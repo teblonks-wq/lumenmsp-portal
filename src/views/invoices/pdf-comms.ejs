@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 13px; color: #374151; background: #fff; padding: 28px 32px; }
+  table { border-collapse: collapse; }
+  .lbl { font-size: 10px; font-weight: 700; color: #9ca3af; letter-spacing: .05em; text-transform: uppercase; }
+  .val { font-size: 13px; color: #111827; }
+  .sec-h { background:#111827; color:#fff; font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:7px 10px; }
+</style>
+</head>
+<body>
+<% function m(v){ return (Number(v)||0).toFixed(2); } %>
+<% function d(x){ return x ? new Date(x).toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'}) : ''; } %>
+<% var addrLines = (invoice.address_parts && invoice.address_parts.length) ? invoice.address_parts : [invoice.address_line_1, invoice.address_line_2, invoice.city, invoice.county, invoice.postcode].filter(Boolean); %>
+
+<% if (invoice.is_preview) { %>
+<div style="margin-bottom:14px;padding:8px 12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;font-size:12px;color:#92400e;text-align:center;font-weight:700;letter-spacing:.04em;">PREVIEW — not yet generated. This is exactly what the customer will receive.</div>
+<% } %>
+
+<table width="100%" style="margin-bottom:18px;"><tr>
+  <td style="vertical-align:top;width:50%;">
+    <% if (logoUrl) { %><img src="<%= logoUrl %>" alt="Lumen IT Solutions" style="display:block;max-width:180px;height:auto;border:0;"><% } %>
+  </td>
+  <td style="vertical-align:top;text-align:right;">
+    <strong style="font-size:14px;color:#111827;">Lumen IT Solutions Limited</strong><br>
+    <span style="font-size:12px;color:#6b7280;line-height:1.7;">
+      Gemini House, Hargreaves Road<br>Groundwell Industrial Estate<br>Swindon, SN25 5AZ<br>
+      back.office@lumensolutions.co.uk<br>VAT Registration No.: 443375688
+    </span>
+  </td>
+</tr></table>
+
+<h2 style="font-size:22px;font-weight:400;color:#9ca3af;margin:0 0 20px;">Telecoms Services Invoice</h2>
+
+<table width="100%" style="margin-bottom:18px;"><tr>
+  <td style="vertical-align:top;width:55%;">
+    <div class="lbl" style="margin-bottom:6px;">Invoice To</div>
+    <div style="font-size:13px;line-height:1.7;color:#111827;"><strong><%= invoice.customer_name %></strong><br><%= addrLines.join(', ') %></div>
+  </td>
+  <td style="vertical-align:top;text-align:right;">
+    <table cellspacing="4" style="margin-left:auto;">
+      <tr><td class="lbl" style="padding-right:20px;">Invoice</td><td class="val"><%= invoice.invoice_number %></td></tr>
+      <tr><td class="lbl" style="padding-right:20px;">Period</td><td class="val"><%= invoice.billing_period || '' %></td></tr>
+      <tr><td class="lbl" style="padding-right:20px;">Date</td><td class="val"><%= d(invoice.issue_date) %></td></tr>
+      <tr><td class="lbl" style="padding-right:20px;">Due Date</td><td class="val"><%= d(invoice.due_date) %></td></tr>
+    </table>
+  </td>
+</tr></table>
+
+<% if (typeof priceNotice!=='undefined' && priceNotice) { %>
+<div style="margin:0 0 16px;padding:8px 12px;border:1px solid #fca5a5;background:#fef2f2;color:#b91c1c;font-size:12px;line-height:1.5;border-radius:4px;"><strong>Price notice:</strong> <%= priceNotice %></div>
+<% } %>
+
+<!-- Account summary breakdown (one row per category that has charges) -->
+<div style="margin-bottom:18px;">
+  <div style="font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Account Summary</div>
+  <table width="100%" style="border:1px solid #e5e7eb;border-radius:4px;overflow:hidden;">
+    <thead><tr style="background:#f3f4f6;">
+      <th style="padding:8px 12px;text-align:left;font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;">Category</th>
+      <th style="padding:8px 12px;text-align:center;font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;width:90px;">Items</th>
+      <th style="padding:8px 12px;text-align:right;font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;width:130px;">Amount (net)</th>
+    </tr></thead>
+    <tbody>
+      <% summary.forEach(function(s){ %>
+        <tr><td style="padding:8px 12px;font-size:13px;border-top:1px solid #f3f4f6;"><%= s.label %></td>
+            <td style="padding:8px 12px;font-size:13px;text-align:center;border-top:1px solid #f3f4f6;"><%= s.count %></td>
+            <td style="padding:8px 12px;font-size:13px;text-align:right;border-top:1px solid #f3f4f6;"><%= m(s.amount) %></td></tr>
+      <% }); %>
+    </tbody>
+  </table>
+</div>
+
+<!-- Detailed breakdown by category section -->
+<% sections.forEach(function(sec){ %>
+  <table width="100%" style="margin-bottom:14px;">
+    <thead>
+      <tr><td colspan="4" class="sec-h"><%= sec.label %></td></tr>
+      <tr style="border-bottom:1px solid #e5e7eb;">
+        <th style="padding:7px 8px;text-align:left;" class="lbl">Service</th>
+        <th style="padding:7px 8px;text-align:center;width:60px;" class="lbl">Qty</th>
+        <th style="padding:7px 8px;text-align:right;width:110px;" class="lbl">Rate</th>
+        <th style="padding:7px 8px;text-align:right;width:110px;" class="lbl">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      <% sec.lines.forEach(function(l){ %>
+        <tr>
+          <td style="padding:9px 8px;border-bottom:1px dashed #e5e7eb;font-size:13px;">
+            <%= l.description %>
+            <% if (l.ref || l.location) { %><br><span style="font-size:11px;color:#9ca3af;"><%= [l.ref, l.location].filter(Boolean).join(' · ') %></span><% } %>
+          </td>
+          <td style="padding:9px 8px;border-bottom:1px dashed #e5e7eb;font-size:13px;text-align:center;"><%= Number(l.quantity) %></td>
+          <td style="padding:9px 8px;border-bottom:1px dashed #e5e7eb;font-size:13px;text-align:right;"><%= m(l.unit_price) %></td>
+          <td style="padding:9px 8px;border-bottom:1px dashed #e5e7eb;font-size:13px;text-align:right;"><%= m(l.line_total) %></td>
+        </tr>
+      <% }); %>
+      <tr><td colspan="3" style="padding:7px 8px;text-align:right;font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:.04em;"><%= sec.label %> total</td>
+          <td style="padding:7px 8px;text-align:right;font-size:13px;font-weight:700;"><%= m(sec.subtotal) %></td></tr>
+    </tbody>
+  </table>
+<% }); %>
+
+<table width="100%">
+  <tr><td></td><td style="width:180px;text-align:right;padding:8px;font-size:12px;color:#6b7280;border-bottom:1px dashed #e5e7eb;text-transform:uppercase;letter-spacing:.04em;">Subtotal</td><td style="width:110px;text-align:right;padding:8px;font-size:13px;border-bottom:1px dashed #e5e7eb;"><%= m(invoice.subtotal) %></td></tr>
+  <tr><td></td><td style="text-align:right;padding:8px;font-size:12px;color:#6b7280;border-bottom:1px dashed #e5e7eb;text-transform:uppercase;letter-spacing:.04em;">VAT Total</td><td style="text-align:right;padding:8px;font-size:13px;border-bottom:1px dashed #e5e7eb;"><%= m(invoice.tax_total) %></td></tr>
+  <tr><td></td><td style="text-align:right;padding:8px;font-size:12px;color:#6b7280;border-bottom:1px dashed #e5e7eb;text-transform:uppercase;letter-spacing:.04em;">Total</td><td style="text-align:right;padding:8px;font-size:13px;border-bottom:1px dashed #e5e7eb;"><%= m(invoice.total) %></td></tr>
+  <tr><td></td><td style="text-align:right;padding:10px 8px;font-size:12px;color:#6b7280;border-bottom:2px solid #111827;text-transform:uppercase;letter-spacing:.04em;font-weight:700;">Balance Due</td><td style="text-align:right;padding:10px 8px;font-size:17px;font-weight:700;color:#111827;border-bottom:2px solid #111827;">£<%= m(invoice.total) %></td></tr>
+</table>
+
+<% if (hasMandate) { %>
+<div style="margin:20px 0;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;font-size:13px;color:#166534;line-height:1.6;">
+  <strong>No action required.</strong> As a Direct Debit customer, payment for this invoice will be collected automatically via GoCardless.
+</div>
+<% } else { %>
+<div style="margin:20px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;color:#374151;line-height:1.6;">
+  <strong>Payment details</strong><br>
+  Please make payment by bank transfer using the details below, quoting your invoice number as the reference.<br><br>
+  <table cellspacing="0" style="font-size:13px;">
+    <tr><td style="color:#6b7280;padding-right:16px;padding-bottom:4px;">Account name</td><td style="font-weight:600;">Lumen IT Solutions</td></tr>
+    <tr><td style="color:#6b7280;padding-right:16px;padding-bottom:4px;">Sort code</td><td style="font-weight:600;">60-83-71</td></tr>
+    <tr><td style="color:#6b7280;padding-right:16px;">Account number</td><td style="font-weight:600;">58116491</td></tr>
+  </table>
+</div>
+<% } %>
+
+<div style="margin-top:18px;padding-top:14px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af;line-height:1.6;">
+  LumenMSP is a trading name of Lumen IT Solutions Limited. Registered in England &amp; Wales · Company No. 14951068 · Gemini House, Hargreaves Road, Groundwell Industrial Estate, Swindon, SN25 5AZ
+</div>
+</body>
+</html>

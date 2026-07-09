@@ -1,0 +1,114 @@
+<%- include('header', { title: 'E-Recycling', heading: 'E-Recycling', subtitle: batch.reference + ' · ' + batch.item_count + ' item(s)', back: '/m', user, active }) %>
+<div class="m-wrap">
+  <% if (notice) { %><div class="m-alert ok"><%= notice %></div><% } %>
+  <% if (error) { %><div class="m-alert err"><%= error %></div><% } %>
+
+  <!-- ADD ITEM -->
+  <form id="itemForm" class="sheet" style="padding:18px;" method="post" action="/m/erecycling/item" enctype="multipart/form-data">
+    <div style="margin-bottom:14px;">
+      <label class="m-label">Photos <span style="color:#94a3b8;font-weight:400;">(make/model plate, condition)</span></label>
+      <input id="photoInput" type="file" name="photos" accept="image/*" capture="environment" multiple style="display:none;">
+      <input id="galleryInput" type="file" accept="image/*" multiple style="display:none;">
+      <div id="thumbs" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;"></div>
+      <div style="display:flex;gap:10px;">
+        <button type="button" class="m-btn" onclick="openCamera()" style="flex:2;"><i class="ti ti-camera" style="font-size:18px;vertical-align:-3px;margin-right:6px;"></i>Take photo</button>
+        <button type="button" class="m-btn ghost" onclick="document.getElementById('galleryInput').click()" style="flex:1;"><i class="ti ti-photo" style="font-size:18px;vertical-align:-3px;"></i></button>
+      </div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <label class="m-label">Category</label>
+      <select class="m-select" name="category" required><% categories.forEach(function(c){ %><option value="<%= c %>"><%= c %></option><% }); %></select>
+    </div>
+    <div style="margin-bottom:14px;">
+      <label class="m-label">Condition</label>
+      <select class="m-select" name="condition"><% conditions.forEach(function(c){ %><option value="<%= c %>"<%= c==='Working'?' selected':'' %>><%= c %></option><% }); %></select>
+    </div>
+    <div style="display:flex;gap:10px;margin-bottom:14px;">
+      <div style="flex:1;"><label class="m-label">Make</label><input class="m-input" name="make" placeholder="Dell, HP…"></div>
+      <div style="flex:1;"><label class="m-label">Model</label><input class="m-input" name="model" placeholder="OptiPlex…"></div>
+    </div>
+    <div style="margin-bottom:14px;"><label class="m-label">Serial / asset tag</label><input class="m-input" name="serial" placeholder="Optional"></div>
+    <div style="margin-bottom:14px;"><label class="m-label">Notes</label><input class="m-input" name="notes" placeholder="Faults, missing parts…"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:16px;font-size:14px;color:#334155;"><input type="checkbox" name="data_wiped"> Data wiped / no storage</label>
+    <button class="m-btn" type="submit"><i class="ti ti-plus" style="font-size:18px;vertical-align:-3px;margin-right:6px;"></i>Add to batch</button>
+  </form>
+
+  <!-- ITEMS -->
+  <div class="m-label">In this batch · <%= items.length %></div>
+  <div class="sheet">
+    <% if (!items.length) { %><div class="row" style="color:#94a3b8;">No items yet — add equipment above.</div><% } %>
+    <% items.forEach(function(it){ %>
+    <div class="row" style="align-items:flex-start;">
+      <% if (it.photoList.length) { %>
+        <img src="/static/attachments/erecycling/<%= it.photoList[0] %>" style="width:42px;height:42px;object-fit:cover;border-radius:8px;margin-right:11px;flex:0 0 42px;">
+      <% } else { %><i class="ti ti-device-desktop ic"></i><% } %>
+      <div class="main">
+        <div class="t"><%= it.category %><% if (it.make || it.model) { %> <span style="font-weight:400;color:#64748b;">· <%= [it.make, it.model].filter(Boolean).join(' ') %></span><% } %></div>
+        <div class="s"><%= it.condition || 'Unknown' %><% if (it.photoList.length > 1) { %> · <%= it.photoList.length %> photos<% } %><% if (it.data_wiped) { %> · wiped<% } %></div>
+      </div>
+      <form method="post" action="/m/erecycling/item/<%= it.id %>/delete" onsubmit="return confirm('Remove this item?');" style="margin:0;">
+        <button type="submit" style="background:none;border:0;color:#b91c1c;font-size:18px;padding:4px 6px;"><i class="ti ti-trash"></i></button>
+      </form>
+    </div>
+    <% }); %>
+  </div>
+
+  <!-- Submitting to the recycler is done from the desktop Bureau, not here. -->
+  <% if (items.length) { %>
+  <p class="m-label" style="text-align:center;color:#94a3b8;font-weight:400;margin-top:6px;">Submit the collection from Bureau &rarr; E-Recycling on the desktop.</p>
+  <% } %>
+</div>
+
+<div id="camOverlay" style="display:none;position:fixed;inset:0;z-index:1000;background:#000;flex-direction:column;">
+  <video id="camVideo" autoplay playsinline muted style="flex:1;width:100%;height:100%;object-fit:cover;background:#000;"></video>
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 24px;padding-bottom:max(18px,env(safe-area-inset-bottom));background:#000;">
+    <button type="button" onclick="closeCamera()" style="background:none;border:0;color:#fff;font-size:16px;">Done</button>
+    <button type="button" onclick="snap()" aria-label="Capture" style="width:68px;height:68px;border-radius:50%;background:#fff;border:5px solid #94a3b8;"></button>
+    <span id="camCount" style="width:54px;color:#fff;font-size:13px;text-align:right;"></span>
+  </div>
+</div>
+<canvas id="camCanvas" style="display:none;"></canvas>
+
+<script>
+  var photoFiles = [];
+  var camStream = null;
+  function syncInput(){
+    var dt = new DataTransfer();
+    photoFiles.forEach(function(f){ dt.items.add(f); });
+    document.getElementById('photoInput').files = dt.files;
+    renderThumbs();
+  }
+  function renderThumbs(){
+    var box = document.getElementById('thumbs'); box.innerHTML = '';
+    photoFiles.forEach(function(f, i){
+      var wrap = document.createElement('div'); wrap.style.cssText = 'position:relative;';
+      var img = document.createElement('img'); img.src = URL.createObjectURL(f);
+      img.style.cssText = 'width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #cbd5e1;';
+      var x = document.createElement('button'); x.type = 'button'; x.innerHTML = '&times;';
+      x.style.cssText = 'position:absolute;top:-6px;right:-6px;background:#0f172a;color:#fff;border:0;border-radius:50%;width:20px;height:20px;font-size:14px;line-height:1;';
+      x.onclick = function(){ photoFiles.splice(i, 1); syncInput(); };
+      wrap.appendChild(img); wrap.appendChild(x); box.appendChild(wrap);
+    });
+    var c = document.getElementById('camCount'); if (c) c.textContent = photoFiles.length ? photoFiles.length + ' shot' + (photoFiles.length>1?'s':'') : '';
+  }
+  function addFiles(list){ for (var i=0;i<list.length;i++) photoFiles.push(list[i]); syncInput(); }
+  async function openCamera(){
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ document.getElementById('photoInput').click(); return; }
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      document.getElementById('camVideo').srcObject = camStream;
+      document.getElementById('camOverlay').style.display = 'flex';
+    } catch (e) { document.getElementById('photoInput').click(); }
+  }
+  function closeCamera(){ if (camStream){ camStream.getTracks().forEach(function(t){ t.stop(); }); camStream = null; } document.getElementById('camOverlay').style.display = 'none'; }
+  function snap(){
+    var v = document.getElementById('camVideo'), c = document.getElementById('camCanvas');
+    c.width = v.videoWidth || 1080; c.height = v.videoHeight || 1440;
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    c.toBlob(function(b){ if (b){ photoFiles.push(new File([b], 'kit-' + Date.now() + '.jpg', { type: 'image/jpeg' })); syncInput(); } }, 'image/jpeg', 0.9);
+  }
+  document.getElementById('galleryInput').addEventListener('change', function(){ if (this.files && this.files.length) addFiles(this.files); this.value=''; });
+  document.getElementById('photoInput').addEventListener('change', function(){ if (this.files && this.files.length) addFiles(this.files); });
+</script>
+
+<%- include('footer', { active }) %>

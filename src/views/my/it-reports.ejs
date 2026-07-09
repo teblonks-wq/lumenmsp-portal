@@ -1,0 +1,29 @@
+<%- include('header', { title: 'IT Reports', company: (user && user.displayName) || '', user, active }) %>
+<%
+  function d(x){ return x ? new Date(x).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '—'; }
+%>
+
+<div class="page-header"><h1>IT Reports</h1><p class="muted" style="margin:4px 0 0;">Your monthly IT Operations &amp; Security Snapshots from Lumen IT.</p></div>
+
+<% if (!reports || !reports.length) { %>
+  <div class="card"><div class="empty">No reports have been issued yet. Your first monthly snapshot will appear here.</div></div>
+<% } else { %>
+  <div class="card" style="padding:0;">
+    <div class="table-wrap">
+      <table class="table" style="margin:0;">
+        <thead><tr><th>Reporting period</th><th>Issued</th><th style="text-align:right;">&nbsp;</th></tr></thead>
+        <tbody>
+          <% reports.forEach(function(r){ %>
+            <tr>
+              <td><a class="row-link" href="/my/it-report/<%= r.id %>" target="_blank"><strong><%= r.period_label %></strong></a></td>
+              <td class="muted" style="white-space:nowrap;"><%= d(r.sent_at || r.created_at) %></td>
+              <td style="text-align:right;"><a class="btn btn-primary" href="/my/it-report/<%= r.id %>" target="_blank">View</a></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% } %>
+
+<%- include('footer', { active }) %>

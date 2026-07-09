@@ -1,0 +1,65 @@
+<%- include('../partials/header', { title: 'QB customer match', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">← Integrations</a></p><h1>QuickBooks customer match</h1><p class="muted">Portal is the source of truth — link or create from QuickBooks</p></div>
+  <form method="post" action="/settings/quickbooks/import-all-customers" onsubmit="return confirm('Link all name-matches and create the rest in the portal?');" style="margin:0;"><button class="btn btn-primary" type="submit">Import all unmatched</button></form>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:760px;"><%= notice %></div><% } %>
+<% if (stats.autoLinked > 0) { %><div class="alert" style="background:#f0fdf4;border:1px solid #bbf7d0;max-width:760px;">Auto-linked <strong><%= stats.autoLinked %></strong> exact name match<%= stats.autoLinked===1?'':'es' %>.</div><% } %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
+  <div class="card"><div class="card-header"><h2>QB customers</h2></div><div class="stat"><%= stats.total %></div></div>
+  <div class="card"><div class="card-header"><h2>Linked</h2></div><div class="stat" style="color:#166534;"><%= stats.linked %></div></div>
+  <div class="card"><div class="card-header"><h2>No match</h2></div><div class="stat" style="color:#b45309;"><%= stats.unmatched %></div></div>
+  <div class="card"><div class="card-header"><h2>Ignored</h2></div><div class="stat" style="color:var(--muted);"><%= stats.ignored %></div><% if (stats.ignored > 0) { %><form method="post" action="/settings/quickbooks/clear-ignored" style="margin:8px 0 0;"><button class="btn" type="submit" style="font-size:12px;padding:4px 10px;">Clear ignore list</button></form><% } %></div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>QuickBooks customer</th><th>Status</th><th style="text-align:right;">Action</th></tr></thead>
+      <tbody>
+        <% rows.forEach(function(r){ %>
+          <tr>
+            <td><%= r.qbName %> <span class="muted" style="font-size:12px;">#<%= r.qbId %></span></td>
+            <td>
+              <% if (r.linked) { %><span class="badge badge-sent">Linked</span> <a class="row-link" href="/customers/<%= r.linked.id %>"><%= r.linked.name %></a>
+              <% } else if (r.suggest) { %><span class="badge badge-primary">Match found</span> <span class="muted"><%= r.suggest.name %></span>
+              <% } else { %><span class="badge badge-inactive">No portal match</span><% } %>
+            </td>
+            <td style="text-align:right;white-space:nowrap;">
+              <% if (r.linked) { %><span class="muted">✓</span>
+              <% } else { %>
+                <% if (r.suggest) { %><form method="post" action="/settings/quickbooks/link-customer" style="display:inline;"><input type="hidden" name="qb_id" value="<%= r.qbId %>"><input type="hidden" name="customer_id" value="<%= r.suggest.id %>"><button class="btn btn-primary" type="submit">Link</button></form>
+                <% } else { %><form method="post" action="/settings/quickbooks/create-customer-in-portal" style="display:inline;"><input type="hidden" name="qb_id" value="<%= r.qbId %>"><input type="hidden" name="name" value="<%= r.qbName %>"><button class="btn" type="submit">Create in portal</button></form><% } %>
+                <form method="post" action="/settings/quickbooks/ignore-customer" style="display:inline;"><input type="hidden" name="qb_id" value="<%= r.qbId %>"><button class="btn" type="submit" title="Hide from this list">Ignore</button></form>
+              <% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<% if (unmatchedCustomers && unmatchedCustomers.length) { %>
+<div class="page-header" style="margin-top:24px;"><h1 style="font-size:20px;">Portal customers not in QuickBooks <span class="muted" style="font-size:14px;">(<%= unmatchedCustomers.length %>)</span></h1><p class="muted">Push these to QuickBooks — portal is the source of truth.</p></div>
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Customer</th><th style="text-align:right;">Action</th></tr></thead>
+      <tbody>
+        <% unmatchedCustomers.forEach(function(c){ %>
+          <tr>
+            <td><a class="row-link" href="/customers/<%= c.id %>"><%= c.name %></a></td>
+            <td style="text-align:right;"><form method="post" action="/settings/quickbooks/create-customer-in-qb" style="display:inline;"><input type="hidden" name="customer_id" value="<%= c.id %>"><button class="btn btn-primary" type="submit">Create in QB</button></form></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<% } %>
+
+<%- include('../partials/footer') %>

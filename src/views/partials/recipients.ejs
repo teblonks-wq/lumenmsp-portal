@@ -1,0 +1,123 @@
+<%
+  // Reusable To/CC/BCC block with customer-contact lookup + domain-mismatch warning.
+  // Locals: id (prefix), contacts [{name,email}], domain (customer domain), to (default To).
+  var _rid = (typeof id !== 'undefined' && id) ? id : 'rcpt';
+  var _contacts = (typeof contacts !== 'undefined' && contacts) ? contacts : [];
+  var _domain = (typeof domain !== 'undefined' && domain) ? domain : '';
+  var _to = (typeof to !== 'undefined' && to) ? to : '';
+  var _cc = (typeof cc !== 'undefined' && cc) ? cc : '';
+  var _bcc = (typeof bcc !== 'undefined' && bcc) ? bcc : '';
+  var _persist = (typeof persist !== 'undefined' && persist) ? persist : false;
+  var _showPersist = (typeof showPersist !== 'undefined') ? showPersist : false;
+  var _custName = (typeof custName !== 'undefined' && custName) ? custName : 'the customer';
+  var _custId = (typeof custId !== 'undefined' && custId) ? custId : '';
+  var _emails = _contacts.map(function(c){ return String(c.email || '').toLowerCase(); }).filter(Boolean).join(',');
+%>
+<datalist id="<%= _rid %>-contacts"><% _contacts.forEach(function(c){ %><option value="<%= c.email %>"><%= c.name %> &lt;<%= c.email %>&gt;</option><% }); %></datalist>
+<div class="rcpt" data-domain="<%= _domain %>" data-default-to="<%= _to %>" data-contacts="<%= _emails %>" data-cust="<%= _custName %>" data-cust-id="<%= _custId %>">
+  <div class="form-group" style="margin-bottom:8px;">
+    <label>To
+      <% if (_contacts.length > 1) { %>
+      <button type="button" class="rcpt-all" title="Fill To with every contact on this customer — for bulk notices (e.g. service appointments)"
+              style="border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;border-radius:5px;padding:1px 8px;font-size:11px;font-weight:600;cursor:pointer;margin-left:6px;">
+        👥 All contacts (<%= _contacts.length %>)
+      </button>
+      <% } %>
+    </label>
+    <input class="input rcpt-f rcpt-to" name="to" list="<%= _rid %>-contacts" autocomplete="off" placeholder="name@customer.com (start typing to pick a contact)" value="<%= _to %>">
+    <div class="rcpt-warn" style="display:none;font-size:12px;color:#b45309;margin-top:3px;"></div>
+  </div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;">
+    <div class="form-group" style="flex:1;min-width:200px;margin-bottom:8px;">
+      <label>CC</label>
+      <input class="input rcpt-f rcpt-cc" name="cc" list="<%= _rid %>-contacts" autocomplete="off" placeholder="optional, comma-separated" value="<%= _cc %>">
+      <div class="rcpt-warn" style="display:none;font-size:12px;color:#b45309;margin-top:3px;"></div>
+    </div>
+    <div class="form-group" style="flex:1;min-width:200px;margin-bottom:8px;">
+      <label>BCC</label>
+      <input class="input rcpt-f rcpt-bcc" name="bcc" list="<%= _rid %>-contacts" autocomplete="off" placeholder="optional, comma-separated" value="<%= _bcc %>">
+      <div class="rcpt-warn" style="display:none;font-size:12px;color:#b45309;margin-top:3px;"></div>
+    </div>
+  </div>
+  <% if (_showPersist) { %>
+  <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);margin-top:2px;cursor:pointer;">
+    <input type="checkbox" name="persist_recipients" value="1" <%= _persist?'checked':'' %>>
+    Remember CC &amp; BCC for this case (applied to every reply)
+  </label>
+  <% } %>
+</div>
+<script>
+if (!window.__rcptInit) { window.__rcptInit = true;
+  function rcptEmails(v){ return String(v||'').split(/[,;]/).map(function(s){ return s.trim(); }).filter(Boolean); }
+  function rcptEsc(s){ return String(s||'').replace(/[&<>"]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];}); }
+  function rcptCheck(block){
+    var domain = (block.getAttribute('data-domain')||'').toLowerCase();
+    var cust = block.getAttribute('data-cust') || 'the customer';
+    var custId = block.getAttribute('data-cust-id') || '';
+    var known = (block.getAttribute('data-contacts')||'').toLowerCase().split(',').filter(Boolean);
+    block.querySelectorAll('.rcpt-f').forEach(function(inp){
+      var warn = inp.parentNode.querySelector('.rcpt-warn'); if (!warn) return;
+      // Flag any address that's neither a known customer contact nor on the customer's domain.
+      var bad = rcptEmails(inp.value).filter(function(e){
+        var le = e.toLowerCase(); if (known.indexOf(le) >= 0) return false;
+        var d = (le.split('@')[1]||''); return d && (!domain || d !== domain);
+      });
+      if (bad.length){
+        var addBtn = custId ? ' <button type="button" class="rcpt-add" data-addr="' + rcptEsc(bad.join(',')) + '" style="border:1px solid #b45309;background:#fffbeb;color:#92400e;border-radius:5px;padding:1px 8px;font-size:11px;font-weight:600;cursor:pointer;margin-left:4px;">+ Add to ' + rcptEsc(cust) + '</button>' : '';
+        warn.innerHTML = '⚠ ' + rcptEsc(bad.join(', ')) + ' — not a ' + rcptEsc(cust) + ' contact.' + addBtn;
+        warn.style.display='block';
+        var ab = warn.querySelector('.rcpt-add');
+        if (ab) ab.addEventListener('click', function(){ rcptAdd(block, custId, this); });
+      }
+      else { warn.style.display='none'; }
+    });
+  }
+  function rcptAdd(block, custId, btn){
+    var addrs = (btn.getAttribute('data-addr')||'').split(',').map(function(s){return s.trim();}).filter(Boolean);
+    if (!addrs.length || !custId) return;
+    btn.disabled = true; btn.textContent = 'Adding…';
+    Promise.all(addrs.map(function(a){
+      return fetch('/customers/' + custId + '/contacts/quick.json', {
+        method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ email:a })
+      }).then(function(r){ return r.json(); }).catch(function(){ return { ok:false }; });
+    })).then(function(){
+      // Mark these as known so the warning clears, and reflect across all rcpt blocks.
+      document.querySelectorAll('.rcpt').forEach(function(b){
+        if ((b.getAttribute('data-cust-id')||'') !== custId) return;
+        var known = b.getAttribute('data-contacts')||'';
+        addrs.forEach(function(a){ if ((','+known.toLowerCase()+',').indexOf(','+a.toLowerCase()+',')<0) known += (known?',':'') + a.toLowerCase(); });
+        b.setAttribute('data-contacts', known);
+        rcptCheck(b);
+      });
+    });
+  }
+  function rcptToChanged(block){
+    var to = block.querySelector('.rcpt-to'); if (!to) return;
+    var def = (block.getAttribute('data-default-to')||'').trim().toLowerCase();
+    var overtyped = def !== '' && to.value.trim().toLowerCase() !== def;
+    var was = block.dataset.overtyped === '1';
+    block.dataset.overtyped = overtyped ? '1' : '0';
+    if (overtyped && !was && typeof block.__onOvertype === 'function') block.__onOvertype();
+  }
+  window.rcptInitAll = function(){
+    document.querySelectorAll('.rcpt').forEach(function(block){
+      if (block.__inited) return; block.__inited = true;
+      block.querySelectorAll('.rcpt-f').forEach(function(inp){ inp.addEventListener('input', function(){ rcptCheck(block); rcptToChanged(block); }); });
+      // "All contacts" → fill To with every contact on the customer (bulk notices).
+      var allBtn = block.querySelector('.rcpt-all');
+      if (allBtn) allBtn.addEventListener('click', function(){
+        var to = block.querySelector('.rcpt-to'); if (!to) return;
+        var all = (block.getAttribute('data-contacts')||'').split(',').filter(Boolean);
+        // Merge with whatever is already typed, de-duplicated.
+        var cur = rcptEmails(to.value).map(function(e){ return e.toLowerCase(); });
+        all.forEach(function(e){ if (cur.indexOf(e) < 0) cur.push(e); });
+        to.value = cur.join(', ');
+        to.dispatchEvent(new Event('input'));
+      });
+      rcptCheck(block);
+    });
+  };
+  document.addEventListener('DOMContentLoaded', window.rcptInitAll);
+}
+setTimeout(function(){ if (window.rcptInitAll) window.rcptInitAll(); }, 0);
+</script>

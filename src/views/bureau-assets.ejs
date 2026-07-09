@@ -1,0 +1,142 @@
+<%- include('partials/header', { title: 'Asset List', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+   function n4(v){ return (Number(v)||0).toFixed(4); } function n2(v){ return (Number(v)||0).toFixed(2); } %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">← Back Office</a></p>
+  <h1>Comms Asset List
+    <span style="float:right;display:flex;gap:8px;">
+      <form method="post" action="/bureau/ext-labels/refresh" style="margin:0;" title="Pull extension/user names from Insights call data"><button class="btn" type="submit" style="font-size:13px;font-weight:600;">↻ Extension names</button></form>
+      <a class="btn" href="/bureau/assets.csv" style="font-size:13px;font-weight:600;">⭳ Export CLIs (CSV)</a>
+    </span></h1></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<div class="card" style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
+  <div><div class="muted" style="font-size:12px;">Assets</div><div style="font-size:20px;font-weight:800;"><%= clis.length %></div></div>
+  <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:800;"><%= money(totals.sale) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Cost</div><div style="font-size:20px;font-weight:800;color:#64748b;"><%= money(totals.cost) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Profit</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(totals.profit) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Duplicates</div><div style="font-size:20px;font-weight:800;color:<%= duplicates.length?'#b45309':'inherit' %>;"><%= duplicates.length %></div></div>
+</div>
+
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+  <input id="aSearch" class="input" placeholder="🔍 search CLI/ref, product or customer…" style="margin-left:auto;max-width:340px;">
+</div>
+
+<% if (duplicates.length || conflicts.length) { %>
+<details class="card" style="margin-bottom:14px;border-left:3px solid #f59e0b;">
+  <summary style="cursor:pointer;font-weight:600;">⚠ Duplicate finder (<%= duplicates.length %> dup · <%= conflicts.length %> conflicts)</summary>
+  <% if (duplicates.length) { %><div style="margin-top:10px;"><strong style="font-size:13px;">Same product appears more than once on a CLI/period:</strong>
+    <div class="table-wrap"><table class="table"><thead><tr><th>CLI</th><th>Product</th><th>Period</th><th style="text-align:right;">Times</th></tr></thead><tbody>
+      <% duplicates.forEach(function(d){ %><tr><td><%= d.cli %></td><td><%= d.description %></td><td><%= d.period||'—' %></td><td style="text-align:right;"><span class="badge" style="background:#fef3c7;color:#92400e;"><%= d.count %></span></td></tr><% }); %>
+    </tbody></table></div></div><% } %>
+  <% if (conflicts.length) { %><div style="margin-top:10px;"><strong style="font-size:13px;">CLI allocated to more than one customer:</strong>
+    <ul style="margin:6px 0 0;font-size:13px;"><% conflicts.forEach(function(c){ %><li><strong><%= c.cli %></strong> → <%= c.customers.join(', ') %></li><% }); %></ul></div><% } %>
+</details>
+<% } %>
+
+<details class="card" style="margin-bottom:14px;">
+  <summary style="cursor:pointer;font-weight:600;">📱 Handset register — find which customer a device (MAC) is registered to (<%= handsets.length %>)</summary>
+  <input id="hSearch" class="input" placeholder="🔍 search MAC, model or customer…" style="margin:10px 0;max-width:320px;font-size:13px;padding:5px 8px;">
+  <div class="table-wrap"><table class="table" id="hTable">
+    <thead><tr><th>MAC / device ID</th><th>Model</th><th>Customer</th><th>Location</th></tr></thead>
+    <tbody>
+      <% if (!handsets.length) { %><tr><td colspan="4"><div class="empty-state">No handsets found in the comms feed.</div></td></tr><% } %>
+      <% handsets.forEach(function(h){ %>
+        <tr data-search="<%= ((h.mac||'')+' '+(h.model||'')+' '+(h.customer||'')).toLowerCase() %>">
+          <td><strong style="font-family:monospace;font-size:12px;"><%= h.mac %></strong></td>
+          <td><%= h.model || '—' %></td>
+          <td><% if (h.customer_id) { %><a class="row-link" href="/customers/<%= h.customer_id %>#comms"><%= h.customer %></a><% } else { %><span class="badge" style="background:#fee2e2;color:#b91c1c;font-size:10px;">unallocated</span><% } %></td>
+          <td class="muted" style="font-size:12px;"><%= h.location || '—' %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</details>
+
+<details class="card" style="margin-bottom:14px;">
+  <summary style="cursor:pointer;font-weight:600;">➕ Add a manual service (not from Giacom)</summary>
+  <form method="post" action="/bureau/assets/add" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px;">
+    <div><label class="muted" style="font-size:11px;display:block;">CLI / circuit ref *</label><input class="input" name="cli" required style="min-width:160px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Customer</label><select class="input" name="customer_id" style="min-width:180px;"><option value="">— unallocated —</option><% customers.forEach(function(c){ %><option value="<%= c.id %>"><%= c.name %></option><% }); %></select></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Description / product *</label><input class="input" name="description" required style="min-width:200px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Qty</label><input class="input" name="quantity" value="1" style="width:55px;text-align:right;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Unit cost £</label><input class="input" name="unit_cost" value="0.00" style="width:90px;text-align:right;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Sale £</label><input class="input" name="sale_price" placeholder="optional" style="width:90px;text-align:right;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Service from</label><input class="input" name="billing_from" type="date" style="font-size:13px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Service to</label><input class="input" name="billing_to" type="date" style="font-size:13px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Location</label><input class="input" name="location" placeholder="site…" style="width:120px;"></div>
+    <button class="btn btn-primary" type="submit">Add service</button>
+  </form>
+</details>
+
+<div id="aList">
+  <% clis.forEach(function(g){ %>
+  <details class="card a-cli" data-domain="<%= g.domain %>" data-search="<%= ((g.cli||'')+' '+(g.customer||'')+' '+g.lines.map(function(l){return l.description||'';}).join(' ')).toLowerCase() %>" style="padding:0;margin-bottom:10px;">
+    <summary style="cursor:pointer;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span><strong><%= g.cli %></strong>
+        <span class="badge <%= g.domain==='cloud'?'badge-inactive':(g.type==='voice'?'badge-sent':'badge-primary') %>" style="font-size:10px;"><%= g.domain==='cloud'?'Cloud':(g.type==='voice'?'Number':'Circuit') %></span>
+        <% if (g.manual) { %><span class="badge" style="font-size:10px;background:#dbeafe;color:#1e40af;">manual</span><% } %>
+        <% if (!g.allocated) { %><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;">unallocated</span><% } %>
+        <span class="muted" style="font-size:13px;">· <%= g.customer || '—' %> · <%= g.lines.length %> product(s)</span>
+      </span>
+      <span class="muted" style="font-size:13px;">cost <%= money(g.cost) %> · sale <%= money(g.sale) %> · <span style="color:<%= g.profit>=0?'#166534':'#b91c1c' %>;">profit <%= money(g.profit) %></span></span>
+    </summary>
+    <% if (g.domain!=='cloud') { %>
+    <div style="padding:10px 18px;border-top:1px solid var(--line,#eef2f7);background:#f8fafc;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <form method="post" action="/bureau/cli/allocate" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0;" onsubmit="return this.customer_id.value && confirm('Reassign <%= g.cli %> to the selected customer? Its lines and call records move across and the CLI mapping is corrected.');">
+        <input type="hidden" name="cli" value="<%= g.cli %>">
+        <input type="hidden" name="back" value="/bureau/assets">
+        <span class="muted" style="font-size:12px;">Reassign this CLI to</span>
+        <select class="input" name="customer_id" required style="font-size:12px;padding:4px 8px;min-width:190px;"><option value="">— choose customer —</option><% customers.forEach(function(cu){ %><option value="<%= cu.id %>" <%= cu.id===g.customer_id?'selected':'' %>><%= cu.name %></option><% }); %></select>
+        <input class="input" name="billing_start" type="date" title="Bill the new customer from this date (first-month prorata)" style="font-size:12px;padding:4px 6px;">
+        <button class="btn" type="submit" style="font-size:12px;padding:4px 11px;">Reassign</button>
+      </form>
+    </div>
+    <% } %>
+    <div class="table-wrap" style="border-top:1px solid var(--line,#eef2f7);"><table class="table">
+      <thead><tr><th>Product</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit cost</th><th style="text-align:right;">Total cost</th><th>Location</th><th style="text-align:right;">Sale</th><th style="text-align:right;">Profit</th><th>Period</th><th></th></tr></thead>
+      <tbody>
+        <% g.lines.forEach(function(l){ %>
+        <tr>
+          <form method="post" action="/bureau/assets/line/<%= l.id %>" style="display:contents;">
+            <td><input class="input" name="description" value="<%= l.description || '' %>" style="min-width:200px;font-size:12px;padding:4px 7px;"></td>
+            <td style="text-align:right;"><input class="input" name="quantity" value="<%= Number(l.quantity) %>" style="width:50px;text-align:right;font-size:12px;padding:4px 6px;"></td>
+            <td style="text-align:right;"><input class="input" name="unit_cost" value="<%= n4(l.unit_cost) %>" style="width:85px;text-align:right;font-size:12px;padding:4px 6px;" title="Override cost"></td>
+            <td style="text-align:right;"><input class="input" name="total_cost" value="<%= n2(l.total_cost) %>" style="width:85px;text-align:right;font-size:12px;padding:4px 6px;"></td>
+            <td><input class="input" name="location" value="<%= l.location || '' %>" placeholder="—" style="width:110px;font-size:12px;padding:4px 6px;"></td>
+            <td style="text-align:right;"><input class="input" name="sale_price" value="<%= l.sale_price!=null?Number(l.sale_price).toFixed(2):'' %>" placeholder="—" style="width:75px;text-align:right;font-size:12px;padding:4px 6px;"></td>
+            <td style="text-align:right;font-size:12px;color:<%= l._lineProfit==null?'#94a3b8':(l._lineProfit>=0?'#166534':'#b91c1c') %>;"><%= l._lineProfit==null?'—':money(l._lineProfit) %></td>
+            <td class="muted" style="font-size:11px;white-space:nowrap;"><%= l.billing_period || '—' %><% if (l.is_prorata) { %> <span class="badge" style="font-size:9px;background:#fef3c7;color:#92400e;">part</span><% } %><% if (l.is_one_off) { %> <span class="badge" style="font-size:9px;">one-off</span><% } %></td>
+            <td style="white-space:nowrap;"><button class="btn btn-primary" type="submit" style="font-size:11px;padding:3px 8px;">Save</button></td>
+          </form>
+          <td style="padding-left:0;"><form method="post" action="/bureau/assets/line/<%= l.id %>/delete" onsubmit="return confirm('Delete this line?');" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:#b91c1c;">✕</button></form></td>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </details>
+  <% }); %>
+</div>
+
+<script>(function(){
+  var s=document.getElementById('aSearch'); var items=[].slice.call(document.querySelectorAll('#aList .a-cli'));
+  var domain='all'; var tabs=[].slice.call(document.querySelectorAll('.tab-btn[data-domain]'));
+  function apply(){ var q=s?s.value.trim().toLowerCase():'';
+    items.forEach(function(it){
+      var okD = domain==='all' || it.getAttribute('data-domain')===domain;
+      var okQ = !q || it.getAttribute('data-search').indexOf(q)>=0;
+      it.style.display = (okD && okQ) ? '' : 'none';
+    });
+  }
+  if(s) s.addEventListener('input',apply);
+  tabs.forEach(function(t){ t.addEventListener('click',function(){ domain=t.getAttribute('data-domain'); tabs.forEach(function(x){x.classList.toggle('active',x===t);}); apply(); }); });
+  // Handset register search.
+  var hs=document.getElementById('hSearch');
+  if(hs) hs.addEventListener('input',function(){ var q=hs.value.trim().toLowerCase();
+    document.querySelectorAll('#hTable tbody tr[data-search]').forEach(function(tr){ tr.style.display=(!q||tr.getAttribute('data-search').indexOf(q)>=0)?'':'none'; });
+  });
+})();</script>
+
+<%- include('partials/footer') %>

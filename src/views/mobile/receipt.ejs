@@ -1,0 +1,88 @@
+<%- include('header', { title: 'Log a receipt', heading: 'Log a receipt', back: '/m', user, active }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+   function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : ''; } %>
+<div class="m-wrap">
+  <% if (notice) { %><div class="m-alert ok"><%= notice %></div><% } %>
+  <% if (error) { %><div class="m-alert err"><%= error %></div><% } %>
+
+  <form id="receiptForm" class="sheet" style="padding:18px;" method="post" action="/m/receipt" enctype="multipart/form-data">
+    <div style="margin-bottom:18px;">
+      <label class="m-label">Amount (£)</label>
+      <input class="m-input" type="number" name="amount" inputmode="decimal" step="0.01" min="0" placeholder="0.00" required style="font-size:30px;font-weight:600;text-align:center;padding:18px;">
+    </div>
+    <div style="margin-bottom:18px;">
+      <label class="m-label">Category</label>
+      <select class="m-select" name="category_id"><option value="">— choose category —</option><% (cats||[]).forEach(function(c){ %><option value="<%= c.Id %>"><%= c.Name %></option><% }); %></select>
+    </div>
+    <div style="margin-bottom:18px;">
+      <label class="m-label">Receipt photo</label>
+      <input id="photoInput" type="file" name="photo" accept="image/*" capture="environment" style="display:none;">
+      <input id="galleryInput" type="file" accept="image/*" style="display:none;">
+      <div id="photoPreview" style="display:none;margin-bottom:10px;position:relative;">
+        <img id="photoImg" alt="Receipt" style="width:100%;border-radius:12px;display:block;">
+        <button type="button" onclick="clearPhoto()" aria-label="Remove photo" style="position:absolute;top:8px;right:8px;background:rgba(15,23,42,.7);color:#fff;border:0;border-radius:50%;width:32px;height:32px;font-size:16px;"><i class="ti ti-x"></i></button>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button type="button" class="m-btn" onclick="openCamera()" style="flex:2;"><i class="ti ti-camera" style="font-size:18px;vertical-align:-3px;margin-right:6px;"></i>Take photo</button>
+        <button type="button" class="m-btn ghost" onclick="document.getElementById('galleryInput').click()" style="flex:1;"><i class="ti ti-photo" style="font-size:18px;vertical-align:-3px;"></i></button>
+      </div>
+    </div>
+    <div style="margin-bottom:20px;">
+      <label class="m-label">Note (optional)</label>
+      <input class="m-input" type="text" name="note" placeholder="Who / what it was for">
+    </div>
+    <button class="m-btn" type="submit"><i class="ti ti-check" style="font-size:18px;vertical-align:-3px;margin-right:6px;"></i>Log receipt</button>
+  </form>
+
+  <% if ((recent||[]).length) { %>
+  <div class="m-label">Recently logged</div>
+  <div class="sheet">
+    <% recent.forEach(function(r){ %>
+    <a class="row" href="/purchases/doc/<%= r.id %>/view" target="_blank">
+      <i class="ti ti-receipt ic"></i>
+      <div class="main"><div class="t"><%= money(r.parsed_amount) %><% if (r.category_name) { %> · <span style="font-weight:400;color:#64748b;"><%= r.category_name %></span><% } %></div><div class="s"><%= dt(r.created_at) %></div></div>
+      <i class="ti ti-external-link chev"></i>
+    </a>
+    <% }); %>
+  </div>
+  <% } %>
+</div>
+
+<div id="camOverlay" style="display:none;position:fixed;inset:0;z-index:1000;background:#000;flex-direction:column;">
+  <video id="camVideo" autoplay playsinline muted style="flex:1;width:100%;height:100%;object-fit:cover;background:#000;"></video>
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 24px;padding-bottom:max(18px,env(safe-area-inset-bottom));background:#000;">
+    <button type="button" onclick="closeCamera()" style="background:none;border:0;color:#fff;font-size:16px;">Cancel</button>
+    <button type="button" onclick="snap()" aria-label="Capture" style="width:68px;height:68px;border-radius:50%;background:#fff;border:5px solid #94a3b8;"></button>
+    <span style="width:54px;"></span>
+  </div>
+</div>
+<canvas id="camCanvas" style="display:none;"></canvas>
+
+<script>
+  var camStream = null;
+  function showPreview(url){ document.getElementById('photoImg').src = url; document.getElementById('photoPreview').style.display = 'block'; }
+  function setPhoto(file){ var dt = new DataTransfer(); dt.items.add(file); document.getElementById('photoInput').files = dt.files; showPreview(URL.createObjectURL(file)); }
+  function clearPhoto(){ document.getElementById('photoInput').value=''; document.getElementById('photoPreview').style.display='none'; }
+  async function openCamera(){
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ document.getElementById('photoInput').click(); return; }
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      var v = document.getElementById('camVideo'); v.srcObject = camStream;
+      document.getElementById('camOverlay').style.display = 'flex';
+    } catch (e) {
+      document.getElementById('photoInput').click();  // fall back to the OS camera
+    }
+  }
+  function closeCamera(){ if (camStream){ camStream.getTracks().forEach(function(t){ t.stop(); }); camStream = null; } document.getElementById('camOverlay').style.display = 'none'; }
+  function snap(){
+    var v = document.getElementById('camVideo'), c = document.getElementById('camCanvas');
+    c.width = v.videoWidth || 1080; c.height = v.videoHeight || 1440;
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    c.toBlob(function(b){ if (b) setPhoto(new File([b], 'receipt-' + Date.now() + '.jpg', { type: 'image/jpeg' })); closeCamera(); }, 'image/jpeg', 0.9);
+  }
+  document.getElementById('galleryInput').addEventListener('change', function(){ if (this.files && this.files[0]) setPhoto(this.files[0]); });
+  document.getElementById('photoInput').addEventListener('change', function(){ if (this.files && this.files[0]) showPreview(URL.createObjectURL(this.files[0])); });
+  document.getElementById('receiptForm').addEventListener('submit', function(e){ if (!document.getElementById('photoInput').files.length){ e.preventDefault(); alert('Please take or choose a receipt photo.'); } });
+</script>
+
+<%- include('footer', { active }) %>

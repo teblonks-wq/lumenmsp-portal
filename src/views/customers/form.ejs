@@ -1,0 +1,83 @@
+<%- include('../partials/header', { title: customer && customer.id ? 'Edit customer' : 'New customer', user }) %>
+
+<% var isEdit = customer && customer.id; %>
+<% function v(f){ return customer && customer[f] != null ? customer[f] : ''; } %>
+<% function chk(f){ return customer && (customer[f] === true || customer[f] === 'on' || customer[f] === 1) ? 'checked' : ''; } %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="<%= isEdit ? '/customers/' + customer.id : '/customers' %>">← Back</a></p>
+  <h1><%= isEdit ? 'Edit customer' : 'New customer' %></h1>
+</div>
+
+<% if (error) { %><div class="alert alert-error" style="max-width:760px;"><%= error %></div><% } %>
+
+<form method="post" action="<%= isEdit ? '/customers/' + customer.id : '/customers' %>" style="max-width:760px;">
+  <% if (typeof fromTicket !== 'undefined' && fromTicket) { %>
+    <input type="hidden" name="from_ticket" value="<%= fromTicket %>">
+    <input type="hidden" name="requester_email" value="<%= typeof requesterEmail !== 'undefined' ? requesterEmail : '' %>">
+    <input type="hidden" name="requester_name" value="<%= typeof requesterName !== 'undefined' ? requesterName : '' %>">
+    <div class="alert" style="background:#fffbeb;border:1px solid #f59e0b;max-width:760px;margin-bottom:14px;">
+      Creating this customer will link it to the ticket and return you there. The sender will be added as the primary contact.
+      <label style="display:flex;gap:6px;align-items:center;margin-top:8px;font-weight:600;"><input type="checkbox" name="protect" checked> Preserve this contact (directory sync won't change it)</label>
+    </div>
+  <% } %>
+  <div class="card">
+    <div class="card-header"><h2>Company</h2></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group" style="grid-column:1 / -1;">
+        <label>Name *</label>
+        <input class="input" name="name" required value="<%= v('name') %>">
+      </div>
+      <div class="form-group">
+        <label>Status</label>
+        <select class="input" name="status">
+          <% ['lead','active','inactive'].forEach(function(s){ %>
+            <option value="<%= s %>" <%= v('status') === s ? 'selected' : '' %>><%= s.charAt(0).toUpperCase()+s.slice(1) %></option>
+          <% }); %>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Account number <span class="muted">(auto if blank)</span></label>
+        <input class="input" name="account_number" value="<%= v('account_number') %>">
+      </div>
+      <div class="form-group"><label>Phone</label><input class="input" name="phone" value="<%= v('phone') %>"></div>
+      <div class="form-group"><label>Email</label><input class="input" type="email" name="email" value="<%= v('email') %>"></div>
+      <div class="form-group"><label>Website</label><input class="input" name="website" value="<%= v('website') %>"></div>
+      <div class="form-group"><label>Domain</label><input class="input" name="domain" value="<%= v('domain') %>"></div>
+      <div class="form-group"><label>Lead source</label><input class="input" name="lead_source" value="<%= v('lead_source') %>"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>Services</h2></div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;">
+      <label style="display:flex;align-items:center;gap:8px;font-weight:500;"><input type="checkbox" name="is_itsm" <%= chk('is_itsm') %>> Support (ITSM)</label>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:500;"><input type="checkbox" name="has_internet" <%= chk('has_internet') %>> Internet</label>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:500;"><input type="checkbox" name="has_phones" <%= chk('has_phones') %>> Phones</label>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:500;"><input type="checkbox" name="has_cloud" <%= chk('has_cloud') %>> Cloud</label>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>Address</h2></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group" style="grid-column:1 / -1;"><label>Address line 1</label><input class="input" name="address_line_1" value="<%= v('address_line_1') %>"></div>
+      <div class="form-group" style="grid-column:1 / -1;"><label>Address line 2</label><input class="input" name="address_line_2" value="<%= v('address_line_2') %>"></div>
+      <div class="form-group"><label>City</label><input class="input" name="city" value="<%= v('city') %>"></div>
+      <div class="form-group"><label>County</label><input class="input" name="county" value="<%= v('county') %>"></div>
+      <div class="form-group"><label>Postcode</label><input class="input" name="postcode" value="<%= v('postcode') %>"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>Notes</h2></div>
+    <textarea class="input" name="notes" rows="4" style="width:100%;"><%= v('notes') %></textarea>
+  </div>
+
+  <div style="display:flex;gap:10px;margin-top:4px;">
+    <button class="btn btn-primary" type="submit"><%= isEdit ? 'Save changes' : 'Create customer' %></button>
+    <a class="btn" href="<%= isEdit ? '/customers/' + customer.id : '/customers' %>">Cancel</a>
+  </div>
+</form>
+
+<%- include('../partials/footer') %>

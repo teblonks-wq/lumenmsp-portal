@@ -1,0 +1,134 @@
+<%- include('../partials/header', { title: quote.quote_number, user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
+<% function badge(s){ return s==='accepted'?'badge-sent':s==='sent'?'badge-primary':s==='lost'?'badge-failed':'badge-inactive'; } %>
+<% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
+<% function mcol(p){ return p>=20 ? '#166534' : p>0 ? '#b45309' : '#b91c1c'; } %>
+
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/quotes">← Quotes</a></p>
+    <h1 style="margin:0;display:flex;align-items:center;gap:12px;"><%= quote.quote_number %> <span class="badge <%= badge(quote.status) %>"><%= quote.status.charAt(0).toUpperCase()+quote.status.slice(1) %></span></h1>
+    <p class="muted" style="margin:4px 0 0;"><%= quote.title %><% if (quote.customer_name) { %> · <a class="row-link" href="/customers/<%= quote.customer_id %>"><%= quote.customer_name %></a><% } %><% if (quote.ticket_number) { %> · <a class="row-link" href="/tickets/<%= quote.inbox_ticket_id %>">Case <%= quote.ticket_number %></a><% } %></p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+    <a class="btn" href="/quotes/<%= quote.id %>/edit">Edit</a>
+    <a class="btn" href="/quotes/<%= quote.id %>/pdf" target="_blank">Preview PDF</a>
+    <a class="btn" href="/quotes/<%= quote.id %>/pdf?dl=1">Download</a>
+    <a class="btn btn-primary" href="/invoices/new?quote=<%= quote.id %>">Create invoice</a>
+    <form method="post" action="/quotes/<%= quote.id %>/status" style="margin:0;display:flex;gap:6px;align-items:center;">
+      <select class="input" name="status"><% ['draft','sent','accepted','lost'].forEach(function(s){ %><option value="<%= s %>" <%= quote.status===s?'selected':'' %>><%= s.charAt(0).toUpperCase()+s.slice(1) %></option><% }); %></select>
+      <button class="btn" type="submit">Set status</button>
+    </form>
+    <form method="post" action="/quotes/<%= quote.id %>/delete" onsubmit="return confirm('Move this quote to the recycle bin?');" style="margin:0;"><button class="btn" type="submit" style="color:var(--lumen-dark);">Delete</button></form>
+  </div>
+</div>
+
+<% if (quote.accept_token) { %>
+<div class="alert" style="background:#f0fdf9;border:1px solid #bbf7d0;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;">
+  <span>Customer link: <a class="row-link" href="/q/<%= quote.accept_token %>" target="_blank">/q/<%= quote.accept_token %></a></span>
+  <span class="muted">Viewed <%= quote.view_count %> time(s)</span>
+</div>
+<% } %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+  <div class="card"><div class="card-header"><h2>Issued</h2></div><div><%= quote.issue_date ? new Date(quote.issue_date).toLocaleDateString('en-GB') : '—' %></div></div>
+  <div class="card"><div class="card-header"><h2>Valid until</h2></div><div><%= quote.valid_until ? new Date(quote.valid_until).toLocaleDateString('en-GB') : '—' %></div></div>
+  <div class="card"><div class="card-header"><h2>Total (inc. VAT)</h2></div><div class="stat" style="font-size:24px;"><%= money(quote.total) %></div></div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Line items</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit</th><th style="text-align:right;">VAT %</th><th style="text-align:right;">Line total</th></tr></thead>
+      <tbody>
+        <% if (items.length===0) { %><tr><td colspan="5"><div class="empty-state">No line items.</div></td></tr><% } %>
+        <% items.forEach(function(it){ %>
+          <tr><td><%= it.description %></td><td style="text-align:right;"><%= Number(it.quantity) %></td><td style="text-align:right;"><%= money(it.unit_price) %></td><td style="text-align:right;"><%= Number(it.tax_rate) %></td><td style="text-align:right;"><%= money(it.line_total) %></td></tr>
+        <% }); %>
+      </tbody>
+      <tfoot>
+        <tr><td colspan="4" style="text-align:right;" class="muted">Subtotal</td><td style="text-align:right;"><%= money(quote.subtotal) %></td></tr>
+        <tr><td colspan="4" style="text-align:right;" class="muted">VAT</td><td style="text-align:right;"><%= money(quote.tax_total) %></td></tr>
+        <tr><td colspan="4" style="text-align:right;font-weight:700;">Total</td><td style="text-align:right;font-weight:700;"><%= money(quote.total) %></td></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<!-- Profit analysis (internal) -->
+<% var tBuy=0, tSell=0; %>
+<div class="card" style="padding:0;border-top:3px solid var(--accent);">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Profit analysis <span class="badge" style="background:#fef3c7;color:#92400e;">INTERNAL — not visible to customers</span></h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Description</th><th>Supplier</th><th style="text-align:right;">Buy</th><th style="text-align:right;">Sell</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Margin £</th><th style="text-align:right;">Margin %</th></tr></thead>
+      <tbody>
+        <% items.forEach(function(it){ var q=Number(it.quantity)||0, buy=(Number(it.buy_price)||0)*q, sell=(Number(it.unit_price)||0)*q, mg=sell-buy, mp=sell>0?(mg/sell*100):0; tBuy+=buy; tSell+=sell; %>
+          <tr>
+            <td><%= it.description %></td>
+            <td class="muted"><%= it.supplier_name || '—' %></td>
+            <td style="text-align:right;"><%= money(buy) %></td>
+            <td style="text-align:right;"><%= money(sell) %></td>
+            <td style="text-align:right;"><%= q %></td>
+            <td style="text-align:right;color:<%= mg>=0?'#166534':'#b91c1c' %>;"><%= money(mg) %></td>
+            <td style="text-align:right;color:<%= mcol(mp) %>;"><%= mp.toFixed(1) %>%</td>
+          </tr>
+        <% }); %>
+      </tbody>
+      <% var tMg=tSell-tBuy, tMp=tSell>0?(tMg/tSell*100):0; %>
+      <tfoot>
+        <tr style="background:#fefce8;font-weight:700;">
+          <td>Totals</td><td></td>
+          <td style="text-align:right;"><%= money(tBuy) %></td>
+          <td style="text-align:right;"><%= money(tSell) %></td>
+          <td></td>
+          <td style="text-align:right;color:<%= tMg>=0?'#166534':'#b91c1c' %>;"><%= money(tMg) %></td>
+          <td style="text-align:right;color:<%= mcol(tMp) %>;"><%= tMp.toFixed(1) %>%</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<div class="card-grid" style="grid-template-columns:2fr 1fr;align-items:start;">
+  <div class="card">
+    <div class="card-header"><h2>Send quote</h2></div>
+    <p class="muted" style="margin:0 0 16px;">Sends a branded email with the quote link, and sets status to <strong>Sent</strong>.</p>
+    <form method="post" action="/quotes/<%= quote.id %>/send">
+      <div class="form-group" style="margin-bottom:12px;">
+        <label>Recipient email</label>
+        <% if (contacts.length) { %>
+        <select class="input" name="send_to" style="width:100%;">
+          <% contacts.forEach(function(ct){ %><option value="<%= ct.email %>" <%= quote.sent_to===ct.email ? 'selected' : '' %>><%= ct.full_name %> &lt;<%= ct.email %>&gt;<%= ct.is_primary ? ' ★' : '' %></option><% }); %>
+          <option value="">— other —</option>
+        </select>
+        <% } else { %>
+        <input class="input" type="email" name="send_to" value="<%= quote.sent_to || '' %>" placeholder="customer@example.com" style="width:100%;">
+        <% } %>
+      </div>
+      <div class="form-group" style="margin-bottom:14px;"><label>Message (optional — appears at top of email)</label><textarea class="input" name="message" rows="4" style="width:100%;" placeholder="Hi, please find your quote attached…"></textarea></div>
+      <button class="btn btn-primary" type="submit">Send quote by email</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>Activity</h2></div>
+    <div style="margin-bottom:14px;"><div style="font-weight:600;">Created</div><div class="muted" style="font-size:13px;"><%= quote.created_by_name || '—' %> · <%= dt(quote.created_at) %></div></div>
+    <div><div style="font-weight:600;">Updated</div><div class="muted" style="font-size:13px;"><%= dt(quote.updated_at) %></div></div>
+    <% if (quote.status==='accepted' && quote.accepted_by_name) { %>
+    <div style="margin-top:14px;"><div style="font-weight:600;color:#166534;">Accepted</div><div class="muted" style="font-size:13px;"><%= quote.accepted_by_name %><% if (quote.accepted_at) { %> · <%= dt(quote.accepted_at) %><% } %><% if (quote.approve_note) { %><br>"<%= quote.approve_note %>"<% } %></div></div>
+    <% } %>
+  </div>
+</div>
+
+<% if (quote.notes || quote.terms) { %>
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));align-items:start;">
+  <% if (quote.notes) { %><div class="card"><div class="card-header"><h2>Notes</h2></div><p style="white-space:pre-wrap;margin:0;"><%= quote.notes %></p></div><% } %>
+  <% if (quote.terms) { %><div class="card"><div class="card-header"><h2>Terms</h2></div><p style="white-space:pre-wrap;margin:0;"><%= quote.terms %></p></div><% } %>
+</div>
+<% } %>
+
+<%- include('../partials/comms', { entityType: 'quote', entityId: quote.id, comms: comms, toEmail: commsTo, commsSubject: quote.quote_number + ' — ' + quote.title }) %>
+
+<%- include('../partials/footer') %>

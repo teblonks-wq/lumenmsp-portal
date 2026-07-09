@@ -1,0 +1,42 @@
+<%- include('../partials/header', { title: 'Security', user }) %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p><h1>Security</h1></div>
+
+<div class="card-grid" style="grid-template-columns:2fr 1fr;align-items:start;">
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;"><h2>Recent login attempts</h2></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>When</th><th>Email</th><th>IP</th><th>Result</th></tr></thead>
+        <tbody>
+          <% if (attempts.length===0) { %><tr><td colspan="4"><div class="empty-state">No attempts logged.</div></td></tr><% } %>
+          <% attempts.forEach(function(a){ %>
+            <tr>
+              <td class="muted"><%= new Date(a.created_at).toLocaleString('en-GB') %></td>
+              <td><%= a.email %></td>
+              <td class="muted"><%= a.ip %></td>
+              <td><span class="badge <%= a.success ? 'badge-sent' : 'badge-failed' %>"><%= a.success ? 'success' : 'failed' %></span></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;"><h2>Top IPs (7 days)</h2></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>IP</th><th style="text-align:right;">Total</th><th style="text-align:right;">Failed</th></tr></thead>
+        <tbody>
+          <% if (topIps.length===0) { %><tr><td colspan="3"><div class="empty-state">—</div></td></tr><% } %>
+          <% topIps.forEach(function(t){ %>
+            <tr><td class="muted"><%= t.ip %></td><td style="text-align:right;"><%= t.n %></td><td style="text-align:right;color:<%= t.failed>0?'#b91c1c':'inherit' %>;"><%= t.failed %></td></tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

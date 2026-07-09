@@ -1,0 +1,172 @@
+<%- include('../partials/header', { title: 'IT Report — ' + c.name, user }) %>
+<% var m = (cfg && cfg.manual) || {}; %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/it-report">← IT Reports</a></p>
+  <h1><%= c.name %> — IT Snapshot</h1>
+  <p class="muted">Next report covers <strong><%= periodLabel %></strong>.</p>
+</div>
+
+<% if (saved) { %><div class="alert alert-success" style="margin-bottom:16px;">Saved.</div><% } %>
+<% if (err) { %><div class="alert alert-error" style="margin-bottom:16px;"><%= err %></div><% } %>
+<% if (!c.entra_tenant_id) { %>
+  <div class="alert alert-error" style="margin-bottom:16px;">No Entra tenant ID on file for this customer, so Intune / Secure Score can't auto-fill. Set it up via <a class="row-link" href="/customers/<%= c.id %>">the customer's user-sync settings</a>. DNS, tickets and manual sections still work.</div>
+<% } %>
+
+<div style="display:flex;gap:12px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
+  <a class="btn btn-primary" href="/it-report/<%= c.id %>/preview" target="_blank">Preview &amp; send — <%= periodLabel %></a>
+  <span class="muted" style="font-size:13px;">Opens the finished report. Review it, then click <strong>✉ Send to customer</strong> in the top bar to email the exact copy you're looking at.</span>
+</div>
+<p class="muted" style="margin:0 0 18px;font-size:13px;">Claude consolidates and proof-reads all your notes for the period into the write-up. Save your settings and add notes first, then preview.</p>
+
+<form method="post" action="/it-report/<%= c.id %>">
+  <div class="card">
+    <div class="card-header"><h2>Delivery</h2></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="form-group"><label>Recipient emails (comma or newline separated)</label>
+        <textarea class="input" name="recipients" rows="3" style="width:100%;"><%= cfg ? cfg.recipients : '' %></textarea></div>
+      <div>
+        <div class="form-group"><label>Primary domain — fallback only</label>
+          <input class="input" name="primary_domain" value="<%= cfg ? cfg.primary_domain : '' %>" placeholder="leave blank — uses the customer record's primary domain" style="width:100%;">
+          <p class="muted" style="margin:4px 0 0;font-size:12px;">DNS &amp; email-security checks use the <strong>customer record's</strong> primary domain. This field is only used when the customer has no domains recorded.</p></div>
+        <div style="margin-top:12px;display:flex;gap:20px;">
+          <label style="font-weight:600;"><input type="checkbox" name="is_active" <%= cfg && cfg.is_active ? 'checked' : '' %>> Send monthly (auto)</label>
+          <label style="font-weight:600;"><input type="checkbox" name="auto_send" <%= !cfg || cfg.auto_send ? 'checked' : '' %>> Auto-send (untick = create draft for review)</label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>Service Delivery Manager — standing notes</h2></div>
+    <p class="muted" style="margin-top:0;">Persistent commentary that always feeds the report. Month-specific observations go in the running log below.</p>
+    <textarea class="input" name="sdm_notes" rows="4" style="width:100%;"><%= cfg ? cfg.sdm_notes : '' %></textarea>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>Manual sections (interim, until each API is wired)</h2></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div>
+        <div class="form-group"><label>Backup &amp; Recovery — bullets (one per line)</label>
+          <textarea class="input" name="backupBullets" rows="4" style="width:100%;" placeholder="On-site NAS providing local data protection&#10;Acronis Microsoft 365 Backup protecting cloud data&#10;All scheduled backups completed successfully"><%= m.backupBullets || '' %></textarea></div>
+        <div class="form-group" style="margin-top:8px;"><label>Backup status</label>
+          <input class="input" name="backupStatus" value="<%= m.backupStatus || '' %>" placeholder="Healthy"></div>
+        <div class="form-group" style="margin-top:8px;"><label>Patch — extra bullets (one per line)</label>
+          <textarea class="input" name="patchBullets" rows="3" style="width:100%;" placeholder="Antivirus definitions fully up to date&#10;Installed software fully updated"><%= m.patchBullets || '' %></textarea></div>
+        <div class="form-group" style="margin-top:8px;"><label>Patch status</label>
+          <input class="input" name="patchStatus" value="<%= m.patchStatus || '' %>" placeholder="Healthy"></div>
+      </div>
+      <div>
+        <div class="form-group"><label>Firewall threats blocked (number)</label>
+          <input class="input" name="firewallBlocked" value="<%= m.firewallBlocked || '' %>" placeholder="8"></div>
+        <div class="form-group" style="margin-top:8px;"><label>Endpoint threats detected/removed (number)</label>
+          <input class="input" name="endpointThreats" value="<%= m.endpointThreats || '' %>" placeholder="1"></div>
+        <div class="form-group" style="margin-top:8px;"><label>Threat protection — extra bullets (one per line)</label>
+          <textarea class="input" name="threatBullets" rows="3" style="width:100%;" placeholder="No persistent infections identified&#10;No security incidents escalated"><%= m.threatBullets || '' %></textarea></div>
+        <div class="form-group" style="margin-top:8px;"><label>Threat status</label>
+          <input class="input" name="threatStatus" value="<%= m.threatStatus || '' %>" placeholder="Healthy"></div>
+        <div class="form-group" style="margin-top:8px;"><label>Email deliverability</label>
+          <input class="input" name="deliverabilityPct" value="<%= m.deliverabilityPct || '' %>" placeholder="99.79%"></div>
+      </div>
+    </div>
+
+    <div style="border-top:1px solid #e5e7eb;margin-top:20px;padding-top:16px;">
+      <h3 style="margin:0 0 4px;font-size:16px;">Vulnerability testing — monthly external scan</h3>
+      <p class="muted" style="margin:0 0 12px;font-size:13px;">From your monthly RoboShadow scan (no remote access, so entered here). Leave blank if not run this month.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div>
+          <div class="form-group"><label>Provider</label><input class="input" name="vulnProvider" value="<%= m.vulnProvider || '' %>" placeholder="RoboShadow"></div>
+          <div class="form-group" style="margin-top:8px;"><label>Target (external IP / host)</label><input class="input" name="vulnTarget" value="<%= m.vulnTarget || '' %>" placeholder="95.141.23.229"></div>
+          <div class="form-group" style="margin-top:8px;"><label>Risk level</label><input class="input" name="vulnRiskLevel" value="<%= m.vulnRiskLevel || '' %>" placeholder="Low"></div>
+          <div class="form-group" style="margin-top:8px;"><label>Status</label><input class="input" name="vulnStatus" value="<%= m.vulnStatus || '' %>" placeholder="Secured"></div>
+        </div>
+        <div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="form-group"><label>Critical CVEs</label><input class="input" name="vulnCriticalCves" value="<%= m.vulnCriticalCves || '' %>" placeholder="0"></div>
+            <div class="form-group"><label>CVEs</label><input class="input" name="vulnCves" value="<%= m.vulnCves || '' %>" placeholder="0"></div>
+            <div class="form-group"><label>Open ports</label><input class="input" name="vulnPorts" value="<%= m.vulnPorts || '' %>" placeholder="3"></div>
+            <div class="form-group"><label>Web alerts</label><input class="input" name="vulnWebAlerts" value="<%= m.vulnWebAlerts || '' %>" placeholder="0"></div>
+          </div>
+          <div class="form-group" style="margin-top:8px;"><label>Extra bullets (one per line)</label>
+            <textarea class="input" name="vulnBullets" rows="2" style="width:100%;" placeholder="No critical vulnerabilities identified&#10;Web application secured"><%= m.vulnBullets || '' %></textarea></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button class="btn btn-primary" type="submit" style="margin-bottom:24px;">Save settings</button>
+</form>
+
+<div class="card">
+  <div class="card-header"><h2>Running notes log</h2></div>
+  <p class="muted" style="margin-top:0;">Drop observations as they happen (e.g. "internet outage on the 12th — considering a supplier review"). Notes within the reporting month are compiled and handed to Claude for the write-up.</p>
+  <div style="display:flex;gap:8px;margin-bottom:16px;">
+    <input id="noteBody" class="input" placeholder="Add a note… (saved instantly, won't clear the boxes above)" style="flex:1;" onkeydown="if(event.key==='Enter'){event.preventDefault();addNote();}">
+    <button class="btn btn-primary" type="button" onclick="addNote()">Add note</button>
+  </div>
+  <table class="table"><tbody id="notesBody">
+    <% if (!notes.length) { %><tr id="noNotesRow"><td class="muted">No notes yet this period.</td></tr><% } %>
+    <% notes.forEach(function(n){ %>
+    <tr data-note="<%= n.id %>">
+      <td style="white-space:nowrap;width:120px;" class="muted"><%= new Date(n.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) %></td>
+      <td><%= n.body %><% if (n.author) { %> <span class="muted" style="font-size:12px;">— <%= n.author %></span><% } %></td>
+      <td style="text-align:right;width:60px;">
+        <button class="btn" style="padding:2px 8px;font-size:12px;" type="button" onclick="delNote(<%= n.id %>, this)">✕</button>
+      </td>
+    </tr>
+    <% }); %>
+  </tbody></table>
+</div>
+
+<script>
+  var CID = <%= c.id %>;
+  function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
+  function esc(s){ var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function addNote(){
+    var inp = document.getElementById('noteBody');
+    var body = (inp.value || '').trim();
+    if (!body) return;
+    fetch('/it-report/' + CID + '/note', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'x-csrf-token': csrf() },
+      body: JSON.stringify({ body: body })
+    }).then(function(r){ return r.json(); }).then(function(j){
+      if (!j.ok || !j.note) return;
+      var noNotes = document.getElementById('noNotesRow'); if (noNotes) noNotes.remove();
+      var d = new Date(j.note.created_at).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+      var tr = document.createElement('tr'); tr.setAttribute('data-note', j.note.id);
+      tr.innerHTML = '<td style="white-space:nowrap;width:120px;" class="muted">' + d + '</td>' +
+        '<td>' + esc(j.note.body) + (j.note.author ? ' <span class="muted" style="font-size:12px;">— ' + esc(j.note.author) + '</span>' : '') + '</td>' +
+        '<td style="text-align:right;width:60px;"><button class="btn" style="padding:2px 8px;font-size:12px;" type="button" onclick="delNote(' + j.note.id + ', this)">✕</button></td>';
+      var tb = document.getElementById('notesBody'); tb.insertBefore(tr, tb.firstChild);
+      inp.value = '';
+    }).catch(function(){ alert('Could not add the note — please try again.'); });
+  }
+  function delNote(id, btn){
+    if (!confirm('Delete this note?')) return;
+    fetch('/it-report/' + CID + '/note/' + id + '/delete', {
+      method: 'POST', headers: { 'Accept': 'application/json', 'x-csrf-token': csrf() }
+    }).then(function(r){ return r.json(); }).then(function(j){
+      if (j.ok){ var row = btn.closest('tr'); if (row) row.remove(); }
+    }).catch(function(){ alert('Could not delete the note.'); });
+  }
+</script>
+
+<div class="card">
+  <div class="card-header"><h2>Recent reports</h2></div>
+  <% if (!runs.length) { %><p class="muted">None generated yet.</p><% } else { %>
+    <table class="table">
+      <thead><tr><th>Period</th><th>Status</th><th>Created</th></tr></thead>
+      <tbody>
+      <% runs.forEach(function(r){ %>
+        <tr>
+          <td><a class="row-link" href="/it-report/run/<%= r.id %>" target="_blank"><%= r.period_label %></a></td>
+          <td><span class="badge <%= r.status==='sent'?'badge-sent':(r.status==='failed'?'badge-failed':'badge-inactive') %>"><%= r.status %></span></td>
+          <td class="muted"><%= new Date(r.created_at).toLocaleDateString('en-GB') %></td>
+        </tr>
+      <% }); %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,76 @@
+<%- include('../partials/header', { title: 'Purchase Ledger settings', user }) %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a> · <a class="row-link" href="/purchases">Purchase Ledger</a></p>
+  <h1>Purchase Ledger — Bookkeeper &amp; setup</h1>
+  <p class="muted">Who the expenses go to, the accounts you import against, and the Open Banking connection.</p></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:800px;"><%= notice %></div><% } %>
+
+<form method="post" action="/purchases/settings" style="max-width:760px;">
+  <input type="hidden" name="back" value="/purchases/settings">
+  <div class="card" style="margin-bottom:14px;">
+    <h2 style="margin:0 0 12px;font-size:16px;">Bookkeeper</h2>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;">
+      <div><label class="muted" style="font-size:11px;display:block;">Name</label><input class="input" name="bookkeeper_name" value="<%= bookkeeperName %>" placeholder="Bookkeeper / accountant" style="min-width:240px;"></div>
+      <div><label class="muted" style="font-size:11px;display:block;">Email (To)</label><input class="input" name="bookkeeper_email" value="<%= bookkeeperEmail %>" placeholder="bookkeeper@…" style="min-width:260px;"></div>
+      <div><label class="muted" style="font-size:11px;display:block;">CC</label><input class="input" name="bookkeeper_cc" value="<%= bookkeeperCc %>" placeholder="cc@… (comma-separated)" style="min-width:260px;"></div>
+      <div><label class="muted" style="font-size:11px;display:block;">BCC</label><input class="input" name="bookkeeper_bcc" value="<%= bookkeeperBcc %>" placeholder="bcc@… (comma-separated)" style="min-width:260px;"></div>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:14px;">
+    <h2 style="margin:0 0 4px;font-size:16px;">Invoice inbox</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 12px;">Suppliers email invoices here. PDFs/images land in the Invoice inbox tab for attaching to expenses. This mailbox is read on its own — it never creates support tickets or touches other mail feeds.</p>
+    <div><label class="muted" style="font-size:11px;display:block;">Invoice mailbox address</label><input class="input" name="invoice_mailbox" value="<%= invoiceMailbox %>" placeholder="invoices@lumenmsp.co.uk" style="min-width:300px;"></div>
+  </div>
+  <div class="card" style="margin-bottom:14px;">
+    <h2 style="margin:0 0 4px;font-size:16px;">Open Banking</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 12px;">Recommended provider: GoCardless Bank Account Data (free, UK). Add the keys + authorise the bank, then "Sync" pulls live transactions. Until then, use CSV import.</p>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;">
+      <div><label class="muted" style="font-size:11px;display:block;">Provider secret / key</label><input class="input" name="ob_secret_id" value="<%= obSecretId %>" placeholder="secret id" style="min-width:260px;"></div>
+      <div><label class="muted" style="font-size:11px;display:block;">Account / requisition id</label><input class="input" name="ob_account_id" value="<%= obAccountId %>" placeholder="account id" style="min-width:240px;"></div>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:14px;">
+    <h2 style="margin:0 0 4px;font-size:16px;">Report-only categories</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 12px;">Categories that aren't QuickBooks accounts (e.g. director loans). They appear in the category dropdown and on the report, but are never pushed to QuickBooks. One per line.</p>
+    <textarea class="input" name="extra_categories" rows="4" style="width:100%;max-width:420px;font-family:inherit;"><%= extraCategories %></textarea>
+  </div>
+  <div class="card" style="margin-bottom:14px;">
+    <h2 style="margin:0 0 4px;font-size:16px;">Push to QuickBooks</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 10px;">When off, the “Submit” button won’t post anything to QuickBooks — you can still import, categorise, attach receipts and run the report.</p>
+    <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
+      <input type="checkbox" name="qb_push_enabled" <%= qbPushEnabled ? 'checked' : '' %>> Enable push to QuickBooks
+    </label>
+  </div>
+  <button class="btn btn-primary" type="submit">Save settings</button>
+</form>
+
+<div class="card" style="max-width:760px;margin-top:18px;padding:0;">
+  <div class="card-header" style="padding:16px 20px 0;"><h2 style="font-size:16px;">Bank / card accounts</h2></div>
+  <p class="muted" style="padding:0 20px;font-size:12px;margin:6px 0 0;">The accounts you import statements against. Map each to the QuickBooks bank account expenses should post to.</p>
+  <% if (!qbOn) { %><p class="muted" style="padding:0 20px;font-size:12px;">QuickBooks isn't connected — connect it in <a class="row-link" href="/admin/integrations">Integrations</a> to map accounts for posting.</p><% } %>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Name</th><th>Posts to (QuickBooks)</th><th>Active</th><th></th></tr></thead>
+    <tbody>
+      <% if (!(accounts||[]).length) { %><tr><td colspan="4"><div class="empty-state">No accounts yet — add one below.</div></td></tr><% } %>
+      <% (accounts||[]).forEach(function(a){ %>
+      <tr>
+        <form method="post" action="/purchases/accounts/<%= a.id %>" style="display:contents;">
+          <td><input class="input" name="name" value="<%= a.name %>" style="min-width:180px;font-size:13px;padding:4px 7px;"></td>
+          <td><select class="input" name="qb_account_id" onchange="this.form.querySelector('[name=qb_account_name]').value=this.options[this.selectedIndex].text" style="font-size:13px;padding:4px 7px;min-width:200px;"><option value="">— not mapped —</option><% (banks||[]).forEach(function(bk){ %><option value="<%= bk.Id %>" <%= a.qb_account_id===bk.Id?'selected':'' %>><%= bk.Name %></option><% }); %></select><input type="hidden" name="qb_account_name" value="<%= a.qb_account_name || '' %>"></td>
+          <td style="text-align:center;"><input type="checkbox" name="is_active" <%= a.is_active?'checked':'' %>></td>
+          <td><button class="btn btn-primary" type="submit" style="font-size:11px;padding:4px 9px;">Save</button></td>
+        </form>
+        <td style="padding-left:0;"><form method="post" action="/purchases/accounts/<%= a.id %>/delete" onsubmit="return confirm('Delete this account?');" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:4px 8px;color:#b91c1c;">✕</button></form></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <form method="post" action="/purchases/accounts" style="display:flex;gap:8px;align-items:flex-end;padding:14px 20px;flex-wrap:wrap;">
+    <div><span class="muted" style="font-size:11px;display:block;">New account name</span><input class="input" name="name" required placeholder="e.g. Barclays Current" style="min-width:200px;"></div>
+    <div><span class="muted" style="font-size:11px;display:block;">Posts to (QuickBooks)</span><select class="input" name="qb_account_id" onchange="this.form.querySelector('[name=qb_account_name]').value=this.options[this.selectedIndex].text" style="min-width:200px;"><option value="">— not mapped —</option><% (banks||[]).forEach(function(bk){ %><option value="<%= bk.Id %>"><%= bk.Name %></option><% }); %></select><input type="hidden" name="qb_account_name" value=""></div>
+    <button class="btn btn-primary" type="submit">Add account</button>
+  </form>
+</div>
+
+<%- include('../partials/footer') %>

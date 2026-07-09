@@ -1,0 +1,95 @@
+<%- include('../partials/header', { title: s.name, user }) %>
+<% function esc(x){ return String(x==null?'':x).replace(/[&<>"]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];}); } %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/purchases/expenses?view=suppliers">← Suppliers</a></p>
+  <h1><%= s.name %></h1>
+</div>
+
+<% if(msg){ %><div class="alert alert-success" style="margin-bottom:16px;"><%= msg %></div><% } %>
+<% if(err){ %><div class="alert alert-error" style="margin-bottom:16px;"><%= err %></div><% } %>
+
+<div class="card">
+  <div class="card-header"><h2>Supplier details</h2></div>
+  <form method="post" action="/purchases/suppliers/<%= s.id %>">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group"><label>Name</label><input class="input" name="name" value="<%= esc(s.name) %>" required></div>
+      <div class="form-group"><label>Website</label><input class="input" name="website" value="<%= esc(s.url) %>" placeholder="https://…"></div>
+      <div class="form-group"><label>Contact name</label><input class="input" name="contact_name" value="<%= esc(s.contact_name) %>"></div>
+      <div class="form-group"><label>Account reference</label><input class="input" name="account_ref" value="<%= esc(s.account_ref) %>"></div>
+      <div class="form-group"><label>Phone</label><input class="input" name="phone" value="<%= esc(s.phone) %>"></div>
+      <div class="form-group"><label>Email</label><input class="input" name="email" value="<%= esc(s.email) %>"></div>
+      <div class="form-group" style="grid-column:1/3;"><label>Address</label><input class="input" name="address" value="<%= esc(s.address) %>"></div>
+      <div class="form-group" style="grid-column:1/3;"><label>Notes</label><textarea class="input" name="notes" rows="2"><%= esc(s.notes) %></textarea></div>
+    </div>
+    <div style="text-align:right;margin-top:12px;"><button class="btn btn-primary" type="submit">Save details</button></div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Website logins</h2><span class="muted" style="font-size:12px;"><%= logins.length %> login<%= logins.length===1?'':'s' %> · passwords encrypted</span></div>
+
+  <% if(logins.length){ %>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Name</th><th>URL</th><th>Username</th><th>Password</th><th></th></tr></thead>
+    <tbody>
+      <% logins.forEach(function(l){ %>
+      <tr>
+        <td><strong><%= esc(l.name) %></strong></td>
+        <td><% if(l.login_url){ %><a class="row-link" href="<%= esc(l.login_url) %>" target="_blank" rel="noopener"><%= esc(l.login_url) %></a><% } else { %>—<% } %></td>
+        <td style="font-family:monospace;"><%= esc(l.username) || '—' %></td>
+        <td>
+          <% if(l.has_secret){ %>
+            <span id="pw<%= l.id %>" style="font-family:monospace;">••••••••</span>
+            <button class="btn" style="padding:2px 8px;font-size:12px;" onclick="reveal(<%= l.id %>)">Show</button>
+            <button class="btn" style="padding:2px 8px;font-size:12px;" onclick="copyPw(<%= l.id %>)">Copy</button>
+          <% } else { %><span class="muted">—</span><% } %>
+        </td>
+        <td style="text-align:right;white-space:nowrap;">
+          <button class="btn" style="padding:2px 8px;font-size:12px;" onclick="document.getElementById('edit<%= l.id %>').style.display=(document.getElementById('edit<%= l.id %>').style.display==='none'?'table-row':'none')">Edit</button>
+          <form method="post" action="/supplier-logins/<%= l.id %>/delete" style="display:inline;margin:0;" onsubmit="return confirm('Delete this login?');"><button class="btn" style="padding:2px 8px;font-size:12px;">✕</button></form>
+        </td>
+      </tr>
+      <tr id="edit<%= l.id %>" style="display:none;background:#f9fafb;">
+        <td colspan="5">
+          <form method="post" action="/supplier-logins/<%= l.id %>/edit" style="display:grid;grid-template-columns:repeat(4,1fr) auto;gap:8px;align-items:end;">
+            <div class="form-group"><label>Name</label><input class="input" name="name" value="<%= esc(l.name) %>"></div>
+            <div class="form-group"><label>URL</label><input class="input" name="login_url" value="<%= esc(l.login_url) %>"></div>
+            <div class="form-group"><label>Username</label><input class="input" name="username" value="<%= esc(l.username) %>"></div>
+            <div class="form-group"><label>New password <span class="muted" style="font-size:11px;">(blank = keep)</span></label><input class="input" name="password" type="text" autocomplete="off"></div>
+            <button class="btn btn-primary" type="submit">Save</button>
+          </form>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <% } else { %><p class="muted">No logins yet.</p><% } %>
+
+  <div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:14px;">
+    <h3 style="margin:0 0 10px;font-size:15px;">Add a login</h3>
+    <form method="post" action="/purchases/suppliers/<%= s.id %>/logins" style="display:grid;grid-template-columns:repeat(4,1fr) auto;gap:8px;align-items:end;">
+      <div class="form-group"><label>Name / portal</label><input class="input" name="name" placeholder="e.g. Giacom Cloud Market" required></div>
+      <div class="form-group"><label>Login URL</label><input class="input" name="login_url" placeholder="https://…"></div>
+      <div class="form-group"><label>Username</label><input class="input" name="username"></div>
+      <div class="form-group"><label>Password</label><input class="input" name="password" type="text" autocomplete="off"></div>
+      <button class="btn btn-primary" type="submit">Add</button>
+    </form>
+    <div class="muted" style="font-size:12px;margin-top:6px;">Passwords are encrypted at rest and only shown on an explicit reveal (which is logged).</div>
+  </div>
+</div>
+
+<script>
+function reveal(id){
+  fetch('/supplier-logins/'+id+'/secret').then(function(r){return r.json();}).then(function(j){
+    if(j.secret!=null){ document.getElementById('pw'+id).textContent=j.secret; } else { alert(j.error||'Could not reveal'); }
+  }).catch(function(){ alert('Could not reveal'); });
+}
+function copyPw(id){
+  fetch('/supplier-logins/'+id+'/secret?action=copy').then(function(r){return r.json();}).then(function(j){
+    if(j.secret!=null){ navigator.clipboard.writeText(j.secret).then(function(){ document.getElementById('pw'+id).textContent='copied ✓'; }); } else { alert(j.error||'Could not copy'); }
+  }).catch(function(){ alert('Could not copy'); });
+}
+</script>
+
+<%- include('../partials/footer') %>

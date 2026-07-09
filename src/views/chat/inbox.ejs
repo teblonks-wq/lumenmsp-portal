@@ -1,0 +1,135 @@
+<%- include('../partials/header', { title: label + ' messages', user }) %>
+<%
+  function d(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : ''; }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c];}); }
+  var waU = counts.whatsapp.untagged, tmU = counts.teams.untagged;
+%>
+
+<div class="page-header"><h1>Messages</h1><p class="muted">Tag each message to a case. Untagged messages can't be replied to until they're tagged.</p></div>
+
+<div style="display:flex;gap:6px;border-bottom:2px solid #e5e7eb;margin-bottom:18px;">
+  <a href="/chat" style="padding:10px 18px;text-decoration:none;font-weight:600;color:#6b7280;border-bottom:2px solid transparent;margin-bottom:-2px;">Website</a>
+  <a href="/chat/channel/whatsapp" style="padding:10px 18px;text-decoration:none;font-weight:600;margin-bottom:-2px;<%= channel==='whatsapp' ? 'color:#0891b2;border-bottom:2px solid #0891b2;' : 'color:#6b7280;border-bottom:2px solid transparent;' %>">WhatsApp<%if(waU){%> <span class="badge badge-failed"><%= waU %></span><%}%></a>
+  <a href="/chat/channel/teams" style="padding:10px 18px;text-decoration:none;font-weight:600;margin-bottom:-2px;<%= channel==='teams' ? 'color:#0891b2;border-bottom:2px solid #0891b2;' : 'color:#6b7280;border-bottom:2px solid transparent;' %>">Teams<%if(tmU){%> <span class="badge badge-failed"><%= tmU %></span><%}%></a>
+</div>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+  <div class="muted"><%= msgs.length %> message<%= msgs.length===1?'':'s' %><%= attOnly ? ' with attachments' : '' %></div>
+  <div>
+    <% if(channel==='whatsapp'){ %><a class="btn btn-primary" href="/chat/wa/new">New message</a> <a class="btn" href="/chat/wa/templates">Templates</a><% } %>
+    <a class="btn <%= attOnly?'':'btn-primary' %>" href="/chat/channel/<%= channel %>">All</a>
+    <a class="btn <%= attOnly?'btn-primary':'' %>" href="/chat/channel/<%= channel %>?att=1">With attachments</a>
+  </div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap"><table class="table" style="margin:0;">
+    <thead><tr><th></th><th>Contact</th><th>From</th><th>Message</th><th>When</th><th>Case</th><th></th></tr></thead>
+    <tbody>
+      <% if(!msgs.length){ %><tr><td colspan="7" class="empty" style="padding:24px;text-align:center;color:#9ca3af;">No messages.</td></tr><% } %>
+      <% msgs.forEach(function(m){ %>
+      <tr>
+        <td title="<%= m.message_direction %>" style="color:#9ca3af;"><%= m.message_direction==='outbound' ? '↗' : '↘' %></td>
+        <td><strong><%= esc(m.from_name || '—') %></strong></td>
+        <td class="muted" style="font-family:monospace;font-size:13px;"><%= esc(m.from_email || '') %></td>
+        <td style="max-width:360px;"><a class="row-link" href="/chat/msg/<%= m.id %>" style="color:inherit;"><%= esc((m.body_text||'').slice(0,140)) || '(open message)' %></a><% if(m.hasAttachment){ %> <span class="badge badge-primary">Attachment</span><% } %></td>
+        <td class="muted" style="white-space:nowrap;"><%= d(m.at) %></td>
+        <td>
+          <% if(m.ticket_id){ %><a class="row-link" href="/tickets/<%= m.ticket_id %>" title="<%= esc(m.ticket_subject||'') %>"><strong><%= m.ticket_number || ('#'+m.ticket_id) %></strong></a>
+          <% } else { %><span class="badge badge-failed">Untagged</span><% } %>
+        </td>
+        <td style="text-align:right;white-space:nowrap;">
+          <% if(m.ticket_id && m.message_direction!=='outbound'){ %><button class="btn btn-primary" style="padding:3px 10px;font-size:13px;" onclick="openReply(<%= m.id %>, '<%= esc((m.from_name||'').replace(/'/g,'')) %>')">Reply</button><% } %>
+          <button class="btn" style="padding:3px 10px;font-size:13px;" onclick="openTag(<%= m.id %>, '<%= m.ticket_id ? esc((m.ticket_number||('#'+m.ticket_id))) : '' %>')"><%= m.ticket_id ? 'Re-tag' : 'Tag' %></button>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+
+<div id="tagModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:2000;align-items:flex-start;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;max-width:560px;width:92%;margin-top:8vh;padding:20px 22px;box-shadow:0 20px 50px rgba(0,0,0,.3);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h2 style="margin:0;font-size:18px;">Tag message to a case</h2>
+      <button class="btn" style="padding:2px 10px;" onclick="closeTag()">✕</button>
+    </div>
+    <p id="tagCurrent" class="muted" style="margin:0 0 10px;font-size:13px;display:none;"></p>
+    <input id="tagSearch" class="input" style="width:100%;" placeholder="Case number, case name, or person…" oninput="searchCases(this.value)" autocomplete="off">
+    <div id="tagResults" style="margin-top:12px;max-height:280px;overflow-y:auto;"></div>
+    <div style="border-top:1px solid #e5e7eb;margin-top:12px;padding-top:12px;text-align:center;">
+      <button class="btn" onclick="newCase()">＋ Create a new case from this message</button>
+      <div class="muted" style="font-size:12px;margin-top:4px;">Claude picks the category (you'll confirm it before replying).</div>
+    </div>
+  </div>
+</div>
+
+<div id="replyModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:2000;align-items:flex-start;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;max-width:560px;width:92%;margin-top:8vh;padding:20px 22px;box-shadow:0 20px 50px rgba(0,0,0,.3);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h2 style="margin:0;font-size:18px;">Reply <span id="replyWho" class="muted" style="font-weight:400;font-size:14px;"></span></h2>
+      <button class="btn" style="padding:2px 10px;" onclick="closeReply()">✕</button>
+    </div>
+    <textarea id="replyBody" class="input" style="width:100%;" rows="4" placeholder="Type your reply…"></textarea>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px;">
+      <button class="btn" onclick="closeReply()">Cancel</button>
+      <button class="btn btn-primary" id="replySend" onclick="sendReply()">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var tagMsgId = null;
+function openTag(id, current){
+  tagMsgId = id;
+  document.getElementById('tagModal').style.display='flex';
+  var cur = document.getElementById('tagCurrent');
+  if(current){ cur.textContent = 'Currently tagged to ' + current + '. Choose a case to move it.'; cur.style.display='block'; }
+  else { cur.style.display='none'; }
+  var s=document.getElementById('tagSearch'); s.value=''; document.getElementById('tagResults').innerHTML='<p class="muted">Type to search cases…</p>'; s.focus();
+}
+function closeTag(){ document.getElementById('tagModal').style.display='none'; tagMsgId=null; }
+var replyMsgId = null;
+function openReply(id, who){ replyMsgId=id; document.getElementById('replyModal').style.display='flex'; document.getElementById('replyWho').textContent = who ? ('to ' + who) : ''; var b=document.getElementById('replyBody'); b.value=''; b.focus(); }
+function closeReply(){ document.getElementById('replyModal').style.display='none'; replyMsgId=null; }
+function sendReply(){
+  if(!replyMsgId) return;
+  var body=(document.getElementById('replyBody').value||'').trim(); if(!body) return;
+  var btn=document.getElementById('replySend'); btn.disabled=true; btn.textContent='Sending…';
+  fetch('/chat/msg/'+replyMsgId+'/reply', { method:'POST', headers:{'Content-Type':'application/json','x-csrf-token':csrf()}, body:JSON.stringify({ body: body }) })
+    .then(function(r){return r.json();}).then(function(j){ btn.disabled=false; btn.textContent='Send'; if(j.ok){ location.reload(); } else { alert(j.error||'Could not send.'); } })
+    .catch(function(){ btn.disabled=false; btn.textContent='Send'; alert('Could not send.'); });
+}
+function csrf(){ var m=document.querySelector('meta[name="csrf-token"]'); return m?m.getAttribute('content'):''; }
+function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
+var _t;
+function searchCases(q){
+  clearTimeout(_t);
+  q=(q||'').trim();
+  if(!q){ document.getElementById('tagResults').innerHTML='<p class="muted">Type to search cases…</p>'; return; }
+  _t=setTimeout(function(){
+    fetch('/chat/msg/case-search?q='+encodeURIComponent(q)).then(function(r){return r.json();}).then(function(rows){
+      if(!rows.length){ document.getElementById('tagResults').innerHTML='<p class="muted">No matching cases.</p>'; return; }
+      document.getElementById('tagResults').innerHTML = rows.map(function(c){
+        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px;">'
+          + '<div><strong>'+esc(c.ticket_number)+'</strong> — '+esc(c.subject||'(no subject)')+'<br><span class="muted" style="font-size:12px;">'+esc(c.customer_name||'')+'</span></div>'
+          + '<button class="btn btn-primary" style="padding:4px 12px;" onclick="assign('+c.id+')">Tag</button></div>';
+      }).join('');
+    });
+  }, 200);
+}
+function assign(ticketId){
+  if(!tagMsgId) return;
+  fetch('/chat/msg/'+tagMsgId+'/tag', { method:'POST', headers:{'Content-Type':'application/json','x-csrf-token':csrf()}, body:JSON.stringify({ ticketId: ticketId }) })
+    .then(function(r){return r.json();}).then(function(j){ if(j.ok){ location.reload(); } else { alert(j.error||'Could not tag.'); } })
+    .catch(function(){ alert('Could not tag.'); });
+}
+function newCase(){
+  if(!tagMsgId) return;
+  fetch('/chat/msg/'+tagMsgId+'/new-case', { method:'POST', headers:{'x-csrf-token':csrf()} })
+    .then(function(r){return r.json();}).then(function(j){ if(j.ok){ location.href='/tickets/'+j.ticketId; } else { alert(j.error||'Could not create case.'); } })
+    .catch(function(){ alert('Could not create case.'); });
+}
+</script>
+
+<%- include('../partials/footer') %>

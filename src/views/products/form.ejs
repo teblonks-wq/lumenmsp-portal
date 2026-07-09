@@ -1,0 +1,40 @@
+<%- include('../partials/header', { title: product && product.id ? 'Edit product' : 'New product', user }) %>
+<% var isEdit = product && product.id; %>
+<% function v(f){ return product && product[f] != null ? product[f] : ''; } %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/products">← Products</a></p>
+  <h1><%= isEdit ? 'Edit product' : 'New product' %></h1>
+</div>
+
+<% if (error) { %><div class="alert alert-error" style="max-width:760px;"><%= error %></div><% } %>
+
+<form method="post" action="<%= isEdit ? '/products/' + product.id : '/products' %>" style="max-width:760px;">
+  <div class="card">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group" style="grid-column:1 / -1;"><label>Name *</label><input class="input" name="name" required value="<%= v('name') %>"></div>
+      <div class="form-group"><label>Code / SKU</label><input class="input" name="code" value="<%= v('code') %>"></div>
+      <div class="form-group"><label>Category</label>
+        <select class="input" name="category_id"><option value="">— none —</option><% categories.forEach(function(c){ %><option value="<%= c.id %>" <%= (product && product.category_id===c.id)?'selected':'' %>><%= c.name %></option><% }); %></select>
+      </div>
+      <div class="form-group"><label>Type</label>
+        <select class="input" name="item_type"><option value="service" <%= v('item_type')==='service'?'selected':'' %>>Service</option><option value="product" <%= v('item_type')==='product'?'selected':'' %>>Product</option></select>
+      </div>
+      <div class="form-group"><label>Billing frequency</label>
+        <select class="input" name="billing_frequency"><% ['monthly','annual','one_off'].forEach(function(f){ %><option value="<%= f %>" <%= v('billing_frequency')===f?'selected':'' %>><%= f.replace('_',' ') %></option><% }); %></select>
+      </div>
+      <div class="form-group"><label>Supplier</label><input class="input" name="supplier" value="<%= v('supplier') %>" list="supplierList"><datalist id="supplierList"><% suppliers.forEach(function(s){ %><option value="<%= s.name %>"><% }); %></datalist></div>
+      <div class="form-group"><label>Cost price £</label><input class="input" type="number" step="0.01" name="cost_price" value="<%= product && product.cost_price!=null ? Number(product.cost_price) : '' %>"></div>
+      <div class="form-group"><label>Unit price £</label><input class="input" type="number" step="0.01" name="unit_price" value="<%= product && product.unit_price!=null ? Number(product.unit_price) : '' %>"></div>
+      <div class="form-group"><label>VAT %</label><input class="input" type="number" step="0.01" name="vat_rate" value="<%= product && product.vat_rate!=null ? Number(product.vat_rate) : 20 %>"></div>
+      <div class="form-group" style="grid-column:1 / -1;"><label>Description</label><textarea class="input" name="description" rows="3" style="width:100%;"><%= v('description') %></textarea></div>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:500;"><input type="checkbox" name="is_active" <%= (!product || product.is_active) ? 'checked' : '' %>> Active</label>
+    </div>
+  </div>
+  <div style="display:flex;gap:10px;">
+    <button class="btn btn-primary" type="submit"><%= isEdit ? 'Save product' : 'Create product' %></button>
+    <a class="btn" href="/products">Cancel</a>
+  </div>
+</form>
+
+<%- include('../partials/footer') %>

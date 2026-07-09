@@ -1,0 +1,53 @@
+<%- include('../partials/header', { title: 'Users', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p><h1>Internal users</h1><p class="muted">Lumen staff only — <%= domains.join(' / ') %>. <a class="row-link" href="/admin/customer-users">Customer users →</a></p></div>
+  <div style="display:flex;gap:8px;">
+    <form method="post" action="/admin/users/sync" style="margin:0;"
+          onsubmit="return confirm('Sync staff with Microsoft 365?\n\nMatches on Entra ID (handles domain + name changes), adds new tenant members, deactivates leavers. Roles, groups and passwords are never changed. Break-glass and local-only accounts are never touched.');">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn" type="submit">⟳ Sync with Microsoft 365</button>
+    </form>
+    <a class="btn" href="/admin/users/import">Import from Microsoft 365</a>
+    <a class="btn btn-primary" href="/admin/users/new">+ New user</a>
+  </div>
+</div>
+
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
+<% if (typeof err !== 'undefined' && err) { %><div class="alert alert-error"><%= err %></div><% } %>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Login</th><th>Last login</th><th></th></tr></thead>
+      <tbody>
+        <% users.forEach(function(u){ %>
+          <tr style="<%= u.is_active ? '' : 'opacity:.55;' %>">
+            <td><%= u.display_name %><% if (u.entra_oid) { %><svg width="13" height="13" viewBox="0 0 23 23" style="vertical-align:-2px;margin-left:6px;" role="img" aria-label="Synced from Microsoft Entra"><title>Synced from Microsoft Entra</title><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="12" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="12" width="10" height="10" fill="#00A4EF"/><rect x="12" y="12" width="10" height="10" fill="#FFB900"/></svg><% } %><% if (!u.is_active) { %> <span class="badge badge-inactive">inactive</span><% } %></td>
+            <td><%= u.email %></td>
+            <td><span class="badge <%= u.role==='admin'?'badge-primary':'badge-inactive' %>"><%= u.role %></span></td>
+            <td class="muted">
+              <% if (u.has_password) { %><span title="Local password set">🔑</span><% } %>
+              <% if (!u.has_password && u.entra_oid) { %><span class="muted" style="font-size:12px;">Microsoft SSO</span><% } %>
+              <% if (!u.has_password && !u.entra_oid) { %><span class="muted" style="font-size:12px;">SSO only</span><% } %>
+            </td>
+            <td class="muted"><%= u.last_login_at ? new Date(u.last_login_at).toLocaleString('en-GB') : '—' %></td>
+            <td style="text-align:right;white-space:nowrap;">
+              <form method="post" action="/admin/users/<%= u.id %>/groups" style="display:inline-flex;gap:10px;align-items:center;margin-right:8px;">
+                <label style="font-size:12px;display:inline-flex;gap:3px;align-items:center;"><input type="checkbox" name="support" onchange="this.form.submit()" <%= u.support_group ? 'checked' : '' %>> Support</label>
+                <label style="font-size:12px;display:inline-flex;gap:3px;align-items:center;"><input type="checkbox" name="sales" onchange="this.form.submit()" <%= u.sales_group ? 'checked' : '' %>> Sales</label>
+                <label style="font-size:12px;display:inline-flex;gap:3px;align-items:center;"><input type="checkbox" name="finance" onchange="this.form.submit()" <%= u.finance_group ? 'checked' : '' %>> Finance</label>
+                <label style="font-size:12px;display:inline-flex;gap:3px;align-items:center;" title="Hide this login-only account from engineer / assignee lookups"><input type="checkbox" name="hidden" onchange="this.form.submit()" <%= u.hidden_from_lookups ? 'checked' : '' %>> Hide from lookups</label>
+              </form>
+              <a class="btn" href="/admin/users/<%= u.id %>/edit">Edit</a>
+              <form method="post" action="/admin/users/<%= u.id %>/welcome" style="display:inline;" onsubmit="return confirm('Send the welcome email to <%= u.email %>?');"><button class="btn" type="submit">Resend welcome</button></form>
+              <% if (u.is_active && u.id !== user.id) { %><form method="post" action="/admin/users/<%= u.id %>/delete" onsubmit="return confirm('Deactivate this user?');" style="display:inline;"><button class="btn" type="submit">Deactivate</button></form><% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

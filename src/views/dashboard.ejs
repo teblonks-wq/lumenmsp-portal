@@ -1,0 +1,144 @@
+<%- include('partials/header', { title: 'Dashboard', user }) %>
+<% function money(v){ var n = Number(v)||0; return '£' + n.toLocaleString('en-GB', {minimumFractionDigits:0, maximumFractionDigits:0}); } %>
+<% var t = stats.tickets||{}, q = stats.quotes||{}, i = stats.invoices||{}, c = stats.customers||{}; %>
+
+<%- include('partials/master-search') %>
+
+<div class="quicklinks" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:24px;">
+  <a class="btn" href="https://admin.microsoft.com" target="_blank" rel="noopener">M365 Admin</a>
+  <a class="btn" href="https://partner.microsoft.com" target="_blank" rel="noopener">MS Partner</a>
+  <a class="btn" href="https://giacom.cloud.market" target="_blank" rel="noopener">Cloud Market</a>
+  <a class="btn" href="https://backup.msp360.com" target="_blank" rel="noopener">MSP360</a>
+  <a class="btn" href="https://claude.ai" target="_blank" rel="noopener">Claude</a>
+  <div style="position:relative;display:inline-block;">
+    <button type="button" class="btn" id="dashBmBtn" style="border-color:#0ea5b7;color:#0e7490;">🔖 Bookmarks <span style="font-size:10px;">▾</span></button>
+    <div id="dashBmMenu" style="display:none;position:absolute;left:0;top:110%;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 14px 34px rgba(2,6,23,.18);min-width:260px;z-index:1300;padding:6px;">
+      <div class="muted" style="padding:8px 10px;font-size:13px;">Loading…</div>
+    </div>
+  </div>
+  <form action="https://www.google.com/search" method="get" target="_blank" style="margin:0 0 0 auto;display:flex;gap:6px;">
+    <input class="input" name="q" placeholder="Google search…" style="min-width:200px;">
+  </form>
+</div>
+<script>
+// Bookmarks dropdown — saved links (Settings → Bookmarks), always opening in a new tab.
+(function(){
+  var btn = document.getElementById('dashBmBtn'), menu = document.getElementById('dashBmMenu'), loaded = false;
+  if (!btn || !menu) return;
+  function escQ(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+  btn.addEventListener('click', function(e){
+    e.stopPropagation();
+    var open = menu.style.display !== 'none';
+    menu.style.display = open ? 'none' : 'block';
+    if (open || loaded) return; loaded = true;
+    fetch('/bookmarks.json').then(function(r){ return r.json(); }).then(function(rows){
+      var html = (rows || []).map(function(b){
+        var u = String(b.url || ''); if (!/^https?:\/\//i.test(u)) return '';
+        return '<a href="' + escQ(u) + '" target="_blank" rel="noopener" style="display:block;padding:9px 12px;border-radius:8px;color:#0f172a;text-decoration:none;font-size:14.5px;" onmouseover="this.style.background=\'#f0fdff\'" onmouseout="this.style.background=\'\'">🔗 ' + escQ(b.label) + '</a>';
+      }).join('');
+      if (!html) html = '<div class="muted" style="padding:8px 10px;font-size:13px;">No bookmarks yet.</div>';
+      html += '<div style="border-top:1px solid #eef1f6;margin:4px 0;"></div><a href="/settings/bookmarks" style="display:block;padding:8px 12px;border-radius:8px;color:#64748b;text-decoration:none;font-size:13px;">⚙ Manage bookmarks</a>';
+      menu.innerHTML = html;
+    }).catch(function(){ menu.innerHTML = '<div class="muted" style="padding:8px 10px;">Could not load.</div>'; });
+  });
+  document.addEventListener('click', function(){ menu.style.display = 'none'; });
+})();
+</script>
+
+<div class="page-header"><h1>Dashboard</h1><p class="muted">Good to see you, <%= user.displayName %>.</p></div>
+
+<style>
+  .dash-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; align-items:start; }
+  .stat-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px 8px; margin:4px 0 16px; }
+  .stat-cell { background:#f8fafc; border:1px solid #eef2f7; border-radius:8px; padding:9px 11px; }
+  .stat-cell .n { font-size:24px; font-weight:800; line-height:1; letter-spacing:-.5px; }
+  .stat-cell .l { font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-top:4px; }
+  .stat-cell .n.green { color:#166534; } .stat-cell .n.blue { color:var(--accent); } .stat-cell .n.amber { color:#b45309; }
+  .dash-grid .card { border-top:3px solid var(--accent); }
+  .dash-grid .card.acc-cases     { border-top-color:#3b82f6; }
+  .dash-grid .card.acc-quotes    { border-top-color:#8b5cf6; }
+  .dash-grid .card.acc-invoices  { border-top-color:#16a34a; }
+  .dash-grid .card.acc-customers { border-top-color:#06b6d4; }
+</style>
+
+<div class="dash-grid">
+
+  <div class="card acc-cases">
+    <div class="card-header"><h2>Cases</h2><a class="btn btn-primary" href="/tickets/new">+ New case</a></div>
+    <div class="stat-grid">
+      <div class="stat-cell"><div class="n"><%= t.live||0 %></div><div class="l">Live</div></div>
+      <div class="stat-cell"><div class="n"><%= t.new||0 %></div><div class="l">New</div></div>
+      <div class="stat-cell"><div class="n"><%= t.open||0 %></div><div class="l">Open</div></div>
+      <div class="stat-cell"><div class="n"><%= t.pending||0 %></div><div class="l">Pending</div></div>
+      <div class="stat-cell"><div class="n amber"><%= t.unassigned||0 %></div><div class="l">Unassigned</div></div>
+      <div class="stat-cell"><div class="n green"><%= t.resolved_today||0 %></div><div class="l">Resolved today</div></div>
+    </div>
+    <a class="btn btn-block" href="/tickets">View inbox</a>
+  </div>
+
+  <div class="card acc-quotes">
+    <div class="card-header"><h2>Quotes</h2><a class="btn btn-primary" href="/quotes/new">+ New</a></div>
+    <div class="stat-grid">
+      <div class="stat-cell"><div class="n"><%= q.draft||0 %></div><div class="l">Draft</div></div>
+      <div class="stat-cell"><div class="n blue"><%= q.sent||0 %></div><div class="l">Sent</div></div>
+      <div class="stat-cell"><div class="n green"><%= q.accepted||0 %></div><div class="l">Accepted</div></div>
+      <div class="stat-cell"><div class="n"><%= q.lost||0 %></div><div class="l">Lost</div></div>
+      <div class="stat-cell"><div class="n blue"><%= money(q.pipeline) %></div><div class="l">Pipeline</div></div>
+      <div class="stat-cell"><div class="n green"><%= money(q.won) %></div><div class="l">Won value</div></div>
+    </div>
+    <a class="btn btn-block" href="/quotes">View quotes</a>
+  </div>
+
+  <% var canFin = (typeof canFinance==='undefined' || canFinance); %>
+  <div class="card acc-invoices" style="position:relative;">
+    <div class="card-header"><h2>Invoices</h2><% if (canFin) { %><a class="btn btn-primary" href="/invoices/new">+ New</a><% } %></div>
+    <div class="stat-grid" style="<%= canFin ? '' : 'filter:blur(6px);pointer-events:none;user-select:none;' %>">
+      <div class="stat-cell"><div class="n"><%= canFin ? (i.draft||0) : '—' %></div><div class="l">Draft</div></div>
+      <div class="stat-cell"><div class="n blue"><%= canFin ? (i.issued||0) : '—' %></div><div class="l">Issued</div></div>
+      <div class="stat-cell"><div class="n green"><%= canFin ? (i.paid||0) : '—' %></div><div class="l">Paid</div></div>
+      <div class="stat-cell"><div class="n"><%= canFin ? (i.void||0) : '—' %></div><div class="l">Void</div></div>
+      <div class="stat-cell"><div class="n blue"><%= canFin ? money(i.billed) : '—' %></div><div class="l">Total billed</div></div>
+      <div class="stat-cell"><div class="n green"><%= canFin ? money(i.collected) : '—' %></div><div class="l">Collected</div></div>
+    </div>
+    <% if (canFin) { %><a class="btn btn-block" href="/invoices">View invoices</a>
+    <% } else { %><div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;"><span class="muted" style="font-size:13px;background:rgba(255,255,255,.7);padding:6px 12px;border-radius:8px;">🔒 Finance access required</span></div><% } %>
+  </div>
+
+  <div class="card acc-customers">
+    <div class="card-header"><h2>Customers</h2><a class="btn btn-primary" href="/customers/new">+ Add</a></div>
+    <div class="stat-grid" style="grid-template-columns:repeat(2,1fr);">
+      <div class="stat-cell"><div class="n green"><%= c.active||0 %></div><div class="l">Active</div></div>
+      <div class="stat-cell"><div class="n"><%= c.leads||0 %></div><div class="l">Leads</div></div>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <a class="btn btn-block" href="/customers">View customers</a>
+      <a class="btn btn-block" href="/customers?status=lead">View leads</a>
+    </div>
+  </div>
+
+</div>
+
+<div class="card-grid" style="margin-top:16px;">
+  <div class="card">
+    <div class="card-header"><h2>My Tasks</h2><a class="btn btn-primary" href="/tasks/new">+ New task</a></div>
+    <% if (!myTasks || myTasks.length===0) { %>
+      <p class="muted" style="margin:0 0 16px;">No tasks assigned to you — nice one! 🎉</p>
+    <% } else { %>
+      <table class="table" style="margin-bottom:12px;">
+        <tbody>
+          <% myTasks.forEach(function(t){ %>
+            <tr>
+              <td><a class="row-link" href="/tasks/<%= t.id %>/edit"><%= t.title %></a></td>
+              <td style="text-align:right;"><span class="badge <%= t.priority==='high'?'badge-failed':(t.priority==='low'?'badge-inactive':'badge-primary') %>"><%= t.priority %></span></td>
+              <td class="muted" style="text-align:right;white-space:nowrap;"><%= t.due_date ? new Date(t.due_date).toLocaleDateString('en-GB') : '—' %></td>
+              <td style="text-align:right;width:32px;"><form method="post" action="/tasks/<%= t.id %>/done" style="margin:0;"><button class="btn" type="submit" title="Done" style="padding:3px 7px;">✓</button></form></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    <% } %>
+    <a class="btn btn-block" href="/tasks">View all tasks</a>
+  </div>
+</div>
+
+<%- include('partials/footer') %>

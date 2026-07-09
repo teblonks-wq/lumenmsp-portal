@@ -1,0 +1,32 @@
+<%- include('../partials/header', { title: 'Customer users', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p><h1>Customer users</h1><p class="muted">External accounts scoped to a customer. <a class="row-link" href="/admin/users">Internal users →</a></p></div>
+  <a class="btn btn-primary" href="/admin/customer-users/new">+ New customer user</a>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Name</th><th>Email</th><th>Customer</th><th>Login</th><th>Last login</th><th></th></tr></thead>
+      <tbody>
+        <% if (users.length===0) { %><tr><td colspan="6"><div class="empty-state">No customer users yet.</div></td></tr><% } %>
+        <% users.forEach(function(u){ %>
+          <tr style="<%= u.is_active ? '' : 'opacity:.55;' %>">
+            <td><%= u.display_name %><% if (!u.is_active) { %> <span class="badge badge-inactive">inactive</span><% } %></td>
+            <td><%= u.email %></td>
+            <td><a class="row-link" href="/customers/<%= u.customer_id %>"><%= u.customer_name %></a></td>
+            <td class="muted"><% if (u.has_password) { %>🔑<% } %><% if (u.entra_oid) { %> MS<% } %><% if (!u.has_password && !u.entra_oid) { %><span style="font-size:12px;">SSO only</span><% } %></td>
+            <td class="muted"><%= u.last_login_at ? new Date(u.last_login_at).toLocaleString('en-GB') : '—' %></td>
+            <td style="text-align:right;white-space:nowrap;">
+              <a class="btn" href="/admin/customer-users/<%= u.id %>/edit">Edit</a>
+              <% if (u.is_active) { %><form method="post" action="/admin/customer-users/<%= u.id %>/delete" onsubmit="return confirm('Deactivate this user?');" style="display:inline;"><button class="btn" type="submit">Deactivate</button></form><% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

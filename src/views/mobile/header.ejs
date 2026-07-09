@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="csrf-token" content="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+<meta name="theme-color" content="#0f172a">
+<title><%= typeof title !== 'undefined' ? title : 'Lumen MSP' %></title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f1f5f9;color:#0f172a;font-size:16px;padding-bottom:92px;}
+  a{color:inherit;text-decoration:none;}
+  .ti{line-height:1;}
+  .m-bar{position:sticky;top:0;z-index:20;background:#0f172a;color:#fff;padding:14px 14px;padding-top:max(14px,env(safe-area-inset-top));display:flex;align-items:center;gap:12px;}
+  .m-bar a.back,.m-bar .act{color:#fff;font-size:24px;display:flex;align-items:center;}
+  .m-bar .ttl{font-size:18px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .m-bar .ttl small{display:block;font-size:12px;font-weight:400;opacity:.6;}
+  .m-wrap{padding:14px;max-width:680px;margin:0 auto;}
+  .m-search{position:sticky;top:0;z-index:10;background:#f1f5f9;padding:12px 14px;}
+  .m-search input{width:100%;font-size:16px;padding:12px 14px 12px 40px;border:0;border-radius:12px;background:#fff;box-shadow:0 1px 4px rgba(2,6,23,.06);}
+  .m-search .ic{position:absolute;left:26px;top:50%;transform:translateY(-50%);color:#94a3b8;font-size:20px;}
+  .sheet{background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 1px 4px rgba(2,6,23,.06);margin-bottom:14px;}
+  .row{display:flex;align-items:center;gap:13px;padding:14px 16px;border-bottom:1px solid #f1f5f9;}
+  .row:last-child{border-bottom:0;}
+  .row .ic{font-size:22px;color:#64748b;flex:none;}
+  .row .main{flex:1;min-width:0;}
+  .row .t{font-size:15px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .row .s{font-size:12.5px;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .row .chev{color:#cbd5e1;font-size:20px;flex:none;}
+  .row .call{color:#16a34a;font-size:24px;flex:none;padding:4px;}
+  .avatar{width:42px;height:42px;border-radius:50%;background:#dbeafe;color:#1e40af;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:15px;flex:none;}
+  .pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:10px;background:#e2e8f0;color:#475569;}
+  .pill.warn{background:#fef3c7;color:#92400e;} .pill.ok{background:#dcfce7;color:#166534;} .pill.info{background:#dbeafe;color:#1e40af;} .pill.red{background:#fee2e2;color:#991b1b;}
+  .actions{display:flex;gap:10px;margin:0 0 16px;}
+  .act-btn{flex:1;border-radius:14px;padding:14px 0;text-align:center;color:#fff;}
+  .act-btn .ic{font-size:24px;display:block;margin-bottom:3px;} .act-btn .l{font-size:12px;}
+  .act-call{background:#16a34a;} .act-map{background:#2563eb;} .act-mail{background:#475569;} .act-dim{background:#cbd5e1;color:#64748b;}
+  .m-label{display:block;font-size:12px;color:#94a3b8;margin:0 0 7px 4px;text-transform:uppercase;letter-spacing:.03em;}
+  .m-input,.m-select,.m-textarea{width:100%;font-size:17px;padding:14px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;}
+  .m-btn{display:block;width:100%;text-align:center;font-size:17px;font-weight:600;padding:15px;border:0;border-radius:14px;background:#2563eb;color:#fff;cursor:pointer;}
+  .m-btn.ghost{background:#e2e8f0;color:#0f172a;}
+  .m-alert{border-radius:12px;padding:13px 15px;font-size:14px;margin-bottom:14px;}
+  .m-alert.ok{background:#dcfce7;color:#166534;} .m-alert.err{background:#fee2e2;color:#991b1b;}
+  .empty{text-align:center;color:#94a3b8;font-size:14px;padding:40px 20px;}
+  .tabs{position:fixed;left:0;right:0;bottom:0;z-index:30;display:flex;background:#fff;border-top:1px solid #e2e8f0;box-shadow:0 -2px 10px rgba(2,6,23,.08);padding-bottom:env(safe-area-inset-bottom);}
+  .tabs a{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:12px 0 14px;color:#475569;font-size:12.5px;font-weight:600;}
+  .tabs a .ic{font-size:29px;}
+  .tabs a.on{color:#2563eb;box-shadow:inset 0 3px 0 #2563eb;background:#eff6ff;}
+</style>
+</head>
+<body>
+<header class="m-bar">
+  <% if (typeof back !== 'undefined' && back) { %><a class="back" href="<%= back %>" aria-label="Back"><i class="ti ti-chevron-left"></i></a><% } %>
+  <div class="ttl"><%= typeof heading !== 'undefined' ? heading : 'Lumen MSP' %><% if (typeof subtitle !== 'undefined' && subtitle) { %><small><%= subtitle %></small><% } %></div>
+  <% if (typeof barAction !== 'undefined' && barAction) { %><%- barAction %><% } %>
+</header>

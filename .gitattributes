@@ -1,0 +1,5 @@
+# Normalise line endings so Windows/Linux never disagree about what changed.
+* text=auto
+*.png binary
+*.jpg binary
+*.ico binary

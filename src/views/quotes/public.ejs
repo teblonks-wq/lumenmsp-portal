@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your quotation — Lumen IT Solutions</title>
+  <link rel="icon" type="image/png" href="/static/lumen-crest.png">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    body.pub { padding-top: 0; background: #f0f2f5; }
+    .pw { max-width: 540px; margin: 0 auto; padding: 36px 16px 60px; }
+    .pcard { background:#fff; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,.08); padding:24px 28px; margin-bottom:16px; }
+    .phead { display:flex; align-items:center; gap:10px; margin-bottom:20px; }
+    .plogo { font-size:20px; font-weight:800; letter-spacing:-.5px; }
+    .plogo .a { color: var(--accent); }
+    .pbtn { display:block; width:100%; box-sizing:border-box; padding:13px; border:none; border-radius:8px; font-size:15px; font-weight:600; cursor:pointer; text-align:center; text-decoration:none; }
+    .pinput { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid #d1d5db; border-radius:8px; font-size:14px; outline:none; font-family:inherit; }
+    .plabel { display:block; font-size:13px; font-weight:600; margin-bottom:6px; color:#374151; }
+  </style>
+</head>
+<body class="pub">
+<div class="pw">
+  <div class="phead">
+    <img src="/static/lumen-msp-logo.png" alt="Lumen IT Solutions" style="max-width:200px;height:auto;">
+  </div>
+
+  <% if (done === 'accepted') { %>
+    <div class="pcard" style="text-align:center;padding:44px 28px;">
+      <div style="font-size:52px;margin-bottom:12px;">✅</div>
+      <h2 style="margin:0 0 8px;color:#16a34a;">Thank you — quote accepted</h2>
+      <p class="muted" style="margin:0;">We've recorded your acceptance and our team will be in touch shortly.</p>
+    </div>
+  <% } else if (done === 'rejected') { %>
+    <div class="pcard" style="text-align:center;padding:44px 28px;">
+      <div style="font-size:52px;margin-bottom:12px;">✕</div>
+      <h2 style="margin:0 0 8px;color:#dc2626;">Response recorded</h2>
+      <p class="muted" style="margin:0;">Thanks for letting us know. If you'd like to discuss, please get in touch.</p>
+    </div>
+  <% } else { %>
+    <% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
+
+    <div class="pcard">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div>
+          <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#9ca3af;">Quote</div>
+          <div style="font-size:20px;font-weight:700;"><%= quote.quote_number %></div>
+          <div style="color:#374151;margin-top:4px;"><%= quote.title %></div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:12px;color:#9ca3af;">Total (inc. VAT)</div>
+          <div style="font-size:22px;font-weight:700;"><%= money(quote.total) %></div>
+          <% if (quote.valid_until) { %><div style="font-size:12px;color:#9ca3af;margin-top:4px;">Valid until <%= new Date(quote.valid_until).toLocaleDateString('en-GB') %></div><% } %>
+        </div>
+      </div>
+      <div class="table-wrap" style="margin-top:16px;">
+        <table class="table">
+          <thead><tr><th>Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Amount</th></tr></thead>
+          <tbody>
+            <% items.forEach(function(it){ %><tr><td><%= it.description %></td><td style="text-align:right;"><%= Number(it.quantity) %></td><td style="text-align:right;"><%= money(it.line_total) %></td></tr><% }); %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <% if (quote.status === 'accepted') { %>
+      <div class="pcard" style="text-align:center;"><div style="font-size:44px;">✅</div><h2 style="margin:8px 0 4px;color:#16a34a;">Quote already accepted</h2><% if (quote.accepted_by_name) { %><p class="muted" style="margin:0;">Accepted by <%= quote.accepted_by_name %><% if (quote.accepted_at) { %> on <%= new Date(quote.accepted_at).toLocaleDateString('en-GB') %><% } %>.</p><% } %></div>
+    <% } else if (quote.status === 'lost') { %>
+      <div class="pcard" style="text-align:center;"><div style="font-size:44px;">✕</div><h2 style="margin:8px 0 4px;color:#dc2626;">Quote already declined</h2><p class="muted" style="margin:0;">If you'd like to reconsider, please get in touch.</p></div>
+    <% } else { %>
+      <div class="pcard" id="chooseCard" style="text-align:center;">
+        <p style="margin:0 0 18px;color:#374151;font-size:15px;">What would you like to do with this quote?</p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;">
+          <button type="button" class="pbtn" style="flex:1;min-width:140px;background:#16a34a;color:#fff;" onclick="showForm('accept')">✓ Accept quote</button>
+          <button type="button" class="pbtn" style="flex:1;min-width:140px;background:#f3f4f6;color:#374151;border:1px solid #d1d5db;" onclick="showForm('reject')">✕ Decline</button>
+        </div>
+      </div>
+
+      <div class="pcard" id="acceptForm" style="display:none;">
+        <div style="background:#fff7ed;border:2px solid #f97316;border-radius:8px;padding:14px 16px;margin-bottom:18px;">
+          <div style="font-weight:700;color:#c2410c;font-size:14px;">Your quote has not been accepted yet</div>
+          <div style="color:#9a3412;font-size:13px;margin-top:2px;">Fill in your name below to confirm and complete your acceptance.</div>
+        </div>
+        <h2 style="margin:0 0 6px;color:#16a34a;">✓ Accept this quote</h2>
+        <p class="muted" style="margin:0 0 20px;font-size:14px;">Once you submit, your acceptance is confirmed and we'll be in touch to get started.</p>
+        <form method="post" action="/q/<%= quote.accept_token %>/accept">
+          <div style="margin-bottom:14px;"><label class="plabel">Your name</label><input class="pinput" name="name" placeholder="e.g. Jane Smith" autocomplete="name" required></div>
+          <div style="margin-bottom:14px;"><label class="plabel">Email <span style="font-weight:400;color:#9ca3af;">(optional)</span></label><input class="pinput" type="email" name="email"></div>
+          <div style="margin-bottom:20px;"><label class="plabel">Message <span style="font-weight:400;color:#9ca3af;">(optional)</span></label><textarea class="pinput" name="note" rows="3" placeholder="Any questions before we get started?"></textarea></div>
+          <button class="pbtn" type="submit" style="background:#16a34a;color:#fff;">✓ Accept quote</button>
+        </form>
+        <p style="text-align:center;margin:14px 0 0;"><a href="#" onclick="showForm('reject');return false;" class="muted">Decline instead</a></p>
+      </div>
+
+      <div class="pcard" id="rejectForm" style="display:none;">
+        <h2 style="margin:0 0 6px;color:#dc2626;">✕ Decline this quote</h2>
+        <p class="muted" style="margin:0 0 20px;font-size:14px;">We're sorry to hear that. Let us know if there's anything we could do differently.</p>
+        <form method="post" action="/q/<%= quote.accept_token %>/reject">
+          <div style="margin-bottom:20px;"><label class="plabel">Reason <span style="font-weight:400;color:#9ca3af;">(optional)</span></label><textarea class="pinput" name="reason" rows="3" placeholder="Let us know why, so we can improve…"></textarea></div>
+          <button class="pbtn" type="submit" style="background:#dc2626;color:#fff;">✕ Decline quote</button>
+        </form>
+        <p style="text-align:center;margin:14px 0 0;"><a href="#" onclick="showForm('accept');return false;" style="color:#16a34a;">Accept instead</a></p>
+      </div>
+
+      <script>
+        function showForm(which){
+          document.getElementById('chooseCard').style.display = 'none';
+          document.getElementById('acceptForm').style.display = which === 'accept' ? 'block' : 'none';
+          document.getElementById('rejectForm').style.display = which === 'reject' ? 'block' : 'none';
+        }
+      </script>
+    <% } %>
+  <% } %>
+</div>
+</body>
+</html>

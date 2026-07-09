@@ -1,0 +1,288 @@
+<%- include('../partials/header', { title: 'New ticket', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/tickets">← Support</a></p>
+  <h1>New support ticket</h1>
+</div>
+
+<% if (error) { %><div class="alert alert-error" style="max-width:760px;"><%= error %></div><% } %>
+
+<style>
+  .step-num { display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700;align-items:center;justify-content:center;margin-right:8px; }
+  .cust-results { border:1px solid var(--line);border-radius:8px;margin-top:6px;max-height:240px;overflow:auto; }
+  .cust-result { padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:12px; }
+  .cust-result:last-child { border-bottom:0; } .cust-result:hover { background:#f9fafb; }
+  .chip { display:inline-flex;align-items:center;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;font-weight:600; }
+  .pillrow { display:flex;gap:10px;flex-wrap:wrap;margin-top:4px; }
+  .pill { border:1px solid var(--line);border-radius:20px;padding:7px 14px;cursor:pointer;font-size:13px;font-weight:600;color:#374151; }
+  .pill input { position:absolute;opacity:0;pointer-events:none; }
+  .pill:has(input:checked) { border-color:var(--accent);background:var(--accent);color:#fff; }
+</style>
+
+<div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
+<form method="post" action="/tickets" enctype="multipart/form-data" style="flex:1 1 520px;max-width:820px;" id="ticketForm">
+  <input type="hidden" name="customer_id" id="customerId" value="<%= preselect ? preselect.id : '' %>">
+  <input type="hidden" name="contact_id" id="contactId" value="">
+
+  <div class="card">
+    <div class="card-header"><h2><span class="step-num">1</span>Customer</h2></div>
+    <div id="custPicker" style="<%= preselect ? 'display:none;' : '' %>">
+      <div class="form-group"><label>Search for a customer</label><input class="input" id="custSearch" autocomplete="off" placeholder="Start typing a customer name…" style="width:100%;"></div>
+      <div class="cust-results" id="custResults" style="display:none;"></div>
+    </div>
+    <div id="custChosen" style="<%= preselect ? '' : 'display:none;' %>">
+      <div class="chip"><span id="custChosenName"><%= preselect ? preselect.name : '' %></span><button type="button" class="btn" id="custChange" style="padding:2px 8px;">change</button></div>
+    </div>
+  </div>
+
+  <div class="card" id="contactCard" style="<%= preselect ? '' : 'display:none;' %>">
+    <div class="card-header"><h2><span class="step-num">2</span>Contact</h2></div>
+    <div id="contactPicker">
+      <div class="form-group" style="margin-bottom:0;">
+        <label>Search for a contact</label>
+        <input class="input" id="contactSearch" autocomplete="off" placeholder="Start typing a contact name…" style="width:100%;">
+        <p class="muted" id="contactHint" style="margin:6px 0 0;font-size:12px;">Loading contacts…</p>
+      </div>
+      <div class="cust-results" id="contactResults" style="display:none;"></div>
+    </div>
+    <div id="contactChosen" style="display:none;">
+      <div class="chip"><span id="contactChosenName"></span><button type="button" class="btn" id="contactChange" style="padding:2px 8px;">change</button></div>
+    </div>
+  </div>
+
+  <div class="card" id="detailCard" style="<%= preselect ? '' : 'display:none;' %>">
+    <div class="card-header"><h2><span class="step-num">3</span>Details</h2></div>
+
+    <div class="form-group" style="margin-bottom:14px;">
+      <label>Case owner *</label>
+      <select class="input" name="assigned_user_id" required style="width:100%;max-width:340px;">
+        <% (typeof users !== 'undefined' ? users : []).forEach(function(u){ %>
+          <option value="<%= u.id %>" <%= String(u.id) === String(user.id) ? 'selected' : '' %>><%= u.display_name %></option>
+        <% }); %>
+      </select>
+    </div>
+
+    <div class="form-group" style="margin-bottom:14px;"><label>Subject *</label><input class="input" name="subject" required style="width:100%;" placeholder="Brief summary of the issue"></div>
+
+    <div class="form-group" style="margin-bottom:14px;">
+      <label>Source</label>
+      <div class="pillrow">
+        <% [['email','Email'],['phone','Phone'],['manual','Walk-in / note'],['whatsapp','WhatsApp'],['teams','Teams']].forEach(function(s, idx){ %>
+          <label class="pill"><input type="radio" name="source" value="<%= s[0] %>" <%= idx===0?'checked':'' %>><%= s[1] %></label>
+        <% }); %>
+      </div>
+    </div>
+
+    <div class="form-group" style="margin-bottom:14px;">
+      <label style="display:flex;align-items:center;gap:7px;">Case type
+        <span role="button" tabindex="0" aria-label="What each case type means (ITIL)"
+              onclick="var h=document.getElementById('caseTypeHelp');h.style.display=h.style.display==='block'?'none':'block';"
+              style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid #94a3b8;color:#475569;font-size:12px;font-weight:700;font-style:italic;cursor:pointer;user-select:none;">i</span>
+        <span class="muted" style="font-weight:400;font-size:12px;">choose one</span>
+      </label>
+      <div id="caseTypeHelp" style="display:none;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:13px;line-height:1.55;">
+        <strong style="display:block;margin-bottom:6px;">What each type means (ITIL)</strong>
+        <div><b>Incident</b> — an unplanned interruption to a service, or a drop in its quality (something is broken).</div>
+        <div><b>Service request</b> — a standard, pre-approved request for something to be provided (new account, access, info, password reset).</div>
+        <div><b>Problem</b> — the underlying cause of one or more incidents (root-cause work).</div>
+        <div><b>Change</b> — adding, modifying or removing anything that could affect a live service.</div>
+        <div><b>Enquiry</b> — a general question; not a fault or a request for service.</div>
+        <div><b>Order</b> — a request to purchase or supply hardware/licences.</div>
+        <div><b>Warranty</b> — a repair or replacement under manufacturer/supplier warranty.</div>
+      </div>
+      <div class="pillrow">
+        <% [['incident','Incident'],['service_request','Service request'],['problem','Problem'],['change_request','Change'],['enquiry','Enquiry'],['order','Order'],['warranty','Warranty']].forEach(function(c){ %>
+          <label class="pill"><input type="radio" name="category" value="<%= c[0] %>" required><%= c[1] %></label>
+        <% }); %>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Description</label>
+      <input type="hidden" name="description" id="ticketDescBody">
+      <div id="ticketDescEditor" style="height:180px;background:#fff;"></div>
+    </div>
+
+    <div class="form-group" style="margin-bottom:0;">
+      <label>Attachments <span class="muted" style="font-weight:400;font-size:12px;">— optional, up to 5 files</span></label>
+      <input class="input" type="file" name="attachments" multiple style="width:100%;">
+    </div>
+  </div>
+
+  <div style="display:flex;gap:10px;">
+    <button class="btn btn-primary" type="submit">Create ticket</button>
+    <a class="btn" href="/tickets">Cancel</a>
+  </div>
+</form>
+
+<aside id="custTickets" class="card" style="flex:0 0 300px;<%= preselect ? '' : 'display:none;' %>">
+  <div class="card-header"><h2>Customer tickets</h2></div>
+  <p class="muted" id="custTicketsHint" style="margin-top:0;font-size:13px;">Existing tickets appear here so you don't duplicate.</p>
+  <div id="custTicketsList"></div>
+</aside>
+</div>
+
+<script>
+  (function () {
+    var search = document.getElementById('custSearch');
+    var results = document.getElementById('custResults');
+    var picker = document.getElementById('custPicker');
+    var chosen = document.getElementById('custChosen');
+    var chosenName = document.getElementById('custChosenName');
+    var customerId = document.getElementById('customerId');
+    var contactCard = document.getElementById('contactCard');
+    var detailCard = document.getElementById('detailCard');
+    var contactId = document.getElementById('contactId');
+    var contactSearch = document.getElementById('contactSearch');
+    var contactResults = document.getElementById('contactResults');
+    var contactPicker = document.getElementById('contactPicker');
+    var contactChosen = document.getElementById('contactChosen');
+    var contactChosenName = document.getElementById('contactChosenName');
+    var contactHint = document.getElementById('contactHint');
+    var timer, allContacts = [];
+
+    function chooseCustomer(id, name) {
+      customerId.value = id;
+      chosenName.textContent = name;
+      picker.style.display = 'none';
+      chosen.style.display = '';
+      contactCard.style.display = '';
+      detailCard.style.display = '';
+      results.style.display = 'none';
+      resetContact();
+      loadContacts(id);
+      loadCustomerTickets(id);
+      contactCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function loadCustomerTickets(id) {
+      var aside = document.getElementById('custTickets');
+      var list = document.getElementById('custTicketsList');
+      var hint = document.getElementById('custTicketsHint');
+      if (aside) aside.style.display = '';
+      list.innerHTML = '<span class="muted">Loading…</span>';
+      fetch('/customers/' + id + '/tickets.json').then(function(r){ return r.json(); }).then(function(rows){
+        if (!rows.length) { list.innerHTML = ''; hint.textContent = 'No existing tickets — good to go.'; return; }
+        hint.textContent = 'Check these before creating a duplicate:';
+        list.innerHTML = rows.map(function(t){
+          return '<a href="/tickets/' + t.id + '" target="_blank" style="display:block;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px;text-decoration:none;color:inherit;"><strong>' + t.ticket_number + '</strong> · ' + t.status + '<br><span class="muted" style="font-size:12px;">' + (t.subject || '') + '</span></a>';
+        }).join('');
+      }).catch(function(){ list.innerHTML = '<span class="muted">Could not load.</span>'; });
+    }
+
+    // ── Contacts (type-ahead) ──────────────────────────────────────────────
+    function resetContact() {
+      contactId.value = '';
+      contactChosen.style.display = 'none';
+      contactPicker.style.display = '';
+      if (contactSearch) contactSearch.value = '';
+    }
+    function loadContacts(id) {
+      allContacts = [];
+      contactHint.textContent = 'Loading contacts…';
+      fetch('/customers/' + id + '/contacts.json').then(function(r){ return r.json(); }).then(function(rows){
+        allContacts = rows || [];
+        contactHint.textContent = allContacts.length
+          ? 'Search or pick a contact — or leave unassigned.'
+          : 'No contacts yet — you can leave this unassigned.';
+        renderContacts('');
+      }).catch(function(){ contactHint.textContent = 'Could not load contacts.'; });
+    }
+    function esc(s){ return (s || '').replace(/"/g, '&quot;'); }
+    function renderContacts(q) {
+      q = (q || '').toLowerCase();
+      var list = allContacts.filter(function(c){
+        return !q || (c.full_name || '').toLowerCase().indexOf(q) >= 0 || (c.email || '').toLowerCase().indexOf(q) >= 0;
+      }).slice(0, 8);
+      var html = '';
+      list.forEach(function(c){
+        html += '<div class="cust-result" data-id="' + c.id + '" data-name="' + esc(c.full_name) + '">'
+          + '<span>' + (c.full_name || '') + (c.is_primary ? ' ★' : '')
+          + (c.job_title ? ' <span class="muted" style="font-size:12px;">· ' + c.job_title + '</span>' : '') + '</span>'
+          + '<span class="muted" style="font-size:12px;">' + (c.email || '') + '</span></div>';
+      });
+      html += '<div class="cust-result" data-id="" data-name="No specific contact"><span><strong>No specific contact</strong></span></div>';
+      contactResults.innerHTML = html;
+      contactResults.style.display = '';
+      contactResults.querySelectorAll('.cust-result').forEach(function(el){
+        el.addEventListener('click', function(){ chooseContact(el.getAttribute('data-id'), el.getAttribute('data-name')); });
+      });
+    }
+    function chooseContact(id, name) {
+      contactId.value = id || '';
+      contactChosenName.textContent = name;
+      contactPicker.style.display = 'none';
+      contactChosen.style.display = '';
+      contactResults.style.display = 'none';
+    }
+    if (contactSearch) {
+      contactSearch.addEventListener('focus', function(){ renderContacts(contactSearch.value); });
+      contactSearch.addEventListener('input', function(){ renderContacts(contactSearch.value); });
+    }
+    var contactChange = document.getElementById('contactChange');
+    if (contactChange) contactChange.addEventListener('click', function(){
+      resetContact(); renderContacts(''); contactSearch.focus();
+    });
+
+    // ── Customer search ────────────────────────────────────────────────────
+    if (search) {
+      search.addEventListener('input', function () {
+        clearTimeout(timer);
+        var q = search.value.trim();
+        if (q.length < 1) { results.style.display = 'none'; return; }
+        timer = setTimeout(function () {
+          fetch('/customers/search.json?q=' + encodeURIComponent(q)).then(function(r){ return r.json(); }).then(function(rows){
+            if (!rows.length) { results.innerHTML = '<div class="cust-result muted">No matches</div>'; results.style.display = ''; return; }
+            results.innerHTML = rows.map(function(c){
+              return '<div class="cust-result" data-id="' + c.id + '" data-name="' + c.name.replace(/"/g,'&quot;') + '"><span>' + c.name + '</span><span class="muted">' + (c.account_number || '') + (c.status==='lead' ? ' · lead' : '') + '</span></div>';
+            }).join('');
+            results.style.display = '';
+            results.querySelectorAll('.cust-result[data-id]').forEach(function(el){
+              el.addEventListener('click', function(){ chooseCustomer(el.getAttribute('data-id'), el.getAttribute('data-name')); });
+            });
+          });
+        }, 200);
+      });
+    }
+    var change = document.getElementById('custChange');
+    if (change) change.addEventListener('click', function(){
+      customerId.value = ''; resetContact();
+      chosen.style.display = 'none'; picker.style.display = '';
+      contactCard.style.display = 'none';
+      var aside = document.getElementById('custTickets'); if (aside) aside.style.display = 'none';
+      search.value = ''; search.focus();
+    });
+
+    <% if (preselect) { %>loadContacts('<%= preselect.id %>'); loadCustomerTickets('<%= preselect.id %>');<% } %>
+  })();
+</script>
+
+<link href="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
+<script src="/static/grammar.js"></script>
+<script>
+  (function () {
+    var el = document.getElementById('ticketDescEditor');
+    if (!el || typeof Quill === 'undefined') return;
+    var descQuill = new Quill('#ticketDescEditor', {
+      theme: 'snow',
+      placeholder: 'Full details of the request or issue…',
+      modules: { toolbar: [
+        [{ font: [] }, { size: [] }],
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ color: [] }, { background: [] }],
+        [{ list: 'ordered' }, { list: 'bullet' }],
+        ['link'],
+        ['clean'],
+      ] },
+    });
+    if (window.LumenGrammar) LumenGrammar.attach(descQuill, el.parentNode);
+    var form = document.getElementById('ticketForm');
+    if (form) form.addEventListener('submit', function () {
+      var html = descQuill.root.innerHTML;
+      document.getElementById('ticketDescBody').value = (descQuill.getText().trim() === '') ? '' : html;
+    });
+  })();
+</script>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,28 @@
+<%- include('../partials/header', { title: 'Atera — missing tickets', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/atera/tickets">← Atera import</a></p>
+  <h1>Atera — not in the portal</h1>
+  <p class="muted"><strong><%= totalAtera %></strong> tickets in Atera · <strong><%= imported %></strong> imported · <strong style="color:#b91c1c;"><%= missing.length %></strong> not in the portal. Deleted/archived ones are skipped on purpose; anything marked “Not imported” can be brought in by running <strong>Import all</strong> again.</p>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Atera #</th><th>Subject</th><th>Customer</th><th>Atera status</th><th>Created</th><th>Why missing</th></tr></thead>
+    <tbody>
+      <% if (!(missing||[]).length) { %><tr><td colspan="6"><div class="empty-state">Nothing missing — every Atera ticket is in the portal. 🎉</div></td></tr><% } %>
+      <% (missing||[]).forEach(function(m){ %>
+      <tr>
+        <td><a class="row-link" href="https://app.atera.com/new/ticket/<%= m.ateraId %>" target="_blank" rel="noopener"><%= m.ateraId %></a></td>
+        <td><%= m.subject %></td>
+        <td class="muted" style="font-size:13px;"><%= m.customerName %></td>
+        <td class="muted" style="font-size:12px;"><%= m.ateraStatus %></td>
+        <td class="muted" style="font-size:12px;white-space:nowrap;"><%= m.created ? new Date(m.created).toLocaleDateString('en-GB') : '—' %></td>
+        <td><span class="badge <%= m.reason.indexOf('Deleted')===0 ? 'badge-inactive' : 'badge-failed' %>" style="font-size:11px;"><%= m.reason %></span></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+
+<%- include('../partials/footer') %>

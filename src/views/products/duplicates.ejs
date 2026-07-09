@@ -1,0 +1,42 @@
+<%- include('../partials/header', { title: 'Duplicate products', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/products">← Products</a></p><h1>Duplicate products</h1><p class="muted">Pick which to keep — the rest merge into it (lines repointed, then deactivated).</p></div>
+  <% if (groups.length > 0) { %><form method="post" action="/products/merge-all" onsubmit="return confirm('Auto-merge every duplicate group, keeping the best match in each?');" style="margin:0;"><button class="btn btn-primary" type="submit">Merge all duplicates</button></form><% } %>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:760px;"><%= notice %></div><% } %>
+
+<% if (groups.length === 0) { %>
+  <div class="card"><div class="empty-state">No duplicate names found 🎉</div></div>
+<% } else { %>
+  <% groups.forEach(function(g){ %>
+    <% var best = g.slice().sort(function(a,b){ return (b.quickbooks_item_id?1:0)-(a.quickbooks_item_id?1:0) || b.usage-a.usage || a.id-b.id; })[0]; %>
+    <form method="post" action="/products/merge" class="card" style="padding:0;" onsubmit="return confirm('Merge the others into the selected product?');">
+      <div class="card-header" style="padding:20px 24px 0;"><h2><%= g[0].name %> <span class="muted" style="font-size:13px;">(<%= g.length %> copies)</span></h2></div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th style="width:60px;">Keep</th><th>Name</th><th>Code</th><th>Supplier</th><th style="text-align:right;">Price</th><th style="text-align:center;">QB</th><th style="text-align:center;">Used</th></tr></thead>
+          <tbody>
+            <% g.forEach(function(p){ %>
+              <input type="hidden" name="ids" value="<%= p.id %>">
+              <tr>
+                <td style="text-align:center;"><input type="radio" name="keep_id" value="<%= p.id %>" <%= p.id===best.id?'checked':'' %>></td>
+                <td><a class="row-link" href="/products/<%= p.id %>/edit"><%= p.name %></a></td>
+                <td class="muted"><%= p.code || '—' %></td>
+                <td class="muted"><%= p.supplier || '—' %></td>
+                <td style="text-align:right;"><%= money(p.unit_price) %></td>
+                <td style="text-align:center;"><% if (p.quickbooks_item_id) { %><span class="badge badge-sent">✓</span><% } else { %>—<% } %></td>
+                <td style="text-align:center;"><%= p.usage %></td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:14px 24px;border-top:1px solid var(--line);"><button class="btn btn-primary" type="submit">Merge into selected</button></div>
+    </form>
+  <% }); %>
+<% } %>
+
+<%- include('../partials/footer') %>

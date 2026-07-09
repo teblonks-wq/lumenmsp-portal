@@ -1,0 +1,55 @@
+<%- include('../partials/header', { title: 'Comms log', user }) %>
+<% function sbadge(s){ return s==='sent'?'badge-sent':(s==='received'?'badge-primary':(s==='failed'?'badge-failed':'badge-inactive')); } %>
+<% function chBadge(c){ return c==='whatsapp'?'badge-sent':(c==='teams'?'badge-primary':'badge-inactive'); } %>
+<% function cap(s){ return s ? s.charAt(0).toUpperCase()+s.slice(1) : ''; } %>
+<%
+  var tally = {};
+  (summary||[]).forEach(function(r){ var k=r.channel+'|'+r.direction+'|'+r.status; tally[k]=r.n; });
+  function sumBy(fn){ var t=0; (summary||[]).forEach(function(r){ if(fn(r)) t+=r.n; }); return t; }
+%>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+  <h1>Comms log</h1>
+  <p class="muted">Every WhatsApp and Teams message in and out of the portal. Last 7 days:
+    <strong><%= sumBy(function(r){return r.channel==='whatsapp';}) %></strong> WhatsApp ·
+    <strong><%= sumBy(function(r){return r.channel==='teams';}) %></strong> Teams ·
+    <strong style="color:#b91c1c;"><%= sumBy(function(r){return r.status==='failed';}) %></strong> failed.
+    Email has its own <a class="row-link" href="/admin/mail-flow">Mail flow</a> log.</p>
+</div>
+
+<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+  <a class="btn <%= channel===''&&direction===''?'btn-primary':'' %>" href="/admin/comms-log">All</a>
+  <a class="btn <%= channel==='whatsapp'?'btn-primary':'' %>" href="/admin/comms-log?channel=whatsapp">WhatsApp</a>
+  <a class="btn <%= channel==='teams'?'btn-primary':'' %>" href="/admin/comms-log?channel=teams">Teams</a>
+  <span style="width:1px;background:var(--line);margin:0 4px;"></span>
+  <a class="btn <%= direction==='inbound'?'btn-primary':'' %>" href="/admin/comms-log?direction=inbound<%= channel?('&channel='+channel):'' %>">Inbound</a>
+  <a class="btn <%= direction==='outbound'?'btn-primary':'' %>" href="/admin/comms-log?direction=outbound<%= channel?('&channel='+channel):'' %>">Outbound</a>
+</div>
+
+<div class="card" style="padding:0;">
+  <% if (!items.length) { %>
+    <p class="muted" style="padding:18px 20px;margin:0;">No messages logged yet<%= (channel||direction)?' for this filter':'' %>.</p>
+  <% } else { %>
+    <div class="table-wrap"><table class="table" style="margin:0;">
+      <thead><tr>
+        <th>When</th><th>Channel</th><th>Dir</th><th>Status</th><th>Party</th><th>Message</th><th>Case</th>
+      </tr></thead>
+      <tbody>
+        <% items.forEach(function(m){ %>
+          <tr>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= new Date(m.created_at).toLocaleString('en-GB') %></td>
+            <td><span class="badge <%= chBadge(m.channel) %>"><%= cap(m.channel) %></span></td>
+            <td style="font-size:12px;"><%= m.direction==='inbound' ? '⬇ In' : '⬆ Out' %></td>
+            <td><span class="badge <%= sbadge(m.status) %>"><%= cap(m.status) %></span><% if (m.error) { %><div class="muted" style="font-size:11px;color:#b91c1c;max-width:220px;overflow-wrap:anywhere;"><%= m.error %></div><% } %></td>
+            <td style="font-size:13px;overflow-wrap:anywhere;"><% if (m.peer_name) { %><strong><%= m.peer_name %></strong><br><% } %><span class="muted" style="font-size:12px;"><%= m.peer || '—' %></span></td>
+            <td style="font-size:13px;max-width:360px;overflow-wrap:anywhere;color:#475569;"><%= m.preview || '—' %></td>
+            <td style="white-space:nowrap;"><% if (m.ticket_id) { %><a class="row-link" href="/tickets/<%= m.ticket_id %>"><%= m.ticket_number || ('#'+m.ticket_id) %></a><% } else { %><span class="muted">—</span><% } %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>

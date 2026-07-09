@@ -1,0 +1,91 @@
+<%- include('../partials/header', { title: 'Branding', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+  <h1>Branding</h1>
+  <p class="muted">Email signature and templates used across the portal.</p>
+</div>
+
+<% if (saved) { %><div class="alert alert-success" style="max-width:900px;">Saved.</div><% } %>
+
+<div class="card" style="max-width:900px;">
+  <div class="card-header"><h2>Email banner</h2></div>
+  <p class="muted" style="margin-top:0;">Shown in the signature, linking to your contact page. Upload a new image any time to change it.</p>
+  <% if (bannerUrl) { %>
+    <div style="margin-bottom:12px;">
+      <img src="<%= bannerUrl %>" alt="Current banner" style="max-width:520px;width:100%;border:1px solid var(--line);border-radius:8px;">
+      <div class="muted" style="font-size:12px;margin-top:4px;word-break:break-all;"><%= bannerUrl %></div>
+    </div>
+  <% } else { %>
+    <p class="muted" style="font-size:13px;">No custom banner uploaded — the built-in banner is in use.</p>
+  <% } %>
+  <form method="post" action="/admin/branding/banner" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <input class="input" type="file" name="banner" accept="image/png,image/jpeg,image/gif,image/webp" required>
+    <button class="btn btn-primary" type="submit">Upload banner</button>
+  </form>
+</div>
+
+<div class="card" style="max-width:900px;">
+  <div class="card-header"><h2>Email signature</h2></div>
+  <p class="muted" style="margin-top:0;">Appended to every outbound email. Use <code>{{name}}</code> where the sender's name should appear.
+    <% if (isCustom) { %><span class="badge badge-primary">custom</span><% } else { %><span class="badge badge-inactive">default</span><% } %>
+  </p>
+
+  <form method="post" action="/admin/branding/signature">
+    <div class="form-group">
+      <label>Signature HTML</label>
+      <textarea class="input" name="signature" rows="14" style="width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;" spellcheck="false"><%= sigTemplate %></textarea>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <button class="btn btn-primary" type="submit">Save signature</button>
+      <button class="btn" type="submit" formaction="/admin/branding/reset" onclick="return confirm('Reset to the built-in default signature?');">Reset to default</button>
+    </div>
+  </form>
+
+  <div style="margin-top:18px;">
+    <div class="muted" style="font-size:13px;margin-bottom:6px;">Live preview (with your name):</div>
+    <div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff;"><%- sigPreview %></div>
+  </div>
+</div>
+
+<div class="card" style="max-width:900px;">
+  <div class="card-header"><h2>Email templates</h2></div>
+  <p class="muted" style="margin-top:0;">Standard emails the portal sends. The signature above is appended to each.</p>
+
+  <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden;">
+    <div style="background:#f9fafb;padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);">Welcome email <span class="muted" style="font-weight:400;">— sent to new staff on import / resend</span></div>
+    <div style="padding:16px;background:#fff;"><%- welcomePreview %></div>
+  </div>
+
+  <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:14px;">
+    <div style="background:#f9fafb;padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);">Thread / reply emails <span class="muted" style="font-weight:400;">— free text typed on a record or mail reply</span></div>
+    <div style="padding:16px;background:#fff;color:#6b7280;font-size:14px;">Body is whatever the agent types; the signature above is appended automatically.</div>
+  </div>
+</div>
+
+<div class="card" style="max-width:900px;">
+  <div class="card-header"><h2>Status update emails</h2></div>
+  <p class="muted" style="margin-top:0;">The emails support sends to the customer as a ticket moves through each status. Use <code>{{name}}</code> (contact) and <code>{{ticket}}</code> (ticket number). The signature is appended automatically.</p>
+
+  <form method="post" action="/admin/branding/status-emails">
+    <% statusEmails.forEach(function(s){ %>
+      <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:16px;">
+        <div style="background:#f9fafb;padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;">
+          <span><%= s.label %> <span class="muted" style="font-weight:400;">· <%= s.status %></span></span>
+          <% if (s.custom) { %><span class="badge badge-primary">custom</span><% } else { %><span class="badge badge-inactive">default</span><% } %>
+        </div>
+        <div style="padding:12px 14px;">
+          <div class="muted" style="font-size:12px;margin-bottom:6px;">Subject: <%= s.subject %></div>
+          <textarea class="input" name="template_<%= s.status %>" rows="4" style="width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;" spellcheck="false"><%= s.tpl %></textarea>
+          <details style="margin-top:8px;">
+            <summary class="muted" style="cursor:pointer;font-size:13px;">Preview</summary>
+            <div style="border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:8px;background:#fff;"><%- s.preview %></div>
+          </details>
+        </div>
+      </div>
+    <% }); %>
+    <button class="btn btn-primary" type="submit">Save status emails</button>
+  </form>
+</div>
+
+<%- include('../partials/footer') %>

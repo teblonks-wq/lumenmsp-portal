@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= typeof title !== 'undefined' ? title + ' — ' : '' %>Lumen MSP Portal</title>
+  <link rel="icon" type="image/png" href="/static/lumen-crest.png">
+  <link rel="stylesheet" href="/static/app.css">
+  <script>
+    // Restore collapsed state before paint to avoid a flash
+    try { if (localStorage.getItem('portalNavCollapsed') === '1') document.documentElement.classList.add('nav-collapsed'); } catch (e) {}
+  </script>
+</head>
+<body class="app">
+<aside class="sidebar">
+  <div class="sidebar-top">
+    <a href="/" class="sidebar-brand">
+      <img src="/static/lumen-crest.png" alt="Lumen">
+      <span class="brand-text">
+        <span class="brand-logo">Portal</span>
+        <span class="brand-sub">Lumen MSP</span>
+      </span>
+    </a>
+    <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle navigation" title="Toggle navigation">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+  </div>
+
+  <nav class="sidebar-nav">
+    <a href="/" class="nav-item" title="Dashboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span class="nav-label">Dashboard</span>
+    </a>
+    <a href="/customers" class="nav-item" title="Customers">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <span class="nav-label">Customers</span>
+    </a>
+    <a href="/tickets" class="nav-item" title="Tickets">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+      <span class="nav-label">Tickets</span>
+    </a>
+    <a href="/quotes" class="nav-item" title="Quotes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      <span class="nav-label">Quotes</span>
+    </a>
+    <a href="/invoices" class="nav-item" title="Invoices">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+      <span class="nav-label">Invoices</span>
+    </a>
+    <% if (typeof user !== 'undefined' && user.role === 'admin') { %>
+    <a href="/admin" class="nav-item" title="Admin">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      <span class="nav-label">Admin</span>
+    </a>
+    <% } %>
+  </nav>
+
+  <div class="sidebar-foot">
+    <% if (typeof user !== 'undefined') { %>
+    <div class="nav-item nav-user" title="<%= user.displayName %>">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="nav-label"><%= user.displayName %></span>
+    </div>
+    <a href="/logout" class="nav-item" title="Sign out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      <span class="nav-label">Sign out</span>
+    </a>
+    <% } %>
+  </div>
+</aside>
+
+<main class="main">
+  <%- body %>
+</main>
+
+<script>
+  (function () {
+    var path = window.location.pathname;
+    document.querySelectorAll('.sidebar-nav .nav-item').forEach(function (a) {
+      var href = a.getAttribute('href');
+      var active = href === '/' ? path === '/' : path.indexOf(href) === 0;
+      if (active) a.classList.add('active');
+    });
+    var btn = document.getElementById('sidebarToggle');
+    if (btn) btn.addEventListener('click', function () {
+      var collapsed = document.documentElement.classList.toggle('nav-collapsed');
+      try { localStorage.setItem('portalNavCollapsed', collapsed ? '1' : '0'); } catch (e) {}
+    });
+  })();
+</script>
+
+</body>
+</html>

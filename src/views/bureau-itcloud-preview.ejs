@@ -1,0 +1,58 @@
+<%- include('partials/header', { title: 'IT & Cloud Preview', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); } %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">← Back Office</a></p>
+  <h1>IT &amp; Cloud — <%= customer.name %></h1></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<!-- Gates / status banners -->
+<% if (!account.hasBillingContact) { %>
+  <div class="alert alert-danger" style="max-width:900px;">⛔ <strong>No billing contact set.</strong> This customer is blocked from invoice generation until a billing contact is assigned on their <a class="row-link" href="/customers/<%= customer.id %>">customer panel</a>.</div>
+<% } %>
+<% if (!account.giacomLinked) { %>
+  <div class="alert alert-warning" style="max-width:900px;">⚠ <strong>Not paired to a Giacom customer.</strong> Cloud activity won't flow automatically until a Giacom account is matched on the <a class="row-link" href="/settings/giacom/match">supplier-matching screen</a>.</div>
+<% } %>
+<% if (account.unpriced) { %>
+  <div class="alert alert-warning" style="max-width:900px;">⚠ <strong><%= account.unpriced %></strong> cloud line(s) have no sale price yet — they won't bill until priced.</div>
+<% } %>
+
+<!-- Totals -->
+<div class="card" style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
+  <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:800;"><%= money(account.totals.sale) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Cost</div><div style="font-size:20px;font-weight:800;color:#64748b;"><%= money(account.totals.cost) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Profit</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(account.totals.profit) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Lines</div><div style="font-size:20px;font-weight:800;"><%= account.itLines.length + account.cloudLines.length %></div></div>
+</div>
+
+<% function lineTable(title, lines){ %>
+  <div class="card" style="margin-bottom:14px;">
+    <div class="card-header"><h2><%= title %> <span class="muted" style="font-weight:500;font-size:12px;">(<%= lines.length %>)</span></h2></div>
+    <% if (!lines.length) { %>
+      <p class="muted" style="padding:8px 0;">No lines.</p>
+    <% } else { %>
+      <table class="table" style="width:100%;">
+        <thead><tr><th>Ref</th><th>Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Cost</th><th style="text-align:right;">Sale</th><th style="text-align:right;">Profit</th></tr></thead>
+        <tbody>
+        <% lines.forEach(function(l){ %>
+          <tr>
+            <td style="white-space:nowrap;"><%= l.ref || '' %></td>
+            <td><%= l.description %><% if (!l.priced) { %> <span class="badge badge-inactive" style="font-size:10px;">no price</span><% } %></td>
+            <td style="text-align:right;"><%= l.qty %></td>
+            <td style="text-align:right;color:#64748b;"><%= money(l.cost) %></td>
+            <td style="text-align:right;"><%= l.sale===null?'—':money(l.sale) %></td>
+            <td style="text-align:right;color:#166534;"><%= l.sale===null?'—':money(l.sale - l.cost) %></td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table>
+    <% } %>
+  </div>
+<% } %>
+
+<%- lineTable('IT Services (contracts)', account.itLines) %>
+<%- lineTable('Cloud / Microsoft 365 (live from Giacom)', account.cloudLines) %>
+<% if (account.adjustments && account.adjustments.length) { %><%- lineTable('Adjustments — advance month (new adds) + notice-period removals', account.adjustments) %><% } %>
+
+<%- include('partials/footer') %>

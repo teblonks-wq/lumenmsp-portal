@@ -1,0 +1,52 @@
+<%- include('../partials/header', { title: contract.contract_number, user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
+<% function badge(s){ return s==='active'?'badge-sent':s==='draft'?'badge-inactive':'badge-failed'; } %>
+<% function dd(x){ return x ? new Date(x).toLocaleDateString('en-GB') : '—'; } %>
+<%
+  var mMonthly=0, mAnnual=0, mOneOff=0;
+  lines.forEach(function(l){ var t=Number(l.line_total)||0; if(l.billing_frequency==='monthly') mMonthly+=t; else if(l.billing_frequency==='annual') mAnnual+=t; else mOneOff+=t; });
+  var annualised = mMonthly*12 + mAnnual;
+%>
+
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/contracts">← Contracts</a></p>
+    <h1 style="margin:0;display:flex;align-items:center;gap:12px;"><%= contract.contract_number %> <span class="badge <%= badge(contract.status) %>"><%= contract.status.charAt(0).toUpperCase()+contract.status.slice(1) %></span></h1>
+    <p class="muted" style="margin:4px 0 0;"><%= contract.title %><% if (contract.customer_name) { %> · <a class="row-link" href="/customers/<%= contract.customer_id %>"><%= contract.customer_name %></a><% } %></p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+    <a class="btn" href="/contracts/<%= contract.id %>/edit">Edit</a>
+    <form method="post" action="/contracts/<%= contract.id %>/status" style="margin:0;display:flex;gap:6px;align-items:center;">
+      <select class="input" name="status"><% ['draft','active','expired','cancelled'].forEach(function(s){ %><option value="<%= s %>" <%= contract.status===s?'selected':'' %>><%= s.charAt(0).toUpperCase()+s.slice(1) %></option><% }); %></select>
+      <button class="btn" type="submit">Set status</button>
+    </form>
+    <form method="post" action="/contracts/<%= contract.id %>/delete" onsubmit="return confirm('Move this contract to the recycle bin?');" style="margin:0;"><button class="btn" type="submit" style="color:var(--lumen-dark);">Delete</button></form>
+  </div>
+</div>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
+  <div class="card"><div class="card-header"><h2>Service</h2></div><div><%= contract.service_type %></div></div>
+  <div class="card"><div class="card-header"><h2>Term</h2></div><div><%= dd(contract.start_date) %><% if (contract.end_date) { %><br>→ <%= dd(contract.end_date) %><% } %></div></div>
+  <div class="card"><div class="card-header"><h2>Notice / renew</h2></div><div><%= contract.notice_days %> days<br><span class="muted"><%= contract.auto_renew ? 'Auto-renews' : 'No auto-renew' %></span></div></div>
+  <div class="card"><div class="card-header"><h2>Payment</h2></div><div><%= contract.payment_method.replace('_',' ') %></div></div>
+  <div class="card" style="background:#f0fdf9;"><div class="card-header"><h2>Annualised value</h2></div><div class="stat" style="font-size:22px;"><%= money(annualised) %></div><p class="muted" style="margin:4px 0 0;"><%= money(mMonthly) %>/mo<% if (mAnnual) { %> · <%= money(mAnnual) %>/yr<% } %><% if (mOneOff) { %> · <%= money(mOneOff) %> one-off<% } %></p></div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Contract lines</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit</th><th>Billing</th><th style="text-align:right;">Line total</th></tr></thead>
+      <tbody>
+        <% if (lines.length===0) { %><tr><td colspan="5"><div class="empty-state">No lines.</div></td></tr><% } %>
+        <% lines.forEach(function(l){ %>
+          <tr><td><%= l.description %></td><td style="text-align:right;"><%= Number(l.quantity) %></td><td style="text-align:right;"><%= money(l.unit_price) %></td><td class="muted"><%= l.billing_frequency.replace('_',' ') %></td><td style="text-align:right;"><%= money(l.line_total) %></td></tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<% if (contract.notes) { %><div class="card"><div class="card-header"><h2>Notes</h2></div><p style="white-space:pre-wrap;margin:0;"><%= contract.notes %></p></div><% } %>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,28 @@
+<%- include('../partials/header', { title: 'Sent email', user }) %>
+<% function badge(s){ return s==='sent'?'badge-sent':(s==='failed'?'badge-failed':'badge-inactive'); } %>
+<% var atts = []; try { atts = m.attachments ? JSON.parse(m.attachments) : []; } catch (e) {} %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin/mail-flow">← Mail flow</a></p>
+  <h1 style="margin:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><%= m.subject || '(no subject)' %> <span class="badge <%= badge(m.status) %>"><%= m.status %></span></h1>
+</div>
+
+<div class="card" style="max-width:820px;">
+  <table class="table" style="margin-bottom:14px;"><tbody>
+    <tr><th style="width:120px;">To</th><td><%= m.to_email || '—' %></td></tr>
+    <tr><th>From</th><td><%= m.from_email || '—' %></td></tr>
+    <tr><th>Sent</th><td><%= new Date(m.created_at).toLocaleString('en-GB') %></td></tr>
+    <% if (m.error) { %><tr><th>Error</th><td style="color:#b91c1c;"><%= m.error %></td></tr><% } %>
+    <% if (atts.length) { %><tr><th>Attachments</th><td><% atts.forEach(function(a){ %><span class="badge" style="margin-right:6px;">&#128206; <%= a %></span><% }); %></td></tr><% } %>
+  </tbody></table>
+
+  <div style="border-top:1px solid var(--line);padding-top:14px;">
+    <% if (m.body) { %>
+      <div style="font-size:14px;line-height:1.6;overflow-wrap:anywhere;"><%- m.body %></div>
+    <% } else { %>
+      <p class="muted">No body stored for this message.</p>
+    <% } %>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

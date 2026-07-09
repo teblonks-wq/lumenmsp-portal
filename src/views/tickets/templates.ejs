@@ -1,0 +1,59 @@
+<%- include('../partials/header', { title: 'Reply Templates', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/tickets">&larr; Support</a></p>
+  <h1>Reply Templates</h1>
+  <p class="muted">Canned messages for the ticket composer ("Insert template…"). HTML allowed — links, bold, paragraphs.</p>
+</div>
+
+<% if (saved) { %><div class="card" style="border-left:4px solid #16a34a;">Saved.</div><% } %>
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
+<% if (typeof err !== 'undefined' && err) { %><div class="alert alert-error"><%= err %></div><% } %>
+
+<div class="card">
+  <div class="card-header"><h2>Microsoft Bookings</h2></div>
+  <p class="muted" style="margin:0 0 10px;">Pull every service from your Bookings pages and create/update a template per service ("Booking — Service name") with the booking link — same shape as the remote-service template. Re-run any time services change. Needs the <code>Bookings.Read.All</code> application permission on the Graph app registration.</p>
+  <form method="post" action="/ticket-templates/sync-bookings">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="btn btn-primary" type="submit">⟳ Sync templates from Bookings</button>
+  </form>
+</div>
+
+<% templates.forEach(function(t){ %>
+<div class="card">
+  <form method="post" action="/ticket-templates">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input type="hidden" name="id" value="<%= t.id %>">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+      <input class="input" name="name" value="<%= t.name %>" required style="flex:1;min-width:260px;">
+      <input class="input" name="sort" type="number" value="<%= t.sort || 0 %>" title="Sort order" style="width:80px;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" name="is_active" <%= t.is_active ? 'checked' : '' %>> Active</label>
+    </div>
+    <textarea class="input" name="body_html" rows="8" style="width:100%;font-family:monospace;font-size:12px;"><%= t.body_html %></textarea>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="btn btn-primary" type="submit">Save</button>
+    </div>
+  </form>
+  <form method="post" action="/ticket-templates/<%= t.id %>/delete" style="margin-top:-30px;text-align:right;"
+        onsubmit="return confirm('Delete template &quot;<%= t.name %>&quot;?');">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="btn" type="submit" style="color:#dc2626;">Delete</button>
+  </form>
+</div>
+<% }); %>
+
+<div class="card">
+  <div class="card-header"><h2>Add a template</h2></div>
+  <form method="post" action="/ticket-templates">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+      <input class="input" name="name" placeholder="Template name" required style="flex:1;min-width:260px;">
+      <input class="input" name="sort" type="number" value="0" title="Sort order" style="width:80px;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" name="is_active" checked> Active</label>
+    </div>
+    <textarea class="input" name="body_html" rows="8" placeholder="<p>Dear Team,</p>&#10;<p>…</p>" style="width:100%;font-family:monospace;font-size:12px;"></textarea>
+    <button class="btn btn-primary" type="submit" style="margin-top:8px;">Add template</button>
+  </form>
+</div>
+
+<%- include('../partials/footer') %>

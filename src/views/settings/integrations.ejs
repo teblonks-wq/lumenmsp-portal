@@ -1,0 +1,333 @@
+<%- include('../partials/header', { title: 'Integrations', user }) %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p><h1>Integrations</h1><p class="muted">Click a row to expand its settings.</p></div>
+
+<div style="margin:0 0 14px;max-width:420px;">
+  <input id="intgSearch" class="input" type="search" placeholder="Search integrations… (e.g. UniFi)" style="width:100%;" oninput="filterIntg(this.value)">
+</div>
+<script>
+function filterIntg(q){
+  q = (q || '').toLowerCase().trim();
+  document.querySelectorAll('details.intg').forEach(function(d){
+    var hit = !q || d.textContent.toLowerCase().indexOf(q) >= 0;
+    d.style.display = hit ? '' : 'none';
+    if (q && hit) d.open = true; else if (!q) d.open = false;
+  });
+}
+</script>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="max-width:900px;"><%= error %></div><% } %>
+
+<style>
+  .intg { border:1px solid var(--line); border-radius:10px; margin-bottom:10px; background:#fff; max-width:900px; }
+  .intg > summary { list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 18px; font-weight:700; font-size:16px; }
+  .intg > summary::-webkit-details-marker { display:none; }
+  .intg-left { display:flex; align-items:center; gap:10px; }
+  .chev::before { content:'▸'; color:#6b7280; font-size:13px; }
+  .intg[open] .chev::before { content:'▾'; }
+  .intg-body { padding:2px 18px 18px; }
+  .intg-body p:first-child { margin-top:0; }
+</style>
+
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> QuickBooks Online</span>
+    <% if (qb.connected) { %><span class="badge badge-sent">Connected</span><% } else { %><span class="badge badge-inactive">Not connected</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <% if (!qb.hasCreds) { %>
+      <p class="muted">Set <code>QB_CLIENT_ID</code> and <code>QB_CLIENT_SECRET</code> in the server <code>.env</code>, then reload this page.</p>
+    <% } else if (qb.connected) { %>
+      <p class="muted"><% if (qb.company) { %>Company: <strong><%= qb.company %></strong> · <% } %>Environment: <%= qb.env %></p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+        <a class="btn btn-primary" href="/settings/quickbooks/match-customers">Match customers</a>
+        <a class="btn btn-primary" href="/settings/quickbooks/match-items">Match items</a>
+        <form method="post" action="/settings/quickbooks/import-invoices" onsubmit="return confirm('Import invoices from QuickBooks into the portal?');" style="margin:0;display:flex;gap:6px;align-items:center;">
+          <label class="muted" style="font-size:12px;">From</label><input class="input" type="date" name="since" style="padding:5px 8px;" title="Transaction date from (blank = all)">
+          <label class="muted" style="font-size:12px;">To</label><input class="input" type="date" name="until" style="padding:5px 8px;" title="Transaction date to (blank = now)">
+          <button class="btn" type="submit">Import invoices from QB</button>
+        </form>
+        <a class="btn" href="/settings/quickbooks/reconcile" title="Show which QB invoices are missing from the portal (no changes)">Reconcile (preview)</a>
+        <form method="post" action="/settings/quickbooks/sync-payments" style="margin:0;" title="Pull paid/unpaid status from QuickBooks into the portal"><button class="btn" type="submit">Sync payments from QB</button></form>
+        <form method="post" action="/settings/quickbooks/disconnect" onsubmit="return confirm('Disconnect QuickBooks?');" style="margin:0;"><button class="btn" type="submit">Disconnect</button></form>
+      </div>
+    <% } else { %>
+      <p class="muted">Connect your QuickBooks Online company to push and import invoices.</p>
+      <a class="btn btn-primary" href="/settings/quickbooks/connect">Connect QuickBooks</a>
+    <% } %>
+  </div>
+</details>
+
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> Atera (RMM / PSA)</span>
+    <% if (atera && atera.hasKey) { %><span class="badge badge-sent">Key set</span><% } else { %><span class="badge badge-inactive">No key</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Pull clients, contacts and tickets from Atera. Clients &amp; contacts are <strong>reviewed before applying</strong> (key contacts are never overwritten); tickets import in full via the status map.</p>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+      <form method="post" action="/settings/atera/save" style="display:flex;gap:8px;align-items:center;margin:0;">
+        <label class="muted" style="font-size:12px;">API key</label>
+        <input class="input" type="text" name="api_key" value="" placeholder="<%= atera && atera.hasKey ? atera.keyMasked : 'paste Atera API key' %>" style="min-width:280px;">
+        <button class="btn btn-primary" type="submit">Save key</button>
+      </form>
+      <form method="post" action="/settings/atera/test" style="margin:0;"><button class="btn" type="submit">Test connection</button></form>
+    </div>
+    <% if (atera && atera.hasKey) { %>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <a class="btn btn-primary" href="/settings/atera/review">Review clients &amp; contacts</a>
+      <a class="btn" href="/settings/atera/tickets">Import tickets…</a>
+      <a class="btn" href="/settings/atera/status-map">Status MAP</a>
+      <span class="muted" style="font-size:12px;"><%= atera.customers %> clients linked · <%= atera.tickets %> tickets imported</span>
+    </div>
+    <% } %>
+  </div>
+</details>
+
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> GoCardless</span>
+    <% if (gc.configured) { %><span class="badge badge-sent">Configured</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Direct Debit — collect invoice payments against customer mandates.</p>
+    <form method="post" action="/settings/gocardless/save" style="max-width:520px;">
+      <div class="form-group" style="margin-bottom:10px;"><label>Access token <% if (gc.configured) { %><span class="muted">(leave blank to keep current)</span><% } %></label><input class="input" name="api_key" type="password" style="width:100%;" placeholder="<%= gc.configured ? '•••••• (set)' : 'live_xxx…' %>"></div>
+      <div class="form-group" style="margin-bottom:14px;"><label>Environment</label><select class="input" name="environment" style="width:100%;"><option value="live" <%= gc.env==='live'?'selected':'' %>>Live</option><option value="sandbox" <%= gc.env==='sandbox'?'selected':'' %>>Sandbox</option></select></div>
+      <button class="btn btn-primary" type="submit">Save GoCardless</button>
+    </form>
+    <% if (gc.configured) { %><div style="margin-top:12px;"><a class="btn btn-primary" href="/settings/gocardless/match-customers">Match customers</a> <span class="muted" style="font-size:12px;">— link Direct Debit mandates to portal customers (auto-matches by name/email).</span></div><% } %>
+  </div>
+</details>
+
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> Teams notifications</span>
+    <% if (teamsWebhook) { %><span class="badge badge-sent">Configured</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Power Automate flow ("When an HTTP request is received") that DMs the engineer on Teams for escalations and case alerts. The portal POSTs <code>{ toEmail, title, text, link }</code>.</p>
+    <form method="post" action="/settings/integrations/teams" style="max-width:620px;">
+      <div class="form-group" style="margin-bottom:14px;"><label>Flow HTTP URL</label><input class="input" type="url" name="teams_webhook" value="<%= teamsWebhook %>" placeholder="https://prod-…logic.azure.com/workflows/…" style="width:100%;"></div>
+      <button class="btn btn-primary" type="submit">Save Teams</button>
+    </form>
+  </div>
+</details>
+
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> WhatsApp (Meta Cloud API)</span>
+    <% if (wa.configured) { %><span class="badge badge-sent">Configured</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Connect your business WhatsApp via Meta's Cloud API. Inbound messages raise/append cases; replies send from the case (Send via → WhatsApp). Free-form replies only work within 24h of the customer's last message — outside that Meta needs an approved template.</p>
+    <div class="card" style="background:#f8fafc;margin-bottom:14px;">
+      <p style="margin:0 0 6px;font-size:13px;"><strong>Webhook URL</strong> (set this in the Meta app → WhatsApp → Configuration):</p>
+      <code style="font-size:13px;word-break:break-all;"><%= wa.webhookUrl %></code>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">Use the same <em>Verify token</em> below in Meta. Messages received so far: <%= wa.messages %>.</p>
+    </div>
+    <form method="post" action="/settings/integrations/whatsapp" style="max-width:620px;">
+      <div class="form-group" style="margin-bottom:12px;"><label>Phone number ID</label><input class="input" name="phone_number_id" value="<%= wa.phoneNumberId %>" placeholder="e.g. 1029384756…" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:12px;"><label>Business number (display only)</label><input class="input" name="business_number" value="<%= wa.businessNumber %>" placeholder="+44…" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:12px;"><label>Verify token <span class="muted">(you choose this; must match Meta)</span></label><input class="input" name="verify_token" value="<%= wa.verifyToken %>" placeholder="a long random string" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:12px;"><label>Access token <% if (wa.tokenSet) { %><span class="badge badge-sent">Set</span><% } %></label><input class="input" type="password" name="access_token" autocomplete="off" placeholder="<%= wa.tokenSet ? 'leave blank to keep current' : 'permanent system-user token' %>" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:14px;"><label>App secret <% if (wa.appSecretSet) { %><span class="badge badge-sent">Set</span><% } %> <span class="muted">(verifies inbound signatures)</span></label><input class="input" type="password" name="app_secret" autocomplete="off" placeholder="<%= wa.appSecretSet ? 'leave blank to keep current' : 'Meta app secret' %>" style="width:100%;"></div>
+      <button class="btn btn-primary" type="submit">Save WhatsApp</button>
+    </form>
+  </div>
+</details>
+
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> Microsoft Teams (customer channel)</span>
+    <% if (teams.graphConnected) { %><span class="badge badge-sent">Connected</span><% } else if (teams.configured) { %><span class="badge badge-sent">Relay set</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <div class="card" style="background:#f0fdf4;margin-bottom:16px;">
+      <h3 style="margin:0 0 6px;">Recommended — connect via Graph (as the support account)</h3>
+      <p class="muted" style="margin:0 0 10px;">Two-way Teams like WhatsApp: the portal signs in once as <strong>sp@lumensolutions.co.uk</strong>, picks up incoming chats (raising/appending cases), and replies straight back into the same chat. Works for external customers once they message first. No Power Automate or bot needed.</p>
+      <% if (teams.graphConnected) { %>
+        <p style="margin:0 0 10px;">Connected as <strong><%= teams.graphAccount || 'support account' %></strong>. Teams messages received: <%= teams.messages %>.</p>
+        <form method="post" action="/settings/integrations/teams-graph/disconnect" style="margin:0;"><button class="btn" type="submit">Disconnect</button></form>
+      <% } else { %>
+        <p class="muted" style="margin:0 0 10px;font-size:12px;">First, in your Entra app add <strong>delegated</strong> permissions Chat.Read, Chat.ReadWrite, offline_access (admin consent), and register the redirect URL <code><%= teams.webhookUrl.replace('/webhooks/teams','/settings/integrations/teams-graph/callback') %></code>.</p>
+        <a class="btn btn-primary" href="/settings/integrations/teams-graph/connect" target="_blank" rel="noopener">Connect Teams (sign in as sp@)</a>
+        <p class="muted" style="margin:8px 0 0;font-size:12px;">Opens a new tab. Pick the <strong>sp@</strong> account at the chooser (if your own account auto-fills, choose "Use another account").</p>
+      <% } %>
+    </div>
+    <details>
+      <summary class="muted" style="cursor:pointer;font-size:13px;">Advanced — Power Automate / bot relay (only if not using Graph)</summary>
+    <p class="muted" style="margin-top:10px;">Two-way Teams via an Azure Bot / Power Automate relay. Inbound Teams messages raise/append cases; replies send from the case (Send via → Teams). Replies only work once the customer has messaged you (we store the conversation reference).</p>
+    <div class="card" style="background:#f8fafc;margin-bottom:14px;">
+      <p style="margin:0 0 6px;font-size:13px;"><strong>Inbound webhook URL</strong> (point your bot's messaging endpoint / Power Automate flow here):</p>
+      <code style="font-size:13px;word-break:break-all;"><%= teams.webhookUrl %></code>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">The relay must send header <code>X-Relay-Secret</code> matching the inbound secret below. Teams messages received so far: <%= teams.messages %>.</p>
+    </div>
+    <form method="post" action="/settings/integrations/teams-channel" style="max-width:620px;">
+      <div class="form-group" style="margin-bottom:12px;"><label>Inbound secret <% if (teams.inboundSecretSet) { %><span class="badge badge-sent">Set</span><% } %> <span class="muted">(the relay must present this)</span></label><input class="input" type="password" name="inbound_secret" autocomplete="off" placeholder="<%= teams.inboundSecretSet ? 'leave blank to keep current' : 'a long random string' %>" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:12px;"><label>Outbound relay URL <span class="muted">(Power Automate flow / bot relay we POST replies to)</span></label><input class="input" name="outbound_url" value="<%= teams.outboundUrl %>" placeholder="https://…logic.azure.com/…" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:12px;"><label>Outbound secret <% if (teams.outboundSecretSet) { %><span class="badge badge-sent">Set</span><% } %> <span class="muted">(sent as X-Relay-Secret to the relay)</span></label><input class="input" type="password" name="outbound_secret" autocomplete="off" placeholder="<%= teams.outboundSecretSet ? 'leave blank to keep current' : 'optional shared secret' %>" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:14px;"><label>Bot display name</label><input class="input" name="bot_name" value="<%= teams.botName %>" placeholder="Lumen IT" style="width:100%;"></div>
+      <button class="btn btn-primary" type="submit">Save Teams channel</button>
+    </form>
+    </details>
+  </div>
+</details>
+
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> Spell &amp; grammar</span>
+    <% if (languagetoolUrl) { %><span class="badge badge-sent">Configured</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">URL of your self-hosted <strong>LanguageTool</strong> server (e.g. <code>http://127.0.0.1:8081/v2/check</code>). Powers live spell &amp; grammar checking — inline underlines and one-click fixes — in all rich-text editors. Checks run server-side, so the LT service only needs to listen on localhost. Leave blank to disable.</p>
+    <form method="post" action="/settings/integrations/languagetool" style="max-width:620px;">
+      <div class="form-group" style="margin-bottom:14px;"><label>LanguageTool check URL</label><input class="input" type="url" name="languagetool_url" value="<%= languagetoolUrl %>" placeholder="http://127.0.0.1:8081/v2/check" style="width:100%;"></div>
+      <button class="btn btn-primary" type="submit">Save</button>
+    </form>
+  </div>
+</details>
+
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> UniFi Site Manager</span>
+    <% if (unifiKey) { %><span class="badge badge-sent">Configured</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Read-only <strong>UniFi Site Manager</strong> API key (create one at <code>unifi.ui.com → Settings → API</code>). Drives the 5-minute device-offline poller — it raises an alert (Teams + optional ticket) when a device or gateway goes offline, and clears it on recovery. Leave blank to disable polling.</p>
+    <form method="post" action="/settings/integrations/unifi" style="max-width:620px;">
+      <div class="form-group" style="margin-bottom:14px;"><label>UniFi API key</label><input class="input" type="password" name="unifi_api_key" value="<%= unifiKey %>" placeholder="X-API-Key from unifi.ui.com" style="width:100%;font-family:monospace;" autocomplete="off"></div>
+      <button class="btn btn-primary" type="submit">Save</button>
+    </form>
+  </div>
+</details>
+
+<% var buf = (typeof buffer !== 'undefined' && buffer) ? buffer : { keySet:false, keyMasked:'', envSet:false }; %>
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> Buffer (social posting)</span>
+    <% if (buf.keySet || buf.envSet) { %><span class="badge badge-sent">Configured</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Powers <strong>Marketing → Socials</strong> — pushes posts to LinkedIn, Facebook &amp; Google Business via Buffer. Create a personal API key at <a href="https://developers.buffer.com" target="_blank" rel="noopener">developers.buffer.com</a> (Get an API Key). A key saved here <strong>overrides</strong> the server <code>.env</code> (<code>BUFFER_TOKEN</code>).</p>
+    <% if (buf.envSet && !buf.keySet) { %><p class="muted" style="color:#b45309;">A <code>BUFFER_TOKEN</code> is set in the server .env. Saving a key here takes precedence over it.</p><% } %>
+    <form method="post" action="/settings/integrations/buffer" style="max-width:620px;">
+      <div class="form-group" style="margin-bottom:14px;">
+        <label>API key <% if (buf.keySet) { %><span class="muted">(set: <%= buf.keyMasked %> — leave blank to keep)</span><% } %></label>
+        <input class="input" type="password" name="api_key" autocomplete="off" placeholder="<%= buf.keySet ? '•••••• (set)' : 'paste your Buffer API key' %>" style="width:100%;">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" type="submit">Save</button>
+        <% if (buf.keySet) { %><button class="btn" type="submit" name="clear_key" value="1" onclick="return confirm('Remove the saved Buffer key?');">Clear key</button><% } %>
+      </div>
+    </form>
+  </div>
+</details>
+
+<% var pex = (typeof pexels !== 'undefined' && pexels) ? pexels : { keySet:false, keyMasked:'', envSet:false }; %>
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> Pexels (free stock images)</span>
+    <% if (pex.keySet || pex.envSet) { %><span class="badge badge-sent">Configured</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Powers <strong>Marketing → Socials → Create</strong> — lets Claude suggest and find matching free images for your posts. Get a free API key at <a href="https://www.pexels.com/api/" target="_blank" rel="noopener">pexels.com/api</a>. A key saved here overrides the server <code>.env</code> (<code>PEXELS_API_KEY</code>).</p>
+    <% if (pex.envSet && !pex.keySet) { %><p class="muted" style="color:#b45309;">A <code>PEXELS_API_KEY</code> is set in the server .env. Saving a key here takes precedence over it.</p><% } %>
+    <form method="post" action="/settings/integrations/pexels" style="max-width:620px;">
+      <div class="form-group" style="margin-bottom:14px;">
+        <label>API key <% if (pex.keySet) { %><span class="muted">(set: <%= pex.keyMasked %> — leave blank to keep)</span><% } %></label>
+        <input class="input" type="password" name="api_key" autocomplete="off" placeholder="<%= pex.keySet ? '•••••• (set)' : 'paste your Pexels API key' %>" style="width:100%;">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" type="submit">Save</button>
+        <% if (pex.keySet) { %><button class="btn" type="submit" name="clear_key" value="1" onclick="return confirm('Remove the saved Pexels key?');">Clear key</button><% } %>
+      </div>
+    </form>
+  </div>
+</details>
+
+<% var anth = (typeof anthropic !== 'undefined' && anthropic) ? anthropic : { keySet:false, keyMasked:'', envSet:false, model:'claude-haiku-4-5-20251001' }; %>
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> Claude (voice-to-message)</span>
+    <% if (anth.keySet || anth.envSet) { %><span class="badge badge-sent">Configured</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Powers <strong>Dictate &amp; Polish with Claude</strong> on the reply composer — turns rough dictated notes into a ready-to-send message. Get a key from <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> (Settings → API Keys; add billing + a spend cap). The API is billed separately from any Claude.ai plan, ~£4/month at typical volume. A key saved here <strong>overrides</strong> the server <code>.env</code>.</p>
+    <% if (anth.envSet && !anth.keySet) { %><p class="muted" style="color:#b45309;">An <code>ANTHROPIC_API_KEY</code> is set in the server .env. Saving a key here takes precedence over it.</p><% } %>
+    <form method="post" action="/settings/integrations/anthropic" style="max-width:620px;">
+      <div class="form-group" style="margin-bottom:12px;">
+        <label>API key <% if (anth.keySet) { %><span class="muted">(set: <%= anth.keyMasked %> — leave blank to keep)</span><% } %></label>
+        <input class="input" type="password" name="api_key" autocomplete="off" placeholder="<%= anth.keySet ? '•••••• (set)' : 'sk-ant-...' %>" style="width:100%;">
+      </div>
+      <div class="form-group" style="margin-bottom:14px;">
+        <label>Model</label>
+        <select class="input" name="model" style="width:100%;">
+          <% ['claude-haiku-4-5-20251001','claude-sonnet-4-6','claude-opus-4-8'].forEach(function(m){ %>
+            <option value="<%= m %>" <%= anth.model===m ? 'selected' : '' %>><%= m %><%= m.indexOf('haiku')>-1 ? ' (cheapest — recommended)' : (m.indexOf('sonnet')>-1 ? ' (nicer prose)' : '') %></option>
+          <% }); %>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" type="submit">Save</button>
+        <% if (anth.keySet) { %><button class="btn" type="submit" name="clear_key" value="1" onclick="return confirm('Remove the saved Claude key?');">Clear key</button><% } %>
+      </div>
+    </form>
+    <% if (anth.keySet || anth.envSet) { %>
+    <form method="post" action="/settings/integrations/anthropic/test" style="margin-top:10px;"><button class="btn" type="submit">Test Claude connection</button></form>
+    <% } %>
+  </div>
+</details>
+
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> Giacom / Cloud Market</span>
+    <% if (giacom.billingSet) { %><span class="badge badge-sent">Billing key set</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Cloud Market APIs (Azure APIM). Paste your subscription <strong>Primary keys</strong> — stored securely and used for the <code>Ocp-Apim-Subscription-Key</code> header. Leave a key blank to keep the current one.</p>
+    <form method="post" action="/settings/integrations/giacom" style="max-width:620px;">
+      <div class="form-group" style="margin-bottom:10px;">
+        <label>Billing Service API key <% if (giacom.billingSet) { %><span class="muted">(set — leave blank to keep)</span><% } %></label>
+        <input class="input" type="password" name="billing_key" autocomplete="off" placeholder="<%= giacom.billingSet ? '•••••• (set)' : 'Primary key' %>" style="width:100%;">
+      </div>
+      <div class="form-group" style="margin-bottom:10px;">
+        <label>PartnerCenter Service API key <% if (giacom.partnerSet) { %><span class="muted">(set — leave blank to keep)</span><% } %></label>
+        <input class="input" type="password" name="partnercenter_key" autocomplete="off" placeholder="<%= giacom.partnerSet ? '•••••• (set)' : 'Primary key' %>" style="width:100%;">
+      </div>
+      <div class="form-group" style="margin-bottom:10px;"><label>Billing base URL</label><input class="input" type="url" name="billing_base_url" value="<%= giacom.billingBase %>" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:14px;"><label>PartnerCenter base URL</label><input class="input" type="url" name="partnercenter_base_url" value="<%= giacom.partnerBase %>" style="width:100%;"></div>
+      <button class="btn btn-primary" type="submit">Save Giacom keys</button>
+    </form>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;border-top:1px solid var(--line);padding-top:12px;">
+      <form method="post" action="/settings/integrations/giacom/test" style="margin:0;"><button class="btn" type="submit">Test Billing connection</button></form>
+      <form method="post" action="/settings/integrations/giacom/sync" style="margin:0;"><button class="btn btn-primary" type="submit">Sync now</button></form>
+      <a class="btn" href="/settings/giacom/match">Match accounts<% if (giacom.unmatchedAccounts) { %> (<%= giacom.unmatchedAccounts %> unmatched)<% } %></a>
+    </div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0;">
+      <% if (giacom.lastSync) { %>Last synced <%= new Date(giacom.lastSync).toLocaleString('en-GB') %> · <%= giacom.items %> items across <%= giacom.accounts %> accounts (<%= giacom.matched %> matched). <% } else { %>Not synced yet. <% } %>
+      Auto-syncs nightly at 05:00.
+    </p>
+  </div>
+</details>
+
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> DWS Bill Run (SFTP)</span>
+    <% if (dws.configured) { %><span class="badge badge-sent">Connected</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Digital Wholesale Solutions / Giacom monthly bill-run files over SFTP (<%= dws.host || 'host not set' %>). Files are downloaded and <strong>tracked, never deleted</strong> from the server. Credentials live in the server <code>.env</code> (<code>DWS_SFTP_*</code>).</p>
+    <form method="post" action="/settings/integrations/dws/fetch" style="margin:0 0 12px;"><button class="btn btn-primary" type="submit">Fetch now</button></form>
+    <% if (dws.files && dws.files.length) { %>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>File</th><th>Status</th><th style="text-align:right;">Rows</th><th>Columns detected</th><th>Ingested</th></tr></thead>
+        <tbody>
+          <% dws.files.forEach(function(f){ %>
+            <tr>
+              <td><%= f.filename %></td>
+              <td><span class="badge <%= f.status==='parsed'?'badge-sent':(f.status==='error'?'badge-failed':'badge-inactive') %>"><%= f.status %></span></td>
+              <td style="text-align:right;"><%= f.rows_parsed || 0 %></td>
+              <td class="muted" style="font-size:12px;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<%= f.columns || '' %>"><%= f.columns || '—' %></td>
+              <td class="muted" style="font-size:12px;white-space:nowrap;"><%= new Date(f.ingested_at).toLocaleString('en-GB') %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table></div>
+      <p class="muted" style="font-size:12px;margin:8px 0 0;">Checks daily at 05:30. Once the column layout above is confirmed, I'll map bill-run lines into service charges (and route call usage to Insights).</p>
+    <% } else { %>
+      <p class="muted" style="font-size:12px;margin:0;">No files ingested yet — click <strong>Fetch now</strong>. Auto-checks daily at 05:30.</p>
+    <% } %>
+  </div>
+</details>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,29 @@
+<%- include('../partials/header', { title: 'Activity log', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+  <h1>Activity log</h1>
+  <p class="muted">Audit trail of changes across the portal.</p>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Item</th><th>Detail</th></tr></thead>
+      <tbody>
+        <% if (items.length===0) { %><tr><td colspan="5"><div class="empty-state">No activity logged yet.</div></td></tr><% } %>
+        <% items.forEach(function(a){ %>
+          <tr>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= new Date(a.created_at).toLocaleString('en-GB') %></td>
+            <td><%= a.user_name || 'System' %></td>
+            <td><span class="badge badge-inactive"><%= a.action %></span></td>
+            <td class="muted" style="font-size:12px;"><%= a.entity_type || '' %><%= a.entity_id ? ' #' + a.entity_id : '' %></td>
+            <td style="font-size:13px;"><%= a.summary || '' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

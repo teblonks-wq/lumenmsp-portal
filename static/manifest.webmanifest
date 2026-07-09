@@ -1,0 +1,18 @@
+{
+  "name": "Lumen MSP Portal",
+  "short_name": "Lumen MSP",
+  "id": "/m",
+  "description": "Lumen MSP field app — support, tasks, customers, contacts, quotes, invoices and receipt logging.",
+  "categories": ["business", "productivity"],
+  "start_url": "/m",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f1f5f9",
+  "theme_color": "#1e3a8a",
+  "icons": [
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,59 @@
+<%- include('../partials/header', { title: 'WhatsApp templates', user }) %>
+<%
+  function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c];}); }
+  function statusBadge(st){ st=(st||'').toUpperCase();
+    if(st==='APPROVED') return '<span class="badge badge-sent">Approved</span>';
+    if(st==='PENDING'||st==='IN_APPEAL'||st==='PENDING_DELETION') return '<span class="badge badge-primary">Pending</span>';
+    if(st==='REJECTED'||st==='DISABLED') return '<span class="badge badge-failed">'+esc(st.charAt(0)+st.slice(1).toLowerCase())+'</span>';
+    if(!st) return '<span class="badge badge-inactive">Not submitted</span>';
+    return '<span class="badge badge-inactive">'+esc(st)+'</span>';
+  }
+%>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/chat/channel/whatsapp">← WhatsApp messages</a></p>
+  <h1>WhatsApp templates</h1>
+  <p class="muted">Approved templates let you start new conversations and message people outside the 24-hour window. Submit them to Meta here; approval is usually minutes to a few hours.</p>
+</div>
+
+<% if(saved){ %><div class="alert alert-success" style="margin-bottom:16px;">WABA ID saved.</div><% } %>
+<% if(pushed){ %><div class="alert alert-success" style="margin-bottom:16px;"><%= pushed %></div><% } %>
+<% if(err){ %><div class="alert alert-error" style="margin-bottom:16px;">Couldn't read templates from Meta: <%= esc(err) %></div><% } %>
+
+<div class="card">
+  <div class="card-header"><h2>Meta connection</h2></div>
+  <form method="post" action="/chat/wa/templates/save-waba" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+    <div class="form-group" style="flex:1;min-width:260px;">
+      <label>WhatsApp Business Account (WABA) ID</label>
+      <input class="input" name="waba_id" value="<%= esc(wabaId) %>" placeholder="e.g. 1029384756…" style="width:100%;">
+    </div>
+    <button class="btn btn-primary" type="submit">Save</button>
+  </form>
+  <p class="muted" style="margin:10px 0 0;font-size:13px;">Find this in Meta Business Suite → WhatsApp Manager → Account tools (or Settings). The access token must have the <strong>whatsapp_business_management</strong> permission — if pushing fails with a permissions error, add that scope to the system user in the Meta app.</p>
+</div>
+
+<div class="card">
+  <div class="card-header" style="justify-content:space-between;">
+    <h2>Templates (<%= templates.length %>)</h2>
+    <form method="post" action="/chat/wa/templates/push" onsubmit="return confirm('Submit all templates to Meta for approval now?');" style="margin:0;">
+      <button class="btn btn-primary" type="submit" <%= configured ? '' : 'disabled title="Add the WABA ID first"' %>>Push all to Meta</button>
+    </form>
+  </div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Template</th><th>Name</th><th>Category</th><th>Meta status</th><th>Preview</th></tr></thead>
+    <tbody>
+      <% templates.forEach(function(t){ %>
+      <tr>
+        <td><strong><%= esc(t.label) %></strong></td>
+        <td style="font-family:monospace;font-size:13px;"><%= esc(t.name) %></td>
+        <td><%= t.category %></td>
+        <td><%- statusBadge(meta[t.name] && meta[t.name].status) %></td>
+        <td style="max-width:420px;color:#6b7280;font-size:13px;"><%= esc(t.body) %></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <p class="muted" style="margin:12px 0 0;font-size:13px;">Once a template shows <strong>Approved</strong>, it becomes available in the new-message composer. Re-submitting an existing name is skipped by Meta.</p>
+</div>
+
+<%- include('../partials/footer') %>

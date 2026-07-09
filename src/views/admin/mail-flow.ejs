@@ -1,0 +1,94 @@
+<%- include('../partials/header', { title: 'Mail flow', user }) %>
+<% function badge(s){ return s==='sent'?'badge-sent':(s==='failed'?'badge-failed':'badge-inactive'); } %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+  <h1>Mail flow</h1>
+  <p class="muted">Every outbound email the portal sent, with delivery status. Last 7 days: <strong><%= summary.sent || 0 %></strong> sent · <strong style="color:#b91c1c;"><%= summary.failed || 0 %></strong> failed<% if (summary.not_sent) { %> · <%= summary.not_sent %> skipped (Graph off)<% } %>.</p>
+</div>
+
+<div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;">
+  <a class="btn <%= status===''?'btn-primary':'' %>" href="/admin/mail-flow">All</a>
+  <a class="btn <%= status==='sent'?'btn-primary':'' %>" href="/admin/mail-flow?status=sent">Sent</a>
+  <a class="btn <%= status==='failed'?'btn-primary':'' %>" href="/admin/mail-flow?status=failed">Failed</a>
+  <a class="btn <%= status==='not_sent'?'btn-primary':'' %>" href="/admin/mail-flow?status=not_sent">Skipped</a>
+</div>
+
+<% if (saved === 'blocked') { %><div class="alert alert-success" style="max-width:900px;">Sender blocked. Their mail will no longer raise tickets.</div><% } %>
+<% if (saved === 'released') { %><div class="alert alert-success" style="max-width:900px;">Released — mail from that sender will come through again.</div><% } %>
+
+<div class="card" style="margin-bottom:18px;">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <h2 style="margin:0;">Spam list <span class="muted" style="font-weight:400;font-size:14px;">(<%= (typeof spam!=='undefined'?spam:[]).length %>)</span></h2>
+  </div>
+  <p class="muted" style="margin:0 0 10px;">Blocked senders never raise or update a ticket. Mark a case as spam from the ticket, or add one here. Release to let their mail through again.</p>
+  <form method="post" action="/admin/mail-flow/spam" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+    <input class="input" name="value" placeholder="person@example.com or example.com" style="min-width:300px;" required>
+    <button class="btn btn-primary" type="submit">Block</button>
+    <span class="muted" style="font-size:12px;">An address blocks one person; a bare domain blocks everyone there.</span>
+  </form>
+  <% if (!(typeof spam!=='undefined'&&spam.length)) { %>
+    <p class="muted" style="margin:0;">Nothing blocked. 🎉</p>
+  <% } else { %>
+    <div class="table-wrap"><table class="table" style="margin:0;">
+      <thead><tr><th>Blocked</th><th>Type</th><th>Reason</th><th>Added by</th><th>When</th><th></th></tr></thead>
+      <tbody>
+        <% spam.forEach(function(s){ %>
+          <tr>
+            <td style="font-weight:600;overflow-wrap:anywhere;"><%= s.value %></td>
+            <td><span class="badge <%= s.kind==='domain'?'badge-failed':'badge-inactive' %>"><%= s.kind %></span></td>
+            <td class="muted" style="font-size:12px;"><%= s.reason || '—' %></td>
+            <td class="muted" style="font-size:12px;"><%= s.created_by_name || '—' %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= new Date(s.created_at).toLocaleDateString('en-GB') %></td>
+            <td style="text-align:right;"><form method="post" action="/admin/mail-flow/spam/<%= s.id %>/release" style="margin:0;"><button class="btn" type="submit">Release</button></form></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  <% } %>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+  <div class="card-header"><h2 style="margin:0;">Auto-filed inbound <span class="muted" style="font-weight:400;font-size:14px;">(<%= (typeof suppressed!=='undefined'?suppressed:[]).length %>)</span></h2></div>
+  <p class="muted" style="margin:0 0 10px;">Inbound emails the loop/auto-reply guard set aside <em>without</em> raising a ticket — bounces, auto-replies, mailing lists, etc. If one is a real request that got filed by mistake, recover it onto the helpdesk.</p>
+  <% if (!(typeof suppressed!=='undefined'&&suppressed.length)) { %>
+    <p class="muted" style="margin:0;">Nothing auto-filed. 🎉</p>
+  <% } else { %>
+    <div class="table-wrap"><table class="table" style="margin:0;">
+      <thead><tr><th>When</th><th>From</th><th>Subject</th><th>Why filed</th><th></th></tr></thead>
+      <tbody>
+        <% suppressed.forEach(function(s){ %>
+          <tr>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= s.received_at ? new Date(s.received_at).toLocaleString('en-GB') : '—' %></td>
+            <td style="font-size:13px;overflow-wrap:anywhere;"><%= s.from_name || '' %><% if (s.from_email) { %><br><span class="muted" style="font-size:12px;"><%= s.from_email %></span><% } %></td>
+            <td style="font-size:13px;overflow-wrap:anywhere;"><%= s.subject || '(no subject)' %></td>
+            <td class="muted" style="font-size:12px;"><%= s.suppression_reason || '—' %></td>
+            <td style="text-align:right;"><form method="post" action="/admin/mail-flow/suppressed/<%= s.id %>/raise" style="margin:0;" onsubmit="return confirm('Raise this email as a support ticket?');"><button class="btn btn-primary" type="submit" style="padding:3px 10px;font-size:12px;">Raise as ticket</button></form></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  <% } %>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>When</th><th>To</th><th>Subject</th><th>Status</th><th>Detail</th></tr></thead>
+      <tbody>
+        <% if (items.length===0) { %><tr><td colspan="5"><div class="empty-state">No emails logged yet.</div></td></tr><% } %>
+        <% items.forEach(function(m){ %>
+          <tr>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= new Date(m.created_at).toLocaleString('en-GB') %></td>
+            <td><%= m.to_email || '—' %></td>
+            <td><a class="row-link" href="/admin/mail-flow/<%= m.id %>"><%= m.subject || '(no subject)' %></a></td>
+            <td><span class="badge <%= badge(m.status) %>"><%= m.status %></span></td>
+            <td class="muted" style="font-size:12px;max-width:340px;overflow-wrap:anywhere;"><%= m.error || '' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

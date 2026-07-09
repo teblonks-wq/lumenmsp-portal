@@ -1,0 +1,52 @@
+<%- include('partials/header', { title: 'Bookmarks', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">&larr; Admin</a></p>
+  <h1>Bookmarks</h1>
+  <p class="muted">Shared quick-links shown in the sidebar's Bookmarks dropdown for all staff. Links always open in a new tab.</p>
+</div>
+
+<% if (saved) { %><div class="alert alert-success">Saved.</div><% } %>
+<% if (err) { %><div class="alert alert-error"><%= err %></div><% } %>
+
+<div class="card">
+  <div class="card-header"><h2>Current bookmarks</h2></div>
+  <% if (!bookmarks.length) { %><p class="muted">None yet — add the first one below.</p><% } else { %>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Label</th><th>URL</th><th style="width:80px;">Sort</th><th></th></tr></thead>
+    <tbody>
+      <% bookmarks.forEach(function(b){ %>
+      <tr>
+        <form method="post" action="/settings/bookmarks">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="id" value="<%= b.id %>">
+          <td><input class="input" name="label" value="<%= b.label %>" style="width:100%;"></td>
+          <td><input class="input" name="url" value="<%= b.url %>" style="width:100%;font-family:monospace;font-size:13px;"></td>
+          <td><input class="input" name="sort" type="number" value="<%= b.sort || 0 %>" style="width:70px;"></td>
+          <td style="white-space:nowrap;text-align:right;">
+            <button class="btn btn-primary" type="submit">Save</button>
+        </form>
+        <form method="post" action="/settings/bookmarks/<%= b.id %>/delete" style="display:inline;" onsubmit="return confirm('Delete this bookmark?');">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button class="btn" type="submit" style="color:#dc2626;">Delete</button>
+        </form>
+          </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <% } %>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Add a bookmark</h2></div>
+  <form method="post" action="/settings/bookmarks" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input class="input" name="label" placeholder="Label (e.g. 20i Control Panel)" required style="min-width:240px;">
+    <input class="input" name="url" placeholder="https://…" required style="min-width:320px;font-family:monospace;font-size:13px;">
+    <input class="input" name="sort" type="number" value="0" title="Sort order" style="width:80px;">
+    <button class="btn btn-primary" type="submit">Add bookmark</button>
+  </form>
+</div>
+
+<%- include('partials/footer') %>

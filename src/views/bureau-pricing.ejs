@@ -1,0 +1,240 @@
+<%- include('partials/header', { title: 'Service Pricing', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+   function n4(v){ return (Number(v)||0).toFixed(4); }
+   // Compute per-line buy/qty/sale/profit; flag uncosted (no sale price yet).
+   var rows = [];
+   (lines||[]).forEach(function(l){
+     var buy = Number(l.unit_cost)||0, qty = Number(l.quantity)||0;
+     var hasSale = l.sale_price !== null && l.sale_price !== undefined;
+     var sale = hasSale ? Number(l.sale_price) : null;
+     rows.push({ l:l, buy:buy, qty:qty, hasSale:hasSale, sale:sale,
+       total: hasSale ? sale*qty : null, profit: hasSale ? (sale-buy)*qty : null });
+   });
+   function sourceUrl(s){ return '/bureau/pricing' + (s ? '?source='+encodeURIComponent(s) : ''); }
+   var priced = rows.filter(function(r){return r.hasSale;});
+   var uncosted = rows.filter(function(r){return !r.hasSale;});
+   var totProfit = priced.reduce(function(a,r){return a+(r.profit||0);},0);
+   var totSale = priced.reduce(function(a,r){return a+(r.total||0);},0);
+   var totBuy = priced.reduce(function(a,r){return a+(r.buy*r.qty);},0);
+%>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">← Back Office</a></p>
+  <h1>Service Pricing &amp; Profit</h1></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+  <div class="tabs" style="margin:0;">
+    <a class="tab-btn <%= source===''?'active':'' %>" href="<%= sourceUrl('') %>">All</a>
+    <a class="tab-btn <%= source==='giacom'?'active':'' %>" href="<%= sourceUrl('giacom') %>">Cloud</a>
+    <a class="tab-btn <%= source==='comms'?'active':'' %>" href="<%= sourceUrl('comms') %>">Comms</a>
+  </div>
+  <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <a class="btn" href="/bureau/supplier-comms.csv" title="Comms: every line the carrier bills us, per CLI/Ref — cost and who it's matched to">Supplier Export</a>
+    <a class="btn" href="/bureau/giacom-sheet.csv" title="Cloud: every line Giacom bills us — latest sync, cost, matched customer">Cloud Supplier (Giacom)</a>
+    <a class="btn btn-primary" href="/bureau/customer-charges.csv" title="Every item we sell — customer name, CLI/Ref, buy, current sale, profit, dates">Customer Charges Export</a>
+    <a class="btn" href="/bureau/pricing-detail.csv?source=giacom" title="Every cloud line: customer, ref, buy, dates, current sale + a new-sale box">Export Cloud CSV</a>
+    <a class="btn" href="/bureau/pricing-detail.csv?source=comms" title="Every comms line: customer, CLI/Ref, buy, service dates, current sale + a new-sale box">Export Comms CSV</a>
+    <a class="btn" href="/bureau/pricing-detail.csv?source=comms&bb=ex" title="Comms minus broadband — seats, line rental, mobile, recording etc: customer, buy, current sale + a new-sale box. Fill it in and re-import to update the customer line items.">Export Non-Broadband CSV</a>
+    <form method="post" action="/bureau/pricing/import" enctype="multipart/form-data" style="display:flex;gap:6px;align-items:center;margin:0;">
+      <input type="file" name="file" accept=".csv" required style="font-size:12px;">
+      <button class="btn btn-primary" type="submit">Preview import</button>
+    </form>
+  </div>
+</div>
+
+<div class="card" style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:16px;">
+  <div><div class="muted" style="font-size:12px;">Priced lines</div><div style="font-size:20px;font-weight:700;"><%= priced.length %></div></div>
+  <div><div class="muted" style="font-size:12px;">Uncosted</div><div style="font-size:20px;font-weight:700;color:<%= uncosted.length?'#b45309':'inherit' %>;"><%= uncosted.length %></div></div>
+  <div><div class="muted" style="font-size:12px;">Monthly buy</div><div style="font-size:20px;font-weight:700;"><%= money(totBuy) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:700;"><%= money(totSale) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Monthly profit</div><div style="font-size:20px;font-weight:700;color:#166534;"><%= money(totProfit) %></div></div>
+</div>
+
+<!-- Filter + batch toolbar -->
+<div class="card" id="pxToolbar" style="margin-bottom:0;position:sticky;top:0;z-index:5;">
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+    <div><label class="muted" style="font-size:11px;display:block;margin-bottom:2px;">Customer</label><input id="pxCust" class="input" placeholder="filter customer…" style="font-size:13px;padding:5px 8px;width:170px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;margin-bottom:2px;">Product</label><input id="pxProd" class="input" placeholder="e.g. HV Select…" style="font-size:13px;padding:5px 8px;width:200px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;margin-bottom:2px;">Show</label>
+      <select id="pxStatus" class="input" style="font-size:13px;padding:5px 8px;"><option value="all">All</option><option value="priced">Priced only</option><option value="uncosted">Uncosted only</option></select>
+    </div>
+    <button class="btn" type="button" id="pxReset" style="font-size:12px;padding:6px 10px;">Reset</button>
+  </div>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px;padding-top:12px;border-top:1px solid var(--border,#e5e7eb);">
+    <div><label class="muted" style="font-size:11px;display:block;margin-bottom:2px;">Set checked to £</label><input id="pxSetPrice" class="input" type="text" inputmode="decimal" placeholder="16.50" style="font-size:13px;padding:5px 8px;width:90px;"></div>
+    <button class="btn" type="button" id="pxApplyPrice" style="font-size:12px;padding:6px 10px;">Apply price</button>
+    <div style="border-left:1px solid var(--border,#e5e7eb);padding-left:10px;"><label class="muted" style="font-size:11px;display:block;margin-bottom:2px;">…or markup %</label><input id="pxMarkup" class="input" type="text" inputmode="decimal" placeholder="50" style="font-size:13px;padding:5px 8px;width:80px;"></div>
+    <button class="btn" type="button" id="pxApplyMarkup" style="font-size:12px;padding:6px 10px;">Apply markup</button>
+    <button class="btn" type="button" id="pxCheckVisible" style="font-size:12px;padding:6px 10px;margin-left:auto;">Check all shown</button>
+  </div>
+  <!-- live what-if summary -->
+  <div id="pxImpact" style="display:flex;gap:24px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border,#e5e7eb);font-size:13px;">
+    <div><span class="muted">Changed rows</span> <strong id="pxNChanged">0</strong></div>
+    <div><span class="muted">Current profit (changed)</span> <strong id="pxCurProfit">£0.00</strong></div>
+    <div><span class="muted">Proposed profit (changed)</span> <strong id="pxNewProfit">£0.00</strong></div>
+    <div><span class="muted">Impact</span> <strong id="pxDelta">£0.00</strong> <span class="muted">/ mo</span></div>
+  </div>
+</div>
+
+<form method="post" action="/bureau/pricing/batch<%= source?'?source='+source:'' %>" id="pxForm">
+  <input type="hidden" name="source" value="<%= source %>">
+  <div class="card" style="padding:0;"><div class="table-wrap"><table class="table" id="pxTable">
+    <thead><tr>
+      <th style="width:28px;"><input type="checkbox" id="pxHead" title="Check all shown"></th>
+      <th>Customer</th><th>Product</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Buy</th>
+      <th style="text-align:right;">Current sale</th><th style="text-align:right;">Current profit</th>
+      <th style="text-align:right;">New sale</th><th style="text-align:right;">Proposed profit</th><th></th>
+    </tr></thead>
+    <tbody>
+      <% if (!rows.length) { %><tr><td colspan="9"><div class="empty-state">No mapped services yet.</div></td></tr><% } %>
+      <% rows.forEach(function(r){ var l=r.l; %>
+      <tr class="px-row" data-status="<%= r.hasSale?'priced':'uncosted' %>"
+          data-cust="<%= (l.customer_name||'').toLowerCase() %>"
+          data-prod="<%= ((l.description||l.product_reference||'')+' '+l.source).toLowerCase() %>"
+          data-buy="<%= r.buy.toFixed(4) %>" data-qty="<%= r.qty %>"
+          data-cursale="<%= r.hasSale ? r.sale.toFixed(4) : '' %>"
+          data-curprofit="<%= r.hasSale ? r.profit.toFixed(4) : '0' %>">
+        <td><input type="checkbox" class="px-check"></td>
+        <td><%= l.customer_name || '—' %></td>
+        <td><%= l.description || l.product_reference || '(unnamed)' %> <span class="muted" style="font-size:11px;"><%= l.source %></span>
+          <% if (!r.hasSale) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;">uncosted</span><% } %></td>
+        <td style="text-align:right;"><%= r.qty %></td>
+        <td style="text-align:right;"><%= money(r.buy) %></td>
+        <td style="text-align:right;" class="px-cursale"><%= r.hasSale ? money(r.sale) : '—' %></td>
+        <td style="text-align:right;color:<%= r.hasSale ? (r.profit>=0?'#166534':'#b91c1c') : '' %>;" class="px-curprofit"><%= r.hasSale ? money(r.profit) : '—' %></td>
+        <td style="text-align:right;">
+          <input type="hidden" name="row_source" value="<%= l.source %>">
+          <input type="hidden" name="row_customer_id" value="<%= l.customer_id %>">
+          <input type="hidden" name="row_product_reference" value="<%= l.product_reference || '' %>">
+          <input type="hidden" name="row_description" value="<%= l.description || '' %>">
+          <input type="hidden" name="row_unit_cost" value="<%= n4(r.buy) %>">
+          <input type="hidden" name="row_cur_sale" value="<%= r.hasSale ? r.sale.toFixed(4) : '' %>">
+          <input class="input px-new" name="row_new_sale" type="text" inputmode="decimal" value="<%= r.hasSale ? r.sale.toFixed(2) : '' %>" placeholder="£ sell" style="width:90px;text-align:right;">
+        </td>
+        <td style="text-align:right;" class="px-pp muted">—</td>
+        <td style="text-align:right;"><button type="button" class="btn px-apply" style="font-size:11px;padding:3px 9px;">Apply</button></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div></div>
+
+  <div style="display:flex;gap:12px;align-items:center;margin:14px 0;">
+    <button class="btn btn-primary" type="submit" id="pxSave">Save changes</button>
+    <span class="muted" id="pxSaveNote" style="font-size:13px;"></span>
+    <span class="muted" id="pxCount" style="font-size:12px;margin-left:auto;"></span>
+  </div>
+</form>
+
+<script>(function(){
+  var form=document.getElementById('pxForm'); if(!form) return;
+  var allRows=[].slice.call(document.querySelectorAll('#pxTable tbody tr.px-row'));
+  var fCust=document.getElementById('pxCust'), fProd=document.getElementById('pxProd'), fStatus=document.getElementById('pxStatus');
+  var gbp=function(n){var s=(Math.abs(n)).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});return (n<0?'-£':'£')+s;};
+  function shown(r){
+    if(fCust.value && r.getAttribute('data-cust').indexOf(fCust.value.toLowerCase())<0) return false;
+    if(fProd.value && r.getAttribute('data-prod').indexOf(fProd.value.toLowerCase())<0) return false;
+    var st=fStatus.value; if(st!=='all' && r.getAttribute('data-status')!==st) return false;
+    return true;
+  }
+  function visibleRows(){return allRows.filter(function(r){return r.style.display!=='none';});}
+  function recalcRow(r){
+    var buy=parseFloat(r.getAttribute('data-buy'))||0, qty=parseFloat(r.getAttribute('data-qty'))||0;
+    var inp=r.querySelector('.px-new'), pp=r.querySelector('.px-pp');
+    var v=String(inp.value).replace(/[^0-9.\-]/g,'');
+    if(v===''){pp.textContent='—';pp.style.color='';pp.classList.add('muted');return null;}
+    var sale=parseFloat(v); if(isNaN(sale)){pp.textContent='—';pp.style.color='';return null;}
+    var prof=(sale-buy)*qty; pp.classList.remove('muted'); pp.textContent=gbp(prof);
+    pp.style.color=prof>=0?'#166534':'#b91c1c'; return prof;
+  }
+  function recalcImpact(){
+    var nCh=0,curP=0,newP=0;
+    allRows.forEach(function(r){
+      var inp=r.querySelector('.px-new'); var v=String(inp.value).replace(/[^0-9.\-]/g,'');
+      var cur=r.getAttribute('data-cursale'); var curProfit=parseFloat(r.getAttribute('data-curprofit'))||0;
+      var prop=recalcRow(r);
+      if(prop===null) return;
+      var curSaleNum=cur===''?NaN:parseFloat(cur);
+      var changed = isNaN(curSaleNum) || Math.abs(curSaleNum-parseFloat(v))>=0.0001;
+      if(changed){ nCh++; curP+=curProfit; newP+=prop; }
+    });
+    document.getElementById('pxNChanged').textContent=nCh;
+    document.getElementById('pxCurProfit').textContent=gbp(curP);
+    document.getElementById('pxNewProfit').textContent=gbp(newP);
+    var d=document.getElementById('pxDelta'); var delta=newP-curP;
+    d.textContent=(delta>=0?'+':'')+gbp(delta); d.style.color=delta>=0?'#166534':'#b91c1c';
+    document.getElementById('pxSaveNote').textContent=nCh?(nCh+' change'+(nCh===1?'':'s')+' to save'):'No changes yet';
+    var sv=document.getElementById('pxSave'); sv.textContent=nCh?('Save '+nCh+' price change'+(nCh===1?'':'s')):'Save changes'; sv.disabled=!nCh; sv.style.opacity=nCh?'1':'.5';
+  }
+  function applyFilter(){
+    allRows.forEach(function(r){r.style.display=shown(r)?'':'none';});
+    document.getElementById('pxCount').textContent=visibleRows().length+' of '+allRows.length+' shown';
+    document.getElementById('pxHead').checked=false;
+  }
+  [fCust,fProd].forEach(function(el){el.addEventListener('input',applyFilter);});
+  fStatus.addEventListener('change',applyFilter);
+  document.getElementById('pxReset').addEventListener('click',function(){fCust.value='';fProd.value='';fStatus.value='all';applyFilter();});
+  // batch fill — operate on CHECKED rows, or (if none are checked) ALL currently-shown rows.
+  // So: filter to a product, type a price, Apply price → every shown customer is filled.
+  function checkedRows(){return visibleRows().filter(function(r){return r.querySelector('.px-check').checked;});}
+  function targetRows(){var c=checkedRows();return c.length?c:visibleRows();}
+  document.getElementById('pxApplyPrice').addEventListener('click',function(){
+    var p=String(document.getElementById('pxSetPrice').value).replace(/[^0-9.\-]/g,''); if(p==='')return;
+    var t=targetRows(); t.forEach(function(r){r.querySelector('.px-new').value=parseFloat(p).toFixed(2);});
+    recalcImpact(); flash(t.length+' row'+(t.length===1?'':'s')+' set to £'+parseFloat(p).toFixed(2)+' — review the impact, then Save changes');
+  });
+  document.getElementById('pxApplyMarkup').addEventListener('click',function(){
+    var m=parseFloat(String(document.getElementById('pxMarkup').value).replace(/[^0-9.\-]/g,'')); if(isNaN(m))return;
+    var t=targetRows(); t.forEach(function(r){var buy=parseFloat(r.getAttribute('data-buy'))||0;r.querySelector('.px-new').value=(buy*(1+m/100)).toFixed(2);});
+    recalcImpact(); flash(t.length+' row'+(t.length===1?'':'s')+' set to cost +'+m+'% — review the impact, then Save changes');
+  });
+  function flash(msg){var n=document.getElementById('pxSaveNote');n.textContent=msg;n.style.color='#b45309';}
+  document.getElementById('pxCheckVisible').addEventListener('click',function(){visibleRows().forEach(function(r){r.querySelector('.px-check').checked=true;});});
+  document.getElementById('pxHead').addEventListener('change',function(e){visibleRows().forEach(function(r){r.querySelector('.px-check').checked=e.target.checked;});});
+  form.addEventListener('input',function(e){if(e.target.classList.contains('px-new'))recalcImpact();});
+  // On bulk Save, only POST rows that actually changed — disabling the inputs of unchanged
+  // rows keeps them out of the payload (avoids "payload too large" on big tables).
+  form.addEventListener('submit',function(){
+    allRows.forEach(function(r){
+      var v=String(r.querySelector('.px-new').value).replace(/[^0-9.\-]/g,'');
+      var cur=r.getAttribute('data-cursale');
+      var curNum=cur===''?NaN:parseFloat(cur);
+      var changed = v!=='' && (isNaN(curNum) || Math.abs(curNum-parseFloat(v))>=0.0001);
+      if(!changed){ r.querySelectorAll('input').forEach(function(i){i.disabled=true;}); }
+    });
+  });
+  // Per-row Apply — save just this line immediately (no full-page reload).
+  form.addEventListener('click',function(e){
+    var btn=e.target.closest('.px-apply'); if(!btn) return;
+    var r=btn.closest('tr.px-row'); var inp=r.querySelector('.px-new');
+    var v=String(inp.value).replace(/[^0-9.\-]/g,''); if(v===''){inp.focus();return;}
+    var sale=parseFloat(v); if(isNaN(sale))return;
+    var buy=parseFloat(r.getAttribute('data-buy'))||0, qty=parseFloat(r.getAttribute('data-qty'))||0;
+    var body=new URLSearchParams();
+    body.set('source', r.querySelector('input[name="row_source"]').value);
+    body.set('customer_id', r.querySelector('input[name="row_customer_id"]').value);
+    body.set('product_reference', r.querySelector('input[name="row_product_reference"]').value);
+    body.set('description', r.querySelector('input[name="row_description"]').value);
+    body.set('unit_cost', r.querySelector('input[name="row_unit_cost"]').value);
+    body.set('sale_price', sale.toFixed(4));
+    btn.disabled=true; btn.textContent='…';
+    fetch('/bureau/pricing/set',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest','Accept':'application/json'},body:body.toString()})
+      .then(function(res){return res.json();})
+      .then(function(d){
+        if(!d||!d.ok){throw new Error('save failed');}
+        var prof=(sale-buy)*qty;
+        r.querySelector('.px-cursale').textContent=gbp(sale);
+        var cp=r.querySelector('.px-curprofit'); cp.textContent=gbp(prof); cp.style.color=prof>=0?'#166534':'#b91c1c';
+        r.setAttribute('data-cursale',sale.toFixed(4)); r.setAttribute('data-curprofit',prof.toFixed(4));
+        r.querySelector('input[name="row_cur_sale"]').value=sale.toFixed(4);
+        r.setAttribute('data-status','priced');
+        btn.textContent='✓ Saved'; setTimeout(function(){btn.textContent='Apply';btn.disabled=false;},1200);
+        recalcImpact();
+      })
+      .catch(function(){btn.textContent='Error';btn.disabled=false;setTimeout(function(){btn.textContent='Apply';},1500);});
+  });
+  applyFilter(); recalcImpact();
+})();</script>
+
+<%- include('partials/footer') %>

@@ -1,0 +1,31 @@
+<%- include('header', { title: 'Lumen MSP', heading: greeting, subtitle: dateStr, user, active }) %>
+<div class="m-wrap">
+  <a href="/m/receipt" class="sheet" style="display:flex;align-items:center;gap:13px;padding:16px;background:#dbeafe;margin-bottom:14px;">
+    <i class="ti ti-receipt" style="font-size:28px;color:#1e40af;"></i>
+    <div style="flex:1;"><div style="font-size:16px;font-weight:600;color:#1e40af;">Log a receipt</div><div style="font-size:12px;color:#1e40af;opacity:.75;">Amount · category · photo</div></div>
+    <i class="ti ti-camera" style="font-size:24px;color:#1e40af;"></i>
+  </a>
+
+  <div style="display:flex;gap:12px;margin-bottom:16px;">
+    <a href="/m/support" class="sheet" style="flex:1;margin:0;padding:15px;"><div style="font-size:26px;font-weight:600;"><%= myCases %></div><div style="font-size:12px;color:#64748b;">My open cases</div></a>
+    <a href="/m/tasks" class="sheet" style="flex:1;margin:0;padding:15px;"><div style="font-size:26px;font-weight:600;"><%= tasksDue %></div><div style="font-size:12px;color:#64748b;">Tasks due</div></a>
+  </div>
+
+  <a href="/m/erecycling" class="sheet" style="display:flex;align-items:center;gap:13px;padding:16px;background:#d1fae5;margin-bottom:16px;">
+    <i class="ti ti-recycle" style="font-size:28px;color:#065f46;"></i>
+    <div style="flex:1;"><div style="font-size:16px;font-weight:600;color:#065f46;">E-Recycling</div><div style="font-size:12px;color:#065f46;opacity:.75;">Photograph kit · build collection</div></div>
+    <i class="ti ti-camera" style="font-size:24px;color:#065f46;"></i>
+  </a>
+
+  <div class="m-label">Jump to</div>
+  <div class="sheet">
+    <a class="row" href="/m/support"><i class="ti ti-headset ic"></i><div class="main"><div class="t">Support</div><div class="s">Your open cases</div></div><i class="ti ti-chevron-right chev"></i></a>
+    <a class="row" href="/m/erecycling"><i class="ti ti-recycle ic"></i><div class="main"><div class="t">E-Recycling</div><div class="s">Audit kit for disposal</div></div><i class="ti ti-chevron-right chev"></i></a>
+    <a class="row" href="/m/customers"><i class="ti ti-building ic"></i><div class="main"><div class="t">Customers</div><div class="s">Call &amp; map</div></div><i class="ti ti-chevron-right chev"></i></a>
+    <a class="row" href="/m/contacts"><i class="ti ti-user ic"></i><div class="main"><div class="t">Contacts</div><div class="s">Tap to dial</div></div><i class="ti ti-chevron-right chev"></i></a>
+    <a class="row" href="/m/tasks"><i class="ti ti-checkbox ic"></i><div class="main"><div class="t">Tasks</div><div class="s">Your to-do list</div></div><i class="ti ti-chevron-right chev"></i></a>
+    <a class="row" href="/quotes"><i class="ti ti-file-text ic"></i><div class="main"><div class="t">Quotes</div></div><i class="ti ti-chevron-right chev"></i></a>
+    <a class="row" href="/invoices"><i class="ti ti-coin ic"></i><div class="main"><div class="t">Invoices</div></div><i class="ti ti-chevron-right chev"></i></a>
+  </div>
+</div>
+<%- include('footer', { active }) %>

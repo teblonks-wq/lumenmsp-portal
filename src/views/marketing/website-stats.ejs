@@ -1,0 +1,84 @@
+<%- include('../partials/header', { title: 'Website Stats', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">← Marketing</a></p>
+  <h1 style="margin:0;">Website Stats</h1>
+  <p class="muted" style="margin:4px 0 0;">Page views and visitors from lumenmsp.co.uk (last 30 days).</p>
+</div>
+
+<% if (stats && stats.error) { %>
+  <div class="alert alert-error" style="max-width:760px;">Couldn't load stats: <%= stats.error %></div>
+<% } else { %>
+  <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:18px;">
+    <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">On site now</div><div style="font-size:30px;font-weight:800;color:#16a34a;"><%= stats.liveNow %></div></div>
+    <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Views today</div><div style="font-size:30px;font-weight:800;"><%= stats.today %></div></div>
+    <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Last 7 days</div><div style="font-size:30px;font-weight:800;"><%= stats.last7 %></div></div>
+    <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Last 30 days</div><div style="font-size:30px;font-weight:800;"><%= stats.last30 %></div></div>
+    <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Unique visitors (30d)</div><div style="font-size:30px;font-weight:800;"><%= stats.uniques30 %></div></div>
+  </div>
+
+  <% var max = Math.max.apply(null, stats.byDay.map(function(d){ return d.n; }).concat([1])); %>
+  <div class="card" style="margin-bottom:18px;">
+    <div class="card-header"><h2 style="margin:0;">Views — last 14 days</h2></div>
+    <div style="display:flex;align-items:flex-end;gap:6px;height:160px;margin-top:14px;">
+      <% stats.byDay.forEach(function(d){ var h = Math.round((d.n/max)*140); %>
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;" title="<%= d.label %>: <%= d.n %> views">
+          <div style="font-size:11px;color:#64748b;"><%= d.n %></div>
+          <div style="width:100%;height:<%= h %>px;background:linear-gradient(180deg,#2563eb,#10b981);border-radius:4px 4px 0 0;min-height:2px;"></div>
+          <div style="font-size:10px;color:#94a3b8;white-space:nowrap;transform:rotate(-30deg);transform-origin:center;"><%= d.label %></div>
+        </div>
+      <% }); %>
+    </div>
+  </div>
+
+  <div class="card-grid" style="grid-template-columns:1fr 1fr;align-items:start;">
+    <div class="card" style="padding:0;">
+      <div class="card-header" style="padding:16px 20px;"><h2 style="margin:0;">Top pages</h2></div>
+      <% if (!stats.topPages.length) { %><p class="muted" style="padding:0 20px 16px;margin:0;">No data yet.</p>
+      <% } else { %><div class="table-wrap"><table class="table" style="margin:0;"><tbody>
+        <% stats.topPages.forEach(function(p){ %><tr><td><%= p.page %></td><td style="text-align:right;font-weight:600;"><%= p.n %></td></tr><% }); %>
+      </tbody></table></div><% } %>
+    </div>
+    <div class="card" style="padding:0;">
+      <div class="card-header" style="padding:16px 20px;"><h2 style="margin:0;">Top sources</h2></div>
+      <% if (!stats.topReferrers.length) { %><p class="muted" style="padding:0 20px 16px;margin:0;">No data yet.</p>
+      <% } else { %><div class="table-wrap"><table class="table" style="margin:0;"><tbody>
+        <% stats.topReferrers.forEach(function(r){ %><tr><td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><%= r.referrer %></td><td style="text-align:right;font-weight:600;"><%= r.n %></td></tr><% }); %>
+      </tbody></table></div><% } %>
+    </div>
+  </div>
+
+  <!-- Unique visitors (filterable) -->
+  <% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : ''; }
+     function dur(s){ return s ? (s>=3600? Math.floor(s/3600)+'h '+Math.floor((s%3600)/60)+'m' : s>=60? Math.floor(s/60)+'m' : s+'s') : '—'; } %>
+  <div class="card" style="padding:0;margin-top:18px;">
+    <div class="card-header" style="padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+      <h2 style="margin:0;">Unique visitors <span class="muted" style="font-weight:400;font-size:14px;">(<%= visitors.length %>)</span></h2>
+      <div style="display:flex;gap:6px;">
+        <a class="btn <%= period==='today'?'btn-primary':'' %>" href="/marketing/website-stats?period=today" style="padding:5px 12px;font-size:13px;">Today</a>
+        <a class="btn <%= period==='week'?'btn-primary':'' %>" href="/marketing/website-stats?period=week" style="padding:5px 12px;font-size:13px;">This week</a>
+        <a class="btn <%= period==='month'?'btn-primary':'' %>" href="/marketing/website-stats?period=month" style="padding:5px 12px;font-size:13px;">This month</a>
+      </div>
+    </div>
+    <% if (!visitors.length) { %>
+      <p class="muted" style="padding:0 20px 16px;margin:0;">No visitors in this period.</p>
+    <% } else { %>
+      <div class="table-wrap"><table class="table" style="margin:0;">
+        <thead><tr><th>Visitor</th><th>IP</th><th style="text-align:right;">Views</th><th>Pages seen</th><th>Last seen</th></tr></thead>
+        <tbody>
+          <% visitors.forEach(function(v){ %>
+            <tr>
+              <td><strong><%= [v.device, v.browser].filter(Boolean).join(' · ') || 'Unknown' %></strong><div class="muted" style="font-size:12px;"><%= v.os || '' %><% if (v.lang) { %> · <%= v.lang %><% } %></div></td>
+              <td class="muted" style="font-size:13px;white-space:nowrap;"><%= v.ip || '—' %></td>
+              <td style="text-align:right;font-weight:600;"><%= v.views %></td>
+              <td class="muted" style="font-size:12px;max-width:300px;"><%= (v.pages || []).filter(Boolean).join(', ') %></td>
+              <td class="muted" style="font-size:12px;white-space:nowrap;"><%= dt(v.last_seen) %><div style="font-size:11px;">on site <%= dur(v.span_secs) %></div></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table></div>
+    <% } %>
+  </div>
+<% } %>
+
+<%- include('../partials/footer') %>

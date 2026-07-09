@@ -1,0 +1,33 @@
+<%- include('../partials/header', { title: 'Mail', user }) %>
+<% var path = { quote:'/quotes/', invoice:'/invoices/', customer:'/customers/' }; %>
+
+<div class="page-header"><h1>Mail</h1><p class="muted">Incoming messages — open to read, reply, delete or transfer to support</p></div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th></th><th>From</th><th>Subject</th><th>Record</th><th>Received</th><th></th></tr></thead>
+      <tbody>
+        <% if (items.length===0) { %><tr><td colspan="6"><div class="empty-state">No incoming mail. Replies sync in from sp@ automatically.</div></td></tr><% } %>
+        <% items.forEach(function(m){ %>
+          <tr style="<%= m.is_unread ? 'font-weight:600;' : '' %>cursor:pointer;" onclick="location.href='/mail/<%= m.id %>'">
+            <td style="width:24px;"><% if (m.is_unread) { %><span class="badge badge-primary">●</span><% } %></td>
+            <td><%= m.from_name || m.from_email || '—' %></td>
+            <td><a class="row-link" href="/mail/<%= m.id %>"><%= m.subject || '(no subject)' %></a></td>
+            <td onclick="event.stopPropagation();">
+              <% if (path[m.entity_type]) { %><a class="row-link" href="<%= path[m.entity_type] %><%= m.entity_id %>#comms"><%= m.entity_type %> #<%= m.entity_id %></a>
+              <% } else { %><span class="muted">unmatched</span><% } %>
+            </td>
+            <td class="muted"><%= new Date(m.created_at).toLocaleString('en-GB') %></td>
+            <td style="text-align:right;white-space:nowrap;" onclick="event.stopPropagation();">
+              <a class="btn" href="/mail/<%= m.id %>">Open</a>
+              <form method="post" action="/comms/<%= m.id %>/delete" style="display:inline;" onsubmit="return confirm('Delete this message?');"><button class="btn" type="submit">Delete</button></form>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

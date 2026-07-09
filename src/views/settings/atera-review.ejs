@@ -1,0 +1,110 @@
+<%- include('../partials/header', { title: 'Atera review', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">← Integrations</a></p>
+    <h1>Atera — review clients &amp; contacts</h1>
+    <p class="muted">Pulled <%= counts.aCustomers %> customers and <%= counts.aContacts %> contacts from Atera. Tick what to bring in. Existing key contacts are never touched; existing fields are only filled where blank.</p>
+  </div>
+</div>
+
+<% if (typeof notice!=='undefined' && notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (typeof msg!=='undefined' && msg) { %><div class="alert alert-success" style="max-width:900px;"><%= msg %></div><% } %>
+
+<form method="post" action="/settings/atera/apply">
+  <!-- New clients -->
+  <div class="card" style="padding:0;margin-bottom:16px;">
+    <div class="card-header" style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;">
+      <h2 style="margin:0;">New clients <span class="muted" style="font-weight:400;">(<%= newClients.length %>)</span></h2>
+      <% if (newClients.length) { %><label class="muted" style="font-size:12px;"><input type="checkbox" onclick="document.querySelectorAll('.cl-chk').forEach(c=>c.checked=this.checked)"> select all</label><% } %>
+    </div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th style="width:34px;"></th><th>Name</th><th>Phone</th><th>Domain</th><th>Location</th><th></th></tr></thead>
+      <tbody>
+        <% if (!newClients.length) { %><tr><td colspan="6"><div class="empty-state">No new clients — all Atera customers already match. 🎉</div></td></tr><% } %>
+        <% newClients.forEach(function(c){ %>
+          <tr>
+            <td style="text-align:center;"><input class="cl-chk" type="checkbox" name="create_client" value="<%= c.ateraId %>" checked></td>
+            <td><strong><%= c.name %></strong></td>
+            <td class="muted"><%= c.phone || '—' %></td>
+            <td class="muted"><%= c.domain || '—' %></td>
+            <td class="muted" style="font-size:12px;"><%= [c.address, c.city, c.postcode].filter(Boolean).join(', ') || '—' %></td>
+            <td style="text-align:right;"><button type="submit" class="btn" formaction="/settings/atera/ignore-client" formmethod="post" name="atera_id" value="<%= c.ateraId %>" title="Hide from this list">Ignore</button></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </div>
+
+  <!-- New contacts -->
+  <div class="card" style="padding:0;margin-bottom:16px;">
+    <div class="card-header" style="padding:16px 20px;"><h2 style="margin:0;">New contacts <span class="muted" style="font-weight:400;">(<%= newContacts.length %>)</span></h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th style="min-width:240px;">Assign to client</th></tr></thead>
+      <tbody>
+        <% if (!newContacts.length) { %><tr><td colspan="4"><div class="empty-state">No new contacts.</div></td></tr><% } %>
+        <% newContacts.forEach(function(c){ %>
+          <tr>
+            <td><%= c.fullName %><% if (c.jobTitle) { %> <span class="muted" style="font-size:12px;">· <%= c.jobTitle %></span><% } %></td>
+            <td class="muted"><%= c.email || '—' %></td>
+            <td class="muted"><%= c.phone || c.mobile || '—' %></td>
+            <td>
+              <select class="input" name="contact[<%= c.ateraId %>]" style="width:100%;max-width:280px;">
+                <option value="">— don't import —</option>
+                <% if (c.intoNewClient) { %><option value="new:<%= c.customerAteraId %>" <%= c.defaultTarget===('new:'+c.customerAteraId)?'selected':'' %>>★ New client: <%= c.customerName %></option><% } %>
+                <% customers.forEach(function(cu){ %><option value="<%= cu.id %>" <%= c.defaultTarget===String(cu.id)?'selected':'' %>><%= cu.name %></option><% }); %>
+              </select>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+    <p class="muted" style="padding:0 20px 12px;font-size:12px;">Pick the portal client each contact belongs to (defaults to its Atera client). "★ New client" needs that client ticked above.</p>
+  </div>
+
+  <!-- Ignored clients -->
+  <% if (ignoredClients && ignoredClients.length) { %>
+  <div class="card" style="padding:0;margin-bottom:16px;">
+    <div class="card-header" style="padding:16px 20px;"><h2 style="margin:0;">Ignored clients <span class="muted" style="font-weight:400;">(<%= ignoredClients.length %>)</span></h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Name</th><th>Phone</th><th>Domain</th><th></th></tr></thead>
+      <tbody>
+        <% ignoredClients.forEach(function(c){ %>
+          <tr>
+            <td class="muted"><%= c.name %></td>
+            <td class="muted"><%= c.phone || '—' %></td>
+            <td class="muted"><%= c.domain || '—' %></td>
+            <td style="text-align:right;"><button type="submit" class="btn" formaction="/settings/atera/unignore-client" formmethod="post" name="atera_id" value="<%= c.ateraId %>">Restore</button></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </div>
+  <% } %>
+
+  <!-- Fill blanks on existing clients -->
+  <% if (fillClients.length) { %>
+  <div class="card" style="padding:0;margin-bottom:16px;">
+    <div class="card-header" style="padding:16px 20px;"><h2 style="margin:0;">Fill missing details on existing clients <span class="muted" style="font-weight:400;">(<%= fillClients.length %>)</span></h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th style="width:34px;"></th><th>Client</th><th>Will fill</th></tr></thead>
+      <tbody>
+        <% fillClients.forEach(function(c){ %>
+          <tr>
+            <td style="text-align:center;"><input type="checkbox" name="fill_client" value="<%= c.ateraId %>" checked></td>
+            <td><a class="row-link" href="/customers/<%= c.customerId %>"><%= c.name %></a></td>
+            <td class="muted" style="font-size:13px;"><% Object.keys(c.fills).forEach(function(k){ %><%= k %>: <strong><%= c.fills[k] %></strong>&nbsp;&nbsp;<% }); %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </div>
+  <% } %>
+
+  <div style="display:flex;gap:8px;">
+    <button class="btn btn-primary" type="submit">Apply selected</button>
+    <a class="btn" href="/settings/integrations">Cancel</a>
+  </div>
+</form>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,46 @@
+<%- include('../partials/header', { title: 'Merge customer', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/customers/<%= src.id %>">← <%= src.name %></a></p>
+  <h1>Merge customer</h1>
+  <p class="muted">Fold <strong><%= src.name %></strong> into another customer. All its contacts, sites, tickets, quotes, invoices, passwords and history move across, and <strong><%= src.name %></strong> is moved to the recycle bin.</p>
+</div>
+
+<% if (typeof error!=='undefined' && error) { %><div class="alert alert-error" style="max-width:720px;"><%= error %></div><% } %>
+
+<form method="post" action="/customers/<%= src.id %>/merge" onsubmit="return document.querySelector('input[name=target_id]:checked') ? confirm('Merge \'<%= src.name.replace(/'/g,"") %>\' into the selected customer? This moves everything across and recycle-bins the duplicate.') : (alert('Pick a customer to merge into.'), false);" style="max-width:720px;">
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+      <h2 style="margin:0;">Keep (merge into)</h2>
+      <input class="input" id="mfilter" placeholder="Filter customers…" style="max-width:240px;padding:6px 10px;">
+    </div>
+    <div class="table-wrap" style="max-height:60vh;overflow:auto;">
+      <table class="table">
+        <tbody>
+          <% others.forEach(function(c){ %>
+            <tr class="mrow">
+              <td style="width:36px;text-align:center;"><input type="radio" name="target_id" value="<%= c.id %>"></td>
+              <td><strong><%= c.name %></strong><% if (c.account_number) { %> <span class="muted" style="font-size:12px;">· <%= c.account_number %></span><% } %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;margin-top:12px;">
+    <button class="btn btn-primary" type="submit">Merge</button>
+    <a class="btn" href="/customers/<%= src.id %>">Cancel</a>
+  </div>
+</form>
+
+<script>
+  document.getElementById('mfilter').addEventListener('input', function(){
+    var q=this.value.toLowerCase();
+    document.querySelectorAll('.mrow').forEach(function(tr){ tr.style.display = (!q || tr.textContent.toLowerCase().indexOf(q)>=0) ? '' : 'none'; });
+  });
+  document.querySelectorAll('.mrow td:not(:first-child)').forEach(function(td){
+    td.addEventListener('click', function(){ td.parentNode.querySelector('input[type=radio]').checked = true; });
+  });
+</script>
+
+<%- include('../partials/footer') %>

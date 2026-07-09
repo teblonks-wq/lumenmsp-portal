@@ -1,0 +1,47 @@
+<%- include('../partials/header', { title: 'Quotes', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
+<% function badge(s){ return s==='accepted'?'badge-sent':s==='sent'?'badge-primary':s==='lost'?'badge-failed':'badge-inactive'; } %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><h1>Quotes</h1><p class="muted"><%= quotes.length %> shown</p></div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <form method="get" action="/quotes" style="display:flex;gap:8px;align-items:center;">
+      <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search number, title, customer…" style="min-width:240px;">
+      <% if (status) { %><input type="hidden" name="status" value="<%= status %>"><% } %>
+      <button class="btn" type="submit">Search</button>
+      <% if (search) { %><a class="btn" href="/quotes<%= status ? '?status=' + status : '' %>">Clear</a><% } %>
+    </form>
+    <a class="btn btn-primary" href="/quotes/new">+ New quote</a>
+  </div>
+</div>
+
+<div class="tabs" style="margin-bottom:16px;">
+  <a class="tab-btn <%= status==='' ? 'active' : '' %>" href="/quotes">All</a>
+  <% ['draft','sent','accepted','lost'].forEach(function(s){ %>
+    <a class="tab-btn <%= status===s ? 'active' : '' %>" href="/quotes?status=<%= s %>"><%= s.charAt(0).toUpperCase()+s.slice(1) %> <span class="muted">(<%= statusCounts[s]||0 %>)</span></a>
+  <% }); %>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Number</th><th>Title</th><th>Customer</th><th>Status</th><th style="text-align:right;">Total</th><th>Issued</th><th>Valid until</th></tr></thead>
+      <tbody>
+        <% if (quotes.length===0) { %><tr><td colspan="7"><div class="empty-state">No quotes.</div></td></tr><% } %>
+        <% quotes.forEach(function(q){ %>
+          <tr>
+            <td><a class="row-link" href="/quotes/<%= q.id %>"><%= q.quote_number %></a></td>
+            <td><%= q.title %></td>
+            <td class="muted"><% if (q.customer_id) { %><a class="row-link" href="/customers/<%= q.customer_id %>"><%= q.customer_name %></a><% } else { %>—<% } %></td>
+            <td><span class="badge <%= badge(q.status) %>"><%= q.status.charAt(0).toUpperCase()+q.status.slice(1) %></span></td>
+            <td style="text-align:right;"><%= money(q.total) %></td>
+            <td class="muted"><%= q.issue_date ? new Date(q.issue_date).toLocaleDateString('en-GB') : '—' %></td>
+            <td class="muted"><%= q.valid_until ? new Date(q.valid_until).toLocaleDateString('en-GB') : '—' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

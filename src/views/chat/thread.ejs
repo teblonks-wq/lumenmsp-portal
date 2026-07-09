@@ -1,0 +1,98 @@
+<%- include('../partials/header', { title: 'Chat — ' + (s.name || 'Visitor'), user }) %>
+<%
+  function tm(x){ var d=new Date(x); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+  var lastId = messages.length ? messages[messages.length-1].id : 0;
+%>
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/chat">← Chat</a></p>
+  <h1 style="margin:0;"><%= s.name || s.email || 'Visitor' %>
+    <span class="badge <%= s.department==='sales'?'badge-sent':'badge-primary' %>" style="vertical-align:middle;"><%= s.department || 'support' %></span>
+    <% if (s.status==='closed') { %><span class="badge badge-inactive" style="vertical-align:middle;">closed</span><% } %>
+  </h1>
+  <p class="muted" style="margin:4px 0 0;"><%= s.email || 'no email' %><% if (s.phone) { %> · <%= s.phone %><% } %><% if (s.origin) { %> · from <%= s.origin %><% } %></p>
+</div>
+
+<% if (typeof qerr !== 'undefined' && qerr) { %><div class="alert alert-error" style="max-width:900px;"><%= qerr %></div><% } %>
+
+<div class="card-grid" style="grid-template-columns:1fr 300px;align-items:start;gap:18px;">
+  <div class="card" style="padding:0;display:flex;flex-direction:column;height:560px;">
+    <div id="thread" style="flex:1;overflow-y:auto;padding:16px;background:#f8fafc;">
+      <% messages.forEach(function(m){ var side = m.sender==='agent'?'me':(m.sender==='visitor'?'them':'sys'); %>
+        <div class="cmsg <%= side %>" style="margin:0 0 10px;display:flex;<%= side==='me'?'justify-content:flex-end':(side==='sys'?'justify-content:center':'justify-content:flex-start') %>;">
+          <div style="max-width:78%;padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.4;white-space:pre-wrap;<%= side==='me'?'background:#2563eb;color:#fff;':(side==='sys'?'background:#e2e8f0;color:#475569;font-size:12px;':'background:#fff;color:#0f172a;border:1px solid #e2e8f0;') %>"><%= m.body %></div>
+        </div>
+      <% }); %>
+    </div>
+    <% if (s.status !== 'closed') { %>
+    <form id="replyForm" style="display:flex;gap:8px;padding:12px;border-top:1px solid #e2e8f0;margin:0;">
+      <input id="replyInput" class="input" placeholder="Type your reply…" autocomplete="off" style="flex:1;">
+      <button class="btn btn-primary" type="submit">Send</button>
+    </form>
+    <% } else { %><div style="padding:12px;border-top:1px solid #e2e8f0;" class="muted">This chat is closed.</div><% } %>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-header"><h2 style="margin:0;font-size:15px;">Convert</h2></div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px;">
+        <form method="post" action="/chat/<%= s.id %>/create-ticket" style="margin:0;"><button class="btn btn-primary" style="width:100%;" type="submit">🎫 Create Ticket</button></form>
+        <form method="post" action="/chat/<%= s.id %>/create-lead" style="margin:0;"><button class="btn" style="width:100%;" type="submit">🌱 Create Lead</button></form>
+        <form method="post" action="/chat/<%= s.id %>/create-quote" style="margin:0;"><button class="btn" style="width:100%;" type="submit">📄 Create Quote</button></form>
+      </div>
+      <% if (s.created_ticket_id || s.created_lead_id) { %>
+        <p class="muted" style="font-size:12px;margin:10px 0 0;">
+          <% if (s.created_ticket_id) { %>Ticket <a class="row-link" href="/tickets/<%= s.created_ticket_id %>">#<%= s.created_ticket_id %></a> created. <% } %>
+          <% if (s.created_lead_id) { %>Lead <a class="row-link" href="/leads/<%= s.created_lead_id %>">#<%= s.created_lead_id %></a> created.<% } %>
+        </p>
+      <% } %>
+    </div>
+    <div class="card">
+      <div class="card-header"><h2 style="margin:0;font-size:15px;">Visitor</h2></div>
+      <table class="table" style="margin:0;"><tbody>
+        <tr><th style="width:34%;">Name</th><td><%= s.name || '—' %></td></tr>
+        <tr><th>Email</th><td><%= s.email || '—' %></td></tr>
+        <tr><th>Phone</th><td><%= s.phone || '—' %></td></tr>
+        <tr><th>Device</th><td><%= [s.device, s.browser, s.os].filter(Boolean).join(' · ') || '—' %></td></tr>
+        <tr><th>IP</th><td><%= s.ip || '—' %></td></tr>
+        <% if (s.origin) { %><tr><th>From</th><td style="font-size:12px;word-break:break-all;"><%= s.origin %></td></tr><% } %>
+        <% if (s.customer_id) { %><tr><th>Customer</th><td><a class="row-link" href="/customers/<%= s.customer_id %>">view</a></td></tr><% } %>
+      </tbody></table>
+      <% if (s.status !== 'closed') { %>
+      <form method="post" action="/chat/<%= s.id %>/close" style="margin:12px 0 0;" onsubmit="return confirm('Close this chat?');"><button class="btn" style="width:100%;" type="submit">End chat</button></form>
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var thread = document.getElementById('thread');
+  var form = document.getElementById('replyForm');
+  var input = document.getElementById('replyInput');
+  var lastId = <%= lastId %>;
+  var SID = <%= s.id %>;
+  thread.scrollTop = thread.scrollHeight;
+  function bubble(m){
+    var side = m.sender==='agent'?'me':(m.sender==='visitor'?'them':'sys');
+    var inner = side==='me'?'background:#2563eb;color:#fff;':(side==='sys'?'background:#e2e8f0;color:#475569;font-size:12px;':'background:#fff;color:#0f172a;border:1px solid #e2e8f0;');
+    var wrap = side==='me'?'justify-content:flex-end':(side==='sys'?'justify-content:center':'justify-content:flex-start');
+    var d=document.createElement('div'); d.className='cmsg '+side; d.style.cssText='margin:0 0 10px;display:flex;'+wrap+';';
+    d.innerHTML='<div style="max-width:78%;padding:9px 12px;border-radius:14px;font-size:14px;line-height:1.4;white-space:pre-wrap;'+inner+'"></div>';
+    d.querySelector('div').textContent=m.body; thread.appendChild(d); thread.scrollTop=thread.scrollHeight;
+  }
+  function poll(){
+    fetch('/chat/'+SID+'/poll?since='+lastId).then(function(r){return r.json();}).then(function(j){
+      (j.messages||[]).forEach(function(m){ lastId=Math.max(lastId,m.id); bubble(m); });
+      if (j.status==='closed' && form) { form.style.display='none'; }
+    }).catch(function(){});
+  }
+  setInterval(poll, 3000);
+  if (form) form.addEventListener('submit', function(e){
+    e.preventDefault(); var t=input.value.trim(); if(!t) return; input.value='';
+    fetch('/chat/'+SID+'/reply',{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'fetch'},body:JSON.stringify({body:t})})
+      .then(function(){ poll(); }).catch(function(){});
+  });
+})();
+</script>
+
+<%- include('../partials/footer') %>

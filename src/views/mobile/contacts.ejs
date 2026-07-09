@@ -1,0 +1,22 @@
+<%- include('header', { title: 'Contacts', heading: 'Contacts', user, active }) %>
+<% function tel(p){ var n=String(p||'').replace(/[^0-9+]/g,''); if(n.indexOf('+44')===0)n='0'+n.slice(3); else if(n.indexOf('0044')===0)n='0'+n.slice(4); return 'tel:' + (n ? '141'+n : ''); } %>
+<form class="m-search" method="get" action="/m/contacts">
+  <i class="ti ti-search ic"></i>
+  <input type="search" name="q" value="<%= search %>" placeholder="Search name, company, number…" autocomplete="off">
+</form>
+<div class="m-wrap" style="padding-top:0;">
+  <% if (!(list||[]).length) { %><div class="empty">No contacts found.</div><% } %>
+  <div class="sheet">
+    <% (list||[]).forEach(function(p){ var dial = p.mobile_phone || p.phone; %>
+    <div class="row">
+      <a class="main" href="/m/customers/<%= p.customer_id %>" style="display:block;">
+        <div class="t"><%= p.full_name %></div>
+        <div class="s"><%= p.customer_name %><% if (p.job_title) { %> · <%= p.job_title %><% } %><% if (dial) { %> · <i class="ti ti-phone" style="font-size:13px;vertical-align:-1px;"></i> <%= dial %><% } %></div>
+      </a>
+      <% if (dial) { %><a class="call" href="<%= tel(dial) %>" aria-label="Call <%= p.full_name %> (number withheld)"><i class="ti ti-phone"></i></a><% } %>
+      <% if (p.email) { %><a class="call" href="mailto:<%= p.email %>" style="color:#475569;" aria-label="Email"><i class="ti ti-mail"></i></a><% } %>
+    </div>
+    <% }); %>
+  </div>
+</div>
+<%- include('footer', { active }) %>

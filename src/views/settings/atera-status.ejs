@@ -1,0 +1,49 @@
+<%- include('../partials/header', { title: 'Atera Status MAP', user }) %>
+<% function cap(s){ return s ? String(s).replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">← Integrations</a></p>
+  <h1>Atera — Status MAP</h1>
+  <p class="muted">Map each Atera ticket status to a portal status, stage and department. Used when importing tickets.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+
+<form method="post" action="/settings/atera/status-map" style="max-width:900px;">
+  <div class="card" style="padding:0;">
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Atera status</th><th>→ Portal status</th><th>Stage</th><th>Department</th></tr></thead>
+        <tbody>
+          <% Object.keys(map).sort().forEach(function(k){ var t = map[k]; %>
+            <tr>
+              <td><input class="input" name="atera" value="<%= k %>" style="min-width:200px;"></td>
+              <td>
+                <select class="input" name="status" style="width:auto;">
+                  <% statuses.forEach(function(s){ %><option value="<%= s %>" <%= t.status===s?'selected':'' %>><%= cap(s) %></option><% }); %>
+                </select>
+              </td>
+              <td><input class="input" name="stage" value="<%= t.stage %>" style="width:auto;min-width:150px;"></td>
+              <td>
+                <select class="input" name="department" style="width:auto;">
+                  <% departments.forEach(function(d){ %><option value="<%= d %>" <%= t.department===d?'selected':'' %>><%= cap(d) %></option><% }); %>
+                </select>
+              </td>
+            </tr>
+          <% }); %>
+          <!-- Add a new mapping -->
+          <tr style="background:#f9fafb;">
+            <td><input class="input" name="new_atera" placeholder="+ new Atera status…" style="min-width:200px;"></td>
+            <td><select class="input" name="new_status" style="width:auto;"><% statuses.forEach(function(s){ %><option value="<%= s %>"><%= cap(s) %></option><% }); %></select></td>
+            <td><input class="input" name="new_stage" value="in_progress" style="width:auto;min-width:150px;"></td>
+            <td><select class="input" name="new_department" style="width:auto;"><% departments.forEach(function(d){ %><option value="<%= d %>"><%= cap(d) %></option><% }); %></select></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <p class="muted" style="font-size:12px;margin:8px 0;">To remove a mapping, clear its Atera status box and save. Unmapped Atera statuses default to Open · support.</p>
+  <button class="btn btn-primary" type="submit">Save status map</button>
+</form>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,69 @@
+<%- include('../partials/header', { title: 'New lead', user }) %>
+<% function cap(s){ return s ? s.replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/leads">← Leads</a></p>
+  <h1>New lead</h1>
+  <p class="muted">Create a new prospect, or attach a lead to an existing customer. Contacts, comms and quotes live on the customer.</p>
+</div>
+
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error" style="max-width:720px;"><%= error %></div><% } %>
+
+<form method="post" action="/leads" style="max-width:720px;">
+  <div class="card">
+    <div class="card-header"><h2>Prospect</h2></div>
+    <div class="form-group">
+      <label>Existing customer (optional)</label>
+      <select class="input" name="customer_id" id="customer_id">
+        <option value="">— create a new prospect below —</option>
+        <% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= presetCustomer===c.id?'selected':'' %>><%= c.name %></option><% }); %>
+      </select>
+      <p class="muted" style="font-size:12px;margin:4px 0 0;">Pick a customer to attach this lead to them, or leave blank and fill in the new prospect.</p>
+    </div>
+    <div id="new-prospect">
+      <div class="form-group"><label>Company name</label><input class="input" name="company_name" placeholder="Prospect company"></div>
+      <div class="card-grid" style="grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="form-group"><label>Primary contact name</label><input class="input" name="contact_name" placeholder="Optional"></div>
+        <div class="form-group"><label>Phone</label><input class="input" name="phone" placeholder="Optional"></div>
+      </div>
+      <div class="form-group"><label>Email</label><input class="input" type="email" name="email" placeholder="Optional"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>Lead</h2></div>
+    <div class="card-grid" style="grid-template-columns:1fr 1fr;gap:12px;">
+      <div class="form-group"><label>Source</label><input class="input" name="source" placeholder="referral, website, cold call…"></div>
+      <div class="form-group"><label>Stage</label>
+        <select class="input" name="status">
+          <% STAGES.forEach(function(s){ %><option value="<%= s %>" <%= s==='new'?'selected':'' %>><%= cap(s) %></option><% }); %>
+        </select>
+      </div>
+      <div class="form-group"><label>Services interested in</label><input class="input" name="services_interested" placeholder="M365, VoIP, broadband…"></div>
+      <div class="form-group"><label>Estimated value (£)</label><input class="input" name="estimated_value" type="number" step="0.01"></div>
+      <div class="form-group"><label>Owner</label>
+        <select class="input" name="owner_user_id">
+          <option value="">— assign to me —</option>
+          <% users.forEach(function(u){ %><option value="<%= u.id %>" <%= u.id===user.id?'selected':'' %>><%= u.display_name %></option><% }); %>
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label>Details / notes</label><textarea class="input" name="details" rows="4" placeholder="Context, requirements, next steps…"></textarea></div>
+  </div>
+
+  <div style="display:flex;gap:8px;">
+    <button class="btn btn-primary" type="submit">Create lead</button>
+    <a class="btn" href="/leads">Cancel</a>
+  </div>
+</form>
+
+<script>
+  (function(){
+    var sel = document.getElementById('customer_id');
+    var box = document.getElementById('new-prospect');
+    function toggle(){ box.style.display = sel.value ? 'none' : 'block'; }
+    sel.addEventListener('change', toggle); toggle();
+  })();
+</script>
+
+<%- include('../partials/footer') %>

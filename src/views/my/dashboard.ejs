@@ -1,0 +1,53 @@
+<%- include('header', { title: 'My Account', company, user, active }) %>
+<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); } %>
+<% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
+<% var P = (typeof perms !== 'undefined' && perms) ? perms : {}; %>
+
+<div class="page-header"><h1><%= greeting %></h1><p class="muted"><%= company %></p></div>
+
+<div class="grid">
+  <a class="stat" href="/my/tickets">
+    <div class="n"><%= openTickets %></div>
+    <div class="l"><%= P.allTickets ? 'Open company tickets' : 'Your open tickets' %></div>
+  </a>
+  <% if (P.finance) { %>
+  <a class="stat" href="/my/invoices">
+    <div class="n"><%= unpaidInvoices %></div>
+    <div class="l">Outstanding invoices</div>
+  </a>
+  <% } %>
+  <% if (P.services) { %>
+  <a class="stat" href="/my/services">
+    <div class="n"><%= services %></div>
+    <div class="l">Active services</div>
+  </a>
+  <% } %>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Recent support tickets</h2>
+    <a class="btn btn-primary" href="/my/tickets/new">+ Raise a ticket</a>
+  </div>
+  <% if (!recentTickets || recentTickets.length === 0) { %>
+    <div class="empty">No tickets yet. Need a hand? <a class="row-link" href="/my/tickets/new">Raise a ticket</a>.</div>
+  <% } else { %>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Ref</th><th>Subject</th><th>Status</th><th>Updated</th></tr></thead>
+        <tbody>
+          <% recentTickets.forEach(function(t){ %>
+            <tr>
+              <td><a class="row-link" href="/my/tickets/<%= t.id %>"><%= t.ticket_number || ('#' + t.id) %></a></td>
+              <td><a class="row-link" href="/my/tickets/<%= t.id %>" style="color:inherit;"><%= t.subject || '(no subject)' %></a></td>
+              <td><span class="badge <%= sbadge(t.status) %>"><%= cap(t.status || 'open') %></span></td>
+              <td class="muted"><%= t.updated_at ? new Date(t.updated_at).toLocaleDateString('en-GB') : '' %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+
+<%- include('footer', { active }) %>

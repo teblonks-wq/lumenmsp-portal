@@ -1,0 +1,59 @@
+<%
+// stats, recentReports, flash, error are always supplied by the route.
+const fmt = d => d ? new Date(d).toLocaleString('en-GB', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+const repRows = recentReports.map(r => `
+  <tr>
+    <td style="font-size:13px;">${fmt(r.created_at)}</td>
+    <td style="font-size:13px;">${r.customer_name || ''} — ${r.config_label || r.report_type}</td>
+    <td><span class="badge ${r.status === 'sent' ? 'badge-sent' : r.status === 'generated' ? 'badge-primary' : 'badge-inactive'}">${r.status}</span></td>
+    <td><a href="/insights/reports/${r.id}" target="_blank" class="btn-secondary" style="font-size:12px;padding:4px 10px;">Open</a></td>
+  </tr>
+`).join('');
+%>
+<%- include('_layout', { title: 'Admin', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
+  <div>
+    <h1>Admin</h1>
+    <p class="muted">System overview</p>
+  </div>
+  <div style="display:flex;gap:10px;">
+    <a href="/insights/customers" class="btn-secondary">Customers</a>
+    <a href="/insights/reports" class="btn-secondary">Reports</a>
+  </div>
+</div>
+
+${flash ? `<div class="alert alert-success">${flash}</div>` : ''}
+${error ? `<div class="alert alert-error">${error}</div>` : ''}
+
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px;">
+  <div class="card" style="text-align:center;padding:20px;margin-bottom:0;">
+    <div style="font-size:36px;font-weight:800;color:var(--accent);">${stats.customers}</div>
+    <div class="muted" style="font-size:13px;margin-top:4px;">Active Customers</div>
+  </div>
+  <div class="card" style="text-align:center;padding:20px;margin-bottom:0;">
+    <div style="font-size:36px;font-weight:800;color:var(--accent);">${stats.users}</div>
+    <div class="muted" style="font-size:13px;margin-top:4px;">Active Users</div>
+  </div>
+  <div class="card" style="text-align:center;padding:20px;margin-bottom:0;">
+    <div style="font-size:36px;font-weight:800;color:var(--accent);">${stats.sites}</div>
+    <div class="muted" style="font-size:13px;margin-top:4px;">Active Sites</div>
+  </div>
+  <div class="card" style="text-align:center;padding:20px;margin-bottom:0;">
+    <div style="font-size:36px;font-weight:800;color:var(--accent);">${stats.reports}</div>
+    <div class="muted" style="font-size:13px;margin-top:4px;">Generated Reports</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Recent Reports</h2>
+    <a href="/insights/reports" class="btn-secondary" style="font-size:12px;padding:4px 10px;">View all</a>
+  </div>
+  ${recentReports.length === 0
+    ? '<div class="empty-state"><p class="muted">No reports generated yet.</p></div>'
+    : `<div class="table-wrap"><table class="table">
+        <thead><tr><th>Created</th><th>Report</th><th>Status</th><th></th></tr></thead>
+        <tbody>${repRows}</tbody>
+       </table></div>`}
+</div>
+` }) %>

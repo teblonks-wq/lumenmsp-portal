@@ -1,0 +1,57 @@
+<%- include('header', { title: 'Quote ' + (qt.quote_number || ''), company: (user && user.displayName) || '', user, active }) %>
+<%
+  function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function d(x){ return x ? new Date(x).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '—'; }
+  function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
+  function qbadge(s){ s=(s||'').toLowerCase(); return s==='accepted'?'badge-sent':(s==='lost'||s==='declined'||s==='expired'?'badge-inactive':(s==='sent'?'badge-primary':'badge-failed')); }
+%>
+
+<p style="margin:0 0 12px;"><a class="row-link" href="/my/quotes">&larr; Back to quotes</a></p>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+    <div>
+      <h1 style="margin:0;">Quote <%= qt.quote_number || ('#' + qt.id) %></h1>
+      <p class="muted" style="margin:6px 0 0;"><%= qt.title || '' %></p>
+    </div>
+    <div style="text-align:right;">
+      <span class="badge <%= qbadge(qt.status) %>"><%= cap(qt.status || 'draft') %></span>
+      <div class="muted" style="font-size:12px;margin-top:8px;">Issued <%= d(qt.issue_date) %> &middot; Valid until <%= d(qt.valid_until) %></div>
+      <button onclick="window.print()" class="btn" style="margin-top:8px;">&#128438; Print / Save PDF</button>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table" style="margin:0;">
+      <thead><tr><th>Description</th><th class="num" style="text-align:right;">Qty</th><th class="num" style="text-align:right;">Unit price</th><th class="num" style="text-align:right;">VAT</th><th class="num" style="text-align:right;">Amount</th></tr></thead>
+      <tbody>
+        <% if (!items || !items.length) { %>
+          <tr><td colspan="5" class="muted" style="padding:16px;">No line items.</td></tr>
+        <% } else { %>
+          <% items.forEach(function(it){ %>
+            <tr>
+              <td><%= it.description || '—' %></td>
+              <td style="text-align:right;"><%= Number(it.quantity)||0 %></td>
+              <td style="text-align:right;white-space:nowrap;"><%= money(it.unit_price) %></td>
+              <td style="text-align:right;"><%= (Number(it.tax_rate)||0) %>%</td>
+              <td style="text-align:right;white-space:nowrap;"><%= money(it.line_total) %></td>
+            </tr>
+          <% }); %>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+  <div style="display:flex;justify-content:flex-end;padding:16px 24px;border-top:1px solid var(--line);">
+    <table style="font-size:14px;">
+      <tr><td style="padding:3px 18px 3px 0;color:#64748b;">Subtotal</td><td style="text-align:right;"><%= money(qt.subtotal) %></td></tr>
+      <tr><td style="padding:3px 18px 3px 0;color:#64748b;">VAT</td><td style="text-align:right;"><%= money(qt.tax_total) %></td></tr>
+      <tr><td style="padding:3px 18px 3px 0;color:#64748b;font-weight:700;">Total</td><td style="text-align:right;font-weight:700;"><%= money(qt.total) %></td></tr>
+    </table>
+  </div>
+</div>
+
+<% if (qt.notes) { %><div class="card"><h2 style="margin:0 0 8px;font-size:15px;">Notes</h2><div style="white-space:pre-wrap;line-height:1.5;"><%= qt.notes %></div></div><% } %>
+
+<%- include('footer', { active }) %>

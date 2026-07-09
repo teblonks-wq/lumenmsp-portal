@@ -1,0 +1,13 @@
+<%- include('../partials/header', { title: title, user }) %>
+<style>
+  /* Let the embedded app fill the content area edge-to-edge under the topbar. */
+  main.main { padding: 0; }
+</style>
+<iframe
+  src="<%= src %>"
+  title="<%= title %>"
+  style="width:100%;height:calc(100vh - 47px);border:0;display:block;background:#fff;"
+  loading="eager"
+  referrerpolicy="strict-origin-when-cross-origin"
+></iframe>
+<%- include('../partials/footer') %>

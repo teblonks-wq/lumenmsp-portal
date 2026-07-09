@@ -1,0 +1,93 @@
+<%- include('../partials/header', { title: 'Chat', user }) %>
+<% function rel(s){ if(!s) return ''; var d=new Date(s),n=new Date(); var t=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+   return d.toDateString()===n.toDateString()?'Today '+t:d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' '+t; } %>
+
+<div style="display:flex;gap:6px;border-bottom:2px solid #e5e7eb;margin-bottom:18px;">
+  <a href="/chat" style="padding:10px 18px;text-decoration:none;font-weight:600;color:#0891b2;border-bottom:2px solid #0891b2;margin-bottom:-2px;">Website</a>
+  <a href="/chat/channel/whatsapp" style="padding:10px 18px;text-decoration:none;font-weight:600;color:#6b7280;border-bottom:2px solid transparent;margin-bottom:-2px;">WhatsApp</a>
+  <a href="/chat/channel/teams" style="padding:10px 18px;text-decoration:none;font-weight:600;color:#6b7280;border-bottom:2px solid transparent;margin-bottom:-2px;">Teams</a>
+</div>
+
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <h1 style="margin:0;">Chat</h1>
+    <p class="muted" style="margin:4px 0 0;">Live website conversations. Click one to reply and convert it to a ticket, lead or quote.</p>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <a class="btn <%= status==='active'?'btn-primary':'' %>" href="/chat">Active</a>
+    <a class="btn <%= status==='closed'?'btn-primary':'' %>" href="/chat?status=closed">Closed</a>
+  </div>
+</div>
+
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (typeof qerr !== 'undefined' && qerr) { %><div class="alert alert-error" style="max-width:900px;"><%= qerr %></div><% } %>
+
+<!-- Live website visitors -->
+<div class="card" style="padding:0;margin-bottom:18px;border-color:#bbf7d0;">
+  <div class="card-header" style="padding:14px 18px;display:flex;align-items:center;gap:8px;">
+    <span style="width:9px;height:9px;border-radius:50%;background:#22c55e;display:inline-block;box-shadow:0 0 0 3px rgba(34,197,94,.25);"></span>
+    <h2 style="margin:0;">On the site now <span class="muted" style="font-weight:400;font-size:14px;">(<span id="lvCount"><%= visitors.length %></span>)</span></h2>
+  </div>
+  <div id="lvList">
+    <% if (!visitors.length) { %><p class="muted" style="padding:0 18px 14px;margin:0;">No one browsing right now.</p>
+    <% } else { %><div class="table-wrap"><table class="table" style="margin:0;"><tbody>
+      <% visitors.forEach(function(v){ %><tr><td><strong><%= v.title || v.page || '/' %></strong><div class="muted" style="font-size:12px;"><%= v.page %><% if (v.referrer) { %> · via <%= v.referrer %><% } %></div><div class="muted" style="font-size:11px;"><%= [v.device, v.browser, v.os].filter(Boolean).join(' · ') %><% if (v.ip) { %> · <%= v.ip %><% } %></div></td>
+        <td class="muted" style="font-size:13px;text-align:right;white-space:nowrap;"><%= Math.floor((v.on_site_secs||0)/60) %>m on site</td></tr><% }); %>
+    </tbody></table></div><% } %>
+  </div>
+</div>
+
+<div class="card" style="padding:0;" id="chatList" data-status="<%= status %>">
+  <% if (!sessions.length) { %>
+    <p class="muted" style="padding:18px 20px;margin:0;">No <%= status %> chats.</p>
+  <% } else { %>
+    <div class="table-wrap"><table class="table" style="margin:0;">
+      <thead><tr><th>Visitor</th><th>Dept</th><th>Last message</th><th>When</th><th></th></tr></thead>
+      <tbody>
+        <% sessions.forEach(function(s){ %>
+          <tr style="cursor:pointer;" onclick="location.href='/chat/<%= s.id %>'">
+            <td>
+              <strong><%= s.name || s.email || 'Visitor' %></strong>
+              <% if (s.unread > 0) { %> <span class="badge badge-primary"><%= s.unread %> new</span><% } %>
+              <% if (!s.assigned_user_id) { %> <span class="badge badge-inactive">unassigned</span><% } %>
+              <div class="muted" style="font-size:12px;"><%= s.email || '' %><% if (s.phone) { %> · <%= s.phone %><% } %></div>
+            </td>
+            <td><span class="badge <%= s.department==='sales'?'badge-sent':'badge-primary' %>"><%= s.department || 'support' %></span></td>
+            <td class="muted" style="font-size:13px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><%= s.last_body || '' %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= rel(s.updated_at) %></td>
+            <td style="text-align:right;"><a class="row-link" href="/chat/<%= s.id %>">open →</a></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  <% } %>
+</div>
+
+<script>
+  // Live visitors — refresh every 10s.
+  function escv(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  function refreshVisitors(){
+    fetch('/chat/live').then(function(r){return r.json();}).then(function(rows){
+      document.getElementById('lvCount').textContent = rows.length;
+      var el = document.getElementById('lvList');
+      if (!rows.length) { el.innerHTML = '<p class="muted" style="padding:0 18px 14px;margin:0;">No one browsing right now.</p>'; return; }
+      el.innerHTML = '<div class="table-wrap"><table class="table" style="margin:0;"><tbody>' + rows.map(function(v){
+        var dev = [v.device, v.browser, v.os].filter(Boolean).join(' · ') + (v.ip ? ' · ' + v.ip : '');
+        return '<tr><td><strong>' + escv(v.title || v.page || '/') + '</strong><div class="muted" style="font-size:12px;">' + escv(v.page) + (v.referrer ? ' · via ' + escv(v.referrer) : '') + '</div><div class="muted" style="font-size:11px;">' + escv(dev) + '</div></td>' +
+          '<td class="muted" style="font-size:13px;text-align:right;white-space:nowrap;">' + Math.floor((v.on_site_secs||0)/60) + 'm on site</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    }).catch(function(){});
+  }
+  setInterval(refreshVisitors, 10000);
+
+  // Auto-refresh the active list every 8s so new chats appear without a manual reload.
+  if (document.getElementById('chatList').getAttribute('data-status') === 'active') {
+    setInterval(function () { fetch(location.pathname + location.search).then(function(r){return r.text();}).then(function(html){
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var fresh = doc.getElementById('chatList');
+      if (fresh) document.getElementById('chatList').innerHTML = fresh.innerHTML;
+    }).catch(function(){}); }, 8000);
+  }
+</script>
+
+<%- include('../partials/footer') %>

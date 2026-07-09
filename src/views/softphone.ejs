@@ -1,0 +1,101 @@
+<%- include('partials/header', { title: 'Soft Phone', user }) %>
+<%
+  function fmtWhen(s){ if(!s) return ''; var d=new Date(s), n=new Date();
+    var t=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+    return d.toDateString()===n.toDateString() ? 'Today '+t : d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' '+t; }
+  function fmtDur(s){ return s ? Math.floor(s/60)+'m '+(s%60)+'s' : ''; }
+  function nm(r){ return (r.peer_name && r.peer_name !== r.peer) ? r.peer_name : r.peer; }
+%>
+
+<div class="page-header">
+  <h1 style="margin:0;">
+    <span style="font-weight:800;background:linear-gradient(90deg,#10b981,#2563eb);-webkit-background-clip:text;background-clip:text;color:transparent;">Soft Phone</span>
+  </h1>
+  <p class="muted" style="margin:4px 0 0;">Dial out, call customers back, and see your WhatsApp call history.</p>
+</div>
+
+<div class="card-grid" style="grid-template-columns:300px 1fr;align-items:start;gap:18px;">
+  <!-- Dialer -->
+  <div class="card" style="background:linear-gradient(135deg,#0f172a,#1e293b);border:none;color:#fff;">
+    <input id="dialNum" class="input" placeholder="07… or 01…" inputmode="tel" autocomplete="off"
+      style="width:100%;text-align:center;font-size:24px;letter-spacing:1px;background:#0b1220;border:1px solid #334155;color:#fff;padding:14px 10px;margin-bottom:14px;font-family:monospace;">
+    <div id="keypad" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+      <% ['1','2','3','4','5','6','7','8','9','*','0','#'].forEach(function(k){ %>
+        <button type="button" class="kp" data-k="<%= k %>" style="background:#1e293b;border:1px solid #334155;color:#fff;border-radius:12px;padding:16px 0;font-size:20px;cursor:pointer;"><%= k %></button>
+      <% }); %>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button id="callBtn" class="btn btn-primary" style="flex:1;padding:14px 0;font-size:16px;">📞 Call</button>
+      <button id="bsBtn" type="button" class="btn" style="background:#334155;color:#fff;border-color:#475569;padding:14px 18px;">⌫</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin:12px 0 0;color:#94a3b8;">Call-backs are only allowed within 24h of the customer's last message or call.</p>
+  </div>
+
+  <div>
+    <!-- Call-backs to make -->
+    <div class="card" style="padding:0;margin-bottom:18px;border-color:#fde68a;">
+      <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">Call-backs to make <span class="muted" style="font-weight:400;font-size:14px;">(<%= callbacks.length %>)</span></h2></div>
+      <% if (!callbacks.length) { %>
+        <p class="muted" style="padding:0 18px 14px;margin:0;">No outstanding call-backs. 🎉</p>
+      <% } else { %>
+        <div class="table-wrap"><table class="table" style="margin:0;">
+          <tbody>
+            <% callbacks.forEach(function(r){ %>
+              <tr><td><strong><%= nm(r) %></strong> <span class="muted" style="font-size:12px;"><%= fmtWhen(r.started_at) %> · <%= r.status %></span></td>
+                <td style="text-align:right;"><button class="btn btn-primary wp-callback" data-peer="<%= r.peer %>" data-name="<%= nm(r) %>" style="padding:5px 14px;">📞 Call back</button></td></tr>
+            <% }); %>
+          </tbody>
+        </table></div>
+      <% } %>
+    </div>
+
+    <!-- Recent calls -->
+    <div class="card" style="padding:0;">
+      <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">Recent calls <span class="muted" style="font-weight:400;font-size:14px;">(<%= history.length %>)</span></h2></div>
+      <% if (!history.length) { %>
+        <p class="muted" style="padding:0 18px 14px;margin:0;">No calls yet.</p>
+      <% } else { %>
+        <div class="table-wrap"><table class="table" style="margin:0;">
+          <thead><tr><th></th><th>Customer</th><th>When</th><th>Outcome</th><th>Duration</th><th></th></tr></thead>
+          <tbody>
+            <% history.forEach(function(r){ %>
+              <tr>
+                <td style="font-size:16px;width:24px;" title="<%= r.direction %>"><%= r.direction === 'outbound' ? '↗' : '↙' %></td>
+                <td><%= nm(r) %></td>
+                <td class="muted" style="font-size:13px;white-space:nowrap;"><%= fmtWhen(r.started_at) %></td>
+                <td class="muted" style="font-size:13px;"><%= r.status %></td>
+                <td class="muted" style="font-size:13px;"><%= fmtDur(r.duration_secs) %></td>
+                <td style="text-align:right;">
+                  <% if (r.callable) { %><button class="btn wp-callback" data-peer="<%= r.peer %>" data-name="<%= nm(r) %>" style="padding:4px 12px;font-size:13px;">Call back</button>
+                  <% } else { %><span class="muted" style="font-size:12px;">window closed</span><% } %>
+                </td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table></div>
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function(){
+    var num = document.getElementById('dialNum');
+    document.getElementById('keypad').addEventListener('click', function(e){
+      var b = e.target.closest('.kp'); if (!b) return; num.value += b.getAttribute('data-k'); num.focus();
+    });
+    document.getElementById('bsBtn').onclick = function(){ num.value = num.value.slice(0, -1); num.focus(); };
+    document.getElementById('callBtn').onclick = function(){
+      var v = num.value.trim(); if (!v) { num.focus(); return; }
+      if (window.waPhoneCall) window.waPhoneCall(v, v); else alert('Phone is still connecting — try again in a second.');
+    };
+  })();
+  // Call-back buttons drive the global softphone widget.
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('.wp-callback'); if (!b) return; e.preventDefault();
+    if (window.waPhoneCall) window.waPhoneCall(b.getAttribute('data-peer'), b.getAttribute('data-name'));
+    else alert('Phone is still connecting — try again in a second.');
+  });
+</script>
+
+<%- include('partials/footer') %>

@@ -1,0 +1,71 @@
+<%- include('../partials/header', { title: 'Customers', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <h1>Customers</h1>
+    <p class="muted"><%= customers.length %> shown</p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <form method="get" action="/customers" style="display:flex;gap:8px;align-items:center;">
+      <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search name, account, domain, contact…" style="min-width:260px;">
+      <% if (status) { %><input type="hidden" name="status" value="<%= status %>"><% } %>
+      <button class="btn" type="submit">Search</button>
+      <% if (search) { %><a class="btn" href="/customers<%= status ? '?status=' + status : '' %>">Clear</a><% } %>
+    </form>
+    <a class="btn btn-primary" href="/customers/new">+ New customer</a>
+  </div>
+</div>
+
+<div class="tabs" style="margin-bottom:16px;">
+  <a class="tab-btn <%= status === '' ? 'active' : '' %>" href="/customers<%= search ? '?search=' + encodeURIComponent(search) : '' %>">All <span class="muted">(<%= (statusCounts.active||0)+(statusCounts.lead||0)+(statusCounts.inactive||0) %>)</span></a>
+  <a class="tab-btn <%= status === 'active' ? 'active' : '' %>" href="/customers?status=active<%= search ? '&search=' + encodeURIComponent(search) : '' %>">Active <span class="muted">(<%= statusCounts.active || 0 %>)</span></a>
+  <a class="tab-btn <%= status === 'lead' ? 'active' : '' %>" href="/customers?status=lead<%= search ? '&search=' + encodeURIComponent(search) : '' %>">Leads <span class="muted">(<%= statusCounts.lead || 0 %>)</span></a>
+  <a class="tab-btn <%= status === 'inactive' ? 'active' : '' %>" href="/customers?status=inactive<%= search ? '&search=' + encodeURIComponent(search) : '' %>">Inactive <span class="muted">(<%= statusCounts.inactive || 0 %>)</span></a>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Account</th>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Services</th>
+          <th>Primary contact</th>
+          <th>Location</th>
+          <th style="text-align:center;">Contacts</th>
+          <th style="text-align:center;">Sites</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (customers.length === 0) { %>
+          <tr><td colspan="8"><div class="empty-state">No customers match.</div></td></tr>
+        <% } %>
+        <% customers.forEach(function (c) { %>
+          <tr>
+            <td class="muted"><%= c.account_number || '—' %></td>
+            <td><a class="row-link" href="/customers/<%= c.id %>"><%= c.name %></a></td>
+            <td>
+              <% if (c.status === 'active') { %><span class="badge badge-sent">Active</span>
+              <% } else if (c.status === 'lead') { %><span class="badge badge-primary">Lead</span>
+              <% } else { %><span class="badge badge-inactive">Inactive</span><% } %>
+            </td>
+            <td>
+              <% if (c.is_itsm) { %><span class="badge badge-primary" title="Support">SUP</span> <% } %>
+              <% if (c.has_internet) { %><span class="badge badge-primary" title="Internet">NET</span> <% } %>
+              <% if (c.has_phones) { %><span class="badge badge-primary" title="Phones">TEL</span> <% } %>
+              <% if (c.has_cloud) { %><span class="badge badge-primary" title="Cloud">CLD</span> <% } %>
+            </td>
+            <td><%= c.primary_contact_name || '—' %></td>
+            <td class="muted"><%= [c.city, c.county].filter(Boolean).join(', ') || c.postcode || '—' %></td>
+            <td style="text-align:center;"><%= c.contact_count %></td>
+            <td style="text-align:center;"><%= c.site_count %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,38 @@
+<%- include('../partials/header', { title: edit && edit.id ? 'Edit customer user' : 'New customer user', user }) %>
+<% var isEdit = edit && edit.id; %>
+<% function v(f){ return edit && edit[f] != null ? edit[f] : ''; } %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin/customer-users">← Customer users</a></p>
+  <h1><%= isEdit ? 'Edit customer user' : 'New customer user' %></h1>
+</div>
+
+<% if (error) { %><div class="alert alert-error" style="max-width:600px;"><%= error %></div><% } %>
+
+<form method="post" action="<%= isEdit ? '/admin/customer-users/' + edit.id : '/admin/customer-users' %>" style="max-width:600px;">
+  <div class="card">
+    <div class="form-group" style="margin-bottom:14px;"><label>Display name *</label><input class="input" name="display_name" required value="<%= v('display_name') %>" style="width:100%;"></div>
+    <div class="form-group" style="margin-bottom:14px;">
+      <label>Email *</label>
+      <input class="input" type="email" name="email" required value="<%= v('email') %>" style="width:100%;" <%= isEdit ? 'readonly' : '' %>>
+      <% if (isEdit) { %><span class="muted" style="font-size:12px;">Email can't be changed (it's the SSO identity).</span><% } %>
+    </div>
+    <div class="form-group" style="margin-bottom:14px;">
+      <label>Customer *</label>
+      <select class="input" name="customer_id" required style="width:100%;"><option value="">— select customer —</option><% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= (edit && edit.customer_id===c.id)?'selected':'' %>><%= c.name %></option><% }); %></select>
+    </div>
+    <div class="form-group" style="margin-bottom:14px;">
+      <label><%= isEdit ? 'Reset password' : 'Password' %> <span class="muted">(optional — blank for Microsoft SSO only)</span></label>
+      <input class="input" type="password" name="password" autocomplete="new-password" style="width:100%;" placeholder="Min 8 characters">
+    </div>
+    <% if (isEdit) { %>
+    <label style="display:flex;align-items:center;gap:8px;font-weight:500;"><input type="checkbox" name="is_active" <%= edit.is_active ? 'checked' : '' %>> Active</label>
+    <% } %>
+  </div>
+  <div style="display:flex;gap:10px;">
+    <button class="btn btn-primary" type="submit"><%= isEdit ? 'Save user' : 'Create user' %></button>
+    <a class="btn" href="/admin/customer-users">Cancel</a>
+  </div>
+</form>
+
+<%- include('../partials/footer') %>

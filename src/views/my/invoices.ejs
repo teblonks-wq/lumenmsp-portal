@@ -1,0 +1,49 @@
+<%- include('header', { title: 'Invoices', company: (user && user.displayName) || '', user, active }) %>
+<%
+  function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function d(x){ return x ? new Date(x).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '—'; }
+  function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
+  function ibadge(s){ s=(s||'').toLowerCase(); return s==='paid'?'badge-sent':(s==='void'||s==='cancelled'?'badge-inactive':(s==='overdue'?'badge-failed':'badge-primary')); }
+%>
+
+<div class="page-header"><h1>Invoices</h1><p class="muted" style="margin:4px 0 0;">Your invoices with Lumen IT.</p></div>
+
+<% if (!invoices || !invoices.length) { %>
+  <div class="card"><div class="empty">No invoices yet.</div></div>
+<% } else { %>
+  <div class="card" style="padding:0;">
+    <div style="padding:14px 24px 4px;"><input class="input card-filter" placeholder="Search invoices…" style="max-width:280px;"></div>
+    <div class="table-wrap">
+      <table class="table" style="margin:0;">
+        <thead><tr><th>Invoice</th><th>Description</th><th>Issued</th><th>Due</th><th>Status</th><th style="text-align:right;">Total</th><th style="text-align:right;">Balance</th></tr></thead>
+        <tbody>
+          <% invoices.forEach(function(iv){ %>
+            <tr>
+              <td><a class="row-link" href="/my/invoices/<%= iv.id %>"><strong><%= iv.invoice_number || ('#' + iv.id) %></strong></a></td>
+              <td><a class="row-link" href="/my/invoices/<%= iv.id %>" style="color:inherit;"><%= iv.title || '—' %></a></td>
+              <td class="muted" style="white-space:nowrap;"><%= d(iv.issue_date) %></td>
+              <td class="muted" style="white-space:nowrap;"><%= d(iv.due_date) %></td>
+              <td><span class="badge <%= ibadge(iv.payment_status || iv.status) %>"><%= cap(iv.payment_status || iv.status || 'issued') %></span></td>
+              <td style="text-align:right;white-space:nowrap;"><%= money(iv.total) %></td>
+              <td style="text-align:right;white-space:nowrap;<%= (Number(iv.balance)||0) > 0 ? 'font-weight:700;' : 'color:#16a34a;' %>"><%= money(iv.balance) %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% } %>
+
+<script>
+(function(){
+  var inp = document.querySelector('.card-filter'); if (!inp) return;
+  inp.addEventListener('input', function(){
+    var q = inp.value.toLowerCase();
+    document.querySelectorAll('table tbody tr').forEach(function(tr){
+      tr.style.display = (!q || tr.textContent.toLowerCase().indexOf(q) >= 0) ? '' : 'none';
+    });
+  });
+})();
+</script>
+
+<%- include('footer', { active }) %>

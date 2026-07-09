@@ -1,0 +1,168 @@
+<%
+const bh = site.business_hours || {};
+const days = ['mon','tue','wed','thu','fri','sat','sun'];
+const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const flashMsg = (typeof notice !== 'undefined' && notice) ? notice : null;
+const errMsg   = (typeof qerr !== 'undefined' && qerr) ? qerr : null;
+
+const cfgList = (typeof configs !== 'undefined' ? configs : []);
+const cfgRows = cfgList.map(c => `
+  <tr>
+    <td><a class="row-link" href="/insights/report-config/${c.id}">${c.config_label}</a></td>
+    <td><code style="font-size:12px;">${c.report_type}</code></td>
+    <td>${c.send_day ? ['','Mon','Tue','Wed','Thu','Fri','Sat','Sun'][c.send_day] : '—'} ${c.send_time || ''}</td>
+    <td><span class="badge ${c.is_active ? 'badge-sent' : 'badge-inactive'}">${c.is_active ? 'Active' : 'Inactive'}</span></td>
+    <td><a href="/insights/report-config/${c.id}/edit" class="btn-secondary" style="font-size:12px;padding:4px 10px;">Edit</a></td>
+  </tr>`).join('');
+const cfgTable = cfgList.length
+  ? `<div class="table-wrap"><table class="table">
+      <thead><tr><th>Config</th><th>Type</th><th>Schedule</th><th>Status</th><th></th></tr></thead>
+      <tbody>${cfgRows}</tbody>
+     </table></div>`
+  : '<p class="muted" style="font-size:13px;margin:0 0 8px;">No report configs for this site yet.</p>';
+
+// New model: scheduled reports from the pool (site_reports → template) + the pool for the add form.
+const dayNamesArr = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const srList = (typeof siteReports !== 'undefined' ? siteReports : []);
+const tplList = (typeof templates !== 'undefined' ? templates : []);
+const srRows = srList.map(sr => `<tr>
+    <td><strong>${sr.template_name || ''}</strong></td>
+    <td style="font-size:12px;color:var(--muted);">${sr.reporting_period || ''} ${sr.send_day ? dayNamesArr[sr.send_day] : ''} ${sr.send_time || ''}</td>
+    <td style="font-size:12px;">${sr.recipients || '—'}</td>
+    <td style="text-align:right;"><form method="post" action="/insights/site-report/${sr.id}/delete" style="display:inline;" onsubmit="return confirm('Remove this schedule?');"><button class="btn-secondary" type="submit" style="font-size:12px;padding:4px 10px;">Remove</button></form></td>
+  </tr>`).join('');
+const srTable = srList.length
+  ? `<div class="table-wrap"><table class="table"><thead><tr><th>Report</th><th>Schedule</th><th>Recipients</th><th></th></tr></thead><tbody>${srRows}</tbody></table></div>`
+  : '<p class="muted" style="font-size:13px;margin:0 0 8px;">No scheduled reports yet — add one below.</p>';
+const tplOpts = tplList.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+const dayOpts = [1, 2, 3, 4, 5, 6, 7].map(d => `<option value="${d}">${dayNamesArr[d]}</option>`).join('');
+
+// Call-flow logic summary (site.logic_config).
+const lc = site.logic_config || {};
+const nSot = ((lc.source_of_truth_group || []).length) + ((lc.source_of_truth_extensions || []).length);
+const nGrp = ((lc.call_flow || []).length) || ((lc.ivr_options || []).length);
+const nStaff = (lc.staff_extensions || []).length;
+const logicSummary = (nSot + nGrp + nStaff) > 0
+  ? `<p style="font-size:13px;margin:0;color:#374151;">Source of truth: <strong>${nSot}</strong> &middot; Hunt groups: <strong>${nGrp}</strong> &middot; Staff: <strong>${nStaff}</strong>${lc.business_hours ? ' &middot; Business hours set' : ''}</p>`
+  : '<p class="muted" style="font-size:13px;margin:0;">No call-flow logic set yet — click <strong>Edit logic</strong> to build it.</p>';
+
+const dayGrid = days.map((d, i) => {
+  const day = bh[d] || {};
+  const closed = day.closed || (!day.open && !day.close);
+  const open  = day.open  || '08:00';
+  const close = day.close || '18:30';
+  return `<div style="background:#f9fafb;border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:6px;">${dayNames[i]}</div>
+    <label style="display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;margin-bottom:6px;cursor:pointer;">
+      <input type="checkbox" name="bh_closed_${d}" ${closed ? 'checked' : ''} onchange="toggleDay(this,'${d}')" style="width:auto;min-width:auto;">
+      <span>Closed</span>
+    </label>
+    <div id="hours_${d}" style="${closed ? 'display:none' : ''}">
+      <input type="time" name="bh_open_${d}"  value="${open}"  class="input" style="min-width:auto;width:100%;font-size:11px;padding:4px 6px;margin-bottom:4px;">
+      <input type="time" name="bh_close_${d}" value="${close}" class="input" style="min-width:auto;width:100%;font-size:11px;padding:4px 6px;">
+    </div>
+  </div>`;
+}).join('');
+%>
+<%- include('_layout', { title: site.site_label, user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
+  <div>
+    <h1>${site.site_label}</h1>
+    <p class="muted"><a href="/insights/admin">Admin</a> → <a href="/insights/customer/${site.customer_id}">${site.customer_name}</a> → ${site.site_label}</p>
+  </div>
+</div>
+
+${flashMsg ? `<div class="alert alert-success">${flashMsg}</div>` : ''}
+${errMsg ? `<div class="alert alert-error">${errMsg}</div>` : ''}
+
+<div class="card">
+  <div class="card-header"><h2>Edit Site</h2></div>
+  <form method="POST" action="/insights/site/${site.id}" id="site-edit-form">
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;">
+      <div class="form-group">
+        <label>Site Label</label>
+        <input type="text" name="site_label" value="${site.site_label}" required class="input">
+      </div>
+      <div class="form-group">
+        <label>Ext Prefix</label>
+        <input type="text" name="icalls_site_code" value="${site.icalls_site_code || ''}" class="input" style="font-family:monospace;max-width:80px;">
+      </div>
+      <div class="form-group">
+        <label>DDI Number</label>
+        <input type="text" name="ddi_number" value="${site.ddi_number || ''}" class="input" style="font-family:monospace;">
+      </div>
+      <div class="form-group">
+        <label>Status</label>
+        <select name="is_active" class="input">
+          <option value="true"  ${site.is_active ? 'selected' : ''}>Active</option>
+          <option value="false" ${!site.is_active ? 'selected' : ''}>Inactive</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-bottom:16px;">
+      <div class="form-group" style="margin-bottom:8px;"><label>Business Hours</label></div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;">
+        ${dayGrid}
+      </div>
+    </div>
+    <input type="hidden" name="business_hours" id="bh-json">
+    <div style="display:flex;gap:10px;">
+      <button type="submit" class="btn-primary">Save Changes</button>
+      <a href="/insights/customer/${site.customer_id}" class="btn-secondary">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Scheduled Reports</h2></div>
+  ${srTable}
+  <form method="post" action="/insights/site/${site.id}/schedule" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:12px;border-top:1px solid var(--line);padding-top:14px;">
+    <div class="form-group" style="margin:0;"><label>Report</label><select class="input" name="template_id" required>${tplOpts}</select></div>
+    <div class="form-group" style="margin:0;"><label>Frequency</label><select class="input" name="reporting_period"><option value="weekly">Weekly</option><option value="daily">Daily</option><option value="monthly">Monthly</option></select></div>
+    <div class="form-group" style="margin:0;"><label>Send day</label><select class="input" name="send_day">${dayOpts}</select></div>
+    <div class="form-group" style="margin:0;"><label>Send time</label><input class="input" type="time" name="send_time" value="09:00" style="min-width:auto;"></div>
+    <div class="form-group" style="margin:0;flex:1;min-width:200px;"><label>Recipients</label><input class="input" name="recipients" placeholder="a@x.co.uk, b@y.co.uk" style="width:100%;"></div>
+    <button class="btn-primary" type="submit">+ Add schedule</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+    <h2>Call flow logic</h2>
+    <div style="display:flex;gap:8px;">
+      <a href="/insights/site/${site.id}/logic-edit" class="btn-primary" style="font-size:12px;padding:5px 12px;">Edit logic</a>
+      <form method="post" action="/insights/site/${site.id}/logic/clear" style="display:inline;" onsubmit="return confirm('Clear this site\\'s call-flow logic? You will rebuild it from scratch.');"><button class="btn-secondary" type="submit" style="font-size:12px;padding:5px 12px;">Clear</button></form>
+    </div>
+  </div>
+  ${logicSummary}
+</div>
+<div style="display:none;">${cfgTable}</div>
+
+<div class="card" style="border-color:#fecaca;">
+  <div class="card-header"><h2 style="color:#dc2626;">Danger Zone</h2></div>
+  <p class="muted" style="font-size:13px;margin-bottom:12px;">Deleting a site is permanent. It cannot be deleted if it has report configs attached.</p>
+  <form method="POST" action="/insights/site/${site.id}/delete" onsubmit="return confirm('Delete ${site.site_label}? This cannot be undone.')">
+    <button type="submit" class="btn-primary" style="background:#dc2626;">Delete Site</button>
+  </form>
+</div>
+
+<script>
+function toggleDay(cb, day) {
+  document.getElementById('hours_' + day).style.display = cb.checked ? 'none' : '';
+}
+document.getElementById('site-edit-form').addEventListener('submit', function() {
+  const days = ['mon','tue','wed','thu','fri','sat','sun'];
+  const hours = {};
+  days.forEach(d => {
+    const cb = this.querySelector('[name="bh_closed_' + d + '"]');
+    if (cb && cb.checked) { hours[d] = { closed: true }; }
+    else {
+      const o = this.querySelector('[name="bh_open_'  + d + '"]');
+      const c = this.querySelector('[name="bh_close_' + d + '"]');
+      if (o && c) hours[d] = { open: o.value, close: c.value };
+    }
+  });
+  document.getElementById('bh-json').value = JSON.stringify(hours);
+});
+</script>
+` }) %>

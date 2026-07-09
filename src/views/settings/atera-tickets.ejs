@@ -1,0 +1,114 @@
+<%- include('../partials/header', { title: 'Atera ticket import', user }) %>
+<% function cap(s){ return s ? String(s).replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
+   function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); }
+   var tabs = [ {k:'live',label:'Live'}, {k:'closed',label:'Closed'}, {k:'resolved',label:'Resolved'} ]; %>
+
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">← Integrations</a></p>
+    <h1>Atera — import tickets</h1>
+    <p class="muted"><strong><%= total %></strong> tickets in Atera. The tab numbers are the real totals per status; the rows below are just a small live/closed/resolved sample. <strong>Import all</strong> processes the full history in the background (deleted/archived tickets and already-imported ones are skipped). Each maps via the <a class="row-link" href="/settings/atera/status-map">Status MAP</a>.</p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a class="btn" href="/settings/atera/missing">Find missing</a>
+    <form method="post" action="/settings/atera/import-tickets" onsubmit="return confirm('Import all Atera tickets in the background?');" style="margin:0;">
+      <button class="btn btn-primary" type="submit">Import all tickets</button>
+    </form>
+  </div>
+</div>
+
+<% if (typeof importStatus !== 'undefined' && importStatus) { %>
+<div class="alert <%= importStatus.indexOf('Done')===0 ? 'alert-success' : (importStatus.indexOf('Failed')===0 ? 'alert-error' : '') %>" style="max-width:900px;<%= (importStatus.indexOf('Running')===0) ? 'background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;' : '' %>">
+  Import status: <%= importStatus %><% if (importStatus.indexOf('Running')===0) { %> <a class="row-link" href="/settings/atera/tickets">refresh</a><% } %>
+</div>
+<% } %>
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+
+<style>
+  .b-tabs { display:flex; gap:2px; border-bottom:2px solid var(--line); margin:6px 0 18px; }
+  .b-tabs button { background:none;border:none;padding:9px 16px;font-size:14px;font-weight:600;color:#64748b;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px; }
+  .b-tabs button.active { color:var(--accent);border-bottom-color:var(--accent); }
+  .b-panel { display:none; } .b-panel.active { display:block; }
+  tr.imported td { color:#9ca3af; }
+</style>
+<nav class="b-tabs">
+  <% tabs.forEach(function(t){ var n = (typeof counts !== 'undefined' && counts[t.k] != null) ? counts[t.k] : groups[t.k].length; %><button type="button" data-tab="<%= t.k %>"><%= t.label %> (<%= n %>)</button><% }); %>
+</nav>
+
+<% tabs.forEach(function(t){ %>
+  <div class="b-panel" data-key="<%= t.k %>">
+    <div class="card" style="padding:0;">
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Subject</th><th>Customer</th><th>Contact</th><th>Engineer</th><th>Atera status</th><th>→ Portal</th><th>Created</th><th></th></tr></thead>
+        <tbody>
+          <% if (!groups[t.k].length) { %><tr><td colspan="8"><div class="empty-state">No <%= t.label.toLowerCase() %> tickets.</div></td></tr><% } %>
+          <% groups[t.k].forEach(function(i){ %>
+            <tr class="<%= i.exists ? 'imported' : '' %>">
+              <td><%= i.subject %></td>
+              <td><%= i.customerName %></td>
+              <td class="muted"><%= i.contact %></td>
+              <td class="muted"><%= i.engineer %></td>
+              <td class="muted" style="font-size:12px;"><%= i.ateraStatus %></td>
+              <td><span class="badge <%= sbadge(i.portalStatus) %>"><%= cap(i.portalStatus) %></span></td>
+              <td class="muted" style="font-size:12px;white-space:nowrap;"><%= i.created ? new Date(i.created).toLocaleDateString('en-GB') : '—' %></td>
+              <td style="text-align:right;white-space:nowrap;"><button type="button" class="btn" style="font-size:10px;padding:3px 9px;" onclick="ateraView('<%= i.ateraId %>')">View</button> <% if (i.exists) { %><span class="muted" style="font-size:11px;">imported</span><% } else { %><span class="badge badge-primary" style="font-size:10px;">new</span><% } %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+<% }); %>
+
+<div id="ateraModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(15,23,42,.5);padding:24px;overflow:auto;">
+  <div style="max-width:760px;margin:0 auto;background:#fff;border-radius:14px;overflow:hidden;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:16px 20px;border-bottom:1px solid #e2e8f0;">
+      <div><div id="amSubject" style="font-size:17px;font-weight:600;"></div><div id="amMeta" class="muted" style="font-size:13px;margin-top:3px;"></div></div>
+      <button type="button" class="btn" onclick="ateraClose()" style="flex:none;">✕ Close</button>
+    </div>
+    <div style="padding:16px 20px;">
+      <table style="width:100%;font-size:13px;margin-bottom:16px;border-collapse:collapse;">
+        <tr><td style="color:#64748b;padding:4px 14px 4px 0;width:140px;">Assign to</td><td id="amEng" style="font-weight:600;"></td></tr>
+        <tr><td style="color:#64748b;padding:4px 14px 4px 0;">Status</td><td id="amStatus"></td></tr>
+        <tr><td style="color:#64748b;padding:4px 14px 4px 0;">Original created</td><td id="amCreated"></td></tr>
+        <tr><td style="color:#64748b;padding:4px 14px 4px 0;">Atera ID</td><td id="amId"></td></tr>
+      </table>
+      <div class="muted" style="font-size:12px;margin-bottom:8px;">On import this becomes a new LITS ticket number, keeping the original created date above.</div>
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px;">Description &amp; comments</div>
+      <div id="amBody"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var ATERA_ITEMS = <%- JSON.stringify([].concat(groups.live, groups.closed, groups.resolved)) %>;
+  var ateraById = {}; ATERA_ITEMS.forEach(function(i){ ateraById[String(i.ateraId)] = i; });
+  function cap(s){ return s ? String(s).replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
+  function ateraView(id){
+    var i = ateraById[String(id)]; if(!i) return;
+    document.getElementById('amSubject').textContent = i.subject;
+    document.getElementById('amMeta').textContent = i.customerName + (i.contact && i.contact!=='—' ? ' · ' + i.contact : '');
+    document.getElementById('amEng').textContent = i.engineer || 'Unassigned';
+    document.getElementById('amStatus').innerHTML = (i.ateraStatus||'—') + ' → <strong>' + cap(i.portalStatus) + '</strong>' + (i.exists ? ' <span style="color:#94a3b8;">(already imported)</span>' : ' <span style="color:#2563eb;">(new)</span>');
+    document.getElementById('amCreated').textContent = i.created ? new Date(i.created).toLocaleString('en-GB') : '—';
+    document.getElementById('amId').textContent = i.ateraId;
+    var body = document.getElementById('amBody');
+    body.innerHTML = (i.detailHtml || '') + '<div style="color:#94a3b8;font-size:12px;margin-top:8px;">Loading full conversation…</div>';
+    document.getElementById('ateraModal').style.display = 'block';
+    fetch('/settings/atera/ticket/' + encodeURIComponent(i.ateraId) + '/detail.json')
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if (d && d.html) body.innerHTML = d.html; else body.innerHTML = i.detailHtml || '<p style="color:#94a3b8;">No conversation found.</p>'; })
+      .catch(function(){ body.innerHTML = i.detailHtml || ''; });
+  }
+  function ateraClose(){ document.getElementById('ateraModal').style.display = 'none'; }
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') ateraClose(); });
+  (function(){
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.b-tabs button'));
+    var panels = Array.prototype.slice.call(document.querySelectorAll('.b-panel'));
+    function show(k){ tabs.forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-tab')===k); }); panels.forEach(function(p){ p.classList.toggle('active', p.getAttribute('data-key')===k); }); }
+    tabs.forEach(function(b){ b.addEventListener('click', function(){ show(b.getAttribute('data-tab')); }); });
+    show('live');
+  })();
+</script>
+
+<%- include('../partials/footer') %>

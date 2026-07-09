@@ -1,0 +1,21 @@
+<%- include('header', { title: 'Customers', heading: 'Customers', user, active }) %>
+<form class="m-search" method="get" action="/m/customers">
+  <i class="ti ti-search ic"></i>
+  <input type="search" name="q" value="<%= search %>" placeholder="Search name, town, postcode…" autocomplete="off">
+</form>
+<div class="m-wrap" style="padding-top:0;">
+  <% if (!(list||[]).length) { %><div class="empty">No customers found.</div><% } %>
+  <div class="sheet">
+    <% (list||[]).forEach(function(c){ %>
+    <a class="row" href="/m/customers/<%= c.id %>">
+      <div class="avatar"><%= (c.name||'?').replace(/[^A-Za-z]/g,'').slice(0,2).toUpperCase() %></div>
+      <div class="main">
+        <div class="t"><%= c.name %></div>
+        <div class="s"><%= [c.city, c.postcode].filter(Boolean).join(' · ') || '—' %><% if (c.status && c.status!=='active') { %> · <%= c.status %><% } %></div>
+      </div>
+      <i class="ti ti-chevron-right chev"></i>
+    </a>
+    <% }); %>
+  </div>
+</div>
+<%- include('footer', { active }) %>

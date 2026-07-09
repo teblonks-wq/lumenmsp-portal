@@ -1,0 +1,55 @@
+<%- include('../partials/header', { title: 'Import from Microsoft 365', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin/users">← Users</a></p>
+  <h1>Import staff from Microsoft 365</h1>
+  <p class="muted">Licensed Microsoft 365 users in your tenant. Tick the ones to add as portal staff.</p>
+</div>
+
+<% if (error) { %>
+  <div class="alert alert-error" style="max-width:760px;">
+    <%= error %>
+    <% if (/permission|denied|403|User\.Read/i.test(error)) { %>
+      <div style="margin-top:6px;font-size:13px;">The Graph app needs the <strong>Application</strong> permission <code>User.Read.All</code> with admin consent.</div>
+    <% } %>
+  </div>
+<% } %>
+
+<% if (m365 && m365.length) { %>
+<form method="post" action="/admin/users/import">
+  <div class="card" style="padding:0;">
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:32px;"><input type="checkbox" id="selAll" onclick="document.querySelectorAll('.uchk:not(:disabled)').forEach(c=>c.checked=this.checked)"></th>
+            <th>Name</th><th>Email</th><th>Status</th><th>In portal?</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% m365.forEach(function(u){ var inPortal = existing[u.email]; %>
+            <tr>
+              <td><input class="uchk" type="checkbox" name="users" value="<%= u.email %>|<%= u.id %>|<%= u.displayName %>" <%= inPortal ? 'disabled' : '' %>></td>
+              <td><%= u.displayName %></td>
+              <td class="muted"><%= u.email %></td>
+              <td><% if (u.enabled) { %><span class="badge badge-primary">Enabled</span><% } else { %><span class="badge">Disabled</span><% } %></td>
+              <td><% if (inPortal) { %><span class="muted">Already added</span><% } else { %><span class="muted">—</span><% } %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <label style="margin-top:14px;display:flex;align-items:center;gap:8px;font-size:14px;">
+    <input type="checkbox" name="welcome" value="1" checked> Send a welcome email to newly imported users (no password — sign in with Microsoft)
+  </label>
+  <div style="margin-top:14px;display:flex;gap:10px;">
+    <button class="btn btn-primary" type="submit">Import selected</button>
+    <a class="btn" href="/admin/users">Cancel</a>
+  </div>
+</form>
+<% } else if (!error) { %>
+  <div class="card"><div class="empty-state">No licensed Microsoft 365 users found.</div></div>
+<% } %>
+
+<%- include('../partials/footer') %>

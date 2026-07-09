@@ -1,0 +1,48 @@
+<%- include('partials/header', { title: 'Customer A-Z', user }) %>
+<% function dt(x){ return x ? new Date(x).toLocaleDateString('en-GB') : 'never'; }
+   var SECT = [['concern','Business Concerns'],['service','Service Review'],['future','Future Projects'],['current','Current Projects'],['note','Notes']]; %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><h1>Customer A-Z</h1><p class="muted">Live review across all active customers — open items only. Click a customer to manage.</p></div>
+  <input class="input" id="azSearch" type="search" placeholder="Filter customers…" style="min-width:240px;">
+</div>
+
+<% if (customers.length===0) { %><div class="card"><div class="empty-state">No active customers.</div></div><% } %>
+
+<% customers.forEach(function(c){ var items = byCust[c.id] || []; %>
+  <div class="card az-card" data-name="<%= (c.name||'').toLowerCase() %>" style="margin-bottom:14px;">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <h2 style="margin:0;"><a class="row-link" href="/customers/<%= c.id %>#review"><%= c.name %></a></h2>
+      <span style="font-size:12px;" class="muted">Last reviewed: <%= dt(c.last_reviewed_at) %> <% if (c.overdue) { %><span class="badge badge-failed">overdue</span><% } %></span>
+    </div>
+    <% if (items.length===0) { %>
+      <p class="muted" style="margin:0;font-size:13px;">No open items.</p>
+    <% } else { %>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;">
+        <% SECT.forEach(function(s){ var si = items.filter(function(r){return r.section===s[0];}); if (!si.length) return; %>
+          <div>
+            <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:4px;"><%= s[1] %></div>
+            <% si.forEach(function(r){ %>
+              <div style="font-size:13px;padding:3px 0;border-bottom:1px solid var(--line);"><%= r.body %><% if (r.due_date) { %> <span class="badge badge-failed" style="font-size:10px;">due <%= dt(r.due_date) %></span><% } %></div>
+            <% }); %>
+          </div>
+        <% }); %>
+      </div>
+    <% } %>
+  </div>
+<% }); %>
+
+<script>
+  (function () {
+    var s = document.getElementById('azSearch');
+    if (!s) return;
+    s.addEventListener('input', function () {
+      var q = s.value.toLowerCase();
+      document.querySelectorAll('.az-card').forEach(function (c) {
+        c.style.display = (!q || (c.getAttribute('data-name') || '').indexOf(q) >= 0) ? '' : 'none';
+      });
+    });
+  })();
+</script>
+
+<%- include('partials/footer') %>

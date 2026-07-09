@@ -1,0 +1,68 @@
+<%- include('../partials/header', { title: 'N3twrx', user }) %>
+<%
+  function rel(s){ if(!s) return ''; var d=new Date(s),n=new Date(); var t=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+    return d.toDateString()===n.toDateString() ? 'Today '+t : d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' '+t; }
+  function sevColour(s){ return s==='critical'?'#ef4444':(s==='info'?'#2563eb':'#f59e0b'); }
+  function srcLabel(s){ return s==='giacom'?'Giacom (comms)':(s==='unifi'?'UniFi':s); }
+  var open = alerts.filter(function(a){ return a.status==='open'; });
+%>
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <h1 style="margin:0;"><span style="font-weight:800;background:linear-gradient(90deg,#6366f1,#06b6d4);-webkit-background-clip:text;background-clip:text;color:transparent;">N3twrx</span></h1>
+    <p class="muted" style="margin:4px 0 0;">Network monitoring — UniFi devices &amp; Giacom comms outages. More to come (Azure, etc.).</p>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <a class="btn <%= status==='open'?'btn-primary':'' %>" href="/n3twrx">Open</a>
+    <a class="btn <%= status==='all'?'btn-primary':'' %>" href="/n3twrx?status=all">All</a>
+  </div>
+</div>
+
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+
+<!-- Tool tiles -->
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:18px;">
+  <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Open alerts</div><div style="font-size:30px;font-weight:800;color:<%= open.length?'#ef4444':'#16a34a' %>;"><%= open.length %></div></div>
+  <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">UniFi</div><div style="font-size:30px;font-weight:800;"><%= open.filter(function(a){return a.source==='unifi';}).length %></div><div class="muted" style="font-size:12px;">device alerts open</div></div>
+  <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Giacom / comms</div><div style="font-size:30px;font-weight:800;"><%= open.filter(function(a){return a.source==='giacom';}).length %></div><div class="muted" style="font-size:12px;">incidents open</div></div>
+  <div class="card" style="opacity:.6;"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Azure</div><div style="font-size:16px;font-weight:700;margin-top:8px;">Coming soon</div></div>
+</div>
+
+<div class="card" style="padding:0;" id="alertList">
+  <div class="card-header" style="padding:16px 20px;"><h2 style="margin:0;"><%= status==='open'?'Open alerts':'All alerts' %> <span class="muted" style="font-weight:400;font-size:14px;">(<%= alerts.length %>)</span></h2></div>
+  <% if (!alerts.length) { %>
+    <p class="muted" style="padding:0 20px 16px;margin:0;">No <%= status==='open'?'open':'' %> alerts. All quiet. ✅</p>
+  <% } else { %>
+    <div class="table-wrap"><table class="table" style="margin:0;">
+      <thead><tr><th></th><th>Source</th><th>Alert</th><th>When</th><th>Ticket</th><th></th></tr></thead>
+      <tbody>
+        <% alerts.forEach(function(a){ %>
+          <tr>
+            <td style="width:10px;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:<%= sevColour(a.severity) %>;" title="<%= a.severity %>"></span></td>
+            <td style="white-space:nowrap;"><span class="badge <%= a.source==='unifi'?'badge-primary':'badge-sent' %>"><%= srcLabel(a.source) %></span></td>
+            <td><strong><%= a.title %></strong><% if (a.url) { %> <a class="row-link" href="<%= a.url %>" target="_blank" rel="noopener" style="font-size:12px;">↗</a><% } %><% if (a.body && a.body !== a.title) { %><div class="muted" style="font-size:12px;max-width:520px;"><%= String(a.body).replace(/<[^>]+>/g,'').slice(0,160) %></div><% } %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= rel(a.started_at || a.created_at) %><% if (a.status==='resolved') { %> · <span class="badge badge-inactive">resolved</span><% } %></td>
+            <td><% if (a.ticket_id) { %><a class="row-link" href="/tickets/<%= a.ticket_id %>">#<%= a.ticket_id %></a><% } else { %>—<% } %></td>
+            <td style="text-align:right;white-space:nowrap;">
+              <div style="display:inline-flex;gap:6px;justify-content:flex-end;">
+                <% if (!a.ticket_id) { %><form method="post" action="/n3twrx/alert/<%= a.id %>/ticket" style="margin:0;"><button class="btn btn-primary" type="submit" style="padding:4px 12px;font-size:13px;">Create ticket</button></form><% } %>
+                <% if (a.status==='open') { %><form method="post" action="/n3twrx/alert/<%= a.id %>/resolve" style="margin:0;"><button class="btn" type="submit" style="padding:4px 12px;font-size:13px;">Resolve</button></form><% } %>
+              </div>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  <% } %>
+</div>
+
+<script>
+  // Refresh the open-alerts view every 15s (only on the Open tab).
+  <% if (status === 'open') { %>
+  setInterval(function(){ fetch(location.pathname).then(function(r){return r.text();}).then(function(html){
+    var doc = new DOMParser().parseFromString(html,'text/html'); var fresh = doc.getElementById('alertList');
+    if (fresh) document.getElementById('alertList').innerHTML = fresh.innerHTML;
+  }).catch(function(){}); }, 15000);
+  <% } %>
+</script>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Expenses — Lumen IT Solutions</title>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f0f2f5;color:#111827;}
+    .top{background:#0f172a;color:#fff;display:flex;align-items:center;gap:14px;padding:12px 22px;}
+    .top .logo{font-weight:800;font-size:18px;background:linear-gradient(135deg,#4ade80,#3b82f6);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;}
+    .top .sub{color:#94a3b8;font-size:13px;flex:1;}
+    .top a{color:#cbd5e1;text-decoration:none;font-size:13px;}
+    .wrap{max-width:1100px;margin:0 auto;padding:24px 22px;}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px 22px;margin-bottom:18px;}
+    h1{font-size:22px;margin:0 0 4px;} .muted{color:#6b7280;}
+    select{padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:15px;}
+    table{width:100%;border-collapse:collapse;font-size:15px;}
+    th{text-align:left;padding:10px 12px;border-bottom:2px solid #e5e7eb;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#6b7280;}
+    td{padding:10px 12px;border-bottom:1px solid #eef0f3;vertical-align:middle;}
+    .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+    .btn{display:inline-block;padding:5px 12px;border-radius:8px;background:#0891b2;color:#fff;text-decoration:none;font-size:13px;font-weight:600;}
+    .stat{font-size:30px;font-weight:800;color:#06b6d4;}
+  </style>
+</head>
+<body>
+  <div class="top">
+    <span class="logo">Lumen IT Solutions</span>
+    <span class="sub">Expenses — read-only bookkeeper view</span>
+    <span style="font-size:13px;color:#94a3b8;"><%= user.displayName || user.email %></span>
+    <a href="/logout">Sign out</a>
+  </div>
+  <div class="wrap">
+    <div class="card" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;">
+      <div>
+        <h1>Expenses</h1>
+        <p class="muted" style="margin:0;">View each month's expenses and open the receipts. This view is read-only.</p>
+      </div>
+      <form method="get" action="/bookkeeper" style="display:flex;align-items:center;gap:8px;">
+        <label class="muted" style="font-size:13px;">Month</label>
+        <select name="period" onchange="this.form.submit()">
+          <% if(!months.length){ %><option><%= period %></option><% } %>
+          <% months.forEach(function(m){ var lbl=new Date(m.period+'-01').toLocaleDateString('en-GB',{month:'long',year:'numeric'}); %>
+            <option value="<%= m.period %>" <%= m.period===period?'selected':'' %>><%= lbl %> — £<%= (Number(m.total)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}) %></option>
+          <% }); %>
+        </select>
+      </form>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;">
+        <h2 style="margin:0;font-size:18px;"><%= new Date(period+'-01').toLocaleDateString('en-GB',{month:'long',year:'numeric'}) %></h2>
+        <div><span class="muted" style="font-size:13px;"><%= rows.length %> expense<%= rows.length===1?'':'s' %> · total </span><span class="stat" style="font-size:20px;">£<%= (total||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}) %></span></div>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>Date</th><th>Supplier / description</th><th>Category</th><th>Account</th><th class="num">Amount</th><th>Receipt</th></tr></thead>
+          <tbody>
+            <% if(!rows.length){ %><tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:24px;">No expenses for this month.</td></tr><% } %>
+            <% rows.forEach(function(r){ %>
+              <tr>
+                <td class="muted" style="white-space:nowrap;"><%= r.booked_at ? new Date(r.booked_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '' %></td>
+                <td><strong><%= r.counterparty || r.description || '—' %></strong><% if(r.counterparty && r.description){ %><br><span class="muted" style="font-size:13px;"><%= r.description %></span><% } %></td>
+                <td><%= r.qb_account_name || '—' %></td>
+                <td class="muted"><%= r.account_name || '' %></td>
+                <td class="num">£<%= Math.abs(Number(r.amount)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}) %></td>
+                <td><% if(r.attachment_name){ %><a class="btn" href="/bookkeeper/receipt/<%= r.id %>" target="_blank">View</a><% } else { %><span class="muted" style="font-size:13px;">—</span><% } %></td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

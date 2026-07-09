@@ -1,0 +1,80 @@
+<%- include('../partials/header', { title: 'Package Manager', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); } %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">← Bureau</a></p>
+  <h1>Package Manager</h1>
+  <p class="muted">A package = a friendly invoice name + the Giacom core products it includes + one set price. The customer sees the package name and price; the cost is whatever Giacom bills for the included products (so a tier that auto-bumps just flexes your margin).</p></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<style>
+  .pk-card{border:1px solid var(--line,#e2e8f0);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+  .pk-top{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;}
+  .pk-prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px 14px;margin:12px 0 0;max-height:190px;overflow:auto;border-top:1px solid var(--line,#eef2f7);padding-top:10px;}
+  .pk-prods label{font-size:12px;display:flex;gap:6px;align-items:center;}
+  .pk-lbl{font-size:11px;color:var(--muted,#64748b);display:block;margin-bottom:2px;}
+</style>
+
+<% function pkgForm(p){ %>
+  <div class="pk-top">
+    <div><span class="pk-lbl">Package name (shown on invoice)</span><input class="input" name="name" value="<%= p?p.name:'' %>" placeholder="Simply Mobile — Unlimited (EE) 24m" style="min-width:280px;"></div>
+    <div><span class="pk-lbl">Category</span><select class="input" name="category"><% cats.forEach(function(c){ %><option value="<%= c %>" <%= p&&p.category===c?'selected':'' %>><%= c %></option><% }); %></select></div>
+    <div><span class="pk-lbl">Price £</span><input class="input" name="standard_price" value="<%= p?Number(p.standard_price).toFixed(2):'0.00' %>" style="width:90px;text-align:right;"></div>
+    <div><span class="pk-lbl">Term</span><input class="input" name="term_label" value="<%= p&&p.term_label?p.term_label:'' %>" placeholder="24m" style="width:70px;"></div>
+    <div><span class="pk-lbl">Family pattern <span title="Optional regex so the package also catches future tier SKUs (e.g. EE30 catches EE30ES2/4/…/U)">ⓘ</span></span><input class="input" name="match_pattern" value="<%= p&&p.match_pattern?p.match_pattern:'' %>" placeholder="EE24" style="width:120px;font-family:monospace;"></div>
+    <% if (p) { %><label style="font-size:13px;display:flex;align-items:center;gap:5px;"><input type="checkbox" name="is_active" <%= p.is_active?'checked':'' %>> active</label><% } %>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:12px;gap:10px;flex-wrap:wrap;">
+    <span class="pk-lbl" style="margin:0;">Giacom products that identify this package — a CLI matches if it carries <strong>any one</strong> of these (licence <em>or</em> any handset). Cost = whatever Giacom bills on that CLI.</span>
+    <input class="input pk-search" placeholder="🔍 search products to add…" style="font-size:12px;padding:4px 8px;max-width:240px;">
+  </div>
+  <div class="pk-prods">
+    <% (products||[]).forEach(function(pr){ var on = p && (p.products||[]).indexOf(pr)>=0; %>
+      <label data-name="<%= pr.toLowerCase() %>" <%= on?'':'style=display:none;' %>><input type="checkbox" name="products" value="<%= pr %>" <%= on?'checked':'' %>> <%= pr %></label>
+    <% }); %>
+    <% if (!(products||[]).length) { %><span class="muted" style="font-size:12px;">No Giacom comms products imported yet.</span><% } %>
+  </div>
+  <p class="pk-empty muted" style="font-size:12px;margin:6px 0 0;display:none;">No products selected yet — search above to add.</p>
+<% } %>
+
+<% packages.forEach(function(p){ %>
+  <form method="post" action="/admin/packages/<%= p.id %>" class="pk-card">
+    <% pkgForm(p); %>
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button class="btn btn-primary" type="submit">Save</button>
+      <button class="btn" type="submit" formaction="/admin/packages/<%= p.id %>/delete" formnovalidate onclick="return confirm('Delete <%= (p.name||'').replace(/\x27/g,'') %>?');" style="color:#b91c1c;">Delete</button>
+    </div>
+  </form>
+<% }); %>
+
+<h2 style="margin:22px 0 8px;font-size:16px;">➕ New package</h2>
+<form method="post" action="/admin/packages" class="pk-card">
+  <% pkgForm(null); %>
+  <div style="margin-top:12px;"><button class="btn btn-primary" type="submit">Create package</button></div>
+</form>
+
+<script>(function(){
+  // Per-form searchable product picker: show only ticked products until you search.
+  document.querySelectorAll('form.pk-card').forEach(function(form){
+    var search = form.querySelector('.pk-search'); var grid = form.querySelector('.pk-prods');
+    if(!search || !grid) return;
+    var labels = [].slice.call(grid.querySelectorAll('label[data-name]'));
+    var empty = form.querySelector('.pk-empty');
+    function render(){
+      var q = search.value.trim().toLowerCase();
+      var anyChecked = false;
+      labels.forEach(function(l){
+        var checked = l.querySelector('input').checked; if(checked) anyChecked=true;
+        var show = checked || (q.length >= 1 && l.getAttribute('data-name').indexOf(q) >= 0);
+        l.style.display = show ? 'flex' : 'none';
+      });
+      if(empty) empty.style.display = (anyChecked || q) ? 'none' : '';
+    }
+    search.addEventListener('input', render);
+    grid.addEventListener('change', render);
+    render();
+  });
+})();</script>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumen MSP - Ops Board</title>
+<style>
+  :root{ --bg:#0b1220; --card:#111c33; --line:#1e2d4a; --txt:#e8eefb; --mut:#8aa0c6;
+         --green:#22c55e; --amber:#f59e0b; --red:#ef4444; --blue:#3b82f6; }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{height:100%;background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,Arial,sans-serif;overflow:hidden;}
+  .wrap{height:100vh;display:flex;flex-direction:column;padding:18px 22px;gap:14px;}
+  .top{display:flex;align-items:center;justify-content:space-between;}
+  .brand{font-size:26px;font-weight:800;letter-spacing:.3px;}
+  .brand span{color:var(--blue);}
+  .top-r{display:flex;align-items:center;gap:18px;}
+  #clock{font-size:30px;font-weight:800;font-variant-numeric:tabular-nums;}
+  .upd{font-size:12px;color:var(--mut);}
+  .mute{background:var(--card);border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer;}
+  .strip{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;}
+  .stat .n{font-size:46px;font-weight:800;line-height:1;}
+  .stat .l{font-size:13px;color:var(--mut);margin-top:8px;text-transform:uppercase;letter-spacing:.05em;}
+  .stat.alert{border-color:var(--amber);} .stat.alert .n{color:var(--amber);}
+  .main{flex:1;display:grid;grid-template-columns:1.6fr 1fr;gap:14px;min-height:0;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px;display:flex;flex-direction:column;min-height:0;}
+  .card h2{font-size:16px;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
+  .col{display:flex;flex-direction:column;gap:14px;min-height:0;}
+  .list{overflow:hidden;display:flex;flex-direction:column;gap:9px;}
+  .case{display:flex;align-items:center;gap:14px;background:#0e1830;border:1px solid var(--line);border-radius:10px;padding:11px 14px;}
+  .case .num{font-weight:800;color:var(--blue);font-size:15px;white-space:nowrap;}
+  .case .mid{flex:1;min-width:0;}
+  .case .cust{font-weight:700;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .case .subj{font-size:13px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .case .age{font-size:14px;color:var(--amber);font-weight:700;white-space:nowrap;}
+  .empty{color:var(--mut);font-size:15px;padding:14px 2px;}
+  .alerts-card.hot{border-color:var(--red);box-shadow:0 0 0 2px rgba(239,68,68,.35);}
+  .al{display:flex;align-items:center;gap:12px;background:#0e1830;border-left:4px solid var(--amber);border-radius:8px;padding:10px 12px;}
+  .al.critical{border-left-color:var(--red);} .al.info{border-left-color:var(--blue);}
+  .al .src{font-size:11px;font-weight:800;text-transform:uppercase;color:var(--mut);width:54px;}
+  .al .t{flex:1;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .al .ago{font-size:12px;color:var(--mut);white-space:nowrap;}
+  .ok{color:var(--green);font-size:16px;font-weight:700;padding:10px 2px;}
+  .web{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
+  .web .b{text-align:center;background:#0e1830;border:1px solid var(--line);border-radius:10px;padding:14px 8px;}
+  .web .b .n{font-size:34px;font-weight:800;}
+  .web .b.live .n{color:var(--green);}
+  .web .b .l{font-size:11px;color:var(--mut);margin-top:6px;text-transform:uppercase;}
+  .pulse{animation:pulse 1s ease-in-out 3;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.45;}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="brand">Lumen<span>MSP</span> &middot; Ops Board</div>
+    <div class="top-r">
+      <button class="mute" id="muteBtn" title="Toggle alert sound">Sound: on</button>
+      <div style="text-align:right;"><div id="clock">--:--</div><div class="upd">updated <span id="updAgo">just now</span></div></div>
+    </div>
+  </div>
+
+  <div class="strip">
+    <div class="stat"><div class="n" id="s-month">-</div><div class="l">Cases this month</div></div>
+    <div class="stat"><div class="n" id="s-newhr">-</div><div class="l">New / hour (today)</div></div>
+    <div class="stat"><div class="n" id="s-closehr">-</div><div class="l">Closed / hour (today)</div></div>
+    <div class="stat"><div class="n" id="s-open">-</div><div class="l">Live open cases</div></div>
+    <div class="stat" id="s-unassigned-box"><div class="n" id="s-unassigned">-</div><div class="l">Unassigned</div></div>
+  </div>
+
+  <div class="main">
+    <div class="card">
+      <h2>New &amp; unassigned cases <span id="caseCount" class="mut"></span></h2>
+      <div class="list" id="caseList"></div>
+    </div>
+    <div class="col">
+      <div class="card alerts-card" id="alertsCard" style="flex:1.2;">
+        <h2>Network alerts <span id="alertCount"></span></h2>
+        <div class="list" id="alertList"></div>
+      </div>
+      <div class="card">
+        <h2>Website</h2>
+        <div class="web">
+          <div class="b"><div class="n" id="w-today">-</div><div class="l">Views today</div></div>
+          <div class="b"><div class="n" id="w-uniq">-</div><div class="l">Visitors (30d)</div></div>
+          <div class="b live"><div class="n" id="w-live">-</div><div class="l">Live now</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var INITIAL = <%- JSON.stringify(data) %>;
+  var lastUpdate = Date.now();
+  var seenAlerts = {};
+  var soundOn = (localStorage.getItem('tvSound') !== 'off');
+  var audioCtx = null;
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];}); }
+  function ago(ts){
+    if(!ts) return '';
+    var s = Math.floor((Date.now() - new Date(ts).getTime())/1000);
+    if(s < 60) return s + 's';
+    if(s < 3600) return Math.floor(s/60) + 'm';
+    if(s < 86400) return Math.floor(s/3600) + 'h';
+    return Math.floor(s/86400) + 'd';
+  }
+  function bingBong(){
+    if(!soundOn) return;
+    try{
+      audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+      if(audioCtx.state === 'suspended') audioCtx.resume();
+      [[880,0],[660,0.18]].forEach(function(p){
+        var o=audioCtx.createOscillator(), g=audioCtx.createGain(), t=audioCtx.currentTime+p[1];
+        o.type='sine'; o.frequency.value=p[0];
+        g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.5,t+0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001,t+0.16);
+        o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t+0.18);
+      });
+    }catch(e){}
+  }
+
+  function render(d){
+    if(!d) return;
+    var c = d.cases || {};
+    document.getElementById('s-month').textContent = c.thisMonth ?? 0;
+    document.getElementById('s-newhr').textContent = c.newPerHour ?? 0;
+    document.getElementById('s-closehr').textContent = c.closedPerHour ?? 0;
+    document.getElementById('s-open').textContent = c.liveOpen ?? 0;
+    document.getElementById('s-unassigned').textContent = c.unassignedCount ?? 0;
+    document.getElementById('s-unassigned-box').className = 'stat' + ((c.unassignedCount>0)?' alert':'');
+
+    var cl = document.getElementById('caseList');
+    document.getElementById('caseCount').textContent = (c.unassigned||[]).length ? '' : '';
+    if(!(c.unassigned||[]).length){ cl.innerHTML = '<div class="empty">No unassigned cases - all picked up.</div>'; }
+    else cl.innerHTML = c.unassigned.map(function(t){
+      return '<div class="case"><div class="num">'+esc(t.number||'')+'</div>'+
+        '<div class="mid"><div class="cust">'+esc(t.customer)+'</div>'+
+        '<div class="subj">'+esc(t.subject)+'</div></div>'+
+        '<div class="age">'+ago(t.since)+'</div></div>';
+    }).join('');
+
+    var a = d.alerts || { open:0, items:[] };
+    document.getElementById('alertCount').textContent = a.open ? (a.open + ' open') : '';
+    var card = document.getElementById('alertsCard');
+    var al = document.getElementById('alertList');
+    if(!a.items.length){ card.classList.remove('hot'); al.innerHTML = '<div class="ok">All systems normal</div>'; }
+    else {
+      card.classList.add('hot');
+      al.innerHTML = a.items.map(function(x){
+        return '<div class="al '+esc(x.severity)+'"><div class="src">'+esc(x.source)+'</div>'+
+          '<div class="t">'+esc(x.title)+'</div><div class="ago">'+ago(x.since)+'</div></div>';
+      }).join('');
+    }
+    // bing-bong on a newly-seen alert id
+    var fresh = false;
+    a.items.forEach(function(x){ if(!seenAlerts[x.id]){ seenAlerts[x.id]=true; fresh = true; } });
+    // seed without sound on first paint
+    if(fresh && window._tvSeeded){ bingBong(); card.classList.add('pulse'); setTimeout(function(){card.classList.remove('pulse');},3200); }
+
+    var w = d.web || {};
+    document.getElementById('w-today').textContent = w.today ?? 0;
+    document.getElementById('w-uniq').textContent = w.uniques30 ?? 0;
+    document.getElementById('w-live').textContent = w.liveNow ?? 0;
+
+    lastUpdate = Date.now();
+  }
+
+  function tick(){
+    var now = new Date();
+    document.getElementById('clock').textContent =
+      String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0')+':'+String(now.getSeconds()).padStart(2,'0');
+    document.getElementById('updAgo').textContent = ago(lastUpdate) + ' ago';
+  }
+  function poll(){
+    fetch('/tv/data.json', { cache:'no-store' }).then(function(r){return r.json();}).then(function(d){
+      if(d && !d.error) render(d);
+    }).catch(function(){});
+  }
+
+  // mute toggle
+  document.getElementById('muteBtn').addEventListener('click', function(){
+    soundOn = !soundOn; localStorage.setItem('tvSound', soundOn?'on':'off');
+    this.textContent = 'Sound: ' + (soundOn?'on':'off');
+    if(soundOn) bingBong();
+  });
+  document.getElementById('muteBtn').textContent = 'Sound: ' + (soundOn?'on':'off');
+  // browsers need a gesture to enable audio; first click anywhere primes it
+  document.body.addEventListener('click', function(){ try{ audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)(); if(audioCtx.state==='suspended') audioCtx.resume(); }catch(e){} }, { once:true });
+
+  render(INITIAL);
+  window._tvSeeded = true;   // alerts present at load won't beep; only genuinely new ones after
+  tick(); setInterval(tick, 1000);
+  setInterval(poll, 20000);
+</script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+<nav class="tabs">
+  <a href="/m" class="<%= active==='home'?'on':'' %>"><i class="ti ti-home ic"></i>Home</a>
+  <a href="/m/support" class="<%= active==='support'?'on':'' %>"><i class="ti ti-headset ic"></i>Support</a>
+  <a href="/m/customers" class="<%= active==='customers'?'on':'' %>"><i class="ti ti-building ic"></i>Customers</a>
+  <a href="/m/receipt" class="<%= active==='receipt'?'on':'' %>"><i class="ti ti-receipt ic"></i>Receipt</a>
+  <a href="/m/tasks" class="<%= active==='tasks'?'on':'' %>"><i class="ti ti-checkbox ic"></i>Tasks</a>
+</nav>
+<script>
+  if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(function(){}); }
+  // CSRF: inject the per-session token into every form + same-origin fetch (mobile /m app).
+  (function () {
+    var meta = document.querySelector('meta[name="csrf-token"]');
+    var T = meta ? meta.getAttribute('content') : '';
+    if (!T) return;
+    function ensure(form) {
+      if (!form || (form.method || 'get').toUpperCase() === 'GET') return;
+      if (!form.querySelector('input[name="_csrf"]')) {
+        var i = document.createElement('input'); i.type = 'hidden'; i.name = '_csrf'; i.value = T; form.appendChild(i);
+      }
+      if ((form.enctype || '').toLowerCase() === 'multipart/form-data') {
+        try { var u = new URL(form.getAttribute('action') || location.href, location.href); u.searchParams.set('_csrf', T); form.setAttribute('action', u.pathname + u.search); } catch (e) {}
+      }
+    }
+    document.querySelectorAll('form').forEach(ensure);
+    document.addEventListener('submit', function (e) { ensure(e.target); }, true);
+    var nativeSubmit = HTMLFormElement.prototype.submit;
+    HTMLFormElement.prototype.submit = function () { try { ensure(this); } catch (e) {} return nativeSubmit.apply(this, arguments); };
+    var of = window.fetch;
+    window.fetch = function (input, init) {
+      init = init || {};
+      var method = (init.method || (input && typeof input !== 'string' && input.method) || 'GET').toUpperCase();
+      var url = (typeof input === 'string') ? input : (input && input.url) || '';
+      var sameOrigin = url.indexOf('http') !== 0 || url.indexOf(location.origin) === 0;
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].indexOf(method) >= 0 && sameOrigin) {
+        var h = new Headers(init.headers || (input && typeof input !== 'string' && input.headers) || {});
+        if (!h.has('x-csrf-token')) h.set('x-csrf-token', T);
+        init.headers = h;
+      }
+      return of(input, init);
+    };
+  })();
+</script>
+</body>
+</html>

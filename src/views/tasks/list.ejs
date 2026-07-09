@@ -1,0 +1,46 @@
+<%- include('../partials/header', { title: 'Tasks', user }) %>
+<% function pbadge(p){ return p==='high'?'badge-failed':(p==='low'?'badge-inactive':'badge-primary'); } %>
+<% function sbadge(s){ return s==='done'?'badge-sent':(s==='cancelled'?'badge-inactive':(s==='in_progress'?'badge-primary':'badge-inactive')); } %>
+<% function overdue(d){ return d && new Date(d) < new Date(new Date().toDateString()); } %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><h1>Tasks</h1><p class="muted"><%= tasks.length %> shown</p></div>
+  <a class="btn btn-primary" href="/tasks/new">+ New task</a>
+</div>
+
+<div class="tabs" style="margin-bottom:16px;">
+  <a class="tab-btn <%= scope==='mine' && !status ? 'active' : '' %>" href="/tasks?scope=mine">My open</a>
+  <a class="tab-btn <%= scope==='all' && !status ? 'active' : '' %>" href="/tasks?scope=all">All open</a>
+  <a class="tab-btn <%= status==='done' ? 'active' : '' %>" href="/tasks?scope=<%= scope %>&status=done">Done</a>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th></th><th>Task</th><th>Assigned</th><th>Customer</th><th>Priority</th><th>Status</th><th>Due</th><th></th></tr></thead>
+      <tbody>
+        <% if (tasks.length===0) { %><tr><td colspan="8"><div class="empty-state">No tasks — nice one! 🎉</div></td></tr><% } %>
+        <% tasks.forEach(function(t){ %>
+          <tr>
+            <td style="width:32px;">
+              <% if (t.status!=='done' && t.status!=='cancelled') { %>
+              <form method="post" action="/tasks/<%= t.id %>/done" style="margin:0;"><button class="btn" type="submit" title="Mark done" style="padding:4px 8px;">✓</button></form>
+              <% } else { %>
+              <form method="post" action="/tasks/<%= t.id %>/reopen" style="margin:0;"><button class="btn" type="submit" title="Reopen" style="padding:4px 8px;">↺</button></form>
+              <% } %>
+            </td>
+            <td><a class="row-link" href="/tasks/<%= t.id %>/edit"><%= t.title %></a><% if (t.description) { %><br><span class="muted" style="font-size:12px;"><%= t.description.length>70 ? t.description.slice(0,70)+'…' : t.description %></span><% } %></td>
+            <td class="muted"><%= t.assigned_name || '—' %></td>
+            <td class="muted"><% if (t.related_customer_id) { %><a class="row-link" href="/customers/<%= t.related_customer_id %>"><%= t.customer_name %></a><% } else { %>—<% } %></td>
+            <td><span class="badge <%= pbadge(t.priority) %>"><%= t.priority %></span></td>
+            <td><span class="badge <%= sbadge(t.status) %>"><%= t.status.replace('_',' ') %></span></td>
+            <td class="<%= overdue(t.due_date) && t.status!=='done' ? '' : 'muted' %>" style="<%= overdue(t.due_date) && t.status!=='done' ? 'color:#b91c1c;font-weight:600;' : '' %>"><%= t.due_date ? new Date(t.due_date).toLocaleDateString('en-GB') : '—' %><% if (t.due_time) { %> <%= String(t.due_time).slice(0,5) %><% } %></td>
+            <td style="text-align:right;"><form method="post" action="/tasks/<%= t.id %>/delete" onsubmit="return confirm('Delete this task?');" style="display:inline;"><button class="btn" type="submit">✕</button></form></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

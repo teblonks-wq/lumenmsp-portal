@@ -1,0 +1,56 @@
+<%- include('../partials/header', { title: 'Chat Bot', user }) %>
+<%
+  var enabled = g.enabled === 'true';
+  var openT = g.open_time || '09:00';
+  var closeT = g.close_time || '17:00';
+  var days = (g.days || 'mon,tue,wed,thu,fri').split(',');
+  var DAYS = [['mon','Mon'],['tue','Tue'],['wed','Wed'],['thu','Thu'],['fri','Fri'],['sat','Sat'],['sun','Sun']];
+%>
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">← Marketing</a></p>
+  <h1 style="margin:0;">Chat Bot</h1>
+  <p class="muted" style="margin:4px 0 0;">Turn the website live-chat on/off and set the hours your team is available.</p>
+</div>
+
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="max-width:640px;"><%= notice %></div><% } %>
+
+<form method="post" action="/marketing/chatbot" class="card" style="max-width:640px;">
+  <label style="display:flex;align-items:center;gap:12px;cursor:pointer;">
+    <input type="checkbox" name="enabled" value="on" <%= enabled ? 'checked' : '' %> style="width:20px;height:20px;">
+    <span><strong>Enable website chat</strong><br><span class="muted" style="font-size:13px;">When off, the chat bubble doesn't appear on the website (visitor tracking still runs).</span></span>
+  </label>
+
+  <div style="margin-top:18px;display:flex;gap:16px;flex-wrap:wrap;">
+    <div>
+      <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:4px;">Open from</label>
+      <input class="input" type="time" name="open_time" value="<%= openT %>">
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:4px;">Open until</label>
+      <input class="input" type="time" name="close_time" value="<%= closeT %>">
+    </div>
+  </div>
+
+  <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin:18px 0 6px;">Available days</label>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;">
+    <% DAYS.forEach(function(d){ %>
+      <label style="display:inline-flex;align-items:center;gap:6px;border:1px solid #cbd5e1;border-radius:8px;padding:7px 12px;cursor:pointer;">
+        <input type="checkbox" name="day_<%= d[0] %>" <%= days.indexOf(d[0]) >= 0 ? 'checked' : '' %>> <%= d[1] %>
+      </label>
+    <% }); %>
+  </div>
+
+  <p class="muted" style="font-size:12px;margin:14px 0 0;">Outside these hours the bubble still shows but tells visitors you're offline and invites them to leave a message (it still creates a chat for you to follow up). Times are UK time.</p>
+
+  <div style="margin-top:18px;"><button class="btn btn-primary" type="submit">Save</button></div>
+</form>
+
+<div class="card" style="max-width:640px;margin-top:16px;">
+  <div class="card-header"><h2 style="margin:0;font-size:15px;">Status</h2></div>
+  <p style="margin:10px 0 0;">
+    <% if (enabled) { %><span class="badge badge-sent">Enabled</span> — live during the hours above.
+    <% } else { %><span class="badge badge-inactive">Disabled</span> — the chat bubble is hidden on the website.<% } %>
+  </p>
+</div>
+
+<%- include('../partials/footer') %>

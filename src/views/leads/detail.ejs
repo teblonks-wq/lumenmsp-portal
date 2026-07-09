@@ -1,0 +1,87 @@
+<%- include('../partials/header', { title: lead.customer_name, user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:0,maximumFractionDigits:0}); } %>
+<% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
+<% function lbadge(s){ return s==='won'?'badge-sent':(s==='lost'?'badge-inactive':(s==='proposed'?'badge-failed':'badge-primary')); } %>
+
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/leads">← Leads</a></p>
+    <h1 style="margin:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><%= lead.customer_name %> <span class="badge <%= lbadge(lead.status) %>"><%= lead.status==='won'?'Converted':cap(lead.status) %></span></h1>
+    <p class="muted" style="margin:4px 0 0;"><% if (lead.source) { %>Source: <%= lead.source %> · <% } %><% if (lead.owner_name) { %>Owner: <%= lead.owner_name %> · <% } %><a class="row-link" href="/customers/<%= customerId %>">Full customer record →</a></p>
+    <% if (lead.follow_up_at) { var fu = new Date(lead.follow_up_at); var fuOverdue = fu < new Date(new Date().toDateString()); %>
+      <p style="margin:8px 0 0;"><span class="badge <%= fuOverdue ? 'badge-failed' : 'badge-primary' %>">📅 Follow up<%= fuOverdue ? ' (overdue)' : '' %> · <%= fu.toLocaleDateString('en-GB') %></span><% if (lead.follow_up_note) { %> <span class="muted" style="font-size:13px;"><%= lead.follow_up_note %></span><% } %></p>
+    <% } %>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a class="btn" href="/quotes/new?customer=<%= customerId %>">+ Quote</a>
+    <form method="post" action="/leads/<%= lead.id %>/delete" onsubmit="return confirm('Delete this lead? You can restore it from the recycle bin.');" style="margin:0;"><button class="btn" type="submit" style="color:#b91c1c;">Delete</button></form>
+  </div>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+
+<!-- Conversation + history at the top -->
+<%- include('../partials/comms', { comms: comms, entityType: 'customer', entityId: customerId, toEmail: commsTo, toContacts: toContacts, collapsed: false }) %>
+
+<div class="card">
+  <div class="card-header"><h2>Pipeline stage</h2></div>
+  <form method="post" action="/leads/<%= lead.id %>/status" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+    <% STAGES.forEach(function(s){ %>
+      <button class="btn <%= lead.status===s ? 'btn-primary' : '' %>" type="submit" name="status" value="<%= s %>"><%= s==='won'?'Won (convert)':cap(s) %></button>
+    <% }); %>
+    <input class="input" type="text" name="lost_reason" placeholder="Reason (if lost)…" value="<%= lead.lost_reason || '' %>" style="min-width:200px;margin-left:8px;">
+  </form>
+  <% if (lead.status==='won' && lead.won_at) { %><p class="muted" style="margin:10px 0 0;">Converted <%= new Date(lead.won_at).toLocaleDateString('en-GB') %> — the prospect is now an active customer.</p><% } %>
+  <% if (lead.status==='lost' && lead.lost_at) { %><p class="muted" style="margin:10px 0 0;">Lost <%= new Date(lead.lost_at).toLocaleDateString('en-GB') %><%= lead.lost_reason ? ' — ' + lead.lost_reason : '' %>.</p><% } %>
+</div>
+
+<div class="card-grid" style="grid-template-columns:1fr 1fr;align-items:start;">
+  <!-- Editable lead properties -->
+  <div class="card">
+    <div class="card-header"><h2>Lead details</h2></div>
+    <form method="post" action="/leads/<%= lead.id %>/edit">
+      <div class="form-group"><label>Source</label><input class="input" name="source" value="<%= lead.source || '' %>" placeholder="e.g. referral, website, cold call"></div>
+      <div class="form-group"><label>Services interested in</label><input class="input" name="services_interested" value="<%= lead.services_interested || '' %>" placeholder="e.g. M365, VoIP, broadband"></div>
+      <div class="form-group"><label>Estimated value (£)</label><input class="input" name="estimated_value" type="number" step="0.01" value="<%= lead.estimated_value != null ? Number(lead.estimated_value) : '' %>"></div>
+      <div class="form-group"><label>Owner</label>
+        <select class="input" name="owner_user_id">
+          <option value="">— unassigned —</option>
+          <% users.forEach(function(u){ %><option value="<%= u.id %>" <%= lead.owner_user_id===u.id?'selected':'' %>><%= u.display_name %></option><% }); %>
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="form-group"><label>Follow-up date <span class="muted" style="font-weight:400;">(leave blank to clear)</span></label><input class="input" type="date" name="follow_up_at" value="<%= lead.follow_up_at ? new Date(lead.follow_up_at).toISOString().slice(0,10) : '' %>"></div>
+        <div class="form-group"><label>Follow-up note</label><input class="input" name="follow_up_note" value="<%= lead.follow_up_note || '' %>" placeholder="What to chase / next step"></div>
+      </div>
+      <div class="form-group"><label>Details / notes</label><textarea class="input" name="details" rows="4" placeholder="Context, requirements, next steps…"><%= lead.details || '' %></textarea></div>
+      <button class="btn btn-primary" type="submit">Save details</button>
+    </form>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px;">
+    <div class="card">
+      <div class="card-header"><h2>Contacts</h2></div>
+      <% if (!contacts.length) { %><p class="muted" style="margin:0;">No contacts. <a class="row-link" href="/customers/<%= customerId %>/edit">Add on the customer →</a></p><% } else { %>
+        <% contacts.forEach(function(c){ %>
+          <div style="padding:7px 0;border-bottom:1px solid var(--line);font-size:14px;">
+            <strong><%= c.full_name %></strong><% if (c.is_primary) { %> ★<% } %><% if (c.job_title) { %> <span class="muted">· <%= c.job_title %></span><% } %><br>
+            <% if (c.email) { %><a class="row-link" href="mailto:<%= c.email %>"><%= c.email %></a><% } %><% if (c.phone) { %> · <a class="row-link" href="tel:<%= c.phone %>"><%= c.phone %></a><% } %><% if (c.mobile_phone) { %> · <a class="row-link" href="tel:<%= c.mobile_phone %>"><%= c.mobile_phone %> (m)</a><% } %>
+          </div>
+        <% }); %>
+      <% } %>
+    </div>
+    <div class="card">
+      <div class="card-header"><h2>Quotes</h2><a class="btn btn-primary" href="/quotes/new?customer=<%= customerId %>">+ Quote</a></div>
+      <% if (!quotes.length) { %><p class="muted" style="margin:0;">No quotes yet. <a class="row-link" href="/quotes/new?customer=<%= customerId %>">Create one →</a></p><% } else { %>
+        <% quotes.forEach(function(q){ %>
+          <div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px;">
+            <a class="row-link" href="/quotes/<%= q.id %>"><%= q.quote_number %> <span class="muted"><%= q.title || '' %></span></a>
+            <span style="white-space:nowrap;"><span class="badge"><%= q.status %></span> <%= money(q.total) %></span>
+          </div>
+        <% }); %>
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

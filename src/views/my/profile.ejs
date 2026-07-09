@@ -1,0 +1,30 @@
+<%- include('header', { title: 'Profile', company: (company && company.name) || '', user, active }) %>
+
+<div class="page-header"><h1>Your profile</h1><p class="muted">How we have your details on file. To change anything, please raise a ticket.</p></div>
+
+<div class="card">
+  <div class="card-header"><h2>Your details</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <tr><th style="width:170px;">Name</th><td><%= (me && me.full_name) || (user && user.displayName) || '' %></td></tr>
+      <tr><th>Email</th><td><%= (me && me.email) || (user && user.email) || '' %></td></tr>
+      <tr><th>Phone</th><td><%= (me && me.phone) || '—' %></td></tr>
+      <tr><th>Job title</th><td><%= (me && me.job_title) || '—' %></td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Company</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <tr><th style="width:170px;">Name</th><td><%= company.name || '' %></td></tr>
+      <tr><th>Email</th><td><%= company.email || '—' %></td></tr>
+      <tr><th>Phone</th><td><%= company.phone || '—' %></td></tr>
+      <tr><th>Website</th><td><%= company.website || '—' %></td></tr>
+      <tr><th>Address</th><td><%= [company.address_line_1, company.address_line_2, company.city, company.county, company.postcode].filter(Boolean).join(', ') || '—' %></td></tr>
+    </table>
+  </div>
+</div>
+
+<%- include('footer', { active }) %>

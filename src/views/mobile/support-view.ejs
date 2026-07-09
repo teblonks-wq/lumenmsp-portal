@@ -1,0 +1,60 @@
+<%- include('header', { title: t.ticket_number, heading: t.ticket_number, subtitle: (t.customer_name||''), back: '/m/support', user, active }) %>
+<style>
+  .rich{font-size:14.5px;line-height:1.6;color:#1f2937;word-break:break-word;overflow-wrap:anywhere;}
+  .rich p{margin:0 0 8px;} .rich p:last-child{margin-bottom:0;}
+  .rich img{max-width:100%;height:auto;border-radius:8px;}
+  .rich a{color:#2563eb;text-decoration:underline;}
+  .rich ul,.rich ol{margin:6px 0 8px 20px;} .rich li{margin:2px 0;}
+  .rich blockquote{margin:6px 0;padding:4px 12px;border-left:3px solid #cbd5e1;color:#475569;}
+  .rich pre{background:#f1f5f9;padding:10px;border-radius:8px;overflow:auto;font-size:13px;white-space:pre-wrap;}
+  .rich table{max-width:100%;display:block;overflow-x:auto;border-collapse:collapse;}
+  .rich td,.rich th{border:1px solid #e2e8f0;padding:4px 8px;}
+  .rich h1,.rich h2,.rich h3,.rich h4{font-size:16px;margin:8px 0 4px;font-weight:600;}
+</style>
+<% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : ''; } %>
+<div class="m-wrap">
+  <% if (notice) { %><div class="m-alert ok"><%= notice %></div><% } %>
+
+  <div class="sheet" style="padding:16px;">
+    <div style="font-size:16px;font-weight:600;margin-bottom:4px;"><%= t.subject || '(no subject)' %></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <span class="pill <%= t.status==='new'?'warn':'info' %>"><%= t.status %></span>
+      <% if (t.department) { %><span class="pill"><%= t.department %></span><% } %>
+      <% if (t.customer_id) { %><a class="pill" href="/m/customers/<%= t.customer_id %>"><i class="ti ti-building" style="font-size:12px;"></i> <%= t.customer_name %></a><% } %>
+    </div>
+    <% if (t.description) { %><div class="rich" style="margin-top:12px;"><%- t.description %></div><% } %>
+  </div>
+
+  <div class="actions">
+    <form method="post" action="/m/support/<%= t.id %>/status" style="flex:1;"><input type="hidden" name="status" value="pending"><button class="act-btn" style="width:100%;background:#475569;" type="submit"><i class="ti ti-clock ic"></i><span class="l">Pending</span></button></form>
+    <form method="post" action="/m/support/<%= t.id %>/status" style="flex:1;" onsubmit="return confirm('Mark this case resolved?');"><input type="hidden" name="status" value="resolved"><button class="act-btn act-call" style="width:100%;" type="submit"><i class="ti ti-check ic"></i><span class="l">Resolve</span></button></form>
+  </div>
+
+  <div class="m-label">Conversation</div>
+  <div class="sheet" style="padding:6px 0;">
+    <% if (!(timeline||[]).length) { %><div class="row"><div class="main s">No messages yet.</div></div><% } %>
+    <% (timeline||[]).forEach(function(m){ %>
+    <div style="padding:12px 16px;border-bottom:1px solid #f1f5f9;">
+      <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;">
+        <span style="font-size:13px;font-weight:600;<%= m.dir==='outbound'?'color:#2563eb;':'' %>"><%= m.kind==='note'?'📝 '+m.who:m.who %></span>
+        <span style="font-size:11px;color:#94a3b8;"><%= dt(m.at) %></span>
+      </div>
+      <div class="rich"><%- m.html %></div>
+    </div>
+    <% }); %>
+  </div>
+
+  <form method="post" action="/m/support/<%= t.id %>/note" class="sheet" style="padding:14px;">
+    <label class="m-label">Add a note</label>
+    <textarea class="m-textarea" name="body" rows="3" placeholder="Internal note (not sent to the customer)"></textarea>
+    <button class="m-btn" type="submit" style="margin-top:12px;">Add note</button>
+  </form>
+
+  <form method="post" action="/m/support/<%= t.id %>/photo" enctype="multipart/form-data" class="sheet" style="padding:14px;margin-top:12px;">
+    <label class="m-label">Add photos</label>
+    <input type="file" name="photos" accept="image/*" capture="environment" multiple style="width:100%;margin-bottom:10px;font-size:14px;">
+    <textarea class="m-textarea" name="note" rows="2" placeholder="Optional caption…"></textarea>
+    <button class="m-btn" type="submit" style="margin-top:12px;"><i class="ti ti-camera" style="font-size:15px;"></i> Upload to case</button>
+  </form>
+</div>
+<%- include('footer', { active }) %>

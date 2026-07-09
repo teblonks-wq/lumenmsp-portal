@@ -1,0 +1,745 @@
+<%- include('../partials/header', { title: ticket.ticket_number, user }) %>
+<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s==='pending'?'badge-failed':'badge-primary')); } %>
+<% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; } %>
+<% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
+<style>
+  /* Render inbound email HTML cleanly inside its card — tame Outlook's fixed-width tables,
+     oversized fonts and stray margins so it reads like a normal message. */
+  .email-body { font-size:14px; line-height:1.55; color:#1f2937; overflow-x:auto; word-break:break-word; }
+  .email-body * { max-width:100% !important; }
+  .email-body > *:first-child { margin-top:0; }
+  .email-body img { height:auto !important; }
+  .email-body table { max-width:100% !important; width:auto !important; border-collapse:collapse; }
+  .email-body td, .email-body th { word-break:break-word; }
+  .email-body p { margin:0 0 10px; }
+  .email-body a { word-break:break-word; }
+  .email-body blockquote { margin:8px 0; padding-left:10px; border-left:3px solid #e2e8f0; color:#475569; }
+  /* Strip giant inline font-sizes some signatures use */
+  .email-body font[size] { font-size:14px !important; }
+  /* Composer mode pills — tinted to match each entry's colour in the conversation feed. */
+  .mode-pill { display:flex; gap:6px; align-items:center; border:1.5px solid var(--line); border-radius:8px; padding:6px 12px; cursor:pointer; font-size:13px; font-weight:600; transition:background .12s, box-shadow .12s; }
+  .mode-pill input { margin:0; }
+  .mode-public { border-color:#bbf7d0; color:#166534; }
+  .mode-side { border-color:#ddd6fe; color:#6d28d9; }
+  .mode-internal { border-color:#fde68a; color:#92400e; }
+  .mode-public:has(input:checked) { background:#f0fdf4; box-shadow:0 0 0 2px #bbf7d0; }
+  .mode-side:has(input:checked) { background:#f5f3ff; box-shadow:0 0 0 2px #ddd6fe; }
+  .mode-internal:has(input:checked) { background:#fefce8; box-shadow:0 0 0 2px #fde68a; }
+  /* Channel pills */
+  .chan-pill { display:inline-flex; gap:5px; align-items:center; border:1.5px solid var(--line); border-radius:8px; padding:4px 10px; cursor:pointer; font-size:12px; font-weight:600; }
+  .chan-pill input { margin:0; }
+  .chan-email:has(input:checked) { border-color:#93c5fd; background:#eff6ff; }
+  .chan-teams:has(input:checked) { border-color:#a5b4fc; background:#eef2ff; }
+  .chan-wa:has(input:checked) { border-color:#86efac; background:#f0fdf4; }
+</style>
+
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" style="max-width:1100px;"><%= error %></div><% } %>
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="max-width:1100px;"><%= notice %></div><% } %>
+
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/tickets">← Tickets</a></p>
+    <h1 style="margin:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><%= ticket.ticket_number %> <span class="badge <%= sbadge(ticket.status) %>"><%= cap(ticket.status) %></span><% if (ticket.escalated_at) { %> <span class="badge badge-failed">Escalated</span><% } %></h1>
+    <p class="muted" style="margin:4px 0 0;"><%= ticket.subject %><% if (ticket.customer_name) { %> · <a class="row-link" href="/customers/<%= ticket.customer_id %>"><%= ticket.customer_name %></a><% } %></p>
+    <% if (ticket.contact_name || ticket.contact_email || ticket.contact_phone || ticket.contact_mobile) { %>
+    <p style="margin:6px 0 0;font-size:13px;color:#475569;">
+      <span class="muted" style="text-transform:uppercase;font-size:11px;letter-spacing:.04em;">Requester</span>
+      <% if (ticket.contact_name) { %> <% if (ticket.contact_id) { %><a class="row-link" href="/contacts/<%= ticket.contact_id %>"><strong style="color:#2563eb;"><%= ticket.contact_name %></strong></a><% } else { %><strong style="color:#374151;"><%= ticket.contact_name %></strong><% } %><% } %>
+      <% if (ticket.contact_email) { %> · <a class="row-link" href="mailto:<%= ticket.contact_email %>"><%= ticket.contact_email %></a><% } %>
+      <% if (ticket.contact_phone) { %> · 📞 <a class="row-link" href="tel:<%= ticket.contact_phone %>"><%= ticket.contact_phone %></a><% } %>
+      <% if (ticket.contact_mobile) { %> · 📱 <a class="row-link" href="tel:<%= ticket.contact_mobile %>"><%= ticket.contact_mobile %></a><% } %>
+      <% var waNum = (ticket.contact_mobile || ticket.contact_phone || '').toString().trim(); var waName = (ticket.contact_name || '').toString().replace(/['"\\]/g, ''); %>
+      <% if (waNum) { %> · <button type="button" title="Call this contact on WhatsApp" onclick="if(window.waPhoneCall){window.waPhoneCall('<%= waNum %>','<%= waName %>');}else{alert('Phone widget is still loading — try again in a moment.');}" style="background:#25d366;color:#fff;border:none;border-radius:8px;padding:4px 11px;font-size:12px;font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:5px;vertical-align:middle;">📲 Call on WhatsApp</button><% } %>
+    </p>
+    <% } %>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <form method="post" action="/tickets/<%= ticket.id %>/convert-to-lead" onsubmit="return confirm('Transfer this ticket to sales as a draft lead?');" style="margin:0;"><button class="btn" type="submit">→ Draft Lead</button></form>
+    <form method="post" action="/tickets/<%= ticket.id %>/convert-to-quote" onsubmit="return confirm('Create a draft quote from this ticket?');" style="margin:0;"><button class="btn" type="submit">→ Draft Quote</button></form>
+    <button class="btn" type="button" onclick="var p=document.getElementById('escalatePanel');p.style.display=p.style.display==='none'?'block':'none';">Escalate</button>
+    <button class="btn" type="button" onclick="var p=document.getElementById('mergePanel');p.style.display=p.style.display==='none'?'block':'none';if(p.style.display==='block')document.getElementById('mergeSearch').focus();">Merge</button>
+    <form method="post" action="/tickets/<%= ticket.id %>/close-no-contact" onsubmit="return confirm('Close this ticket with no contact? No emails are sent.');" style="margin:0;"><button class="btn" type="submit">Close — no contact</button></form>
+    <form method="post" action="/tickets/<%= ticket.id %>/spam" id="spamForm" style="margin:0;position:relative;" onsubmit="return confirm('Mark this case as spam? It will be hidden and future mail from this ' + (document.getElementById('spamScope').value==='domain'?'domain':'sender') + ' will be blocked.');">
+      <input type="hidden" name="scope" id="spamScope" value="email">
+      <button class="btn" type="button" id="spamBtn" style="color:#9f1239;" onclick="var m=document.getElementById('spamMenu');m.style.display=m.style.display==='none'?'block':'none';">Mark spam ▾</button>
+      <div id="spamMenu" style="display:none;position:absolute;z-index:20;margin-top:4px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 22px rgba(2,6,23,.16);min-width:230px;">
+        <button class="btn" type="submit" style="display:block;width:100%;text-align:left;border:0;border-radius:0;" onclick="document.getElementById('spamScope').value='email';">Block this sender</button>
+        <button class="btn" type="submit" style="display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);border-radius:0;" onclick="document.getElementById('spamScope').value='domain';">Block the whole domain</button>
+      </div>
+    </form>
+    <form method="post" action="/tickets/<%= ticket.id %>/delete" onsubmit="return confirm('Move this ticket to the recycle bin?');" style="margin:0;"><button class="btn" type="submit" style="color:var(--lumen-dark);">Delete</button></form>
+  </div>
+</div>
+
+<div id="mergePanel" class="card" style="display:none;max-width:640px;">
+  <div class="card-header"><h2>Merge into another ticket</h2></div>
+  <p class="muted" style="margin-top:0;">Search by case number, subject, customer or person. This ticket's conversation moves into the one you pick, and this ticket is then closed.</p>
+  <input class="input" id="mergeSearch" placeholder="Search tickets…" style="width:100%;" autocomplete="off">
+  <div id="mergeResults" style="margin-top:8px;"></div>
+</div>
+
+<div id="escalatePanel" class="card" style="display:none;max-width:520px;">
+  <div class="card-header"><h2>Escalate to a senior engineer</h2></div>
+  <form method="post" action="/tickets/<%= ticket.id %>/escalate" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+    <div class="form-group" style="margin:0;flex:1;min-width:220px;"><label>Engineer</label>
+      <select class="input" name="to_user_id" required style="width:100%;">
+        <option value="">— choose —</option>
+        <% users.forEach(function(u){ %><option value="<%= u.id %>"><%= u.display_name %></option><% }); %>
+      </select>
+    </div>
+    <button class="btn btn-primary" type="submit">Escalate</button>
+  </form>
+  <p class="muted" style="font-size:12px;margin:8px 0 0;">They'll be assigned, notified in-app and by email, and pinged on Teams.</p>
+</div>
+
+<% if (!ticket.customer_id) { %>
+<div class="card" style="border:1.5px solid #f59e0b;background:#fffbeb;margin-bottom:16px;">
+  <div class="card-header" style="padding-bottom:8px;"><h2 style="margin:0;">⚠ Unknown sender — not linked to a customer</h2></div>
+  <p style="margin:0 0 14px;">From <strong><%= requesterName || '—' %></strong><% if (requesterEmail) { %> · <a class="row-link" href="mailto:<%= requesterEmail %>"><%= requesterEmail %></a><% } %>. Link this case to an existing customer, or create a new one.</p>
+  <div style="display:flex;gap:28px;flex-wrap:wrap;">
+    <form method="post" action="/tickets/<%= ticket.id %>/link-customer" style="flex:1 1 320px;min-width:280px;">
+      <input type="hidden" name="requester_email" value="<%= requesterEmail %>">
+      <input type="hidden" name="requester_name" value="<%= requesterName %>">
+      <input type="hidden" name="customer_id" id="linkCustomerId">
+      <label style="font-weight:600;font-size:13px;">Link to an existing customer</label>
+      <input class="input" id="linkCustSearch" autocomplete="off" placeholder="Start typing a customer name…" style="width:100%;margin-top:4px;">
+      <div id="linkCustResults" style="display:none;border:1px solid var(--line);border-radius:8px;margin-top:6px;max-height:200px;overflow:auto;background:#fff;"></div>
+      <div id="linkChosen" style="display:none;margin-top:10px;flex-direction:column;gap:8px;">
+        <span style="font-weight:600;" id="linkChosenName"></span>
+        <label style="display:flex;gap:6px;align-items:center;font-size:12px;"><input type="checkbox" name="protect"> Preserve this requester (directory sync won't change it)</label>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <button class="btn btn-primary" type="submit">Link case</button>
+          <a href="#" id="linkClear" class="row-link" style="font-size:12px;">change</a>
+        </div>
+      </div>
+    </form>
+    <div style="flex:1 1 280px;min-width:260px;">
+      <label style="font-weight:600;font-size:13px;">…or create a new customer</label>
+      <p class="muted" style="font-size:12px;margin:4px 0 10px;">Opens the full new-customer form with the sender's details, then links this case and brings you back.</p>
+      <a class="btn" href="/customers/new?from_ticket=<%= ticket.id %>&email=<%= encodeURIComponent(requesterEmail || '') %>&name=<%= encodeURIComponent(requesterName || '') %>&domain=<%= (requesterEmail && requesterEmail.indexOf('@')>=0) ? encodeURIComponent(requesterEmail.split('@')[1]) : '' %>">Create new customer &amp; link →</a>
+    </div>
+  </div>
+</div>
+<script>
+  (function () {
+    var search = document.getElementById('linkCustSearch');
+    if (!search) return;
+    var results = document.getElementById('linkCustResults');
+    var chosen = document.getElementById('linkChosen');
+    var chosenName = document.getElementById('linkChosenName');
+    var hid = document.getElementById('linkCustomerId');
+    var t;
+    search.addEventListener('input', function () {
+      clearTimeout(t);
+      var q = search.value.trim();
+      if (q.length < 1) { results.style.display = 'none'; return; }
+      t = setTimeout(function () {
+        fetch('/customers/search.json?q=' + encodeURIComponent(q)).then(function (r) { return r.json(); }).then(function (rows) {
+          if (!rows.length) { results.innerHTML = '<div style="padding:10px;" class="muted">No matches</div>'; results.style.display = 'block'; return; }
+          results.innerHTML = rows.map(function (c) {
+            return '<div class="lcust" data-id="' + c.id + '" data-name="' + (c.name || '').replace(/"/g, '&quot;') + '" style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;"><span>' + c.name + '</span><span class="muted" style="font-size:12px;">' + (c.account_number || '') + (c.status === 'lead' ? ' · lead' : '') + '</span></div>';
+          }).join('');
+          results.style.display = 'block';
+          results.querySelectorAll('.lcust').forEach(function (el) {
+            el.addEventListener('click', function () {
+              hid.value = el.getAttribute('data-id');
+              chosenName.textContent = el.getAttribute('data-name');
+              results.style.display = 'none'; search.style.display = 'none';
+              chosen.style.display = 'flex';
+            });
+          });
+        });
+      }, 200);
+    });
+    document.getElementById('linkClear').addEventListener('click', function (e) {
+      e.preventDefault(); hid.value = ''; chosen.style.display = 'none';
+      search.style.display = ''; search.value = ''; search.focus();
+    });
+  })();
+</script>
+<% } %>
+
+<div class="card-grid" style="grid-template-columns:2fr 1fr;align-items:start;">
+
+  <div>
+    <div class="card">
+      <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <h2 style="margin:0;">Description</h2>
+        <button class="btn" type="button" id="caseEditBtn" onclick="toggleCaseEdit()" style="padding:4px 10px;">✎ Edit</button>
+      </div>
+      <div id="caseView" style="word-wrap:break-word;">
+        <% if (ticket.description) { %><%- ticket.description %><% } else { %><p class="muted" style="margin:0;">No description yet.</p><% } %>
+      </div>
+      <div id="caseSeed" style="display:none;"><% if (ticket.description) { %><%- ticket.description %><% } %></div>
+      <form id="caseEdit" method="post" action="/tickets/<%= ticket.id %>/edit" style="display:none;"
+            onsubmit="document.getElementById('caseDescBody').value = (window.caseQuill.getText().trim()===''?'':window.caseQuill.root.innerHTML);">
+        <div class="form-group"><label>Case title</label><input class="input" name="subject" value="<%= ticket.subject %>" style="width:100%;" required></div>
+        <div class="form-group" style="margin-bottom:10px;">
+          <label>Description</label>
+          <input type="hidden" name="description" id="caseDescBody">
+          <div id="caseDescEditor" style="height:180px;background:#fff;"></div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" type="submit">Save changes</button>
+          <button class="btn" type="button" onclick="toggleCaseEdit()">Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Conversation</h2></div>
+
+      <form method="post" action="/tickets/<%= ticket.id %>/note" enctype="multipart/form-data" style="margin:0 0 18px;border-bottom:1px solid var(--line);padding-bottom:18px;"
+            onsubmit="document.getElementById('ticketNoteBody').value = window.ticketQuill.root.innerHTML;">
+        <input type="hidden" name="body" id="ticketNoteBody">
+        <input type="hidden" name="postponed_until" id="composerPostponedUntil">
+        <div id="tkRecipients" style="margin-bottom:10px;">
+          <%- include('../partials/recipients', { id: 'tk', contacts: contacts, domain: customerDomain, custName: (ticket.customer_name || 'the customer'), custId: (ticket.customer_id || ''), to: (ticket.contact_email || ''), cc: (ticket.persistent_cc || ''), bcc: (ticket.persistent_bcc || ''), persist: !!(ticket.persistent_cc || ticket.persistent_bcc), showPersist: true }) %>
+        </div>
+        <div class="form-group" style="margin-bottom:10px;">
+          <label>Update</label>
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+            <select id="tplSelect" class="input" style="width:auto;padding:3px 8px;font-size:12px;">
+              <option value="">📄 Insert template…</option>
+              <% (typeof replyTemplates !== 'undefined' ? replyTemplates : []).forEach(function(t){ %>
+              <option value="<%= t.id %>"><%= t.name %></option>
+              <% }); %>
+            </select>
+            <button type="button" class="btn" id="lnkBtn" style="padding:3px 10px;font-size:12px;" title="Insert a link with your own label (e.g. 'Book your appointment' instead of the raw URL)">🔗 Labelled link</button>
+            <a class="muted" href="/ticket-templates" style="font-size:12px;" title="Add or edit templates">manage</a>
+          </div>
+          <div id="aiBar" style="display:none;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+            <button type="button" class="btn ai-btn" id="aiMic" style="padding:3px 10px;font-size:12px;">🎤 Dictate</button>
+            <button type="button" class="btn ai-btn" id="aiUpdate" style="padding:3px 10px;font-size:12px;" title="Polishes your draft using the whole ticket — previous messages and notes — as context.">✨ Claude</button>
+            <span id="aiStatus" class="muted" style="font-size:12px;"></span>
+          </div>
+          <style>
+            /* Reply composer opens at double height and grows with content (scrolls past ~55vh). */
+            #ticketNoteEditor.ql-container{height:auto;}
+            #ticketNoteEditor .ql-editor{min-height:300px;max-height:55vh;overflow-y:auto;}
+          </style>
+          <div id="ticketNoteEditor" style="background:#fff;"></div>
+          <div id="waLock" style="display:none;margin-top:10px;padding:14px 16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;text-align:center;">
+            <div style="font-size:14px;color:#9a3412;margin-bottom:8px;">This WhatsApp chat is outside the 24-hour window — free-form replies can't be delivered. Send an approved template to reach the customer.</div>
+            <a class="btn btn-primary" id="waLockBtn" href="#">Use a template to message</a>
+          </div>
+          <div id="catLock" style="display:none;margin-top:10px;padding:12px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;font-size:14px;color:#b91c1c;">Choose a <strong>support category</strong> above before starting work on this ticket.</div>
+        </div>
+        <div class="form-group" style="margin-bottom:10px;"><label>Attachments <span class="muted">(up to 5, 10MB each)</span></label><input class="input" type="file" name="attachments" multiple></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <span class="muted" style="font-size:12px;font-weight:600;">Send via:</span>
+          <label class="chan-pill chan-email"><input type="radio" name="channel" value="email" <%= (typeof lastChannel==='undefined'||lastChannel==='email')?'checked':'' %>> ✉ Email</label>
+          <label class="chan-pill chan-teams"><input type="radio" name="channel" value="teams" <%= (typeof lastChannel!=='undefined'&&lastChannel==='teams')?'checked':'' %>> 👥 Teams</label>
+          <label class="chan-pill chan-wa"><input type="radio" name="channel" value="whatsapp" <%= (typeof lastChannel!=='undefined'&&lastChannel==='whatsapp')?'checked':'' %>> 🟢 WhatsApp</label>
+          <span class="muted chan-note" id="chanNote" style="font-size:11px;"></span>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <label class="mode-pill mode-public"><input type="radio" name="note_type" value="public_reply" checked> Public reply <span class="muted" style="font-size:12px;font-weight:400;">(emails customer)</span></label>
+          <label class="mode-pill mode-side"><input type="radio" name="note_type" value="side_convo"> Side Convo <span class="muted" style="font-size:12px;font-weight:400;">(private · emails a third party)</span></label>
+          <label class="mode-pill mode-internal"><input type="radio" name="note_type" value="private_note"> Internal note</label>
+          <label style="display:flex;gap:6px;align-items:center;">Set status:
+            <select class="input" id="composerStatus" name="set_status" style="width:auto;padding:5px 8px;">
+              <option value="">— no change —</option>
+              <% STATUSES.forEach(function(s){ %><option value="<%= s %>"><%= cap(s) %></option><% }); %>
+            </select>
+          </label>
+          <button class="btn btn-primary" type="submit" id="replyUpdateBtn">Update</button>
+        </div>
+      </form>
+      <script>
+      (function(){
+        var WA_OPEN = <%= (typeof waWindowOpen !== 'undefined' && waWindowOpen) ? 'true' : 'false' %>;
+        var WA_TICKET = <%= ticket.id %>;
+        var WA_NUM = '<%= typeof waNum !== 'undefined' ? waNum : '' %>';
+        var HAS_CAT = <%= ticket.category ? 'true' : 'false' %>;
+        var CAT_ON = <%= (typeof aiCatOn !== 'undefined' && aiCatOn) ? 'true' : 'false' %>;
+        var lock = document.getElementById('waLock');
+        var catLock = document.getElementById('catLock');
+        var btn = document.getElementById('replyUpdateBtn');
+        var lockBtn = document.getElementById('waLockBtn');
+        var ed = document.getElementById('ticketNoteEditor');
+        if (lockBtn) lockBtn.href = '/chat/wa/new?ticket=' + WA_TICKET + (WA_NUM ? '&to=' + encodeURIComponent(WA_NUM) : '');
+        function chan(){ var r=document.querySelector('input[name="channel"]:checked'); return r?r.value:'email'; }
+        function noteType(){ var r=document.querySelector('input[name="note_type"]:checked'); return r?r.value:'public_reply'; }
+        function refresh(){
+          // Lock a WhatsApp public reply outside the 24h window, OR while no support category is set.
+          var waLocked = (chan()==='whatsapp' && noteType()==='public_reply' && !WA_OPEN);
+          var catMissing = (CAT_ON && !HAS_CAT);
+          var blocked = waLocked || catMissing;
+          if (lock) lock.style.display = waLocked ? 'block' : 'none';
+          if (catLock) catLock.style.display = catMissing ? 'block' : 'none';
+          if (btn) { btn.disabled = blocked; btn.style.opacity = blocked ? '0.5' : ''; btn.style.pointerEvents = blocked ? 'none' : ''; }
+          if (ed) ed.style.opacity = blocked ? '0.5' : '';
+        }
+        document.querySelectorAll('input[name="channel"], input[name="note_type"]').forEach(function(r){ r.addEventListener('change', refresh); });
+        refresh();
+      })();
+      </script>
+
+      <!-- Claude dictate + polish for the reply composer -->
+      <style>.ai-btn.rec{background:#b91c1c;color:#fff;border-color:#b91c1c;}</style>
+      <script src="/static/js/ai-compose.js"></script>
+      <script>
+      (function(){
+        function getChannel(){ var r=document.querySelector('input[name="channel"]:checked'); return r?r.value:'email'; }
+        function getRecipient(){
+          var to=document.querySelector('#tkRecipients .rcpt-to'); if(!to||!to.value) return null;
+          var email=to.value.split(',')[0].trim().toLowerCase(); if(!email) return null;
+          var dl=document.getElementById('tk-contacts');
+          if(dl){ for(var i=0;i<dl.options.length;i++){ if((dl.options[i].value||'').toLowerCase()===email){ var nm=(dl.options[i].textContent||'').split('<')[0].trim(); if(nm) return nm; } } }
+          var local=email.split('@')[0].replace(/[._-]+/g,' ').trim();
+          return local || null;
+        }
+        var tries=0;
+        (function init(){
+          tries++;
+          if(!window.AiCompose || !window.ticketQuill){ if(tries<40) return setTimeout(init,150); return; }
+          AiCompose.attach({ quill: window.ticketQuill, micBtn: document.getElementById('aiMic'),
+            updateBtn: document.getElementById('aiUpdate'),
+            ticketId: <%= ticket.id %>, statusEl: document.getElementById('aiStatus'),
+            getRecipient: getRecipient, getChannel: getChannel });
+          // Only reveal the bar once we know Claude is configured on the server.
+          fetch('/ai/status').then(function(r){return r.json();}).then(function(d){
+            if(d && d.configured){ var b=document.getElementById('aiBar'); if(b) b.style.display='flex'; }
+          }).catch(function(){});
+          // Insert template… → paste the canned HTML into the composer at the cursor.
+          var TPLS = <%- JSON.stringify((typeof replyTemplates !== 'undefined' ? replyTemplates : []).map(function(t){ return { id: t.id, html: t.body_html }; })) %>;
+          var sel = document.getElementById('tplSelect');
+          if (sel) sel.addEventListener('change', function(){
+            var t = TPLS.filter(function(x){ return String(x.id) === sel.value; })[0];
+            sel.value = '';
+            if (!t || !window.ticketQuill) return;
+            var q = window.ticketQuill;
+            var range = q.getSelection(true);
+            var idx = range ? range.index : q.getLength();
+            q.clipboard.dangerouslyPasteHTML(idx, t.html, 'user');
+          });
+          // Labelled link: paste/type a URL, give it friendly text. (Selecting existing text
+          // and using the toolbar 🔗 also works — this is the quick two-prompt path.)
+          var lb = document.getElementById('lnkBtn');
+          if (lb) lb.addEventListener('click', function(){
+            var q = window.ticketQuill; if (!q) return;
+            var url = prompt('Link URL (paste it here):'); if (!url) return;
+            url = url.trim(); if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+            var sel = q.getSelection(true);
+            // If text is selected, turn IT into the link; otherwise ask for a label.
+            if (sel && sel.length > 0) { q.format('link', url, 'user'); return; }
+            var label = (prompt('Link text (what the reader sees):', 'Click here') || url).trim();
+            var idx = sel ? sel.index : q.getLength();
+            q.insertText(idx, label, 'link', url, 'user');
+            q.setSelection(idx + label.length, 0);
+          });
+        })();
+      })();
+      </script>
+
+      <% if (timeline.length===0) { %><div class="empty-state">No messages or notes yet.</div><% } %>
+      <% timeline.forEach(function(e){ %>
+        <% if (e.kind==='note' && e.noteType==='system_log') { %>
+          <div class="muted" style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--line);"><%= e.body %> · <%= dt(e.at) %></div>
+        <% } else {
+             var bg = '#fff', label = '', bd = 'var(--line)';
+             if (e.kind==='message') { if (e.direction==='outbound'){bg='#eff6ff';label='Sent';} else {label='From '+e.author;} }
+             else if (e.noteType==='public_reply') { bg='#f0fdf4'; bd='#bbf7d0'; label='Reply by '+e.author; }
+             else if (e.noteType==='side_convo') { bg='#f5f3ff'; bd='#ddd6fe'; label='🔒 Side conversation · '+e.author; }
+             else if (e.noteType==='bot') { bg='#f8fafc'; label='Bot'; }
+             else { bg='#fefce8'; bd='#fde68a'; label='Internal note · '+e.author; }
+        %>
+          <div style="border:1px solid <%= bd %>;background:<%= bg %>;border-radius:10px;padding:14px 16px;margin:12px 0;">
+            <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:8px;font-size:12px;align-items:center;">
+              <span><strong><%= label %></strong><% if (e.channel==='teams' || e.channel==='whatsapp') { %><span style="font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;<%= e.channel==='teams' ? 'background:#eef2ff;color:#4338ca;' : 'background:#f0fdf4;color:#15803d;' %>"><%= e.channel==='teams' ? '👥 Teams' : '🟢 WhatsApp' %></span><% } %></span>
+              <span class="muted" style="display:flex;gap:8px;align-items:center;">
+                <% if (e.kind==='note' && (e.noteType==='public_reply' || e.noteType==='private_note')) { %>
+                  <form method="post" action="/tickets/<%= ticket.id %>/note/<%= e.id %>/privacy" style="display:inline;margin:0;"><button class="btn" type="submit" style="padding:1px 8px;font-size:11px;"><%= e.noteType==='public_reply' ? 'Make private' : 'Make public' %></button></form>
+                <% } %>
+                <% if (e.kind==='message' && (e.channel==='teams' || e.channel==='whatsapp')) { %>
+                  <button type="button" class="btn" onclick="document.getElementById('movemsg-<%= e.id %>').style.display=(document.getElementById('movemsg-<%= e.id %>').style.display==='none'?'block':'none')" style="padding:1px 8px;font-size:11px;" title="Move this message to another case and restore this one">↪ Move</button>
+                <% } %>
+                <%= dt(e.at) %>
+              </span>
+            </div>
+            <% if ((e.kind==='message' && e.direction!=='outbound' && (e.fromEmail || e.to || e.cc)) || ((e.to || e.cc))) { %>
+              <div class="muted" style="font-size:12px;margin:-2px 0 8px;border-bottom:1px dashed var(--line);padding-bottom:6px;overflow-wrap:anywhere;">
+                <% if (e.kind==='message' && e.direction!=='outbound' && e.fromEmail) { %><span style="margin-right:10px;"><strong>From:</strong> <%= e.fromEmail %></span><% } %>
+                <% if (e.to) { %><span style="margin-right:10px;"><strong>To:</strong> <%= e.to %></span><% } %>
+                <% if (e.cc) { %><span><strong>Cc:</strong> <%= e.cc %></span><% } %>
+              </div>
+            <% } %>
+            <div class="email-body" style="font-size:14px;line-height:1.6;overflow-wrap:anywhere;"><%- e.body %></div>
+            <% if (e.kind==='message' && (e.channel==='teams' || e.channel==='whatsapp')) { %>
+            <div id="movemsg-<%= e.id %>" style="display:none;margin-top:10px;padding:12px;border:1px dashed var(--line);border-radius:8px;background:#fff;">
+              <form method="post" action="/tickets/<%= ticket.id %>/message/<%= e.id %>/move" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:0;">
+                <div style="font-size:12px;">
+                  <label style="display:block;margin-bottom:3px;color:var(--muted);">Move this message to</label>
+                  <label style="margin-right:10px;"><input type="radio" name="target_type" value="new" checked onchange="this.closest('form').querySelector('.mv-tn').style.display='none'"> New case</label>
+                  <label><input type="radio" name="target_type" value="existing" onchange="this.closest('form').querySelector('.mv-tn').style.display='inline-block'"> Existing #</label>
+                  <input class="input mv-tn" name="target_ticket" placeholder="e.g. LITS-104812" style="display:none;font-size:12px;padding:3px 7px;width:150px;margin-left:6px;">
+                </div>
+                <div style="font-size:12px;">
+                  <label style="display:block;margin-bottom:3px;color:var(--muted);">Restore this case to</label>
+                  <select class="input" name="restore_status" style="font-size:12px;padding:4px 7px;">
+                    <option value="">↩ Previous status (auto)</option>
+                    <% STATUSES.forEach(function(s){ %><option value="<%= s %>"><%= cap(s) %></option><% }); %>
+                  </select>
+                </div>
+                <button class="btn btn-primary" type="submit" style="font-size:12px;padding:5px 11px;">Move message</button>
+              </form>
+            </div>
+            <% } %>
+          </div>
+        <% } %>
+      <% }); %>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:18px;">
+  <div class="card">
+    <div class="card-header"><h2>Properties</h2></div>
+    <form method="post" action="/tickets/<%= ticket.id %>">
+      <div class="form-group" style="margin-bottom:12px;"><label>Status</label><select class="input" id="statusSel" name="status" style="width:100%;"><% STATUSES.forEach(function(s){ %><option value="<%= s %>" <%= ticket.status===s?'selected':'' %>><%= cap(s) %></option><% }); %></select></div>
+      <% function dtLocal(d){ if(!d) return ''; var x=new Date(d); var p=function(n){return String(n).padStart(2,'0');}; return x.getFullYear()+'-'+p(x.getMonth()+1)+'-'+p(x.getDate())+'T'+p(x.getHours())+':'+p(x.getMinutes()); } %>
+      <input type="hidden" name="postponed_until" id="postponedUntil" value="<%= dtLocal(ticket.postponed_until) %>">
+      <div id="postponeWrap" style="margin-bottom:12px;display:<%= (ticket.status==='postponed'||ticket.status==='awaiting_installation')?'block':'none' %>;font-size:13px;color:#7c3aed;">
+        📅 <span id="postponeLabel"><%= ticket.status==='awaiting_installation'?'Installation date':'Postpone until' %></span> <strong id="postponeShow"></strong> · <a href="#" id="postponeChange" class="row-link">change</a>
+      </div>
+      <input type="hidden" name="department" value="support">
+      <% var _catReq = (typeof aiCatOn !== 'undefined' && aiCatOn && !ticket.category); %>
+      <div class="form-group" style="margin-bottom:12px;"><label>Category<% if(_catReq){ %> <span style="color:#dc2626;font-weight:700;">— required</span><% } %></label><select class="input" name="category" id="ticketCategory" style="width:100%;<%= _catReq ? 'border-color:#dc2626;' : '' %>"><option value="" disabled <%= !ticket.category ? 'selected' : '' %>>— choose a category —</option><% CATEGORIES.forEach(function(c){ %><option value="<%= c %>" <%= ticket.category===c?'selected':'' %>><%= cap(c) %></option><% }); %></select></div>
+      <div class="form-group" style="margin-bottom:14px;"><label>Assigned to</label><select class="input" name="assigned_user_id" style="width:100%;"><option value="">— unassigned —</option><% users.forEach(function(u){ %><option value="<%= u.id %>" <%= ticket.assigned_user_id===u.id?'selected':'' %>><%= u.display_name %></option><% }); %></select></div>
+      <div class="form-group" style="margin-bottom:14px;">
+        <label>Requester</label>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="flex:1;font-size:13px;min-width:0;">
+            <% if (ticket.contact_name) { %>
+              <a class="row-link" href="/contacts/<%= ticket.contact_id %>" style="font-weight:600;"><%= ticket.contact_name %></a>
+              <% if (ticket.customer_name) { %><br><span class="muted" style="font-size:12px;"><%= ticket.customer_name %></span><% } %>
+            <% } else { %><span class="muted">— none —</span><% } %>
+          </div>
+          <button type="button" class="btn" onclick="openReqModal()" style="font-size:12px;padding:5px 10px;white-space:nowrap;">Change</button>
+        </div>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Save</button>
+    </form>
+
+    <div id="ppModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(15,23,42,.5);align-items:center;justify-content:center;padding:20px;">
+      <div style="background:#fff;border-radius:14px;padding:22px;max-width:400px;width:100%;">
+        <h2 id="ppModalTitle" style="font-size:17px;margin:0 0 4px;">Postpone case</h2>
+        <p id="ppModalSub" class="muted" style="font-size:13px;margin:0 0 14px;">When should this case come back to Awaiting engineer?</p>
+        <input id="ppModalInput" class="input" type="datetime-local" style="width:100%;margin-bottom:12px;font-size:16px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">
+          <button type="button" class="btn pp-quick" data-h="1" style="font-size:12px;padding:4px 9px;">+1 hour</button>
+          <button type="button" class="btn pp-quick" data-h="24" style="font-size:12px;padding:4px 9px;">Tomorrow</button>
+          <button type="button" class="btn pp-quick" data-h="72" style="font-size:12px;padding:4px 9px;">+3 days</button>
+          <button type="button" class="btn pp-quick" data-h="168" style="font-size:12px;padding:4px 9px;">+1 week</button>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+          <button type="button" class="btn" id="ppCancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="ppConfirm">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="reqModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(15,23,42,.5);align-items:center;justify-content:center;padding:20px;">
+      <div style="background:#fff;border-radius:14px;padding:22px;max-width:480px;width:100%;">
+        <h2 style="font-size:17px;margin:0 0 4px;">Set requester</h2>
+        <p class="muted" style="font-size:13px;margin:0 0 12px;">Search all contacts. Choosing one updates the requester and company on this case.</p>
+        <input id="reqSearch" class="input" type="search" placeholder="Search name or email…" style="width:100%;margin-bottom:10px;" autocomplete="off">
+        <div id="reqResults" style="max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:8px;"></div>
+        <div style="display:flex;justify-content:flex-end;margin-top:14px;"><button type="button" class="btn" onclick="closeReqModal()">Cancel</button></div>
+      </div>
+    </div>
+    <form id="reqForm" method="post" action="/tickets/<%= ticket.id %>/set-requester" style="display:none;"><input type="hidden" name="contact_id" id="reqContactId"></form>
+    <table class="table" style="margin-top:16px;"><tbody>
+      <tr><th style="width:45%;">Source</th><td><%= cap(ticket.source) %></td></tr>
+      <tr><th>Mailbox</th><td class="muted" style="font-size:12px;"><%= ticket.mailbox %></td></tr>
+      <tr><th>Created</th><td class="muted" style="font-size:12px;"><%= dt(ticket.created_at) %></td></tr>
+      <% if (ticket.assigned_name) { %><tr><th>Assignee</th><td><%= ticket.assigned_name %></td></tr><% } %>
+    </tbody></table>
+  </div>
+
+  <% if (typeof quotes !== 'undefined' && quotes.length) { %>
+  <div class="card">
+    <div class="card-header"><h2>Quotes</h2></div>
+    <% quotes.forEach(function(q){ %>
+      <div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px;">
+        <a class="row-link" href="/quotes/<%= q.id %>"><%= q.quote_number %> <span class="muted"><%= q.title || '' %></span></a>
+        <span style="white-space:nowrap;"><span class="badge"><%= q.status %></span> &pound;<%= (Number(q.total)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}) %></span>
+      </div>
+    <% }); %>
+  </div>
+  <% } %>
+
+  <div class="card">
+    <div class="card-header"><h2>Case log</h2></div>
+    <% if (!caseLog || caseLog.length===0) { %>
+      <p class="muted" style="margin:0;">No events yet.</p>
+    <% } else { %>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <% caseLog.forEach(function(c){ %>
+          <div style="font-size:12px;border-bottom:1px solid var(--line);padding-bottom:5px;"><%= c.body %><br><span class="muted"><%= dt(c.created_at) %></span></div>
+        <% }); %>
+      </div>
+    <% } %>
+  </div>
+  </div>
+
+</div>
+
+<link href="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
+<script src="/static/grammar.js"></script>
+<script>
+  window.ticketQuill = new Quill('#ticketNoteEditor', {
+    theme: 'snow',
+    placeholder: 'Type your reply or internal note…',
+    modules: { toolbar: [
+      [{ font: [] }, { size: [] }],
+      ['bold', 'italic', 'underline', 'strike'],
+      [{ color: [] }, { background: [] }],
+      [{ list: 'ordered' }, { list: 'bullet' }],
+      ['link'],
+      ['clean'],
+    ] },
+  });
+  if (window.LumenGrammar) LumenGrammar.attach(window.ticketQuill, document.getElementById('ticketNoteEditor').parentNode);
+
+  // Composer draft — keeps whatever you've typed (message, To/CC/BCC, mode, status) in this
+  // browser so it survives a reload, accidental navigation, or even a logout & log back in.
+  // Cleared once the reply is actually submitted.
+  (function () {
+    var q = window.ticketQuill;
+    var form = document.querySelector('form[action="/tickets/<%= ticket.id %>/note"]');
+    if (!q || !form) return;
+    var KEY = 'tkDraft:<%= user.id %>:<%= ticket.id %>';
+    var get = function (sel) { return form.querySelector(sel); };
+    var val = function (sel) { var e = get(sel); return e ? e.value : ''; };
+
+    // Restore an existing draft.
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (raw) {
+        var d = JSON.parse(raw) || {};
+        if (d.body) q.clipboard.dangerouslyPasteHTML(d.body);
+        if (d.to && get('.rcpt-to')) get('.rcpt-to').value = d.to;
+        if (d.cc && get('.rcpt-cc')) get('.rcpt-cc').value = d.cc;
+        if (d.bcc && get('.rcpt-bcc')) get('.rcpt-bcc').value = d.bcc;
+        if (d.mode) { var r = form.querySelector('input[name=note_type][value="' + d.mode + '"]'); if (r) r.checked = true; }
+        if (d.status && get('#composerStatus')) get('#composerStatus').value = d.status;
+      }
+    } catch (e) { /* ignore */ }
+
+    var save = function () {
+      try {
+        var body = q.getText().trim() === '' ? '' : q.root.innerHTML;
+        var d = { body: body, to: val('.rcpt-to'), cc: val('.rcpt-cc'), bcc: val('.rcpt-bcc'),
+                  mode: (form.querySelector('input[name=note_type]:checked') || {}).value || '',
+                  status: val('#composerStatus') };
+        if (!d.body && !d.to && !d.cc && !d.bcc && !d.status) { localStorage.removeItem(KEY); return; }
+        localStorage.setItem(KEY, JSON.stringify(d));
+      } catch (e) { /* quota/full — ignore */ }
+    };
+    var t; var schedule = function () { clearTimeout(t); t = setTimeout(save, 400); };
+    q.on('text-change', schedule);
+    form.querySelectorAll('.rcpt-f, #composerStatus, input[name=note_type]').forEach(function (el) {
+      el.addEventListener('input', schedule); el.addEventListener('change', schedule);
+    });
+    // Sent → clear the draft so it doesn't linger.
+    form.addEventListener('submit', function () { try { localStorage.removeItem(KEY); } catch (e) {} });
+  })();
+
+  // Channel picker hint — Teams/WhatsApp are recorded on the case until those connectors go live.
+  (function () {
+    var note = document.getElementById('chanNote');
+    if (!note) return;
+    function upd() {
+      var sel = document.querySelector('input[name=channel]:checked');
+      var v = sel ? sel.value : 'email';
+      note.textContent = v === 'teams' ? '· logged on the case (Teams sending not connected yet)'
+        : v === 'whatsapp' ? '· sends via WhatsApp (free-form replies work within 24h of their last message)' : '';
+    }
+    document.querySelectorAll('input[name=channel]').forEach(function (r) { r.addEventListener('change', upd); });
+    upd();
+  })();
+
+  // Edit case title + description in place.
+  window.caseQuill = null;
+  function toggleCaseEdit() {
+    var view = document.getElementById('caseView');
+    var form = document.getElementById('caseEdit');
+    var btn = document.getElementById('caseEditBtn');
+    var editing = form.style.display !== 'none';
+    if (editing) {
+      form.style.display = 'none'; view.style.display = ''; btn.style.display = '';
+      return;
+    }
+    view.style.display = 'none'; form.style.display = ''; btn.style.display = 'none';
+    if (!window.caseQuill) {
+      window.caseQuill = new Quill('#caseDescEditor', {
+        theme: 'snow',
+        placeholder: 'Describe the request or issue…',
+        modules: { toolbar: [
+          [{ font: [] }, { size: [] }],
+          ['bold', 'italic', 'underline', 'strike'],
+          [{ color: [] }, { background: [] }],
+          [{ list: 'ordered' }, { list: 'bullet' }],
+          ['link'],
+          ['clean'],
+        ] },
+      });
+      window.caseQuill.root.innerHTML = document.getElementById('caseSeed').innerHTML;
+      if (window.LumenGrammar) LumenGrammar.attach(window.caseQuill, document.getElementById('caseDescEditor').parentNode);
+    }
+  }
+  window.toggleCaseEdit = toggleCaseEdit;
+
+  (function () {
+    var s = document.getElementById('mergeSearch'), r = document.getElementById('mergeResults'), t;
+    if (!s) return;
+    s.addEventListener('input', function () {
+      clearTimeout(t);
+      var q = s.value.trim();
+      if (!q) { r.innerHTML = ''; return; }
+      t = setTimeout(function () {
+        fetch('/tickets/search.json?exclude=<%= ticket.id %>&q=' + encodeURIComponent(q)).then(function (x) { return x.json(); }).then(function (rows) {
+          if (!rows.length) { r.innerHTML = '<div class="muted" style="padding:8px;">No matches</div>'; return; }
+          r.innerHTML = rows.map(function (row) {
+            return '<form method="post" action="/tickets/<%= ticket.id %>/merge" onsubmit="return confirm(\'Merge this ticket into the selected one?\');" style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
+              + '<span><strong>' + row.ticket_number + '</strong> &middot; ' + (row.subject || '') + '<br><span class="muted" style="font-size:12px;">' + (row.customer_name || '') + ' &middot; ' + row.status + '</span></span>'
+              + '<input type="hidden" name="target_id" value="' + row.id + '"><button class="btn btn-primary" type="submit">Merge</button></form>';
+          }).join('');
+        });
+      }, 200);
+    });
+  })();
+</script>
+
+<script>
+// Make the "Set status" default reflect what actually happens: a public reply with
+// no explicit choice moves the case to Awaiting customer; an internal note leaves it.
+(function(){
+  var f = document.querySelector('form[action="/tickets/<%= ticket.id %>/note"]');
+  if(!f) return;
+  var sel = f.querySelector('select[name="set_status"]');
+  if(!sel || !sel.options.length) return;
+  var first = sel.options[0];
+  function upd(){
+    var r = f.querySelector('input[name="note_type"]:checked');
+    first.textContent = (r && r.value === 'public_reply') ? 'Awaiting customer (default)' : '— no change —';
+  }
+  f.querySelectorAll('input[name="note_type"]').forEach(function(r){ r.addEventListener('change', upd); });
+  upd();
+
+  // Show the To/CC/BCC block only for public replies (it emails the customer).
+  var rcptWrap = document.getElementById('tkRecipients');
+  function toggleRcpt(){
+    var r = f.querySelector('input[name="note_type"]:checked');
+    var v = r ? r.value : '';
+    if (rcptWrap) rcptWrap.style.display = (v === 'public_reply' || v === 'side_convo') ? '' : 'none';
+  }
+  f.querySelectorAll('input[name="note_type"]').forEach(function(r){ r.addEventListener('change', toggleRcpt); });
+  toggleRcpt();
+
+  // If the To is overtyped (no longer the matched contact), strip the auto "Hi {name}," greeting.
+  var blk = document.querySelector('#tkRecipients .rcpt');
+  if (blk) blk.__onOvertype = function(){
+    try {
+      if (!window.ticketQuill) return;
+      var html = window.ticketQuill.root.innerHTML;
+      var stripped = html.replace(/^\s*<p>\s*Hi\b[^<]*?,?\s*<\/p>\s*(?:<p><br><\/p>\s*)?/i, '');
+      if (stripped !== html) window.ticketQuill.root.innerHTML = stripped;
+    } catch (e) {}
+  };
+})();
+</script>
+
+<script>
+// Postpone lightbox — shared by the Properties panel and the composer.
+(function(){
+  var ppModal = document.getElementById('ppModal');
+  if (!ppModal) return;
+  var ppInput = document.getElementById('ppModalInput');
+  var cur = null; // {hidden, sel, prev, show, wrap}
+  function pad(n){ return String(n).padStart(2,'0'); }
+  function toLocal(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes()); }
+  function fmtShow(v){ if(!v) return '(not set)'; var d=new Date(v); return isNaN(d)?'(not set)':d.toLocaleString('en-GB',{weekday:'short',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}); }
+  var DATE_STATUSES = ['postponed', 'awaiting_installation'];
+  function labelFor(s){ return s === 'awaiting_installation' ? 'Installation date' : 'Postpone until'; }
+  function open(ctx){
+    cur = ctx;
+    var install = ctx.sel && ctx.sel.value === 'awaiting_installation';
+    var t = document.getElementById('ppModalTitle'), sub = document.getElementById('ppModalSub');
+    if (t) t.textContent = install ? 'Installation date' : 'Postpone case';
+    if (sub) sub.textContent = install ? 'When is the installation scheduled?' : 'When should this case come back to Awaiting engineer?';
+    ppInput.value = (ctx.hidden && ctx.hidden.value) || toLocal(new Date(Date.now()+3600000));
+    ppModal.style.display='flex'; setTimeout(function(){ ppInput.focus(); }, 30);
+  }
+  document.querySelectorAll('.pp-quick').forEach(function(b){ b.addEventListener('click', function(){ ppInput.value = toLocal(new Date(Date.now() + Number(b.getAttribute('data-h'))*3600000)); }); });
+  document.getElementById('ppConfirm').addEventListener('click', function(){
+    if (!ppInput.value) { alert('Pick a date & time.'); return; }
+    if (cur){
+      if(cur.hidden) cur.hidden.value = ppInput.value;
+      if(cur.sel) cur.sel.dataset.prev = cur.sel.value;
+      if(cur.label && cur.sel) cur.label.textContent = labelFor(cur.sel.value);
+      if(cur.show) cur.show.textContent = fmtShow(ppInput.value);
+      if(cur.wrap) cur.wrap.style.display='block';
+    }
+    ppModal.style.display='none';
+  });
+  document.getElementById('ppCancel').addEventListener('click', function(){
+    if (cur && cur.sel && cur.prev != null) cur.sel.value = cur.prev;
+    ppModal.style.display='none';
+  });
+  function register(sel, hidden, show, wrap, label){
+    if (!sel) return;
+    sel.dataset.prev = sel.value;
+    if (DATE_STATUSES.indexOf(sel.value) >= 0){ if(show && hidden) show.textContent = fmtShow(hidden.value); if(label) label.textContent = labelFor(sel.value); if(wrap) wrap.style.display='block'; }
+    sel.addEventListener('change', function(){
+      if (DATE_STATUSES.indexOf(sel.value) >= 0){ open({ hidden: hidden, sel: sel, prev: sel.dataset.prev, show: show, wrap: wrap, label: label }); }
+      else { sel.dataset.prev = sel.value; if(wrap) wrap.style.display='none'; }
+    });
+  }
+  register(document.getElementById('statusSel'), document.getElementById('postponedUntil'), document.getElementById('postponeShow'), document.getElementById('postponeWrap'), document.getElementById('postponeLabel'));
+  register(document.getElementById('composerStatus'), document.getElementById('composerPostponedUntil'), null, null, null);
+  var chg = document.getElementById('postponeChange');
+  if (chg) chg.addEventListener('click', function(e){ e.preventDefault(); var ss=document.getElementById('statusSel'); open({ hidden: document.getElementById('postponedUntil'), sel: ss, prev: ss.value, show: document.getElementById('postponeShow'), wrap: document.getElementById('postponeWrap'), label: document.getElementById('postponeLabel') }); });
+
+  // Can't start a ticket (working status) until it's assigned.
+  var statusSel = document.getElementById('statusSel');
+  var statusForm = statusSel ? statusSel.closest('form') : null;
+  var assignSel = statusForm ? statusForm.querySelector('select[name="assigned_user_id"]') : null;
+  if (statusForm && assignSel) {
+    statusForm.addEventListener('submit', function(e){
+      var WORKING = ['open','awaiting_customer','awaiting_3rd_party','awaiting_engineer','awaiting_installation'];
+      if (WORKING.indexOf(statusSel.value) >= 0 && !assignSel.value) { e.preventDefault(); alert('Assign the ticket to an engineer before starting it.'); assignSel.focus(); }
+    });
+  }
+})();
+</script>
+
+<script>
+// Requester picker — search all contacts; choosing one updates requester + company on the case.
+function openReqModal(){ var m=document.getElementById('reqModal'); if(!m) return; m.style.display='flex'; var s=document.getElementById('reqSearch'); s.value=''; document.getElementById('reqResults').innerHTML=''; s.focus(); }
+function closeReqModal(){ var m=document.getElementById('reqModal'); if(m) m.style.display='none'; }
+function chooseReq(id){ document.getElementById('reqContactId').value=id; document.getElementById('reqForm').submit(); }
+(function(){
+  var box=document.getElementById('reqSearch'); if(!box) return;
+  function esc(s){ return String(s||'').replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  var t;
+  box.addEventListener('input', function(){
+    clearTimeout(t);
+    var q=box.value.trim();
+    var out=document.getElementById('reqResults');
+    if(q.length<2){ out.innerHTML='<div class="muted" style="padding:10px;font-size:13px;">Type at least 2 characters…</div>'; return; }
+    t=setTimeout(function(){
+      fetch('/contacts/search.json?q='+encodeURIComponent(q)).then(function(r){return r.json();}).then(function(rows){
+        out.innerHTML = (rows && rows.length) ? rows.map(function(c){
+          return '<button type="button" onclick="chooseReq('+c.id+')" style="display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:#fff;padding:9px 12px;cursor:pointer;font-size:13px;"><strong>'+esc(c.full_name)+'</strong>'+(c.email?' <span class="muted">· '+esc(c.email)+'</span>':'')+(c.customer_name?'<br><span class="muted" style="font-size:12px;">'+esc(c.customer_name)+'</span>':'')+'</button>';
+        }).join('') : '<div class="muted" style="padding:10px;font-size:13px;">No contacts match.</div>';
+      }).catch(function(){ out.innerHTML='<div class="muted" style="padding:10px;">Search failed.</div>'; });
+    }, 250);
+  });
+  document.getElementById('reqModal').addEventListener('click', function(e){ if(e.target===this) closeReqModal(); });
+})();
+</script>
+
+<%- include('../partials/footer') %>

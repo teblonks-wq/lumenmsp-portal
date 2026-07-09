@@ -1,0 +1,335 @@
+<%- include('partials/header', { title: 'Comms Bill Run', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+   var nClis = (clis||[]).length, nUncosted = (uncosted||[]).length, nCust = (review||[]).length;
+%>
+<style>
+  .br-steps{display:flex;gap:0;margin:0 0 22px;flex-wrap:wrap;}
+  .br-step{flex:1;min-width:150px;position:relative;padding:12px 14px 12px 30px;background:var(--card,#fff);border:1px solid var(--border,#e5e7eb);cursor:pointer;}
+  .br-step:first-child{border-radius:8px 0 0 8px;}
+  .br-step:last-child{border-radius:0 8px 8px 0;}
+  .br-step.active{background:var(--accent,#2563eb);border-color:var(--accent,#2563eb);}
+  .br-step.active .br-n,.br-step.active .br-t{color:#fff;}
+  .br-step.done .br-n{background:#166534;color:#fff;border-color:#166534;}
+  .br-n{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;border:1.5px solid var(--muted,#94a3b8);font-size:12px;font-weight:700;color:var(--muted,#64748b);margin-right:8px;}
+  .br-t{font-weight:600;font-size:13px;}
+  .br-sub{display:block;font-size:11px;color:var(--muted,#94a3b8);margin-left:30px;}
+  .br-panel{display:none;}
+  .br-panel.active{display:block;}
+  .br-nav{display:flex;justify-content:space-between;margin-top:18px;gap:10px;}
+</style>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">← Back Office</a></p>
+  <h1>Comms Bill Run <% if (period){ %><span class="muted" style="font-weight:400;">· period <%= period %></span><% } %></h1></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<div class="br-steps">
+  <div class="br-step active" data-step="1"><span class="br-n">1</span><span class="br-t">Allocate CLIs</span><span class="br-sub"><%= nClis %> to allocate</span></div>
+  <div class="br-step" data-step="2"><span class="br-n">2</span><span class="br-t">Cost services</span><span class="br-sub"><%= nUncosted %> to review</span></div>
+  <div class="br-step" data-step="3"><span class="br-n">3</span><span class="br-t">Review invoices</span><span class="br-sub"><%= nCust %> customers</span></div>
+  <div class="br-step" data-step="4"><span class="br-n">4</span><span class="br-t">Complete</span><span class="br-sub">close period</span></div>
+</div>
+
+<!-- STAGE 1 — Allocate CLIs -->
+<div class="br-panel active" data-step="1">
+  <% if ((unaccounted||[]).length) { %>
+  <div class="card" style="padding:0;border:1px solid #fca5a5;margin-bottom:14px;">
+    <div class="card-header" style="padding:18px 22px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2 style="color:#b91c1c;">⚠ Unaccounted CLIs <span class="muted">(<%= unaccounted.length %>)</span></h2>
+      <input id="unaccFilter" class="input" placeholder="filter by area code / digits e.g. 01793" oninput="(function(v){document.querySelectorAll('#unaccTable tbody tr').forEach(function(r){var c=(r.getAttribute('data-cli')||'');r.style.display=(!v||c.indexOf(v.replace(/\D/g,''))===0||c.indexOf(v.replace(/\D/g,''))>-1)?'':'none';});})(this.value)" style="max-width:260px;font-size:13px;padding:5px 8px;"></div>
+    <p class="muted" style="padding:0 22px;font-size:13px;margin:6px 0 0;">These CLIs are <strong>live but not billing to a current customer</strong> — a deleted owner, or active in the call records with no billed line. <strong>Allocate</strong> each to its customer or <strong>Suppress</strong> the ones that genuinely shouldn't bill. The run can't complete while any remain.</p>
+    <form method="post" action="/bureau/cli/bulk-allocate" onsubmit="return confirm('Allocate every comms CLI in this number range to the chosen customer?');" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 22px;margin:0;background:#f8fafc;border-top:1px solid var(--border,#e5e7eb);border-bottom:1px solid var(--border,#e5e7eb);">
+      <input type="hidden" name="back" value="/bureau/bill-run">
+      <strong style="font-size:13px;">Bulk assign a number range:</strong>
+      <input class="input" name="from" placeholder="from e.g. 01367718760" style="width:170px;font-size:13px;padding:5px 8px;">
+      <span class="muted">→</span>
+      <input class="input" name="to" placeholder="to e.g. 01367718799" style="width:170px;font-size:13px;padding:5px 8px;">
+      <select class="input" name="customer_id" required style="width:auto;min-width:180px;padding:5px 8px;"><option value="">— choose customer —</option><% customers.forEach(function(cu){ %><option value="<%= cu.id %>"><%= cu.name %></option><% }); %></select>
+      <button class="btn btn-primary" type="submit">Assign range</button>
+    </form>
+    <div class="table-wrap"><table class="table" id="unaccTable">
+      <thead><tr><th>CLI / Ref</th><th>Problem</th><th>Detail</th><th>Allocate to customer / suppress</th></tr></thead>
+      <tbody>
+        <% (unaccounted||[]).forEach(function(u){ %>
+          <tr data-cli="<%= String(u.cli||'').replace(/\D/g,'') %>">
+            <td><strong><%= u.cli %></strong></td>
+            <td><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;"><%= u.reason==='orphaned_owner'?'Owner deleted':'Active, no bill' %></span></td>
+            <td class="muted" style="font-size:12px;"><%= u.detail %></td>
+            <td>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <form method="post" action="/bureau/cli/allocate" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0;">
+                  <input type="hidden" name="cli" value="<%= u.cli %>">
+                  <input type="hidden" name="back" value="/bureau/bill-run">
+                  <select class="input" name="customer_id" required style="width:auto;min-width:170px;padding:5px 8px;"><option value="">— choose customer —</option><% customers.forEach(function(cu){ %><option value="<%= cu.id %>"><%= cu.name %></option><% }); %></select>
+                  <button class="btn btn-primary" type="submit">Allocate</button>
+                </form>
+                <form method="post" action="/bureau/cli/suppress" onsubmit="return confirm('Suppress <%= u.cli %>? It will stay hidden across future imports.');" style="margin:0;">
+                  <input type="hidden" name="cli" value="<%= u.cli %>">
+                  <button class="btn" type="submit" style="font-size:12px;padding:5px 9px;color:#b91c1c;">Suppress</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </div>
+  <% } %>
+
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:18px 22px 0;"><h2>New CLIs / circuit refs to allocate <span class="muted">(<%= nClis %>)</span></h2></div>
+    <p class="muted" style="padding:0 22px;font-size:13px;margin:6px 0 0;">Just assign each CLI/circuit to its customer (and a site/location if useful). Billing belongs to the period at the top — there's no billing decision here.</p>
+    <div class="table-wrap"><table class="table sortable">
+      <thead><tr><th>CLI / Ref</th><th>Type</th><th style="text-align:right;">Cost</th><th>Allocate to customer + location</th></tr></thead>
+      <tbody>
+        <% if (!nClis) { %><tr><td colspan="4"><div class="empty-state">Every supplied CLI is allocated. 🎉</div></td></tr><% } %>
+        <% (clis||[]).forEach(function(c){ %>
+          <tr>
+            <td><strong><%= c.cli %></strong> <span class="muted" style="font-size:11px;"><%= (c.services||[]).slice(0,2).join(', ') %></span></td>
+            <td><span class="badge <%= c.type==='voice'?'badge-sent':'badge-primary' %>" style="font-size:10px;"><%= c.type==='voice'?'Number':'Circuit' %></span></td>
+            <td style="text-align:right;" class="muted"><%= money(c.cost) %></td>
+            <td>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <form method="post" action="/bureau/cli/allocate" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0;">
+                  <input type="hidden" name="cli" value="<%= c.cli %>">
+                  <select class="input" name="customer_id" required style="width:auto;min-width:180px;padding:5px 8px;"><option value="">— choose customer —</option><% customers.forEach(function(cu){ %><option value="<%= cu.id %>"><%= cu.name %></option><% }); %></select>
+                  <input class="input" name="location" placeholder="<%= c.type==='circuit'?'site / office…':'location (optional)' %>" title="Location / site label for this CLI or circuit" style="width:150px;padding:5px 8px;font-size:13px;">
+                  <button class="btn btn-primary" type="submit">Allocate</button>
+                </form>
+                <form method="post" action="/bureau/cli/suppress" onsubmit="return confirm('Suppress <%= c.cli %>? It will drop off the bill run and stay hidden across future imports (e.g. a dead customer). You can restore it from the suppressed list.');" style="margin:0;">
+                  <input type="hidden" name="cli" value="<%= c.cli %>">
+                  <button class="btn" type="submit" style="font-size:12px;padding:5px 9px;color:#b91c1c;" title="Hide this CLI — for a customer that went under / dead asset">Suppress</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+    <% if ((suppressed||[]).length) { %>
+    <details style="padding:8px 22px 16px;">
+      <summary style="cursor:pointer;font-size:13px;color:var(--muted);">Suppressed CLIs (<%= suppressed.length %>) — dead assets hidden from the bill run</summary>
+      <div class="table-wrap" style="margin-top:8px;"><table class="table">
+        <thead><tr><th>CLI / Ref</th><th>Services</th><th style="text-align:right;">Cost</th><th></th></tr></thead>
+        <tbody>
+          <% suppressed.forEach(function(s){ %>
+          <tr>
+            <td><strong><%= s.cli %></strong></td>
+            <td class="muted" style="font-size:12px;"><%= (s.services||[]).slice(0,3).join(', ') %></td>
+            <td style="text-align:right;" class="muted"><%= money(s.cost) %></td>
+            <td style="text-align:right;"><form method="post" action="/bureau/cli/unsuppress" style="margin:0;"><input type="hidden" name="cli" value="<%= s.cli %>"><button class="btn" type="submit" style="font-size:11px;padding:3px 9px;">↩ Restore</button></form></td>
+          </tr>
+          <% }); %>
+        </tbody>
+      </table></div>
+    </details>
+    <% } %>
+  </div>
+  <div class="br-nav"><span></span><button class="btn btn-primary br-next" type="button">Next: cost services →</button></div>
+</div>
+
+<!-- STAGE 2 — Cost services -->
+<div class="br-panel" data-step="2">
+  <div class="card" style="padding:0;border-left:3px solid #f59e0b;">
+    <div class="card-header" style="padding:18px 22px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2>Services to review <span class="muted">(<%= nUncosted %>)</span></h2>
+      <input class="input card-filter" placeholder="🔍 search customer, CLI or product…" style="max-width:280px;font-size:13px;padding:5px 8px;"></div>
+    <p class="muted" style="padding:0 22px;font-size:13px;margin:6px 0 0;">One row per CLI. Where a <strong>package is detected</strong>, confirm it. Otherwise set the price. Use the column filters + checkboxes to <strong>price many at once</strong>.</p>
+    <!-- Bulk toolbar -->
+    <div id="s2bulk" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 22px;">
+      <button class="btn" type="button" id="s2checkAll" style="font-size:12px;padding:5px 10px;">Check all shown</button>
+      <span style="border-left:1px solid var(--border,#e5e7eb);padding-left:10px;">Set checked to £</span>
+      <input class="input" id="s2price" type="text" inputmode="decimal" placeholder="16.50" style="width:90px;font-size:13px;padding:5px 8px;">
+      <button class="btn" type="button" id="s2apply" style="font-size:12px;padding:5px 10px;">Apply to checked</button>
+      <button class="btn btn-primary" type="button" id="s2save" style="font-size:12px;padding:5px 12px;">Save checked</button>
+      <span class="muted" id="s2count" style="font-size:12px;margin-left:auto;"></span>
+    </div>
+    <div class="table-wrap"><table class="table" id="s2table">
+      <% function d2(x){ return x ? new Date(x).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}) : null; } %>
+      <thead>
+        <tr><th style="width:26px;"><input type="checkbox" id="s2head"></th><th>Customer</th><th>CLI / Ref</th><th>Products</th><th>Period · start</th><th style="text-align:right;">Unit cost</th><th style="text-align:right;">Units</th><th data-nosort>Confirm package / set price</th><th data-nosort></th></tr>
+        <tr class="s2filters"><th></th><th><input class="input s2f" data-col="cust" placeholder="filter…" style="width:100%;font-size:11px;padding:3px 5px;"></th><th><input class="input s2f" data-col="cli" placeholder="filter…" style="width:100%;font-size:11px;padding:3px 5px;"></th><th><input class="input s2f" data-col="prod" placeholder="filter…" style="width:100%;font-size:11px;padding:3px 5px;"></th><th><input class="input s2f" data-col="period" placeholder="filter…" style="width:100%;font-size:11px;padding:3px 5px;"></th><th></th><th></th><th></th><th></th></tr>
+      </thead>
+      <tbody>
+        <% if (!nUncosted) { %><tr><td colspan="9"><div class="empty-state">Every CLI is confirmed or priced. 🎉</div></td></tr><% } %>
+        <% (uncosted||[]).forEach(function(l){ %>
+          <tr class="s2row" data-cust="<%= (l.customer_name||'').toLowerCase() %>" data-cli="<%= (l.cli||'').toLowerCase() %>" data-prod="<%= (l.products||'').toLowerCase() %>" data-period="<%= (period||'').toLowerCase() %>">
+            <td><input type="checkbox" class="s2chk"></td>
+            <td><%= l.customer_name || '—' %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><strong><%= l.cli %></strong></td>
+            <td class="muted" style="font-size:12px;max-width:280px;"><%= l.products || '—' %><% if (l.isAddon) { %> <span class="badge badge-inactive" style="font-size:10px;">add-on</span><% } %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;">
+              <%= period || '—' %><br>
+              <span style="font-size:11px;">start <%= d2(l.service_from) || '—' %></span>
+              <% if (l.has_prorata) { %> <span class="badge" style="font-size:9px;background:#fef3c7;color:#92400e;">part-month</span><% } %>
+            </td>
+            <td style="text-align:right;"><%= money(l.unit_cost > 0 ? l.unit_cost : (l.units ? l.cost / l.units : l.cost)) %></td>
+            <td style="text-align:right;"><%= (l.units && l.units > 0) ? l.units : 1 %></td>
+            <td>
+              <% if (l.detected) { %>
+                <form method="post" action="/bureau/cli/confirm-package" style="display:flex;gap:6px;align-items:center;margin:0;flex-wrap:wrap;">
+                  <input type="hidden" name="cli" value="<%= l.cli %>"><input type="hidden" name="customer_id" value="<%= l.customer_id %>">
+                  <span class="badge badge-sent" style="font-size:10px;">📦 detected</span>
+                  <select class="input" name="package_id" style="font-size:12px;padding:4px 7px;max-width:210px;">
+                    <% allPkgs.forEach(function(pk){ %><option value="<%= pk.id %>" <%= pk.id===l.detected.id?'selected':'' %>><%= pk.name %></option><% }); %>
+                    <option value="none">None — price manually</option>
+                  </select>
+                  <input class="input" name="price" type="text" inputmode="decimal" value="<%= l.detectedPrice!=null ? Number(l.detectedPrice).toFixed(2) : '' %>" title="Price for this customer (overrides the package standard)" style="width:80px;text-align:right;font-size:12px;padding:4px 7px;">
+                  <button class="btn btn-primary" type="submit" style="font-size:11px;padding:4px 10px;">Confirm</button>
+                </form>
+              <% } else { %>
+                <form method="post" action="/bureau/pricing/set?source=comms" style="display:flex;gap:6px;margin:0;align-items:center;">
+                  <input type="hidden" name="source" value="comms"><input type="hidden" name="customer_id" value="<%= l.customer_id %>">
+                  <input type="hidden" name="product_reference" value="<%= l.priceRef || l.cli %>"><input type="hidden" name="description" value="<%= (l.products||'').slice(0,120) %>">
+                  <input type="hidden" name="unit_cost" value="<%= Number(l.unit_cost).toFixed(4) %>">
+                  <span class="muted" style="font-size:11px;"><%= l.isAddon ? 'price per user —' : 'no package —' %></span>
+                  <input class="input" name="sale_price" type="text" inputmode="decimal" value="<%= l.currentPrice!=null ? Number(l.currentPrice).toFixed(2) : '' %>" placeholder="£ sell" style="width:90px;" required>
+                  <button class="btn btn-primary" type="submit" style="font-size:11px;padding:4px 10px;">Save price</button>
+                </form>
+              <% } %>
+            </td>
+            <td style="text-align:right;">
+              <% if (!l.isAddon) { %>
+              <form method="post" action="/bureau/cli/release" style="margin:0;" onsubmit="return confirm('Drop <%= l.cli %> from <%= (l.customer_name||'').replace(/'/g,'') %>? It returns to stage 1 to re-allocate.');">
+                <input type="hidden" name="cli" value="<%= l.cli %>">
+                <button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:#b91c1c;" title="Wrong customer? Drop the allocation">Drop</button>
+              </form>
+              <% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </div>
+  <div class="br-nav"><button class="btn br-back" type="button">← Back</button><button class="btn btn-primary br-next" type="button">Next: review invoices →</button></div>
+</div>
+
+<!-- STAGE 3 — Review invoices -->
+<div class="br-panel" data-step="3">
+  <div class="card" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px;">
+    <div><div class="muted" style="font-size:12px;">Customers</div><div style="font-size:20px;font-weight:800;"><%= nCust %></div></div>
+    <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:800;"><%= money(grand.sale) %></div></div>
+    <div><div class="muted" style="font-size:12px;">Cost</div><div style="font-size:20px;font-weight:800;color:#64748b;"><%= money(grand.cost) %></div></div>
+    <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(grand.profit) %></div></div>
+  </div>
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:18px 22px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2>Draft bills by category</h2>
+      <input class="input card-filter" placeholder="Search customer…" style="max-width:240px;font-size:13px;padding:5px 8px;"></div>
+    <div class="table-wrap"><table class="table sortable">
+      <thead><tr><th>Customer</th><% cats.forEach(function(cat){ %><th style="text-align:right;"><%= cat.label.replace(' Services','').replace(' Charges','') %></th><% }); %><th style="text-align:right;">Total</th><th data-nosort></th></tr></thead>
+      <tbody>
+        <% if (!nCust) { %><tr><td colspan="<%= cats.length+3 %>"><div class="empty-state">No comms customers for this period.</div></td></tr><% } %>
+        <% (review||[]).forEach(function(r){ %>
+          <tr>
+            <td><strong><%= r.name %></strong> <% if (r.hasUnpriced) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;">unpriced lines</span><% } %></td>
+            <% cats.forEach(function(cat){ var b=r.byCategory[cat.key]; %><td style="text-align:right;<%= b.sale?'':'color:#cbd5e1;' %>"><%= b.sale? money(b.sale) : '—' %></td><% }); %>
+            <td style="text-align:right;font-weight:700;"><%= money(r.totals.sale) %></td>
+            <td style="text-align:right;white-space:nowrap;"><a class="row-link" href="/bureau/comms/<%= r.id %>/preview<%= period ? ('?period=' + period) : '' %>" target="_blank" style="font-size:12px;">Preview</a> · <a class="row-link" href="/customers/<%= r.id %>#comms" style="font-size:12px;">View</a></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </div>
+  <div class="br-nav"><button class="btn br-back" type="button">← Back</button><button class="btn btn-primary br-next" type="button">Next: complete →</button></div>
+</div>
+
+<!-- STAGE 4 — Complete -->
+<div class="br-panel" data-step="4">
+  <div class="card">
+    <h2 style="margin:0 0 6px;">Complete the bill run</h2>
+    <p class="muted" style="margin:0 0 14px;">This produces the invoices for <strong><%= nCust %></strong> customers (due the 1st) and closes period <strong><%= period || '—' %></strong>. One-off charges bill once and then drop off. Invoices are produced for review and <strong>not sent</strong> until you choose to send them.</p>
+    <div style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:18px;">
+      <div><div class="muted" style="font-size:12px;">Invoices to produce</div><div style="font-size:22px;font-weight:800;"><%= nCust %></div></div>
+      <div><div class="muted" style="font-size:12px;">Total billed</div><div style="font-size:22px;font-weight:800;"><%= money(grand.sale) %></div></div>
+      <div><div class="muted" style="font-size:12px;">Still to allocate</div><div style="font-size:22px;font-weight:800;color:<%= nClis?'#b45309':'inherit' %>;"><%= nClis %></div></div>
+      <div><div class="muted" style="font-size:12px;">Still to price</div><div style="font-size:22px;font-weight:800;color:<%= nUncosted?'#b45309':'inherit' %>;"><%= nUncosted %></div></div>
+    </div>
+    <% if (nClis || nUncosted) { %><div class="alert alert-danger" style="margin:0 0 14px;">There are still <%= nClis %> CLI(s) to allocate and <%= nUncosted %> service(s) to price. Clear these first so nothing is missed off the bills.</div><% } %>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+      <form method="post" action="/bureau/bill-run/complete" onsubmit="return confirm('Produce <%= nCust %> draft invoices for <%= period %>? (Review before sending.)');">
+        <input type="hidden" name="period" value="<%= period || '' %>">
+        <button class="btn btn-primary" type="submit" style="font-size:15px;padding:10px 18px;">1 · Run month — produce <%= nCust %> drafts</button>
+        <p class="muted" style="font-size:12px;margin:6px 0 0;max-width:280px;">Creates draft invoices. Nothing is sent. Review them in Invoices first.</p>
+      </form>
+      <form method="post" action="/bureau/bill-run/finalise" onsubmit="return confirm('SEND the draft invoices for <%= period %>?\n\nThis emails each customer their invoice + PDF, pushes to QuickBooks, and via GoCardless requests payment (or sends a Direct Debit invite). It then closes the period. This contacts customers and moves money — make sure the drafts are correct.');">
+        <input type="hidden" name="period" value="<%= period || '' %>">
+        <button class="btn" type="submit" style="font-size:15px;padding:10px 18px;background:#166534;color:#fff;border-color:#166534;">2 · Complete &amp; send →</button>
+        <p class="muted" style="font-size:12px;margin:6px 0 0;max-width:300px;">Emails invoices (+PDF), pushes to QuickBooks, GoCardless collect or DD invite, then closes &amp; rolls the period forward.</p>
+      </form>
+    </div>
+  </div>
+  <div class="br-nav"><button class="btn br-back" type="button">← Back</button><span></span></div>
+</div>
+
+<script>(function(){
+  var steps=[].slice.call(document.querySelectorAll('.br-step'));
+  var panels=[].slice.call(document.querySelectorAll('.br-panel'));
+  function go(n){
+    steps.forEach(function(s){var i=+s.getAttribute('data-step');s.classList.toggle('active',i===n);s.classList.toggle('done',i<n);});
+    panels.forEach(function(p){p.classList.toggle('active',+p.getAttribute('data-step')===n);});
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  // Stage 2: save prices inline (AJAX) so we stay focused on the bill run — no page jump.
+  var s2 = document.querySelector('.br-panel[data-step="2"]');
+  if (s2) s2.addEventListener('submit', function(e){
+    var f = e.target.closest('form[action*="pricing/set"], form[action*="cli/release"], form[action*="confirm-package"]'); if(!f) return;
+    e.preventDefault();
+    var url = f.getAttribute('action'); var btn = f.querySelector('button[type="submit"]'); var row = f.closest('tr');
+    var body = new URLSearchParams(new FormData(f));
+    var label = btn.textContent;
+    btn.disabled = true; btn.textContent = '…';
+    fetch(url, { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest','Accept':'application/json'}, body: body.toString() })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d || !d.ok){ throw new Error('failed'); }
+        if(row){ row.style.transition='opacity .3s'; row.style.opacity='0'; setTimeout(function(){ row.remove(); refreshS2(); }, 300); }
+      })
+      .catch(function(){ btn.disabled=false; btn.textContent=label; alert('Action failed — try again.'); });
+  });
+  function refreshS2(){
+    var rows = document.querySelectorAll('.br-panel[data-step="2"] tbody tr'); var left = 0;
+    rows.forEach(function(r){ if(r.querySelector('form[action*="cli/release"]')) left++; });
+    var sub = document.querySelector('.br-step[data-step="2"] .br-sub'); if(sub) sub.textContent = left + ' to review';
+    if(!left){ var tb = document.querySelector('.br-panel[data-step="2"] tbody'); if(tb) tb.innerHTML = '<tr><td colspan="9"><div class="empty-state">Every service is confirmed or priced. 🎉</div></td></tr>'; }
+  }
+  // Stage-2 per-column filters (all applied simultaneously, AND) + global search.
+  (function(){
+    var rows=[].slice.call(document.querySelectorAll('#s2table tbody tr.s2row'));
+    var cols=[].slice.call(document.querySelectorAll('.s2f'));
+    var search=document.querySelector('.br-panel[data-step="2"] .card-filter');
+    function vis(r){
+      if(search && search.value){ if(r.textContent.toLowerCase().indexOf(search.value.toLowerCase())<0) return false; }
+      for(var i=0;i<cols.length;i++){ var q=cols[i].value.trim().toLowerCase(); if(!q) continue;
+        if((r.getAttribute('data-'+cols[i].getAttribute('data-col'))||'').indexOf(q)<0) return false; }
+      return true;
+    }
+    function shown(){ return rows.filter(function(r){ return r.style.display!=='none'; }); }
+    function apply(){ rows.forEach(function(r){ r.style.display=vis(r)?'':'none'; }); count(); }
+    function count(){ var ch=shown().filter(function(r){return r.querySelector('.s2chk').checked;}).length; var c=document.getElementById('s2count'); if(c) c.textContent=shown().length+' shown · '+ch+' checked'; }
+    cols.forEach(function(c){ c.addEventListener('input',apply); });
+    if(search) search.addEventListener('input',apply);
+    var head=document.getElementById('s2head'); if(head) head.addEventListener('change',function(){ shown().forEach(function(r){ r.querySelector('.s2chk').checked=head.checked; }); count(); });
+    var chkAll=document.getElementById('s2checkAll'); if(chkAll) chkAll.addEventListener('click',function(){ shown().forEach(function(r){ r.querySelector('.s2chk').checked=true; }); count(); });
+    document.querySelectorAll('.s2chk').forEach(function(c){ c.addEventListener('change',count); });
+    var applyBtn=document.getElementById('s2apply'); if(applyBtn) applyBtn.addEventListener('click',function(){
+      var p=String(document.getElementById('s2price').value).replace(/[^0-9.\-]/g,''); if(p==='')return;
+      shown().forEach(function(r){ if(!r.querySelector('.s2chk').checked) return; var inp=r.querySelector('input[name="price"], input[name="sale_price"]'); if(inp) inp.value=parseFloat(p).toFixed(2); });
+    });
+    var saveBtn=document.getElementById('s2save'); if(saveBtn) saveBtn.addEventListener('click',function(){
+      var checked=shown().filter(function(r){return r.querySelector('.s2chk').checked;});
+      if(!checked.length){ alert('Check some rows first.'); return; }
+      checked.forEach(function(r){ var f=r.querySelector('form[action*="pricing/set"], form[action*="confirm-package"]'); if(f) f.requestSubmit(); });
+    });
+    apply();
+  })();
+  // Generic search for other cards (e.g. Stage 3 review) — Stage 2 handled above.
+  document.querySelectorAll('.card-filter').forEach(function(inp){
+    if(inp.closest('.br-panel[data-step="2"]')) return;
+    inp.addEventListener('input',function(){ var q=inp.value.toLowerCase(); var card=inp.closest('.card'); if(!card) return;
+      card.querySelectorAll('table tbody tr').forEach(function(tr){ tr.style.display=(!q||tr.textContent.toLowerCase().indexOf(q)>=0)?'':'none'; }); });
+  });
+  document.querySelectorAll('.br-next').forEach(function(b){b.addEventListener('click',function(){var cur=+document.querySelector('.br-step.active').getAttribute('data-step');go(Math.min(4,cur+1));});});
+  document.querySelectorAll('.br-back').forEach(function(b){b.addEventListener('click',function(){var cur=+document.querySelector('.br-step.active').getAttribute('data-step');go(Math.max(1,cur-1));});});
+  steps.forEach(function(s){s.addEventListener('click',function(){go(+s.getAttribute('data-step'));});});
+})();</script>
+
+<%- include('partials/footer') %>

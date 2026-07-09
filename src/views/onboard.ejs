@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Onboarding — Lumen IT Solutions</title>
+  <link rel="icon" type="image/png" href="/static/lumen-crest.png">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    body.pub { padding-top: 0; background: #f0f2f5; }
+    .pw { max-width: 640px; margin: 0 auto; padding: 36px 16px 60px; }
+    .pcard { background:#fff; border-radius:12px; box-shadow:0 2px 12px rgba(0,0,0,.08); padding:24px 28px; margin-bottom:16px; }
+    .phead { display:flex; align-items:center; gap:10px; margin-bottom:20px; }
+    .pbtn { display:inline-block; box-sizing:border-box; padding:13px 26px; border:none; border-radius:8px; font-size:15px; font-weight:600; cursor:pointer; text-align:center; text-decoration:none; background:#0ea5b7; color:#fff; }
+    .pinput { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid #d1d5db; border-radius:8px; font-size:14px; outline:none; font-family:inherit; }
+    .plabel { display:block; font-size:13px; font-weight:600; margin-bottom:6px; color:#374151; }
+    .pg { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .pfg { margin-bottom:14px; }
+    h2 { margin:0 0 4px; } h3 { margin:18px 0 10px; font-size:15px; }
+    .muted { color:#6b7280; font-size:13px; }
+  </style>
+</head>
+<body class="pub">
+<div class="pw">
+  <div class="phead"><img src="/static/lumen-msp-logo.png" alt="Lumen IT Solutions" style="max-width:200px;height:auto;"></div>
+
+  <% if (done) { %>
+    <div class="pcard" style="text-align:center;padding:44px 28px;">
+      <div style="font-size:52px;margin-bottom:12px;">✅</div>
+      <h2 style="color:#16a34a;">Thank you</h2>
+      <p class="muted">We've received your details — there's nothing more you need to do. We'll be in touch shortly.</p>
+    </div>
+  <% } else { %>
+  <% function v(f){ return (customer && customer[f] != null) ? customer[f] : ''; } %>
+  <form method="post" action="/onboard/<%= token %>">
+    <div class="pcard">
+      <h2>Welcome to Lumen IT Solutions</h2>
+      <p class="muted">Please confirm your business details and the right people for us to contact. It only takes a couple of minutes.</p>
+
+      <h3>Business details</h3>
+      <div class="pfg"><label class="plabel">Legal / registered business name</label><input class="pinput" name="legal_name" value="<%= v('legal_name') || v('name') %>"></div>
+      <div class="pg">
+        <div class="pfg"><label class="plabel">Company number</label><input class="pinput" name="company_number" value="<%= v('company_number') %>"></div>
+        <div class="pfg"><label class="plabel">VAT number</label><input class="pinput" name="vat_number" value="<%= v('vat_number') %>"></div>
+      </div>
+
+      <h3>Registered address</h3>
+      <div class="pfg"><label class="plabel">Address line 1</label><input class="pinput" name="reg_line1" value="<%= v('address_line_1') %>"></div>
+      <div class="pfg"><label class="plabel">Address line 2</label><input class="pinput" name="reg_line2" value="<%= v('address_line_2') %>"></div>
+      <div class="pg">
+        <div class="pfg"><label class="plabel">Town / city</label><input class="pinput" name="reg_city" value="<%= v('city') %>"></div>
+        <div class="pfg"><label class="plabel">County</label><input class="pinput" name="reg_county" value="<%= v('county') %>"></div>
+      </div>
+      <div class="pfg" style="max-width:220px;"><label class="plabel">Postcode</label><input class="pinput" name="reg_postcode" value="<%= v('postcode') %>"></div>
+
+      <h3>Billing address</h3>
+      <label style="display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:14px;"><input type="checkbox" name="bill_same" id="billSame" checked> Same as registered address</label>
+      <div id="billFields" style="display:none;">
+        <div class="pfg"><label class="plabel">Address line 1</label><input class="pinput" name="bill_line1"></div>
+        <div class="pfg"><label class="plabel">Address line 2</label><input class="pinput" name="bill_line2"></div>
+        <div class="pg">
+          <div class="pfg"><label class="plabel">Town / city</label><input class="pinput" name="bill_city"></div>
+          <div class="pfg"><label class="plabel">County</label><input class="pinput" name="bill_county"></div>
+        </div>
+        <div class="pfg" style="max-width:220px;"><label class="plabel">Postcode</label><input class="pinput" name="bill_postcode"></div>
+      </div>
+    </div>
+
+    <div class="pcard">
+      <h3 style="margin-top:0;">Key contacts</h3>
+      <p class="muted" style="margin-top:0;">Who should we speak to about each area? (You can give the same person for more than one.)</p>
+
+      <h3>💷 Finance contact <span class="muted">— where invoices go</span></h3>
+      <div class="pg">
+        <div class="pfg"><label class="plabel">Name</label><input class="pinput" name="finance_name"></div>
+        <div class="pfg"><label class="plabel">Email</label><input class="pinput" type="email" name="finance_email"></div>
+      </div>
+      <div class="pfg" style="max-width:260px;"><label class="plabel">Phone</label><input class="pinput" name="finance_phone"></div>
+
+      <h3>📝 Lead contact <span class="muted">— contract decisions</span></h3>
+      <div class="pg">
+        <div class="pfg"><label class="plabel">Name</label><input class="pinput" name="lead_name"></div>
+        <div class="pfg"><label class="plabel">Email</label><input class="pinput" type="email" name="lead_email"></div>
+      </div>
+      <div class="pfg" style="max-width:260px;"><label class="plabel">Phone</label><input class="pinput" name="lead_phone"></div>
+
+      <h3>🛠️ Service contact <span class="muted">— day-to-day manager</span></h3>
+      <div class="pg">
+        <div class="pfg"><label class="plabel">Name</label><input class="pinput" name="service_name"></div>
+        <div class="pfg"><label class="plabel">Email</label><input class="pinput" type="email" name="service_email"></div>
+      </div>
+      <div class="pfg" style="max-width:260px;"><label class="plabel">Phone</label><input class="pinput" name="service_phone"></div>
+    </div>
+
+    <div class="pcard">
+      <h3 style="margin-top:0;">Sites / locations</h3>
+      <p class="muted" style="margin-top:0;">The offices or locations we'll be supporting.</p>
+      <div id="sites">
+        <div class="pg site-row">
+          <div class="pfg"><label class="plabel">Site name</label><input class="pinput" name="site_name"></div>
+          <div class="pfg"><label class="plabel">Address / postcode</label><input class="pinput" name="site_address"></div>
+        </div>
+      </div>
+      <button type="button" class="pbtn" id="addSite" style="background:#e2e8f0;color:#1f2937;padding:8px 16px;font-size:13px;">+ Add another site</button>
+    </div>
+
+    <div class="pcard" style="text-align:center;">
+      <button type="submit" class="pbtn">Submit my details</button>
+    </div>
+  </form>
+  <% } %>
+</div>
+
+<script>
+  (function(){
+    var same = document.getElementById('billSame'), bf = document.getElementById('billFields');
+    if (same) { var t=function(){ bf.style.display = same.checked ? 'none' : 'block'; }; same.addEventListener('change', t); t(); }
+    var add = document.getElementById('addSite'), sites = document.getElementById('sites');
+    if (add) add.addEventListener('click', function(){
+      var row = sites.querySelector('.site-row').cloneNode(true);
+      row.querySelectorAll('input').forEach(function(i){ i.value=''; });
+      sites.appendChild(row);
+    });
+  })();
+</script>
+</body>
+</html>

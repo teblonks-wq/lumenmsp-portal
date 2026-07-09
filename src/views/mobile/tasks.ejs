@@ -1,0 +1,18 @@
+<%- include('header', { title: 'Tasks', heading: 'Tasks', user, active }) %>
+<% function due(x){ if(!x) return ''; var d=new Date(x); var today=new Date(); today.setHours(0,0,0,0); var diff=Math.round((d.setHours(0,0,0,0)-today)/86400000); if(diff<0) return 'Overdue'; if(diff===0) return 'Today'; if(diff===1) return 'Tomorrow'; return new Date(x).toLocaleDateString('en-GB',{day:'2-digit',month:'short'}); } %>
+<div class="m-wrap">
+  <% if (notice) { %><div class="m-alert ok"><%= notice %></div><% } %>
+  <% if (!(list||[]).length) { %><div class="empty">Nothing on your list — nice one.</div><% } %>
+  <div class="sheet">
+    <% (list||[]).forEach(function(t){ var d=due(t.due_date); var over=d==='Overdue'; %>
+    <div class="row">
+      <form method="post" action="/m/tasks/<%= t.id %>/done" style="margin:0;flex:none;"><button type="submit" aria-label="Complete" style="border:2px solid #cbd5e1;background:#fff;width:26px;height:26px;border-radius:50%;color:#16a34a;font-size:14px;line-height:1;cursor:pointer;"><i class="ti ti-check"></i></button></form>
+      <div class="main">
+        <div class="t" style="white-space:normal;"><%= t.title %></div>
+        <div class="s"><% if (d) { %><span style="<%= over?'color:#dc2626;font-weight:600;':'' %>"><%= d %></span><% } %><% if (t.priority && t.priority!=='medium') { %> · <%= t.priority %> priority<% } %></div>
+      </div>
+    </div>
+    <% }); %>
+  </div>
+</div>
+<%- include('footer', { active }) %>

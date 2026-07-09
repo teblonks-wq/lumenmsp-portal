@@ -1,0 +1,62 @@
+<%- include('header', { title: 'Support', company: (user && user.displayName) || '', user, active }) %>
+<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); } %>
+<% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><h1>Support</h1><p class="muted"><%= scope === 'company' ? "Your company's support tickets." : 'Your support tickets.' %></p></div>
+  <a class="btn btn-primary" href="/my/tickets/new">+ Raise a ticket</a>
+</div>
+
+<% function isClosed(s){ s=(s||'').toLowerCase(); return s==='resolved'||s==='closed'; }
+   var openCount = (tickets||[]).filter(function(t){return !isClosed(t.status);}).length;
+   var closedCount = (tickets||[]).length - openCount; %>
+
+<% if (!tickets || tickets.length === 0) { %>
+  <div class="card"><div class="empty">You have no tickets yet. <a class="row-link" href="/my/tickets/new">Raise your first ticket</a>.</div></div>
+<% } else { %>
+  <div class="card" style="padding:0;">
+    <div class="my-tabs">
+      <button class="my-tab active" data-tab="open"   onclick="myTab('open',this)">Open <span class="muted">(<%= openCount %>)</span></button>
+      <button class="my-tab"        data-tab="closed" onclick="myTab('closed',this)">Closed <span class="muted">(<%= closedCount %>)</span></button>
+      <button class="my-tab"        data-tab="all"    onclick="myTab('all',this)">All <span class="muted">(<%= tickets.length %>)</span></button>
+    </div>
+    <div class="table-wrap">
+      <table class="table" style="margin:0;">
+        <thead><tr><th>Ref</th><th>Subject</th><th>Status</th><th>Raised</th><th>Updated</th></tr></thead>
+        <tbody id="tkBody">
+          <% tickets.forEach(function(t){ var closed = isClosed(t.status); %>
+            <tr class="tk" data-closed="<%= closed ? 1 : 0 %>" style="<%= t.activity_status==='unread' ? 'font-weight:600;' : '' %>">
+              <td><a class="row-link" href="/my/tickets/<%= t.id %>"><%= t.ticket_number || ('#' + t.id) %></a></td>
+              <td><a class="row-link" href="/my/tickets/<%= t.id %>" style="color:inherit;"><%= t.subject || '(no subject)' %></a></td>
+              <td><span class="badge <%= sbadge(t.status) %>"><%= cap(t.status || 'open') %></span></td>
+              <td class="muted"><%= t.created_at ? new Date(t.created_at).toLocaleDateString('en-GB') : '' %></td>
+              <td class="muted"><%= t.updated_at ? new Date(t.updated_at).toLocaleDateString('en-GB') : '' %></td>
+            </tr>
+          <% }); %>
+          <tr id="tkEmpty" style="display:none;"><td colspan="5" class="muted" style="padding:16px;">No tickets in this view.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% } %>
+
+<style>
+  .my-tabs { display:flex; gap:2px; padding:10px 14px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .my-tab { background:none; border:none; border-bottom:2px solid transparent; padding:8px 14px; font-size:14px; font-weight:600; color:#64748b; cursor:pointer; }
+  .my-tab.active { color:var(--accent,#0ea5b7); border-bottom-color:var(--accent,#0ea5b7); }
+</style>
+<script>
+function myTab(which, btn){
+  document.querySelectorAll('.my-tab').forEach(function(b){ b.classList.toggle('active', b===btn); });
+  var shown = 0;
+  document.querySelectorAll('#tkBody .tk').forEach(function(tr){
+    var closed = tr.getAttribute('data-closed') === '1';
+    var show = which==='all' || (which==='open' && !closed) || (which==='closed' && closed);
+    tr.style.display = show ? '' : 'none'; if (show) shown++;
+  });
+  var e = document.getElementById('tkEmpty'); if (e) e.style.display = shown ? 'none' : '';
+}
+(function(){ var b = document.querySelector('.my-tab[data-tab="open"]'); if (b) myTab('open', b); })();
+</script>
+
+<%- include('footer', { active }) %>

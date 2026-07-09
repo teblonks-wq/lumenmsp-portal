@@ -1,0 +1,35 @@
+<%- include('partials/header', { title: 'Confirm pricing import', user }) %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau/pricing">← Service Pricing</a></p>
+  <h1>Confirm import</h1>
+  <p class="muted">Review what this sheet will do. Nothing has changed yet.</p></div>
+
+<div class="card" style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:16px;">
+  <div><div class="muted" style="font-size:12px;">Rows in sheet</div><div style="font-size:22px;font-weight:700;"><%= totalRows %></div></div>
+  <div><div class="muted" style="font-size:12px;">New sale prices to set</div><div style="font-size:22px;font-weight:700;color:#166534;"><%= priceUpdates %></div></div>
+  <div><div class="muted" style="font-size:12px;">Delete rows (D)</div><div style="font-size:22px;font-weight:700;color:<%= deleteRows?'#b91c1c':'inherit' %>;"><%= deleteRows %></div></div>
+  <div><div class="muted" style="font-size:12px;">Lines that will be deleted</div><div style="font-size:22px;font-weight:700;color:<%= linesToDelete?'#b91c1c':'inherit' %>;"><%= linesToDelete %></div></div>
+</div>
+
+<% if (deleteRows) { %>
+<div class="card" style="padding:0;margin-bottom:16px;border-left:3px solid #ef4444;">
+  <div class="card-header" style="padding:18px 24px 0;"><h2>Will delete <span class="muted">(<%= linesToDelete %> line<%= linesToDelete===1?'':'s' %>)</span></h2></div>
+  <p class="muted" style="padding:0 24px;font-size:13px;margin:6px 0 0;">Each <strong>D</strong> row removes the matching import lines. This can't be undone (live cloud lines may return on the next supplier sync; comms history stays gone).</p>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Target</th><th style="text-align:right;">Lines removed</th></tr></thead>
+    <tbody>
+      <% delPreview.forEach(function(d){ %>
+        <tr><td><%= d.label %></td><td style="text-align:right;color:<%= d.n?'#b91c1c':'#94a3b8' %>;"><%= d.n %></td></tr>
+      <% }); %>
+      <% if (deleteRows > delPreview.length) { %><tr><td class="muted" colspan="2">…and <%= deleteRows - delPreview.length %> more</td></tr><% } %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<form method="post" action="/bureau/pricing/apply" style="display:flex;gap:10px;">
+  <button class="btn btn-primary" type="submit"<% if (linesToDelete) { %> onclick="return confirm('Apply <%= priceUpdates %> price(s) and permanently delete <%= linesToDelete %> line(s)?');"<% } %>>Confirm &amp; apply</button>
+  <a class="btn" href="/bureau/pricing">Cancel</a>
+</form>
+
+<%- include('partials/footer') %>

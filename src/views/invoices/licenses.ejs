@@ -1,0 +1,42 @@
+<%- include('../partials/header', { title: 'Licence reconciliation', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toFixed(2); }
+   var badge = { billed:'badge-sent', not_billed:'badge-failed', qty_diff:'badge-primary', removed:'badge-inactive' };
+   var label = { billed:'Billed', not_billed:'NOT billed', qty_diff:'Qty differs', removed:'No longer in Giacom' }; %>
+
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/invoices/<%= inv.id %>">← <%= inv.invoice_number %></a></p>
+    <h1 style="margin:0;">Cloud licences — <%= customerName %></h1>
+    <p class="muted" style="margin:4px 0 0;">Giacom licences held vs what's billed on this invoice.<% if (notBilled) { %> <strong style="color:#b91c1c;"><%= notBilled %> not being billed.</strong><% } else if (!issues) { %> All in sync. ✓<% } %></p>
+  </div>
+  <% if (issues) { %>
+  <form method="post" action="/invoices/<%= inv.id %>/pull-giacom" onsubmit="return confirm('Sync all Giacom licences onto this invoice (adds missing, fixes quantities)?');" style="margin:0;">
+    <input type="hidden" name="return" value="/invoices/<%= inv.id %>/licenses">
+    <button class="btn btn-primary" type="submit">Sync all from Giacom</button>
+  </form>
+  <% } %>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="max-width:900px;"><%= error %></div><% } %>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Licence</th><th style="text-align:right;">Giacom qty</th><th style="text-align:right;">Billed qty</th><th style="text-align:right;">Monthly sell</th><th>Status</th></tr></thead>
+    <tbody>
+      <% if (!rows.length) { %><tr><td colspan="5"><div class="empty-state">No Giacom cloud services on this customer. Link a Giacom account on the <a class="row-link" href="/settings/giacom/match">matching screen</a>.</div></td></tr><% } %>
+      <% rows.forEach(function(r){ %>
+        <tr style="<%= r.status==='not_billed' ? 'background:#fef2f2;' : '' %>">
+          <td><%= r.description %></td>
+          <td style="text-align:right;"><%= r.giacomQty %></td>
+          <td style="text-align:right;"><%= r.billedQty %></td>
+          <td style="text-align:right;"><%= r.sell>0 ? money(r.sell) : '—' %></td>
+          <td><span class="badge <%= badge[r.status] %>"><%= label[r.status] %></span></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<p class="muted" style="font-size:12px;margin:10px 0 0;">"Sync from Giacom" rebuilds the cloud lines on this invoice from current Giacom quantities — adding unbilled licences and correcting quantities. Manual (non-Giacom) lines are left untouched. For recurring IT-contract invoices this also runs automatically each cycle.</p>
+
+<%- include('../partials/footer') %>

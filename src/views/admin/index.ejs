@@ -1,0 +1,102 @@
+<%- include('../partials/header', { title: 'Admin', user }) %>
+
+<div class="page-header"><h1>Admin</h1><p class="muted">Users, access and security.</p></div>
+
+<div style="margin:0 0 18px;max-width:420px;">
+  <input id="adminSearch" class="input" type="search" placeholder="Search admin…" style="width:100%;" oninput="filterAdmin(this.value)" autofocus>
+</div>
+<script>
+function filterAdmin(q){
+  q = (q || '').toLowerCase().trim();
+  document.querySelectorAll('.hub-grid .hub-card').forEach(function(c){
+    c.style.display = (!q || c.textContent.toLowerCase().indexOf(q) >= 0) ? '' : 'none';
+  });
+}
+</script>
+
+<style>
+  .hub-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;align-items:stretch;}
+  .hub-card{display:flex;flex-direction:column;min-height:170px;border-radius:14px;padding:20px 22px;text-decoration:none;color:#fff;box-shadow:0 8px 22px rgba(2,6,23,.16);transition:transform .12s ease, box-shadow .12s ease;}
+  a.hub-card:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(2,6,23,.26);}
+  .hub-card h2{color:#fff;font-size:17px;margin:0 0 4px;}
+  .hub-card .muted{color:rgba(255,255,255,.9)!important;font-size:13px;margin:0;}
+  .hub-card .stat{font-size:30px;font-weight:800;line-height:1;margin:2px 0 8px;color:#fff;}
+  /* push the description to the bottom so every card lines up regardless of the big number */
+  .hub-card .muted{margin-top:auto;}
+  .hub-blue{background:linear-gradient(135deg,#1e3a8a,#2563eb);}
+  .hub-green{background:linear-gradient(135deg,#065f46,#10b981);}
+  .hub-purple{background:linear-gradient(135deg,#5b21b6,#7c3aed);}
+  .hub-amber{background:linear-gradient(135deg,#b45309,#f59e0b);}
+  .hub-teal{background:linear-gradient(135deg,#0e7490,#06b6d4);}
+  .hub-rose{background:linear-gradient(135deg,#9f1239,#e11d48);}
+  .hub-indigo{background:linear-gradient(135deg,#3730a3,#6366f1);}
+  .hub-slate{background:linear-gradient(135deg,#334155,#64748b);}
+</style>
+
+<div class="hub-grid">
+  <a class="hub-card hub-blue" href="/admin/users">
+    <h2>Internal users</h2>
+    <div class="stat"><%= stats.users %></div>
+    <p class="muted">Lumen staff · @lumensolutions.co.uk / @lumenmsp.co.uk only</p>
+  </a>
+  <a class="hub-card hub-teal" href="/admin/customer-users">
+    <h2>Customer users</h2>
+    <div class="stat"><%= stats.customer_users %></div>
+    <p class="muted">external accounts scoped to a customer</p>
+  </a>
+  <a class="hub-card hub-rose" href="/admin/security">
+    <h2>Security</h2>
+    <div class="stat"><%= stats.failed_24h %></div>
+    <p class="muted"><%= stats.attempts_24h %> login attempts (24h) · <%= stats.failed_24h %> failed</p>
+  </a>
+  <a class="hub-card hub-purple" href="/admin/branding">
+    <h2>Branding</h2>
+    <p class="muted">Email signature &amp; templates — edit the signature, preview every email.</p>
+  </a>
+  <a class="hub-card hub-amber" href="/admin/mail-flow">
+    <h2>Mail flow</h2>
+    <p class="muted">Every outbound email and whether it sent, failed, or was skipped.</p>
+  </a>
+  <a class="hub-card hub-green" href="/admin/comms-log">
+    <h2>Comms log</h2>
+    <p class="muted">WhatsApp &amp; Teams messages — inbound and outbound, with delivery status.</p>
+  </a>
+  <a class="hub-card hub-green" href="/admin/email-test">
+    <h2>Email delivery test</h2>
+    <p class="muted">Send a test email to any address(es) — free-text or from a template, with editable subject.</p>
+  </a>
+  <a class="hub-card hub-indigo" href="/admin/activity">
+    <h2>Activity log</h2>
+    <p class="muted">Audit trail — who deleted, restored or changed what.</p>
+  </a>
+  <a class="hub-card hub-rose" href="/recycle-bin">
+    <h2>Recycle bin</h2>
+    <p class="muted">Restore deleted customers, quotes, invoices, contracts &amp; tickets.</p>
+  </a>
+  <a class="hub-card hub-teal" href="/settings/integrations">
+    <h2>Integrations</h2>
+    <p class="muted">QuickBooks &amp; GoCardless — connect, push &amp; import invoices, collect payments.</p>
+  </a>
+  <a class="hub-card hub-indigo" href="/it-report">
+    <h2>IT Reports</h2>
+    <p class="muted">Monthly IT Operations &amp; Security Snapshot per customer — Intune, security, DNS &amp; helpdesk.</p>
+  </a>
+  <a class="hub-card hub-teal" href="/dmarc">
+    <h2>Domain Health</h2>
+    <p class="muted">LITS-DMARC — SPF/DKIM/DMARC &amp; Office 365 DNS per domain: setup checks, report ingestion &amp; enforcement.</p>
+  </a>
+  <a class="hub-card hub-green" href="/purchases/settings">
+    <h2>Purchase Ledger</h2>
+    <p class="muted">Bookkeeper details, report-only categories, invoice mailbox &amp; Open Banking.</p>
+  </a>
+  <a class="hub-card hub-slate" href="/admin/backups">
+    <h2>Backups</h2>
+    <p class="muted">Nightly encrypted backup of the database &amp; files to Azure — status, history &amp; run-now.</p>
+  </a>
+  <a class="hub-card hub-indigo" href="/admin/about">
+    <h2>About</h2>
+    <p class="muted">Next document numbers, case throughput, app version &amp; the full release history.</p>
+  </a>
+</div>
+
+<%- include('../partials/footer') %>

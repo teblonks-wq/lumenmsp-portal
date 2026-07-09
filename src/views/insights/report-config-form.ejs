@@ -1,0 +1,796 @@
+<%
+const isNew   = !config;
+// Site-logic mode: the same builder, but editing a SITE's call logic (not a report). Hides the
+// report-only fields and saves to the site.
+const _slm    = (typeof siteLogicMode !== 'undefined' && siteLogicMode);
+const _sid    = (typeof siteId !== 'undefined' ? siteId : null);
+const _slabel = (typeof siteLabel !== 'undefined' ? siteLabel : '');
+const title   = _slm ? ('Call flow logic — ' + _slabel) : (isNew ? 'New Report Config' : config.config_label);
+const action  = _slm ? `/insights/site/${_sid}/logic` : (isNew ? '/insights/report-config' : `/insights/report-config/${config.id}`);
+const backUrl = customerId ? `/insights/customer/${customerId}` : '/insights/customers';
+// sites / knownGroups / knownExtensions are always passed by the route (spread from
+// getConfigFormData). flash isn't passed here, so guard it under a distinct name.
+const flashMsg = (typeof flash !== 'undefined') ? flash : null;
+const errMsg    = (typeof error !== 'undefined') ? error : null;
+const noticeMsg = (typeof notice !== 'undefined') ? notice : null;
+
+const siteOptions = sites.map(s => {
+  const selected = (config && config.site_id === s.id) || (!config && preselectSiteId === s.id) ? 'selected' : '';
+  const label = s.customer_name ? `${s.customer_name} — ${s.site_label}` : s.site_label;
+  return `<option value="${s.id}" data-customer="${s.customer_id}" ${selected}>${label}</option>`;
+}).join('');
+
+const DAY_NAMES = ['','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+const dayOptions = [1,2,3,4,5,6,7].map(d => {
+  const selected = config?.send_day === d ? 'selected' : (d === 2 && isNew ? 'selected' : '');
+  return `<option value="${d}" ${selected}>${DAY_NAMES[d]}</option>`;
+}).join('');
+
+const lc                    = config?.logic_config || {};
+const existingSourceGroups  = JSON.stringify(lc.source_of_truth_group || []);
+const existingSourceExts    = JSON.stringify(lc.source_of_truth_extensions || []);
+const existingStaffExts      = JSON.stringify(lc.staff_extensions || []);
+const existingCallFlow      = JSON.stringify(lc.call_flow || []);
+const existingOverflow      = lc.overflow_label || '';
+const existingBhStart       = lc.business_hours?.start || '08:00';
+const existingBhEnd         = lc.business_hours?.end   || '18:30';
+const existingIvrOptions    = JSON.stringify(lc.ivr_options || []);
+const allGroupsJson         = JSON.stringify(knownGroups);
+const allExtensionsJson     = JSON.stringify(knownExtensions);
+%>
+<%- include('_layout', { title: title, user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
+  <div>
+    <h1>${title}</h1>
+    <p class="muted">${_slm ? `<a href="/insights/site/${_sid}">← Back to site</a>` : `<a href="/insights/admin">Admin</a> → <a href="${backUrl}">Customer</a> → Report Config`}</p>
+  </div>
+</div>
+
+${flashMsg ? `<div class="alert alert-success">${flashMsg}</div>` : ''}
+${errMsg ? `<div class="alert alert-error">${errMsg}</div>` : ''}
+${noticeMsg ? `<div class="alert alert-success">${noticeMsg}</div>` : ''}
+
+<form method="POST" action="${action}" id="config-form">
+
+  <div class="card" style="${_slm ? 'display:none' : ''}">
+    <div class="card-header"><h2>Basic Settings</h2></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div class="form-group">
+        <label>Config Label</label>
+        <input type="text" name="config_label" value="${config?.config_label || ''}" placeholder="Cholsey Weekly" required class="input">
+      </div>
+      <div class="form-group">
+        <label>Site</label>
+        <select name="site_id" id="site-select" required class="input" onchange="onSiteChange(this)">
+          <option value="">— select site —</option>
+          ${siteOptions}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Report Type</label>
+        <select name="report_type" id="report-type-select" class="input" onchange="toggleStaffSection()">
+          <option value="weekly_call_stats"      ${config?.report_type === 'weekly_call_stats'      ? 'selected' : ''}>Weekly Call Stats</option>
+          <option value="group_call_performance" ${config?.report_type === 'group_call_performance' ? 'selected' : ''}>Daily Group Performance</option>
+          <option value="site_performance"       ${config?.report_type === 'site_performance'       ? 'selected' : ''}>Site Performance (date range)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Send Day</label>
+        <select name="send_day" class="input">${dayOptions}</select>
+      </div>
+      <div class="form-group">
+        <label>Send Time</label>
+        <input type="time" name="send_time" value="${config?.send_time || '09:00'}" class="input" style="min-width:auto;">
+      </div>
+      ${!isNew ? `
+      <div class="form-group">
+        <label>Status</label>
+        <select name="is_active" class="input">
+          <option value="true"  ${config.is_active ? 'selected' : ''}>Active</option>
+          <option value="false" ${!config.is_active ? 'selected' : ''}>Inactive</option>
+        </select>
+      </div>` : ''}
+    </div>
+    <div class="form-group" style="margin-top:4px;">
+      <label>Report Recipients <span class="muted" style="font-size:10px;text-transform:none;">who receives this report by email — separate addresses with commas or new lines</span></label>
+      <textarea name="recipients" rows="2" class="input" placeholder="vet@practice.co.uk, manager@practice.co.uk" style="width:100%;font-family:monospace;font-size:13px;">${Array.isArray(config?.recipients) ? config.recipients.join(', ') : (config?.recipients || '')}</textarea>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>Call Flow Config</h2>
+      <span class="muted" style="font-size:12px;">Built from imported data — load a customer to see available groups</span>
+    </div>
+
+    ${!_slm ? `
+    <div class="alert alert-error" style="margin-bottom:14px;">
+      ⚠ <strong>Logic edited here does NOT drive reports.</strong> Since the one-logic-per-site change, the
+      <strong>SITE's</strong> call-flow logic is what the generator uses — this box is only a legacy fallback for
+      sites with no logic set. Edit the real thing at
+      <a href="/insights/site/${config?.site_id || ''}/logic"><strong>the site's Call flow logic</strong></a>.
+    </div>` : ''}
+
+    <div id="no-data-msg" style="${knownGroups.length > 0 ? 'display:none' : ''}">
+      <p class="muted" style="font-size:13px;margin-bottom:16px;">No call data synced yet for this customer. Save Tollring API credentials and run a sync first, then return here to configure the call flow.</p>
+    </div>
+
+    <div id="logic-builder" style="${knownGroups.length === 0 ? 'display:none' : ''}">
+
+      <div style="margin-bottom:20px;">
+        <div class="form-group" style="margin-bottom:8px;">
+          <label>Source of Truth <span class="muted" style="font-size:10px;text-transform:none;">the user extension(s) carrying the business DDI that forward to the auto attendant — the first place each call is logged</span></label>
+        </div>
+        <input type="text" id="ext-search" placeholder="Search extensions..." class="input" style="margin-bottom:6px;width:100%;max-width:300px;" oninput="filterCheckboxes('ext-checkboxes', this.value)">
+        <div id="ext-checkboxes" style="display:flex;flex-direction:column;gap:4px;max-height:150px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:#f9fafb;">
+          <p class="muted" style="font-size:13px;margin:0;">Select a site to load extensions.</p>
+        </div>
+
+        <div id="sot-panel" style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+            <div id="sot-title" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Source of truth — selected extensions</div>
+            <button type="button" id="sot-confirm-btn" onclick="confirmSourceOfTruth()" class="btn-secondary" style="font-size:12px;padding:5px 12px;">Confirm source of truth</button>
+          </div>
+          <div id="sot-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+            <span class="muted" style="font-size:13px;">Nothing selected yet — tick the DDI-carrying user extension(s) above.</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:20px;">
+        <div class="form-group" style="margin-bottom:8px;">
+          <label style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+            <span>Hunt Groups <span class="muted" style="font-size:10px;text-transform:none;font-weight:normal;">the groups calls flow through after the source of truth — used to build the call flow &amp; report</span></span>
+            <button type="button" onclick="clearAllGroups()" class="btn-secondary" style="font-size:11px;padding:3px 10px;text-transform:none;letter-spacing:0;">Clear all</button>
+          </label>
+        </div>
+        <input type="text" id="group-search" placeholder="Search groups..." class="input" style="margin-bottom:6px;width:100%;max-width:300px;" oninput="filterCheckboxes('group-checkboxes', this.value)">
+        <div id="group-checkboxes" style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:#f9fafb;">
+        </div>
+        <div id="group-panel" style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Hunt groups — selected</div>
+          <div id="group-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+            <span class="muted" style="font-size:13px;">Nothing selected yet — tick one or more groups above.</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="staff-section" style="margin-bottom:20px;">
+        <div class="form-group" style="margin-bottom:8px;">
+          <label>Staff <span class="muted" style="font-size:10px;text-transform:none;">the team who answer — shown in the daily Staff Performance table only (who answered, missed, ring times)</span></label>
+        </div>
+        <input type="text" id="staff-search" placeholder="Search extensions..." class="input" style="margin-bottom:6px;width:100%;max-width:300px;" oninput="filterCheckboxes('staff-checkboxes', this.value)">
+        <div id="staff-checkboxes" style="display:flex;flex-direction:column;gap:4px;max-height:150px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:#f9fafb;">
+          <p class="muted" style="font-size:13px;margin:0;">Select a site to load extensions.</p>
+        </div>
+        <div id="staff-panel" style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;">
+          <div id="staff-title" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Staff — selected extensions</div>
+          <div id="staff-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+            <span class="muted" style="font-size:13px;">Nothing selected yet — tick the staff handsets above.</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:20px;">
+        <div class="form-group" style="margin-bottom:10px;">
+          <label>Call Flow Order &amp; Labels <span class="muted" style="font-size:10px;text-transform:none;">drag to reorder — assign a short label for each group (e.g. Reception, Overflow 1)</span></label>
+        </div>
+        <div id="call-flow-list" style="display:flex;flex-direction:column;gap:6px;"></div>
+        <p id="flow-empty" class="muted" style="font-size:13px;">Select groups above to build the call flow.</p>
+      </div>
+
+      <div style="margin-bottom:20px;">
+        <div class="form-group" style="margin-bottom:8px;">
+          <label>IVR Options <span class="muted" style="font-size:10px;text-transform:none;">optional — map each hunt group to an IVR choice label so reports show how many callers chose each option</span></label>
+        </div>
+        <div id="ivr-options-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+        <button type="button" onclick="addIvrOption()" class="btn-secondary" style="font-size:12px;padding:6px 12px;">+ Add IVR Option</button>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:10px;cursor:pointer;">
+          <input type="checkbox" id="ivr-answered-cb" ${lc.ivr_counts_as_answered ? 'checked' : ''} onchange="updatePreview()" style="width:auto;min-width:auto;">
+          <span>Count calls that reach an IVR option as <strong>Answered</strong> (e.g. emergency / voicemail = handled, not missed)</span>
+        </label>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="form-group">
+          <label>Overflow Provider <span class="muted" style="font-size:10px;text-transform:none;">group that receives overflowed calls</span></label>
+          <select id="overflow-input" class="input" onchange="updatePreview()">
+            <option value="">— none —</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+            <input type="checkbox" id="ivr-weighted-cb" ${(lc.min_wait_seconds ?? 0) > 0 ? 'checked' : ''} onchange="toggleIvrWeighted(this)" style="width:auto;min-width:auto;">
+            <span>IVR Weighted</span>
+          </label>
+          <div id="ivr-weighted-row" style="${(lc.min_wait_seconds ?? 0) > 0 ? '' : 'display:none;'}">
+            <input type="number" id="min-wait-input" value="${lc.min_wait_seconds ?? 27}" min="1" max="120" class="input" style="min-width:auto;margin-top:4px;width:80px;" oninput="updatePreview()">
+            <div style="font-size:10px;color:var(--muted);margin-top:4px;">seconds threshold</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <datalist id="group-datalist"></datalist>
+
+    <input type="hidden" name="logic_config" id="logic-config-hidden">
+
+    <div style="margin-top:16px;padding:12px;background:#f9fafb;border-radius:6px;border:1px solid var(--line);">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:6px;">Logic Config Preview</div>
+      <pre id="logic-preview" style="font-size:11px;margin:0;color:#374151;white-space:pre-wrap;"></pre>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:10px;">
+    <button type="submit" class="btn-primary">${isNew ? 'Create Config' : 'Save Changes'}</button>
+    <a href="${backUrl}" class="btn-secondary">Cancel</a>
+  </div>
+
+</form>
+
+${!isNew && !_slm ? `
+<form method="post" action="/insights/report-config/${config.id}/delete" style="margin-top:10px;text-align:right;"
+      onsubmit="return confirm('Delete this report schedule?\\n\\nIt will stop sending immediately. Generated report history is kept.');">
+  <input type="hidden" name="_csrf" value="${typeof csrfToken !== 'undefined' ? csrfToken : ''}">
+  <button type="submit" class="btn-secondary" style="color:#dc2626;border-color:#fecaca;">🗑 Delete this schedule</button>
+</form>
+` : ''}
+
+${!isNew ? `
+<div class="card" style="margin-top:16px;">
+  <div class="card-header"><h2>Generate Report</h2></div>
+
+  ${config.report_type === 'weekly_call_stats' ? `
+  <p class="muted" style="font-size:13px;margin-bottom:12px;">Pick a week (Monday–Sunday) to generate. The report is added to the list below for review — it is <strong>not</strong> emailed. Use <strong>Send</strong> on a report when you're happy.</p>
+  <form method="POST" action="/insights/report-config/${config.id}/generate" style="display:flex;gap:12px;align-items:flex-end;">
+    <input type="hidden" name="report_type" value="weekly">
+    <div class="form-group">
+      <label>Week</label>
+      <select name="report_date" class="input">
+        ${(() => {
+          const opts = [];
+          const now = new Date();
+          now.setUTCHours(0,0,0,0);
+          const d = new Date(now);
+          d.setUTCDate(d.getUTCDate() + (d.getUTCDay() === 0 ? -6 : 1 - d.getUTCDay()));
+          const fmt = (x) => x.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+          for (let i = 0; i < 26; i++) {
+            const mon = new Date(d); mon.setUTCDate(mon.getUTCDate() - i * 7);
+            const sun = new Date(mon); sun.setUTCDate(sun.getUTCDate() + 6);
+            const val = mon.toISOString().slice(0,10);
+            const label = fmt(mon) + ' – ' + fmt(sun);
+            opts.push('<option value="' + val + '"' + (i === 1 ? ' selected' : '') + '>' + label + '</option>');
+          }
+          return opts.join('');
+        })()}
+      </select>
+    </div>
+    <button type="submit" class="btn-primary">Generate Week for Review</button>
+  </form>` : `
+  <p class="muted" style="font-size:13px;margin-bottom:12px;">Select a date range, tick the days you want, then generate.</p>
+  <div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap;">
+    <div class="form-group">
+      <label>From</label>
+      <input type="date" id="gen-from" class="input" value="${new Date(Date.now()-30*86400000).toISOString().slice(0,10)}" onchange="buildDayList()" oninput="buildDayList()">
+    </div>
+    <div class="form-group">
+      <label>To</label>
+      <input type="date" id="gen-to" class="input" value="${new Date().toISOString().slice(0,10)}" onchange="buildDayList()" oninput="buildDayList()">
+    </div>
+    <button type="button" onclick="buildDayList()" class="btn-secondary">Show Days</button>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:8px;">
+    <button type="button" onclick="toggleAllDays(true)" class="btn-secondary" style="font-size:12px;padding:4px 10px;">Select all</button>
+    <button type="button" onclick="toggleAllDays(false)" class="btn-secondary" style="font-size:12px;padding:4px 10px;">Clear</button>
+    <span id="day-count" class="muted" style="font-size:12px;align-self:center;"></span>
+  </div>
+  <div id="day-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:#f9fafb;"></div>
+  <form method="POST" action="/insights/report-config/${config.id}/generate" id="gen-form" onsubmit="return confirmGenerate()">
+    <input type="hidden" name="report_type" value="daily">
+    <div id="day-inputs"></div>
+    <p class="muted" style="font-size:12px;margin:0 0 10px;">Generated reports are added to the list below for review — they are <strong>not</strong> emailed. Use <strong>Send</strong> on a report when you're happy.</p>
+    <button type="submit" class="btn-primary">Generate Selected Days for Review</button>
+  </form>
+  <script>
+  function buildDayList() {
+    const from = new Date(document.getElementById('gen-from').value);
+    const to   = new Date(document.getElementById('gen-to').value);
+    if (isNaN(from) || isNaN(to) || to < from) return;
+    const days = [];
+    const d = new Date(from);
+    while (d <= to && days.length < 60) {
+      days.push(d.toISOString().slice(0,10));
+      d.setDate(d.getDate() + 1);
+    }
+    const DAY = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    document.getElementById('day-list').innerHTML = days.map(iso => {
+      const dt = new Date(iso);
+      return '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">'
+        + '<input type="checkbox" class="gen-day-cb" value="' + iso + '" checked onchange="updateDayCount()" style="width:auto;min-width:auto;">'
+        + '<span>' + DAY[dt.getDay()] + ' ' + dt.toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"}) + '</span></label>';
+    }).join('');
+    updateDayCount();
+  }
+  function toggleAllDays(state) {
+    document.querySelectorAll('.gen-day-cb').forEach(cb => { cb.checked = state; });
+    updateDayCount();
+  }
+  function updateDayCount() {
+    const n = document.querySelectorAll('.gen-day-cb:checked').length;
+    const el = document.getElementById('day-count');
+    if (el) el.textContent = n + ' day' + (n !== 1 ? 's' : '') + ' selected';
+  }
+  function confirmGenerate() {
+    const checked = Array.from(document.querySelectorAll('.gen-day-cb:checked'));
+    if (checked.length === 0) { alert('No days selected.'); return false; }
+    const inp = document.getElementById('day-inputs');
+    inp.innerHTML = checked.map(cb => '<input type="hidden" name="report_dates[]" value="' + cb.value + '">').join('');
+    return true;
+  }
+  buildDayList();
+  </script>`}
+</div>` : ''}
+
+<script>
+let allGroups      = ${allGroupsJson};
+let allExtensions  = ${allExtensionsJson};
+let selectedGroups = new Set(${existingSourceGroups});
+let selectedExts   = new Set(${existingSourceExts});
+let selectedStaff  = new Set(${existingStaffExts});
+let callFlow       = ${existingCallFlow};
+
+document.addEventListener('DOMContentLoaded', () => {
+  renderIvrOptions();
+  renderExtCheckboxes();
+  renderSotPanel();
+  renderStaffCheckboxes();
+  renderStaffChips();
+  toggleStaffSection();
+  pruneStaleSelections();
+  renderGroupCheckboxes();
+  renderGroupChips();
+  applyOverflow();
+  renderCallFlow();
+  updatePreview();
+  if (selectedExts.size > 0) confirmSourceOfTruth();
+  const sel = document.getElementById('site-select');
+  const custId = sel?.options[sel.selectedIndex]?.dataset.customer;
+  if (custId && allGroups.length === 0) {
+    loadGroups(custId, { preserve: true });
+  }
+});
+
+function onSiteChange(select) {
+  const custId = select.options[select.selectedIndex]?.dataset.customer;
+  if (!custId) return;
+  loadGroups(custId, { preserve: false });
+}
+
+function loadGroups(custId, { preserve }) {
+  const groupBox = document.getElementById('group-checkboxes');
+  if (groupBox) groupBox.innerHTML = '<p class="muted" style="font-size:13px;margin:0;">Loading groups…</p>';
+  document.getElementById('no-data-msg').style.display = 'none';
+  document.getElementById('logic-builder').style.display = '';
+  fetch('/insights/api/customer-groups?customer_id=' + custId)
+    .then(r => r.json())
+    .then(data => {
+      allGroups     = data.groups || [];
+      allExtensions = data.extensions || [];
+      if (!preserve) {
+        selectedGroups = new Set();
+        selectedExts   = new Set();
+        selectedStaff  = new Set();
+        callFlow = [];
+      } else {
+        pruneStaleSelections();
+      }
+      const hasData = allGroups.length > 0 || allExtensions.length > 0;
+      document.getElementById('no-data-msg').style.display = hasData ? 'none' : '';
+      document.getElementById('logic-builder').style.display = hasData ? '' : 'none';
+      renderExtCheckboxes();
+      renderSotPanel();
+      renderStaffCheckboxes();
+      renderStaffChips();
+      renderGroupCheckboxes();
+      renderGroupChips();
+      renderIvrOptions();
+      renderCallFlow();
+      updatePreview();
+    })
+    .catch(() => {
+      if (groupBox) groupBox.innerHTML = '<p class="muted" style="font-size:13px;margin:0;color:#dc2626;">Could not load groups — try again.</p>';
+    });
+}
+
+function renderExtCheckboxes() {
+  const container = document.getElementById('ext-checkboxes');
+  if (allExtensions.length === 0) {
+    container.innerHTML = '<p class="muted" style="font-size:13px;margin:0;">No extension data found — import EXT CSV first.</p>';
+    return;
+  }
+  container.innerHTML = allExtensions.map(e => {
+    const checked = selectedExts.has(e) ? 'checked' : '';
+    const safe = e.replace(/"/g, '&quot;');
+    return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">'
+      + '<input type="checkbox" ' + checked + ' value="' + safe + '" onchange="toggleExt(this)" style="width:auto;min-width:auto;">'
+      + '<span>' + e + '</span></label>';
+  }).join('');
+}
+
+function toggleExt(cb) {
+  if (cb.checked) selectedExts.add(cb.value);
+  else selectedExts.delete(cb.value);
+  renderSotPanel();
+  updatePreview();
+}
+
+let sotConfirmed = false;
+
+function renderSotPanel() {
+  sotConfirmed = false;
+  const panel = document.getElementById('sot-panel');
+  const btn   = document.getElementById('sot-confirm-btn');
+  const chips = document.getElementById('sot-chips');
+  if (!panel || !chips) return;
+
+  panel.style.borderColor = 'var(--line)';
+  panel.style.background  = '#fff';
+  if (btn) {
+    btn.textContent   = 'Confirm source of truth';
+    btn.disabled      = selectedExts.size === 0;
+    btn.style.opacity = selectedExts.size === 0 ? '0.5' : '1';
+  }
+
+  const picks = [...selectedExts];
+  if (picks.length === 0) {
+    chips.innerHTML = '<span class="muted" style="font-size:13px;">Nothing selected yet — tick one or more extensions above.</span>';
+    return;
+  }
+  chips.innerHTML = picks.map(e => {
+    const safe = e.replace(/"/g, '&quot;');
+    return '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;'
+      + 'border:1px solid #c7d2fe;border-radius:999px;font-size:13px;color:#3730a3;font-weight:600;">'
+      + e
+      + '<button type="button" data-ext="' + safe + '" onclick="removeSotExt(this.dataset.ext)" title="Remove" '
+      + 'style="background:none;border:none;cursor:pointer;color:#6366f1;font-size:15px;line-height:1;padding:0;">&times;</button>'
+      + '</span>';
+  }).join('');
+}
+
+function removeSotExt(val) {
+  selectedExts.delete(val);
+  renderExtCheckboxes();
+  renderSotPanel();
+  updatePreview();
+}
+
+function renderStaffCheckboxes() {
+  const container = document.getElementById('staff-checkboxes');
+  if (!container) return;
+  if (allExtensions.length === 0) {
+    container.innerHTML = '<p class="muted" style="font-size:13px;margin:0;">No extension data found — import EXT CSV first.</p>';
+    return;
+  }
+  container.innerHTML = allExtensions.map(e => {
+    const checked = selectedStaff.has(e) ? 'checked' : '';
+    const safe = e.replace(/"/g, '&quot;');
+    return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">'
+      + '<input type="checkbox" ' + checked + ' value="' + safe + '" onchange="toggleStaff(this)" style="width:auto;min-width:auto;">'
+      + '<span>' + e + '</span></label>';
+  }).join('');
+}
+
+function toggleStaff(cb) {
+  if (cb.checked) selectedStaff.add(cb.value);
+  else selectedStaff.delete(cb.value);
+  renderStaffChips();
+  updatePreview();
+}
+
+function renderStaffChips() {
+  const chips = document.getElementById('staff-chips');
+  if (!chips) return;
+  const picks = [...selectedStaff];
+  if (picks.length === 0) {
+    chips.innerHTML = '<span class="muted" style="font-size:13px;">Nothing selected yet — tick the staff handsets above.</span>';
+    return;
+  }
+  chips.innerHTML = picks.map(e => {
+    const safe = e.replace(/"/g, '&quot;');
+    return '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;'
+      + 'border:1px solid #c7d2fe;border-radius:999px;font-size:13px;color:#3730a3;font-weight:600;">'
+      + e
+      + '<button type="button" data-ext="' + safe + '" onclick="removeStaffExt(this.dataset.ext)" title="Remove" '
+      + 'style="background:none;border:none;cursor:pointer;color:#6366f1;font-size:15px;line-height:1;padding:0;">&times;</button>'
+      + '</span>';
+  }).join('');
+}
+
+function removeStaffExt(val) {
+  selectedStaff.delete(val);
+  renderStaffCheckboxes();
+  renderStaffChips();
+  updatePreview();
+}
+
+// "Has a per-staff table" — Daily Group Performance AND Site Performance both show the Staff
+// section and save staff_extensions (Site Performance is the daily report over a date range).
+function isDailyReport() {
+  const sel = document.getElementById('report-type-select');
+  const v = sel ? sel.value : '';
+  return v === 'group_call_performance' || v === 'site_performance';
+}
+function toggleStaffSection() {
+  const sec = document.getElementById('staff-section');
+  if (sec) sec.style.display = isDailyReport() ? '' : 'none';
+  updatePreview();
+}
+
+function confirmSourceOfTruth() {
+  if (selectedExts.size === 0) return;
+  sotConfirmed = true;
+  const panel = document.getElementById('sot-panel');
+  const btn   = document.getElementById('sot-confirm-btn');
+  if (panel) {
+    panel.style.borderColor = '#16a34a';
+    panel.style.background   = '#f0fdf4';
+  }
+  if (btn) btn.textContent = '✓ Source of truth confirmed';
+}
+
+function pruneStaleSelections() {
+  if (!allGroups.length) return;
+  const live = new Set(allGroups);
+  [...selectedGroups].forEach(g => { if (!live.has(g)) selectedGroups.delete(g); });
+  callFlow = callFlow.filter(f => live.has(f.group));
+}
+
+function applyOverflow() {
+  const ov = document.getElementById('overflow-input');
+  if (!ov) return;
+  const saved = ${JSON.stringify(existingOverflow)};
+  ov.value = (saved && allGroups.includes(saved)) ? saved : '';
+}
+
+function updateGroupDatalist() {
+  const dl = document.getElementById('group-datalist');
+  if (dl) dl.innerHTML = allGroups.map(g => '<option value="' + g.replace(/"/g,'&quot;') + '">').join('');
+
+  const ov = document.getElementById('overflow-input');
+  if (ov) {
+    const cur = ov.value;
+    ov.innerHTML = '<option value="">— none —</option>'
+      + allGroups.map(g => '<option value="' + g.replace(/"/g,'&quot;') + '"' + (g === cur ? ' selected' : '') + '>' + g + '</option>').join('');
+    if (cur) ov.value = cur;
+  }
+}
+
+function renderGroupCheckboxes() {
+  updateGroupDatalist();
+  const ov = document.getElementById('overflow-input');
+  if (ov?.dataset.pending) { ov.value = ov.dataset.pending; delete ov.dataset.pending; }
+  const container = document.getElementById('group-checkboxes');
+  if (allGroups.length === 0) { container.innerHTML = '<p class="muted" style="font-size:13px;">No groups found.</p>'; return; }
+  container.innerHTML = allGroups.map(g => {
+    const checked = selectedGroups.has(g) ? 'checked' : '';
+    const safe = g.replace(/"/g, '&quot;');
+    return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">'
+      + '<input type="checkbox" ' + checked + ' value="' + safe + '" onchange="toggleGroup(this)" style="width:auto;min-width:auto;">'
+      + '<span>' + g + '</span></label>';
+  }).join('');
+}
+
+function toggleGroup(cb) {
+  if (cb.checked) {
+    selectedGroups.add(cb.value);
+    if (!callFlow.find(f => f.group === cb.value)) {
+      callFlow.push({ group: cb.value, label: '' });
+    }
+  } else {
+    selectedGroups.delete(cb.value);
+    callFlow = callFlow.filter(f => f.group !== cb.value);
+  }
+  renderGroupChips();
+  renderCallFlow();
+  updatePreview();
+}
+
+function renderGroupChips() {
+  const chips = document.getElementById('group-chips');
+  if (!chips) return;
+  const picks = [...selectedGroups];
+  if (picks.length === 0) {
+    chips.innerHTML = '<span class="muted" style="font-size:13px;">Nothing selected yet — tick one or more groups above.</span>';
+    return;
+  }
+  chips.innerHTML = picks.map(g => {
+    const safe = g.replace(/"/g, '&quot;');
+    return '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;'
+      + 'border:1px solid #c7d2fe;border-radius:999px;font-size:13px;color:#3730a3;font-weight:600;">'
+      + g
+      + '<button type="button" data-grp="' + safe + '" onclick="removeGroupChip(this.dataset.grp)" title="Remove" '
+      + 'style="background:none;border:none;cursor:pointer;color:#6366f1;font-size:15px;line-height:1;padding:0;">&times;</button>'
+      + '</span>';
+  }).join('');
+}
+
+function removeGroupChip(val) {
+  selectedGroups.delete(val);
+  callFlow = callFlow.filter(f => f.group !== val);
+  renderGroupCheckboxes();
+  renderGroupChips();
+  renderCallFlow();
+  updatePreview();
+}
+
+function renderCallFlow() {
+  const list  = document.getElementById('call-flow-list');
+  const empty = document.getElementById('flow-empty');
+  if (callFlow.length === 0) {
+    list.innerHTML = '';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+  list.innerHTML = callFlow.map((item, idx) => {
+    const safe = item.group.replace(/"/g, '&quot;');
+    const shortName = item.group.replace('Hunt Group ', '');
+    return '<div ondragover="flowDragOver(event)" ondrop="flowDrop(' + idx + ', event)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fff;border:1px solid var(--line);border-radius:6px;">'
+      + '<span draggable="true" ondragstart="flowDragStart(' + idx + ', event)" ondragend="flowDragEnd()" title="Drag to reorder" style="cursor:grab;color:#9ca3af;font-size:16px;">&#9776;</span>'
+      + '<span style="flex:1;font-size:13px;">' + shortName + '</span>'
+      + '<input type="text" placeholder="Label (e.g. Reception)" value="' + (item.label || '') + '" '
+      + 'onchange="updateLabel(' + idx + ', this.value)" '
+      + 'class="input" style="width:180px;font-size:13px;">'
+      + '<button type="button" onclick="moveUp(' + idx + ')" style="background:none;border:none;cursor:pointer;padding:2px 6px;color:var(--muted);">↑</button>'
+      + '<button type="button" onclick="moveDown(' + idx + ')" style="background:none;border:none;cursor:pointer;padding:2px 6px;color:var(--muted);">↓</button>'
+      + '<button type="button" onclick="removeFlowItem(' + idx + ')" title="Remove from report" style="background:none;border:none;cursor:pointer;padding:2px 6px;color:#dc2626;font-size:16px;line-height:1;">&times;</button>'
+      + '</div>';
+  }).join('');
+}
+
+function removeFlowItem(idx) {
+  const g = callFlow[idx] && callFlow[idx].group;
+  if (g) selectedGroups.delete(g);
+  callFlow.splice(idx, 1);
+  renderGroupCheckboxes();
+  renderCallFlow();
+  updatePreview();
+}
+
+function clearAllGroups() {
+  if (callFlow.length && !confirm('Clear all selected groups from this report?')) return;
+  selectedGroups.clear();
+  callFlow = [];
+  renderGroupCheckboxes();
+  renderGroupChips();
+  renderCallFlow();
+  updatePreview();
+}
+
+let dragFromIdx = null;
+function flowDragStart(idx, ev) {
+  dragFromIdx = idx;
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move';
+    try { ev.dataTransfer.setData('text/plain', String(idx)); } catch (e) {}
+  }
+}
+function flowDragOver(ev) {
+  ev.preventDefault();
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+}
+function flowDrop(idx, ev) {
+  ev.preventDefault();
+  if (dragFromIdx === null || dragFromIdx === idx) { dragFromIdx = null; return; }
+  const moved = callFlow.splice(dragFromIdx, 1)[0];
+  callFlow.splice(idx, 0, moved);
+  dragFromIdx = null;
+  renderCallFlow();
+  updatePreview();
+}
+function flowDragEnd() { dragFromIdx = null; }
+
+function updateLabel(idx, val) { callFlow[idx].label = val; updatePreview(); }
+function moveUp(idx) {
+  if (idx === 0) return;
+  [callFlow[idx-1], callFlow[idx]] = [callFlow[idx], callFlow[idx-1]];
+  renderCallFlow(); updatePreview();
+}
+function moveDown(idx) {
+  if (idx >= callFlow.length - 1) return;
+  [callFlow[idx], callFlow[idx+1]] = [callFlow[idx+1], callFlow[idx]];
+  renderCallFlow(); updatePreview();
+}
+
+let ivrOptions = ${existingIvrOptions};
+
+function renderIvrOptions() {
+  const list = document.getElementById('ivr-options-list');
+  if (ivrOptions.length === 0) { list.innerHTML = ''; return; }
+  list.innerHTML = ivrOptions.map((opt, i) => {
+    const labelVal  = (opt.label || '').replace(/"/g,'&quot;');
+    const cur       = opt.group || '';
+    const curSafe   = cur.replace(/"/g,'&quot;');
+    let groupOpts = '<option value="">— select hunt group —</option>';
+    if (cur && allGroups.indexOf(cur) === -1) {
+      groupOpts += '<option value="' + curSafe + '" selected>' + cur + ' (not in list — re-select)</option>';
+    }
+    groupOpts += allGroups.map(g => {
+      const safe = g.replace(/"/g,'&quot;');
+      return '<option value="' + safe + '"' + (g === cur ? ' selected' : '') + '>' + g + '</option>';
+    }).join('');
+    return '<div style="display:flex;gap:8px;align-items:center;">'
+      + '<select data-idx="' + i + '" data-key="group" onchange="ivrFieldChange(this)" '
+      + 'class="input" style="flex:2;font-size:13px;">' + groupOpts + '</select>'
+      + '<input type="text" placeholder="Label (e.g. Emergency, Voicemail)" value="' + labelVal + '" '
+      + 'data-idx="' + i + '" data-key="label" oninput="ivrFieldChange(this)" '
+      + 'class="input" style="flex:1;font-size:13px;">'
+      + '<button type="button" data-idx="' + i + '" onclick="removeIvrOption(+this.dataset.idx)" '
+      + 'style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:18px;padding:0 4px;">x</button>'
+      + '</div>';
+  }).join('');
+}
+
+function ivrFieldChange(el) {
+  ivrOptions[+el.dataset.idx][el.dataset.key] = el.value;
+  updatePreview();
+}
+
+function addIvrOption() {
+  ivrOptions.push({ group: '', label: '' });
+  renderIvrOptions();
+  updatePreview();
+}
+
+function removeIvrOption(idx) {
+  ivrOptions.splice(idx, 1);
+  renderIvrOptions();
+  updatePreview();
+}
+
+function toggleIvrWeighted(cb) {
+  document.getElementById('ivr-weighted-row').style.display = cb.checked ? '' : 'none';
+  updatePreview();
+}
+
+function filterCheckboxes(containerId, query) {
+  const q = query.toLowerCase();
+  const container = document.getElementById(containerId);
+  Array.from(container.querySelectorAll('label')).forEach(label => {
+    const text = label.textContent.toLowerCase();
+    label.style.display = (!q || text.includes(q)) ? '' : 'none';
+  });
+}
+
+function buildLogicConfig() {
+  const ivrFiltered = ivrOptions.filter(o => o.group && o.label);
+  return {
+    source_of_truth_extensions: [...selectedExts],
+    staff_extensions:           isDailyReport() ? [...selectedStaff] : [],
+    source_of_truth_group:      [...selectedGroups],
+    call_flow:                  callFlow.filter(f => f.group),
+    overflow_label:             document.getElementById('overflow-input')?.value || '',
+    ...(document.getElementById('ivr-weighted-cb')?.checked
+      ? { min_wait_seconds: parseInt(document.getElementById('min-wait-input')?.value || '27') || 27 }
+      : {}),
+    ...(ivrFiltered.length ? { ivr_options: ivrFiltered } : {}),
+    ivr_counts_as_answered: !!document.getElementById('ivr-answered-cb')?.checked,
+  };
+}
+
+function updatePreview() {
+  const lc = buildLogicConfig();
+  document.getElementById('logic-preview').textContent = JSON.stringify(lc, null, 2);
+}
+
+['overflow-input'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', updatePreview);
+});
+
+document.getElementById('config-form').addEventListener('submit', () => {
+  document.getElementById('logic-config-hidden').value = JSON.stringify(buildLogicConfig());
+});
+</script>
+` }) %>

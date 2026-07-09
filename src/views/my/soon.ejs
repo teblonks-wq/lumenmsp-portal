@@ -1,0 +1,8 @@
+<%- include('header', { title: title, company: (user && user.displayName) || '', user, active }) %>
+
+<div class="page-header"><h1><%= title %></h1></div>
+<div class="card">
+  <div class="empty"><%= blurb %></div>
+</div>
+
+<%- include('footer', { active }) %>

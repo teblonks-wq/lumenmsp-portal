@@ -1,0 +1,103 @@
+<%- include('partials/header', { title: 'IT & Cloud Bill Run', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); } %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">← Back Office</a></p>
+  <h1>IT &amp; Cloud Bill Run <% if (period){ %><span class="muted" style="font-weight:400;">· <%= period %></span><% } %></h1></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<div class="card" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
+  <div><div class="muted" style="font-size:12px;">Customers</div><div style="font-size:20px;font-weight:800;"><%= rows.length %></div></div>
+  <div><div class="muted" style="font-size:12px;">IT &amp; base (ex VAT)</div><div style="font-size:20px;font-weight:800;"><%= money(grand.it) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Cloud / M365 (ex VAT)</div><div style="font-size:20px;font-weight:800;"><%= money(grand.cloud) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Invoiced (ex VAT)</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(grand.net) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Giacom cost (ex VAT)</div><div style="font-size:20px;font-weight:800;color:#64748b;"><%= money(grand.cost) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Margin (ex VAT)</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(grand.net - grand.cost) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Gross (inc VAT)</div><div style="font-size:16px;font-weight:700;color:#94a3b8;"><%= money(grand.billed) %></div></div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:16px 20px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2>Draft IT &amp; Cloud bills</h2>
+    <input class="input card-filter" placeholder="Search customer…" style="max-width:240px;font-size:13px;padding:5px 8px;"></div>
+  <% function ago(d){ if(!d) return ''; var s=Math.floor((Date.now()-new Date(d))/1000); if(s<60)return 'just now'; if(s<3600)return Math.floor(s/60)+'m ago'; if(s<86400)return Math.floor(s/3600)+'h ago'; return Math.floor(s/86400)+'d ago'; } %>
+  <div class="table-wrap"><table class="table sortable">
+    <thead><tr><th>Customer</th><th style="text-align:right;">IT Services<br><span class="muted" style="font-weight:400;font-size:10px;">ex VAT</span></th><th style="text-align:right;">Cloud / M365<br><span class="muted" style="font-weight:400;font-size:10px;">ex VAT</span></th><th style="text-align:right;">Bill<br><span class="muted" style="font-weight:400;font-size:10px;">ex VAT</span></th><th>Sync status</th><th>Flags</th><th></th></tr></thead>
+    <tbody>
+      <% if (!rows.length) { %><tr><td colspan="7"><div class="empty-state">No IT&Cloud templates, contracts or Giacom cloud services yet.</div></td></tr><% } %>
+      <% rows.forEach(function(r){ %>
+        <tr>
+          <td><a class="row-link" href="/customers/<%= r.id %>#cloud"><strong><%= r.name %></strong></a></td>
+          <td style="text-align:right;<%= r.it?'':'color:#cbd5e1;' %>"><%= r.it ? money(r.it) : '—' %></td>
+          <td style="text-align:right;<%= r.cloud?'':'color:#cbd5e1;' %>"><%= r.cloud ? money(r.cloud) : '—' %></td>
+          <td style="text-align:right;font-weight:700;<%= (r.net==null)?'color:#cbd5e1;':'' %>"><%= r.net==null ? '—' : money(r.net) %><% if (r.billed!=null) { %><br><span class="muted" style="font-size:10px;font-weight:400;"><%= money(r.billed) %> inc</span><% } %><% if (r.predictedBilled!=null && Math.abs(r.predictedBilled - r.billed) > 0.005) { %><br><span style="font-size:10px;font-weight:600;color:#0e7490;" title="Predicted next run — recurring only (drops this period's one-offs &amp; part-month catch-ups)">↻ next ~<%= money(r.predictedBilled) %></span><% } %></td>
+          <td style="font-size:12px;">
+            <% if (!r.templateId) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;">no template</span>
+            <% } else if (!r.periodInvoiceId) { %><span class="badge badge-inactive" style="font-size:10px;">template ✓ · not synced</span>
+            <% } else { %>
+              <a class="row-link" href="/invoices/<%= r.periodInvoiceId %>">
+                <% if (r.syncedAt) { %><span class="badge" style="font-size:10px;background:#dcfce7;color:#166534;">🔄 synced <%= ago(r.syncedAt) %></span><% } else { %><span class="badge badge-inactive" style="font-size:10px;">built · not synced</span><% } %></a>
+              <% if (r.drift) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;">⚠ <%= r.drift %> drift</span><% } %>
+            <% } %>
+          </td>
+          <td>
+            <% if (!r.hasBillingContact) { %><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;">no billing contact</span><% } %>
+            <% if (!r.giacomLinked) { %><span class="badge badge-inactive" style="font-size:10px;">not Giacom-paired</span><% } %>
+            <% if (r.unmatched) { %><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;">⚠ <%= r.unmatched %> not in product list</span><% } %>
+            <% if (r.audit && r.audit.notInDb.length) { %><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;" title="On the invoice: <%= r.audit.notInDb.join('; ') %>">⛔ <%= r.audit.notInDb.length %> line(s) not in DB/QB</span><% } %>
+            <% if (r.audit && r.audit.noQbItem.length) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;" title="<%= r.audit.noQbItem.join('; ') %>">⚠ <%= r.audit.noQbItem.length %> no QB item</span><% } %>
+            <% if (r.unpriced) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;"><%= r.unpriced %> unpriced</span><% } %>
+          </td>
+          <td style="text-align:right;white-space:nowrap;">
+            <% if (r.templateId) { %>
+              <form method="post" action="/bureau/itcloud/run-sync" style="display:inline;"><input type="hidden" name="period" value="<%= period || '' %>"><input type="hidden" name="customer_id" value="<%= r.id %>"><button class="btn" type="submit" style="font-size:12px;padding:3px 9px;">↻ Sync</button></form>
+            <% } %>
+            <% if (r.periodInvoiceId) { %><a class="row-link" href="/invoices/<%= r.periodInvoiceId %>" style="font-size:12px;margin-left:6px;">Open</a>
+              <a class="row-link" href="/invoices/<%= r.periodInvoiceId %>/pdf" target="_blank" style="font-size:12px;margin-left:6px;">Preview</a>
+            <% } else { %>
+              <a class="row-link" href="/bureau/itcloud/<%= r.id %>/preview" target="_blank" style="font-size:12px;margin-left:6px;">Preview</a>
+            <% } %>
+          </td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <% if (typeof audit !== 'undefined' && audit && audit.length) { %>
+    <div class="alert alert-danger" style="margin:14px 20px;">
+      <strong>⛔ <%= audit.length %> invoice(s) have services not matched to the product list / QuickBooks.</strong>
+      These lines won't map to a QB item or reporting category. Add the products to the <a href="/products">product list</a> (with a QB item) and re-sync, or tick <em>complete anyway</em> below to post them under the default Giacom item.
+      <ul style="margin:8px 0 0;padding-left:18px;font-size:13px;">
+        <% audit.slice(0,12).forEach(function(a){ %>
+          <li><strong><%= a.name %></strong> — <% if (a.notInDb.length) { %><%= a.notInDb.length %> not in product list<% } %><% if (a.notInDb.length && a.noQbItem.length) { %>, <% } %><% if (a.noQbItem.length) { %><%= a.noQbItem.length %> no QB item<% } %></li>
+        <% }); %>
+      </ul>
+    </div>
+  <% } %>
+  <div style="padding:16px 20px;border-top:1px solid var(--border,#e5e7eb);display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+    <form method="post" action="/bureau/itcloud/run-sync" onsubmit="return confirm('Run sync for <%= period %>? Builds each customer\'s invoice from their template + layers live Giacom lines. Your manual lines and locked overrides are preserved.');">
+      <input type="hidden" name="period" value="<%= period || '' %>">
+      <button class="btn btn-primary" type="submit" style="font-size:15px;padding:10px 18px;">↻ Run Sync — all templates</button>
+      <p class="muted" style="font-size:12px;margin:6px 0 0;max-width:420px;">Builds/refreshes each customer's <strong>staged</strong> draft (no invoice number yet) from their template + live Giacom. Review &amp; edit here, then <strong>Complete the run</strong> to allocate numbers.</p>
+    </form>
+    <% var _t=new Date(); var todayStr=new Date(_t.getFullYear(),_t.getMonth(),_t.getDate()).toISOString().slice(0,10); var nextFirst=new Date(_t.getFullYear(),_t.getMonth()+1,1).toISOString().slice(0,10); %>
+    <form method="post" action="/bureau/itcloud/complete" onsubmit="return confirm('Complete the run? This numbers the staged drafts, emails finance the PDF, pushes to QuickBooks and submits for Direct Debit. Only do this when finalised.');">
+      <input type="hidden" name="period" value="<%= period %>">
+      <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:8px;">
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Invoice date</label><input class="input" type="date" name="issue_date" value="<%= todayStr %>" style="font-size:12px;"></div>
+        <div class="form-group" style="margin:0;"><label style="font-size:11px;">Due date</label><input class="input" type="date" name="due_date" value="<%= nextFirst %>" style="font-size:12px;"></div>
+      </div>
+      <button class="btn" type="submit" style="font-size:15px;padding:10px 18px;background:#166534;border-color:#166534;color:#fff;">Complete run - number, email, QB and DD</button>
+      <% if (typeof audit !== 'undefined' && audit && audit.length) { %>
+        <label class="muted" style="display:block;font-size:12px;margin-top:8px;color:#b91c1c;"><input type="checkbox" name="override_unmatched" value="1" style="vertical-align:middle;"> Complete anyway — I accept <%= audit.length %> invoice(s) have unmatched services (they'll post under the default Giacom item)</label>
+      <% } %>
+      <p class="muted" style="font-size:12px;margin:6px 0 0;max-width:400px;">Numbers the staged drafts with the dates above, emails finance the PDF, pushes to QuickBooks and submits for Direct Debit.</p>
+    </form>
+    <form method="post" action="/bureau/itcloud/generate" onsubmit="return confirm('Generate live-derive drafts for customers WITHOUT a template? (Builds everything from Giacom + contracts, no manual base.)');">
+      <input type="hidden" name="period" value="<%= period || '' %>">
+      <button class="btn" type="submit" style="font-size:13px;">Generate (no template)</button>
+      <p class="muted" style="font-size:12px;margin:6px 0 0;max-width:320px;">Live-derive fallback for customers with no template yet.</p>
+    </form>
+  </div>
+</div>
+
+<%- include('partials/footer') %>

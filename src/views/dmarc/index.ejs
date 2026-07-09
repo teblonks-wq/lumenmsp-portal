@@ -1,0 +1,102 @@
+<%- include('../partials/header', { title: 'Domain Health', user }) %>
+
+<style>
+  /* Readability pass 2026-07-08 — team found Domain Health too small; everything scaled up. */
+  .card { font-size:16px; }
+  table.table th { font-size:13px !important; }
+  table.table td { font-size:16px !important; padding:14px 12px !important; }
+  .badge { font-size:13px !important; padding:4px 10px !important; }
+  .page-header .muted { font-size:15px !important; }
+</style>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">&larr; Admin</a></p>
+  <h1>Domain Health</h1>
+  <p class="muted">LITS-DMARC — SPF, DKIM, DMARC &amp; Office 365 DNS health per domain. Aggregate reports are collected at <strong><%= mailbox || 'no mailbox configured' %></strong> and ingested every 30 minutes. Data feeds the monthly IT Snapshot.</p>
+</div>
+
+<% if (!mailboxConfigured) { %>
+<div class="card" style="border-left:4px solid #d97706;">
+  <strong>Collector not fully configured.</strong>
+  <p class="muted" style="margin:6px 0 0;">Set <code>DMARC_MAILBOX</code> in the server .env (and ensure Graph credentials are present), create the shared mailbox, and publish the report-authorisation DNS record — see the go-live runbook in <code>02 Projects</code>.</p>
+</div>
+<% } %>
+<% if (ran) { %><div class="card" style="border-left:4px solid #16a34a;">Ingest run started — refresh in a minute to see new reports.</div><% } %>
+<% if (err) { %><div class="card" style="border-left:4px solid #dc2626;"><%= err %></div><% } %>
+
+<div class="card">
+  <div class="card-header"><h2>Monitored domains</h2></div>
+  <% if (!domains.length) { %>
+    <p class="muted">No domains yet — add one below or pick a customer suggestion.</p>
+  <% } else { %>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Domain</th><th>Customer</th><th>Policy</th><th>Score</th><th>30d volume</th><th>30d authenticated</th><th>Last report</th><th></th></tr></thead>
+    <tbody>
+      <% domains.forEach(function(d){
+           var pct = d.volume_30d ? Math.round(d.aligned_30d / d.volume_30d * 100) : null; %>
+      <tr>
+        <td><a class="row-link" href="/dmarc/<%= d.id %>"><%= d.domain %></a>
+          <% if (!d.monitoring_enabled) { %> <span class="badge badge-inactive">Paused</span><% } %></td>
+        <td class="muted"><%= d.customer_name || '—' %></td>
+        <td>
+          <% if (d.policy === 'reject') { %><span class="badge badge-sent">p=reject</span>
+          <% } else if (d.policy === 'quarantine') { %><span class="badge badge-primary">p=quarantine</span>
+          <% } else if (d.policy === 'none') { %><span class="badge badge-inactive">p=none</span>
+          <% } else { %><span class="badge badge-failed">no DMARC</span><% } %>
+          <br><span class="muted" style="font-size:13px;">target: p=<%= d.target_policy || 'none' %></span>
+        </td>
+        <td><%= d.score == null ? '—' : d.score + '/100' %></td>
+        <td><%= d.volume_30d %></td>
+        <td><% if (pct === null) { %><span class="muted">no data yet</span><% } else { %><strong style="color:<%= pct >= 98 ? '#16a34a' : pct >= 90 ? '#d97706' : '#dc2626' %>;"><%= pct %>%</strong><% } %></td>
+        <td class="muted" style="font-size:15px;"><%= d.last_report_at ? new Date(d.last_report_at).toLocaleDateString('en-GB') : 'none yet' %></td>
+        <td style="text-align:right;"><a class="btn btn-primary" href="/dmarc/<%= d.id %>">Open</a></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <% } %>
+  <form method="post" action="/dmarc/run-ingest" style="margin-top:12px;">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="btn" type="submit" <%= mailboxConfigured ? '' : 'disabled' %>>Check mailbox for new reports now</button>
+  </form>
+</div>
+
+<% if (suggestions.length) { %>
+<div class="card">
+  <div class="card-header"><h2>Not yet monitored</h2></div>
+  <p class="muted" style="margin:0 0 10px;">Domains on customer records (plus IT-report primary domains) that aren't monitored yet:</p>
+  <div class="table-wrap"><table class="table">
+    <tbody>
+      <% suggestions.forEach(function(s){ %>
+      <tr>
+        <td><strong><%= s.domain %></strong></td>
+        <td class="muted"><%= s.name %></td>
+        <td style="text-align:right;">
+          <form method="post" action="/dmarc/add" style="display:inline;">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <input type="hidden" name="domain" value="<%= s.domain %>">
+            <input type="hidden" name="customer_id" value="<%= s.customer_id %>">
+            <button class="btn btn-primary" type="submit">Start monitoring</button>
+          </form>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<div class="card">
+  <div class="card-header"><h2>Add a domain</h2></div>
+  <form method="post" action="/dmarc/add" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <input class="input" name="domain" placeholder="customer-domain.co.uk" style="min-width:260px;" required>
+    <select class="input" name="customer_id" style="min-width:220px;">
+      <option value="">No customer link</option>
+      <% customers.forEach(function(c){ %><option value="<%= c.id %>"><%= c.name %></option><% }); %>
+    </select>
+    <button class="btn btn-primary" type="submit">Add &amp; run DNS check</button>
+  </form>
+</div>
+
+<%- include('../partials/footer') %>

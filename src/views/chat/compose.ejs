@@ -1,0 +1,91 @@
+<%- include('../partials/header', { title: 'New WhatsApp message', user }) %>
+<%
+  function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c];}); }
+%>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/chat/channel/whatsapp">← WhatsApp messages</a></p>
+  <h1>New WhatsApp message</h1>
+  <p class="muted">To start a conversation or message someone outside the 24-hour window, use an approved template. It's sent tagged to a case.</p>
+</div>
+
+<% if(err){ %><div class="alert alert-error" style="margin-bottom:16px;"><%= err %> <% if(!templates.length){ %><a class="row-link" href="/chat/wa/templates">Manage templates</a><% } %></div><% } %>
+
+<% if(templates.length){ %>
+<div class="card" style="max-width:640px;">
+  <div class="form-group"><label>Recipient WhatsApp number</label>
+    <input id="toNum" class="input" style="width:100%;" placeholder="+44 7700 900000" value="<%= esc(prefillTo) %>"></div>
+
+  <div class="form-group" style="margin-top:12px;"><label>Case</label>
+    <div id="caseChosen" style="display:<%= prefillTicket ? 'flex' : 'none' %>;align-items:center;gap:8px;margin-bottom:6px;">
+      <span class="badge badge-sent" id="caseLabel">#<%= esc(prefillTicket) %></span>
+      <button type="button" class="btn" style="padding:2px 8px;font-size:12px;" onclick="clearCase()">change</button>
+    </div>
+    <input id="caseSearch" class="input" style="width:100%;display:<%= prefillTicket ? 'none' : 'block' %>;" placeholder="Search case number, name or person…" oninput="searchCases(this.value)" autocomplete="off">
+    <div id="caseResults" style="margin-top:8px;"></div>
+    <input type="hidden" id="ticketId" value="<%= esc(prefillTicket) %>">
+  </div>
+
+  <div class="form-group" style="margin-top:12px;"><label>Template</label>
+    <select id="tplSel" class="input" style="width:100%;" onchange="renderFields()">
+      <option value="">Choose a template…</option>
+      <% templates.forEach(function(t){ %><option value="<%= t.name %>"><%= esc(t.label) %></option><% }); %>
+    </select>
+  </div>
+
+  <div id="tplFields" style="margin-top:4px;"></div>
+
+  <div id="tplPreview" style="display:none;margin-top:12px;padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;font-size:14px;white-space:pre-wrap;"></div>
+
+  <div style="text-align:right;margin-top:16px;">
+    <button class="btn btn-primary" id="sendBtn" onclick="send()">Send message</button>
+  </div>
+</div>
+<% } %>
+
+<script>
+var TEMPLATES = <%- JSON.stringify(templates.map(function(t){ return { name:t.name, label:t.label, body:t.body, vars:t.vars }; })) %>;
+function csrf(){ var m=document.querySelector('meta[name="csrf-token"]'); return m?m.getAttribute('content'):''; }
+function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
+function tpl(){ var n=document.getElementById('tplSel').value; return TEMPLATES.filter(function(t){return t.name===n;})[0]; }
+function renderFields(){
+  var t=tpl(); var box=document.getElementById('tplFields'); box.innerHTML='';
+  if(!t){ document.getElementById('tplPreview').style.display='none'; return; }
+  t.vars.forEach(function(v,i){
+    var d=document.createElement('div'); d.className='form-group'; d.style.marginTop='10px';
+    d.innerHTML='<label>'+esc(v)+'</label><input class="input tplField" data-i="'+(i+1)+'" style="width:100%;" oninput="preview()">';
+    box.appendChild(d);
+  });
+  preview();
+}
+function preview(){
+  var t=tpl(); if(!t) return;
+  var vals={}; document.querySelectorAll('.tplField').forEach(function(f){ vals[f.getAttribute('data-i')]=f.value; });
+  var body=t.body.replace(/\{\{(\d+)\}\}/g,function(_,n){ return vals[n] || ('{{'+n+'}}'); });
+  var p=document.getElementById('tplPreview'); p.textContent=body; p.style.display='block';
+}
+var _t;
+function searchCases(q){ clearTimeout(_t); q=(q||'').trim(); var r=document.getElementById('caseResults'); if(!q){ r.innerHTML=''; return; }
+  _t=setTimeout(function(){ fetch('/chat/msg/case-search?q='+encodeURIComponent(q)).then(function(x){return x.json();}).then(function(rows){
+    r.innerHTML = rows.length ? rows.map(function(c){ return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:6px;"><div><strong>'+esc(c.ticket_number)+'</strong> — '+esc(c.subject||'')+' <span class="muted" style="font-size:12px;">'+esc(c.customer_name||'')+'</span></div><button type="button" class="btn btn-primary" style="padding:3px 10px;" onclick="pickCase('+c.id+',\''+esc(c.ticket_number)+'\')">Use</button></div>'; }).join('') : '<p class="muted">No matching cases.</p>';
+  }); }, 200);
+}
+function pickCase(id,label){ document.getElementById('ticketId').value=id; document.getElementById('caseLabel').textContent=label; document.getElementById('caseChosen').style.display='flex'; document.getElementById('caseSearch').style.display='none'; document.getElementById('caseResults').innerHTML=''; }
+function clearCase(){ document.getElementById('ticketId').value=''; document.getElementById('caseChosen').style.display='none'; var s=document.getElementById('caseSearch'); s.style.display='block'; s.value=''; s.focus(); }
+function send(){
+  var to=(document.getElementById('toNum').value||'').trim();
+  var ticketId=document.getElementById('ticketId').value;
+  var t=tpl();
+  if(!to){ alert('Enter a recipient number.'); return; }
+  if(!ticketId){ alert('Choose a case.'); return; }
+  if(!t){ alert('Choose a template.'); return; }
+  var body={ to:to, ticketId:ticketId, template:t.name };
+  document.querySelectorAll('.tplField').forEach(function(f){ body['p'+f.getAttribute('data-i')]=f.value; });
+  var btn=document.getElementById('sendBtn'); btn.disabled=true; btn.textContent='Sending…';
+  fetch('/chat/wa/send-template',{method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':csrf()},body:JSON.stringify(body)})
+    .then(function(r){return r.json();}).then(function(j){ btn.disabled=false; btn.textContent='Send message'; if(j.ok){ window.location='/tickets/'+j.ticketId; } else { alert(j.error||'Could not send.'); } })
+    .catch(function(){ btn.disabled=false; btn.textContent='Send message'; alert('Could not send.'); });
+}
+</script>
+
+<%- include('../partials/footer') %>

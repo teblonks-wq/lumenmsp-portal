@@ -1,0 +1,58 @@
+<%
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  var custOpts = (customers || []).map(function(c){ return '<option value="' + c.id + '">' + esc(c.name) + '</option>'; }).join('');
+  var tplOpts = (templates || []).map(function(t){ return '<option value="' + t.id + '" data-type="' + esc(t.base_type || '') + '">' + esc(t.name) + '</option>'; }).join('');
+  var siteJson = JSON.stringify((sites || []).map(function(s){ return { id: s.id, label: s.site_label, cust: s.customer_id }; }));
+  var today = new Date().toISOString().slice(0,10);
+  // Recent complete weeks (Monday value, "25 May – 31 May 2026" label).
+  var weekOpts = (function(){
+    var d = new Date(); d.setHours(0,0,0,0);
+    var mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay()+6)%7));
+    var fmt = function(x){ return x.toLocaleDateString('en-GB',{day:'numeric',month:'short'}); };
+    var out = [];
+    for (var i=1;i<=26;i++){
+      var ms = new Date(mon); ms.setDate(mon.getDate() - i*7);
+      var su = new Date(ms); su.setDate(ms.getDate()+6);
+      var val = ms.getFullYear()+'-'+String(ms.getMonth()+1).padStart(2,'0')+'-'+String(ms.getDate()).padStart(2,'0');
+      out.push('<option value="'+val+'"'+(i===1?' selected':'')+'>'+fmt(ms)+' – '+fmt(su)+' '+su.getFullYear()+'</option>');
+    }
+    return out.join('');
+  })();
+%>
+<%- include('_layout', { title: 'Run report', user, csrfToken: (typeof csrfToken !== 'undefined' ? csrfToken : ''), body: `
+  <div class="page-header"><h1>Run a report</h1><p style="color:#6b7280;margin:4px 0 0;">Pick a customer, site and report from the pool, then run it. Opens in a new tab.</p></div>
+  ${err ? '<div style="background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;padding:10px 14px;border-radius:8px;margin-bottom:14px;">' + esc(err) + '</div>' : ''}
+  <div class="card" style="max-width:760px;">
+    <form method="post" action="/insights/run" target="_blank" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+      <div><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Customer</label><select class="input" id="runCust" style="min-width:200px;"><option value="">— choose —</option>${custOpts}</select></div>
+      <div><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Site</label><select class="input" id="runSite" name="site_id" required style="min-width:180px;"><option value="">— choose a customer —</option></select></div>
+      <div><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Report</label><select class="input" id="runTpl" name="template_id" required style="min-width:200px;" onchange="onTpl()">${tplOpts}</select></div>
+      <div id="weekWrap" style="display:none;"><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Week</label><select class="input" id="runWeek" onchange="syncWeek()" style="min-width:190px;">${weekOpts}</select></div>
+      <div id="fromWrap"><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">From</label><input class="input" type="date" name="date_from" id="runFrom" value="${today}"></div>
+      <div id="toWrap"><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">To</label><input class="input" type="date" name="date_to" id="runTo" value="${today}"></div>
+      <div><button class="btn-primary" type="submit" style="padding:10px 22px;">Run report ↗</button></div>
+    </form>
+  </div>
+  <script>
+    (function(){
+      var SITES = ${siteJson};
+      var cust = document.getElementById('runCust'), site = document.getElementById('runSite');
+      cust.addEventListener('change', function(){
+        var cid = cust.value;
+        var opts = SITES.filter(function(s){ return String(s.cust) === String(cid); }).map(function(s){ return '<option value="' + s.id + '">' + s.label + '</option>'; });
+        site.innerHTML = opts.length ? opts.join('') : '<option value="">— no sites —</option>';
+      });
+    })();
+    function syncWeek(){ var w = document.getElementById('runWeek'); var f = document.getElementById('runFrom'); if (w && f) f.value = w.value; }
+    function onTpl(){
+      var sel = document.getElementById('runTpl');
+      var opt = sel.options[sel.selectedIndex];
+      var weekly = opt && opt.getAttribute('data-type') === 'weekly_call_stats';
+      document.getElementById('weekWrap').style.display = weekly ? '' : 'none';
+      document.getElementById('fromWrap').style.display = weekly ? 'none' : '';
+      document.getElementById('toWrap').style.display   = weekly ? 'none' : '';
+      if (weekly) syncWeek();
+    }
+    onTpl();
+  </script>
+` }) %>

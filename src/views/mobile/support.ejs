@@ -1,0 +1,21 @@
+<%- include('header', { title: 'Support', heading: 'Support', user, active }) %>
+<div class="m-wrap">
+  <div style="display:flex;gap:8px;margin-bottom:14px;">
+    <a href="/m/support" class="pill <%= scope==='mine'?'info':'' %>" style="padding:8px 16px;font-size:13px;border-radius:12px;<%= scope==='mine'?'':'background:#fff;' %>">Mine</a>
+    <a href="/m/support?scope=all" class="pill <%= scope==='all'?'info':'' %>" style="padding:8px 16px;font-size:13px;border-radius:12px;<%= scope==='all'?'':'background:#fff;' %>">All open</a>
+  </div>
+  <% if (!(list||[]).length) { %><div class="empty">No open cases <i class="ti ti-confetti"></i></div><% } %>
+  <div class="sheet">
+    <% (list||[]).forEach(function(t){ %>
+    <a class="row" href="/m/support/<%= t.id %>">
+      <i class="ti ti-headset ic"></i>
+      <div class="main">
+        <div class="t"><%= t.subject || '(no subject)' %></div>
+        <div class="s"><%= t.ticket_number %><% if (t.customer_name) { %> · <%= t.customer_name %><% } %></div>
+      </div>
+      <span class="pill <%= t.status==='new'?'warn':(t.status==='pending'?'':'ok') %>"><%= t.status %></span>
+    </a>
+    <% }); %>
+  </div>
+</div>
+<%- include('footer', { active }) %>

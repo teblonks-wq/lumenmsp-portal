@@ -1,0 +1,97 @@
+<%- include('partials/header', { title: 'CLI charges report', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+   function money4(v){ return '£' + (Number(v)||0).toFixed(4); }
+   function dur(s){ s=Number(s)||0; var m=Math.floor(s/60), ss=s%60; return m+':'+(ss<10?'0':'')+ss; }
+   function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : ''; } %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">← Back Office</a></p>
+  <h1>CLI charges report</h1></div>
+
+<form method="get" action="/bureau/cli-report" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;">
+  <div><label class="muted" style="font-size:11px;display:block;">CLI / number</label><input class="input" name="cli" value="<%= cli %>" placeholder="e.g. 01793316929" required style="min-width:200px;"></div>
+  <div><label class="muted" style="font-size:11px;display:block;">Period</label>
+    <select class="input" name="period" style="width:auto;">
+      <option value="">All periods</option>
+      <% (periods||[]).forEach(function(p){ %><option value="<%= p %>" <%= period===p?'selected':'' %>><%= p %></option><% }); %>
+    </select>
+  </div>
+  <button class="btn btn-primary" type="submit">Report</button>
+</form>
+
+<% if (cli && totals) { %>
+  <div class="card" style="margin-bottom:14px;">
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
+      <div><div class="muted" style="font-size:12px;">CLI</div><div style="font-size:18px;font-weight:800;"><%= cli %></div></div>
+      <div><div class="muted" style="font-size:12px;">Customer</div><div style="font-size:15px;font-weight:600;"><% if (customer) { %><a class="row-link" href="/customers/<%= customer.id %>#comms"><%= customer.name %></a><% } else { %><span class="badge" style="background:#fee2e2;color:#b91c1c;">unallocated</span><% } %></div></div>
+      <div><div class="muted" style="font-size:12px;">Period</div><div style="font-size:15px;font-weight:600;"><%= period || 'All' %></div></div>
+      <div style="margin-left:auto;"><div class="muted" style="font-size:12px;">Call sell</div><div style="font-size:18px;font-weight:800;"><%= money(totals.callSell) %></div></div>
+      <div><div class="muted" style="font-size:12px;">Call cost</div><div style="font-size:18px;font-weight:800;color:#64748b;"><%= money(totals.callCost) %></div></div>
+    </div>
+  </div>
+
+  <div class="card" style="padding:0;margin-bottom:14px;">
+    <div class="card-header" style="padding:16px 20px 0;"><h2>Service / rental charges <span class="muted" style="font-weight:500;font-size:12px;">(<%= serviceLines.length %>)</span></h2></div>
+    <% if (!serviceLines.length) { %><p class="muted" style="padding:14px 20px;">No service lines on this CLI<%= period?(' in '+period):'' %>.</p>
+    <% } else { %>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Description</th><th>Period</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Cost</th></tr></thead>
+      <tbody>
+        <% serviceLines.forEach(function(l){ %>
+          <tr>
+            <td><%= l.description %><% if (l.is_one_off) { %> <span class="badge badge-inactive" style="font-size:10px;">one-off</span><% } %><% if (l.is_prorata) { %> <span class="badge badge-inactive" style="font-size:10px;">part-month</span><% } %></td>
+            <td class="muted" style="font-size:12px;"><%= l.billing_period || '—' %></td>
+            <td style="text-align:right;"><%= Number(l.quantity) %></td>
+            <td style="text-align:right;"><%= money(l.total_cost) %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+    <% } %>
+  </div>
+
+  <div class="card" style="padding:0;margin-bottom:14px;">
+    <div class="card-header" style="padding:16px 20px 0;"><h2>Call charges by type</h2></div>
+    <% if (!byType.length) { %><p class="muted" style="padding:14px 20px;">No call records on this CLI<%= period?(' in '+period):'' %>.</p>
+    <% } else { %>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Type</th><th style="text-align:right;">Calls</th><th style="text-align:right;">Minutes</th><th style="text-align:right;">Cost</th><th style="text-align:right;">Markup</th><th style="text-align:right;">Sell</th></tr></thead>
+      <tbody>
+        <% byType.forEach(function(b){ %>
+          <tr>
+            <td><%= b.label %></td>
+            <td style="text-align:right;"><%= b.calls.toLocaleString() %></td>
+            <td style="text-align:right;"><%= Math.round(b.secs/60).toLocaleString() %></td>
+            <td style="text-align:right;color:#64748b;"><%= money(b.cost) %></td>
+            <td style="text-align:right;"><%= b.pct %>%</td>
+            <td style="text-align:right;font-weight:600;"><%= money(b.sell) %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+    <% } %>
+  </div>
+
+  <% if (calls.length) { %>
+  <details class="card" style="padding:0;">
+    <summary style="cursor:pointer;padding:16px 20px;font-weight:600;">Itemised calls (<%= calls.length.toLocaleString() %>) — highest value first</summary>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>When</th><th>Dialled</th><th>Description</th><th>Type</th><th style="text-align:right;">Duration</th><th style="text-align:right;">Cost</th><th style="text-align:right;">Sell</th></tr></thead>
+      <tbody>
+        <% calls.forEach(function(c){ %>
+          <tr>
+            <td style="white-space:nowrap;font-size:12px;"><%= dt(c.call_at) %></td>
+            <td style="font-size:12px;"><%= c.dialled || '' %></td>
+            <td class="muted" style="font-size:12px;"><%= c.description || '' %></td>
+            <td style="font-size:11px;"><%= c.call_type_label || '' %></td>
+            <td style="text-align:right;font-size:12px;"><%= dur(c.duration_sec) %></td>
+            <td style="text-align:right;"><%= money4(c.cost) %></td>
+            <td style="text-align:right;"><%= money4(c.sell||0) %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </details>
+  <% } %>
+<% } %>
+
+<%- include('partials/footer') %>

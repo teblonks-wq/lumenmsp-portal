@@ -1,0 +1,73 @@
+<div id="masterSearchWrap" style="position:relative;margin:6px 0 18px;max-width:640px;">
+  <input id="masterSearch" class="input" type="search" autocomplete="off" placeholder="Search everything — companies, contacts, tickets, quotes, invoices…" style="width:100%;font-size:15px;padding:12px 14px;background:#f0fdf4;border-color:#bbf7d0;">
+  <div id="masterResults" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:50;background:var(--card,#fff);border:1px solid var(--line,#e2e8f0);border-radius:10px;box-shadow:0 12px 32px rgba(0,0,0,.14);max-height:70vh;overflow:auto;"></div>
+</div>
+
+<style>
+  #masterResults .ms-group-h { font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted,#64748b);padding:10px 14px 4px; }
+  #masterResults a.ms-item { display:block;padding:8px 14px;text-decoration:none;color:inherit;border-top:1px solid var(--line,#f1f5f9); }
+  #masterResults a.ms-item:hover, #masterResults a.ms-item.active { background:var(--accent-soft,#eff6ff); }
+  #masterResults .ms-label { font-size:14px;font-weight:600;color:var(--text,#0f172a); }
+  #masterResults .ms-sub { font-size:12px;color:var(--muted,#64748b); }
+  #masterResults .ms-empty { padding:14px;font-size:13px;color:var(--muted,#64748b); }
+</style>
+
+<script>
+(function(){
+  var input = document.getElementById('masterSearch');
+  var box = document.getElementById('masterResults');
+  var wrap = document.getElementById('masterSearchWrap');
+  if (!input || window.__masterSearchInit) return; window.__masterSearchInit = true;
+  var timer = null, lastQ = '', seq = 0, items = [], active = -1;
+  function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+  function hide(){ box.style.display='none'; active=-1; }
+  function show(){ box.style.display='block'; }
+  function render(groups){
+    items = [];
+    if (!groups.length){ box.innerHTML = '<div class="ms-empty">No matches.</div>'; show(); return; }
+    var html = '';
+    groups.forEach(function(g){
+      html += '<div class="ms-group-h">'+ (g.icon? g.icon+' ':'') + esc(g.type) +'</div>';
+      g.items.forEach(function(it){
+        var idx = items.length; items.push(it);
+        html += '<a class="ms-item" data-idx="'+idx+'" href="'+esc(it.url)+'"><div class="ms-label">'+esc(it.label)+'</div>'+ (it.sub? '<div class="ms-sub">'+esc(it.sub)+'</div>':'') +'</a>';
+      });
+    });
+    box.innerHTML = html; show();
+  }
+  function run(q){
+    var mySeq = ++seq;
+    fetch('/search.json?q='+encodeURIComponent(q)).then(function(r){ return r.json(); }).then(function(d){
+      if (mySeq !== seq) return;
+      render(d.groups || []);
+    }).catch(hide);
+  }
+  input.addEventListener('input', function(){
+    var q = input.value.trim();
+    if (q === lastQ) return; lastQ = q;
+    clearTimeout(timer);
+    if (q.length < 2){ hide(); return; }
+    timer = setTimeout(function(){ run(q); }, 180);
+  });
+  input.addEventListener('keydown', function(e){
+    if (e.key==='Enter'){
+      e.preventDefault();
+      var hl = box.querySelectorAll('a.ms-item');
+      if (active>=0 && hl[active]) { window.location = hl[active].getAttribute('href'); return; }
+      var q = input.value.trim();
+      if (q.length>=2) window.location = '/search?q=' + encodeURIComponent(q);
+      return;
+    }
+    if (box.style.display==='none') return;
+    var links = box.querySelectorAll('a.ms-item');
+    if (e.key==='ArrowDown'){ e.preventDefault(); active = Math.min(active+1, links.length-1); }
+    else if (e.key==='ArrowUp'){ e.preventDefault(); active = Math.max(active-1, 0); }
+    else if (e.key==='Escape'){ hide(); return; }
+    else return;
+    links.forEach(function(l,i){ l.classList.toggle('active', i===active); });
+    if (links[active]) links[active].scrollIntoView({block:'nearest'});
+  });
+  document.addEventListener('click', function(e){ if (!wrap.contains(e.target)) hide(); });
+  input.addEventListener('focus', function(){ if (items.length && input.value.trim().length>=2) show(); });
+})();
+</script>

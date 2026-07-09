@@ -1,0 +1,39 @@
+<%- include('partials/header', { title: 'Search', user }) %>
+
+<div class="page-header">
+  <h1>Search</h1>
+  <form method="get" action="/search" style="margin-top:10px;max-width:640px;">
+    <input class="input search-green" type="search" name="q" value="<%= q %>" placeholder="Search everything — companies, contacts, tickets, quotes, invoices…" autofocus style="width:100%;font-size:15px;padding:12px 14px;">
+  </form>
+</div>
+
+<% if (!q || q.length < 2) { %>
+  <p class="muted">Type at least 2 characters and press Enter.</p>
+<% } else if (error) { %>
+  <div class="alert alert-error" style="max-width:700px;">Search failed — please try again.</div>
+<% } else if (!groups.length) { %>
+  <p class="muted">No matches for "<strong><%= q %></strong>".</p>
+<% } else { %>
+  <% groups.forEach(function(g){ %>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-header"><h2><%= g.icon %> <%= g.type %> <span class="muted" style="font-weight:400;font-size:14px;">(<%= g.items.length %>)</span></h2></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <% g.items.forEach(function(it){ %>
+          <a href="<%= it.url %>" class="search-chip">
+            <div style="font-weight:600;font-size:14px;"><%= it.label %></div>
+            <% if (it.sub) { %><div class="muted" style="font-size:12px;margin-top:2px;"><%= it.sub %></div><% } %>
+          </a>
+        <% }); %>
+      </div>
+    </div>
+  <% }); %>
+<% } %>
+
+<style>
+  .search-green { background:#f0fdf4 !important; border-color:#bbf7d0 !important; }
+  .search-green:focus { border-color:#16a34a !important; box-shadow:0 0 0 2px rgba(22,163,74,.15); outline:none; }
+  .search-chip { display:block; min-width:200px; max-width:340px; border:1px solid var(--line); border-radius:10px; padding:10px 12px; text-decoration:none; color:var(--text); background:#fff; transition:border-color .15s, box-shadow .15s; }
+  .search-chip:hover { border-color:var(--accent); box-shadow:0 2px 8px rgba(0,0,0,.06); }
+</style>
+
+<%- include('partials/footer') %>

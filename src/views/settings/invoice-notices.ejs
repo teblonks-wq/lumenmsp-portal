@@ -1,0 +1,33 @@
+<%- include('../partials/header', { title: 'Invoice price notices', user }) %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings">← Settings</a></p>
+  <h1>Invoice price notices</h1>
+  <p class="muted" style="margin:4px 0 0;">A red notice printed on invoices (like the Direct Debit note) — e.g. an upcoming Microsoft price increase. Shown by service: Cloud notice on IT&amp;Cloud invoices, Comms on telecoms, plus a general one on every invoice. Leave blank for none.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:760px;"><%= notice %></div><% } %>
+
+<form method="post" action="/settings/invoice-notices" class="card" style="max-width:760px;display:grid;gap:16px;">
+  <div class="form-group">
+    <label>Cloud / Microsoft notice <span class="muted" style="font-weight:400;">— IT &amp; Cloud invoices</span></label>
+    <textarea class="input" name="cloud" rows="3" placeholder="e.g. Microsoft is increasing prices from 1 July 2026. Your Microsoft 365 licence charges will rise accordingly from your next renewal."><%= notices.cloud || '' %></textarea>
+  </div>
+  <div class="form-group">
+    <label>Comms / telecoms notice <span class="muted" style="font-weight:400;">— Telecoms invoices</span></label>
+    <textarea class="input" name="comms" rows="3" placeholder="e.g. Carrier line rental and call rates will increase from …"><%= notices.comms || '' %></textarea>
+  </div>
+  <div class="form-group">
+    <label>Standard invoice notice <span class="muted" style="font-weight:400;">— other/standard invoices</span></label>
+    <textarea class="input" name="standard" rows="2"><%= notices.standard || '' %></textarea>
+  </div>
+  <div class="form-group">
+    <label>General notice <span class="muted" style="font-weight:400;">— added to EVERY invoice</span></label>
+    <textarea class="input" name="all" rows="2"><%= notices.all || '' %></textarea>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <button class="btn btn-primary" type="submit">Save notices</button>
+    <span class="muted" style="font-size:12px;">Applies to invoices rendered/sent from now on.</span>
+  </div>
+</form>
+
+<%- include('../partials/footer') %>

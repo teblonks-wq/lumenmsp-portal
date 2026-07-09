@@ -1,0 +1,39 @@
+<%- include('../partials/header', { title: 'QuickBooks reconcile', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+   var missingTotal = (missing||[]).reduce(function(a,m){return a+Number(m.amount||0);},0); %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">← Integrations</a></p>
+  <h1>QuickBooks reconcile</h1>
+  <p class="muted">Every invoice in QuickBooks, checked against the portal by reference. Existence only.</p>
+</div>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">
+  <div class="card"><div class="card-header"><h2>In QuickBooks</h2></div><div class="stat" style="font-size:30px;"><%= qbTotal %></div></div>
+  <div class="card" style="background:#f0fdf4;"><div class="card-header"><h2>In portal</h2></div><div class="stat" style="font-size:30px;color:#166534;"><%= matched %></div></div>
+  <div class="card" style="background:#fef2f2;"><div class="card-header"><h2>Missing</h2></div><div class="stat" style="font-size:30px;color:#b91c1c;"><%= (missing||[]).length %></div><p class="muted" style="margin:4px 0 0;"><%= money(missingTotal) %></p></div>
+</div>
+
+<% if ((missing||[]).length) { %>
+<div class="card" style="padding:0;margin-top:16px;">
+  <div class="card-header" style="padding:20px 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+    <h2 style="margin:0;">Missing from portal (<%= missing.length %>)</h2>
+    <form method="post" action="/settings/quickbooks/import-invoices" onsubmit="return confirm('Import these <%= missing.length %> invoices from QuickBooks now?');" style="margin:0;">
+      <input type="hidden" name="since" value="<%= since %>"><input type="hidden" name="until" value="<%= until %>">
+      <button class="btn btn-primary" type="submit">Import the missing invoices</button>
+    </form>
+  </div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Ref</th><th>Date</th><th>Customer</th><th style="text-align:right;">Amount</th></tr></thead>
+    <tbody>
+      <% missing.forEach(function(m){ %>
+        <tr><td><strong><%= m.doc %></strong></td><td class="muted"><%= m.date ? new Date(m.date).toLocaleDateString('en-GB') : '—' %></td><td><%= m.customer || '—' %></td><td style="text-align:right;"><%= money(m.amount) %></td></tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } else { %>
+  <div class="card" style="margin-top:16px;"><p class="muted" style="margin:0;">Every QuickBooks invoice<%= since||until ? ' in this window' : '' %> is already in the portal. 🎉</p></div>
+<% } %>
+
+<%- include('../partials/footer') %>

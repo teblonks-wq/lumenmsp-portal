@@ -1,0 +1,20 @@
+<%- include('header', { title: 'Raise a ticket', company: (user && user.displayName) || '', user, active }) %>
+
+<div class="page-header"><h1>Raise a support ticket</h1><p class="muted">Tell us what you need help with and our team will pick it up.</p></div>
+
+<div class="card">
+  <% if (error) { %><div class="alert alert-danger" style="margin-bottom:12px;"><%= error %></div><% } %>
+  <form method="POST" action="/my/tickets">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <label for="subject">Subject</label>
+    <input class="input" id="subject" name="subject" maxlength="200" required placeholder="e.g. Can't access email on my laptop">
+    <label for="description">Details</label>
+    <textarea class="input" id="description" name="description" rows="7" maxlength="10000" required placeholder="Describe the issue, when it started, and anything you've already tried."></textarea>
+    <div style="margin-top:16px; display:flex; gap:10px;">
+      <button type="submit" class="btn btn-primary">Send to support</button>
+      <a class="btn" href="/my/tickets">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<%- include('footer', { active }) %>

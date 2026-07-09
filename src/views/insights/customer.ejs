@@ -1,0 +1,270 @@
+<%
+// customer, sites, users, configs, dataStats, flash, error are always passed by the route.
+const fmtDt = d => d ? new Date(d).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'}) : '—';
+const fmtNum = n => n ? parseInt(n).toLocaleString() : '0';
+
+const ds = dataStats[0] || {};
+const dataManagerHtml = ds.call_count > 0
+  ? `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+      <div style="text-align:center;padding:12px;background:#f9fafb;border-radius:8px;">
+        <div style="font-size:28px;font-weight:800;color:var(--accent);">${fmtNum(ds.call_count)}</div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:4px;">Call Events</div>
+      </div>
+      <div style="text-align:center;padding:12px;background:#f9fafb;border-radius:8px;">
+        <div style="font-size:28px;font-weight:800;color:var(--accent);">${ds.file_count}</div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:4px;">Files Imported</div>
+      </div>
+      <div style="text-align:center;padding:12px;background:#f9fafb;border-radius:8px;">
+        <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:6px;">${fmtDt(ds.earliest)}</div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:4px;">Earliest Record</div>
+      </div>
+      <div style="text-align:center;padding:12px;background:#f9fafb;border-radius:8px;">
+        <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:6px;">${fmtDt(ds.latest)}</div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:4px;">Latest Record</div>
+      </div>
+    </div>`
+  : '<div class="empty-state"><p class="muted">No data imported yet.</p></div>';
+
+// Each site is shown as its own block with its report configs nested underneath.
+const siteBlocks = sites.map(s => {
+  const siteConfigs = configs.filter(c => c.site_id === s.id);
+  const cfgRows = siteConfigs.map(c => `
+    <tr>
+      <td><a class="row-link" href="/insights/report-config/${c.id}">${c.config_label}</a></td>
+      <td><code style="font-size:12px;">${c.report_type}</code></td>
+      <td>${c.send_day ? ['','Mon','Tue','Wed','Thu','Fri','Sat','Sun'][c.send_day] : '—'} ${c.send_time || ''}</td>
+      <td><span class="badge ${c.is_active ? 'badge-sent' : 'badge-inactive'}">${c.is_active ? 'Active' : 'Inactive'}</span></td>
+      <td><a href="/insights/report-config/${c.id}/edit" class="btn-secondary" style="font-size:12px;padding:4px 10px;">Edit</a></td>
+    </tr>`).join('');
+  const cfgTable = siteConfigs.length
+    ? `<div class="table-wrap"><table class="table">
+        <thead><tr><th>Config</th><th>Type</th><th>Schedule</th><th>Status</th><th></th></tr></thead>
+        <tbody>${cfgRows}</tbody>
+       </table></div>`
+    : '<p class="muted" style="font-size:13px;margin:4px 0 8px;">No report configs for this site yet.</p>';
+  return `
+    <div style="border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <a href="/insights/site/${s.id}" style="font-weight:700;font-size:15px;color:var(--text);">${s.site_label}</a>
+          <span class="badge ${s.is_active ? 'badge-sent' : 'badge-inactive'}">${s.is_active ? 'Active' : 'Inactive'}</span>
+          <span class="muted" style="font-size:12px;">Ext <code>${s.icalls_site_code || '—'}</code> &nbsp;·&nbsp; DDI <code>${s.ddi_number || '—'}</code></span>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <a href="/insights/site/${s.id}" class="btn-secondary" style="font-size:12px;padding:4px 10px;">Edit Site</a>
+          <a href="/insights/report-config/new?customer_id=${customer.id}&site_id=${s.id}" class="btn-primary" style="font-size:12px;padding:4px 10px;">+ Add Config</a>
+        </div>
+      </div>
+      ${cfgTable}
+    </div>`;
+}).join('');
+
+const userRows = users.map(u => `
+  <tr>
+    <td>${u.email}</td>
+    <td>${u.display_name}</td>
+    <td><span class="badge badge-primary">${u.role}</span></td>
+    <td><span class="badge ${u.is_active ? 'badge-sent' : 'badge-inactive'}">${u.is_active ? 'Active' : 'Inactive'}</span></td>
+    <td class="muted" style="font-size:13px;">${u.last_login_at ? new Date(u.last_login_at).toLocaleDateString('en-GB') : 'Never'}</td>
+    <td>${u.password_hash ? '<span class="badge badge-inactive">Local</span>' : '<span class="badge badge-primary">SSO</span>'}</td>
+    <td>
+      <form method="POST" action="/insights/user/${u.id}/toggle" style="display:inline;">
+        <input type="hidden" name="return_to" value="/insights/customer/${customer.id}">
+        <button type="submit" class="btn-secondary" style="font-size:12px;padding:4px 10px;">${u.is_active ? 'Deactivate' : 'Activate'}</button>
+      </form>
+      ${!u.password_hash ? `<form method="POST" action="/insights/user/${u.id}/resend-invite" style="display:inline;">
+        <input type="hidden" name="return_to" value="/insights/customer/${customer.id}">
+        <button type="submit" class="btn-secondary" style="font-size:12px;padding:4px 10px;" title="Resend welcome email">Resend Invite</button>
+      </form>` : ''}
+    </td>
+  </tr>
+`).join('');
+%>
+<%- include('_layout', { title: customer.name, user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
+  <div>
+    <h1>${customer.name}</h1>
+    <p class="muted"><a href="/insights/admin">Admin</a> → <a href="/insights/customers">Customers</a> → ${customer.name}</p>
+  </div>
+</div>
+
+${flash ? `<div class="alert alert-success">${flash}</div>` : ''}
+${error ? `<div class="alert alert-error">${error}</div>` : ''}
+
+<div class="card">
+  <div class="card-header"><h2>Customer Details</h2></div>
+  <form method="POST" action="/insights/customer/${customer.id}/details">
+    <div style="margin-bottom:18px;display:flex;align-items:center;gap:12px;">
+      <span id="cust-name-display" style="font-size:18px;font-weight:700;color:var(--text);">${customer.name}</span>
+      <button type="button" id="cust-name-edit-btn" onclick="document.getElementById('cust-name-display').style.display='none';document.getElementById('name').style.display='block';document.getElementById('cust-name-edit-btn').style.display='none';document.getElementById('name').focus();" class="btn-secondary" style="font-size:11px;padding:3px 10px;">Edit Name</button>
+      <input type="text" id="name" name="name" value="${customer.name}" required class="input" style="font-size:16px;font-weight:600;max-width:400px;display:none;">
+    </div>
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;padding:14px;background:#f9fafb;border-radius:8px;border:1px solid var(--border);">
+      <div class="form-group" style="margin:0;">
+        <label>iCalls Email Token <span class="muted" style="font-size:10px;text-transform:none;">from email subject</span></label>
+        <input type="text" name="icalls_token" value="${customer.icalls_token || ''}" placeholder="WHHCBTWTUZ4111" class="input" style="font-family:monospace;min-width:180px;">
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label>API URL</label>
+        <input type="text" name="icalls_api_url" value="${customer.icalls_api_url || ''}" placeholder="https://icscallanalytics.yourwhc.co.uk" class="input" style="font-family:monospace;min-width:280px;">
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label>API Token</label>
+        <input type="password" name="icalls_api_token" value="${customer.icalls_api_token || ''}" placeholder="token" class="input" style="font-family:monospace;min-width:200px;">
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label>API Username</label>
+        <input type="text" name="icalls_api_username" value="${customer.icalls_api_username || ''}" placeholder="user@customer.co.uk" class="input" style="min-width:200px;">
+      </div>
+      <div style="align-self:flex-end;display:flex;gap:6px;flex-direction:column;">
+        <button type="button" onclick="testConnection(${customer.id})" class="btn-secondary" style="white-space:nowrap;">Test Connection</button>
+        <span id="api-test-result" class="muted" style="font-size:11px;"></span>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+      <div class="form-group" style="margin:0;">
+        <label>Status</label>
+        <select name="is_active" class="input">
+          <option value="true"  ${customer.is_active ? 'selected' : ''}>Active</option>
+          <option value="false" ${!customer.is_active ? 'selected' : ''}>Inactive</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label>Type</label>
+        <select name="is_internal" class="input">
+          <option value="false" ${!customer.is_internal ? 'selected' : ''}>External (Client)</option>
+          <option value="true"  ${customer.is_internal  ? 'selected' : ''}>Internal (Lumen)</option>
+        </select>
+      </div>
+      <button type="submit" class="btn-primary">Save</button>
+    </div>
+  </form>
+  <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:14px;">
+    <form method="POST" action="/insights/customer/${customer.id}/sync-now" style="margin:0;">
+      <button type="submit" class="btn-primary" style="font-size:12px;padding:6px 12px;">&#8635; Sync Now</button>
+    </form>
+    ${customer.last_synced_at ? `<span class="muted" style="font-size:11px;">Last synced: ${new Date(customer.last_synced_at).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span>` : '<span class="muted" style="font-size:11px;">Never synced</span>'}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Sites &amp; Report Configs</h2></div>
+  ${sites.length > 0
+    ? siteBlocks
+    : '<p class="muted" style="margin-bottom:16px;font-size:13px;">No sites yet.</p>'}
+  <form method="POST" action="/insights/customer/${customer.id}/sites" id="add-site-form">
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;">
+      <div class="form-group">
+        <label>Site Label</label>
+        <input type="text" name="site_label" placeholder="Cholsey SA" required class="input">
+      </div>
+      <div class="form-group">
+        <label>Ext Prefix <span class="muted" style="font-size:10px;text-transform:none;">e.g. DI, CH</span></label>
+        <input type="text" name="icalls_site_code" placeholder="DI" class="input" style="font-family:monospace;max-width:80px;">
+      </div>
+      <div class="form-group">
+        <label>DDI Number <span class="muted" style="font-size:10px;text-transform:none;">e.g. 01235814991</span></label>
+        <input type="text" name="ddi_number" placeholder="01235814991" class="input" style="font-family:monospace;">
+      </div>
+    </div>
+  <div style="margin-top:16px;margin-bottom:16px;">
+    <div class="form-group" style="margin-bottom:8px;"><label>Business Hours</label></div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;">
+      ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d,i) => {
+        const isWeekend = i >= 5;
+        return `<div style="background:#f9fafb;border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:6px;">${d}</div>
+          <label style="display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;margin-bottom:6px;cursor:pointer;">
+            <input type="checkbox" name="bh_closed_${d.toLowerCase()}" ${isWeekend ? 'checked' : ''} onchange="toggleDay(this,'${d.toLowerCase()}')" style="width:auto;min-width:auto;">
+            <span>Closed</span>
+          </label>
+          <div id="hours_${d.toLowerCase()}" style="${isWeekend ? 'display:none' : ''}">
+            <input type="time" name="bh_open_${d.toLowerCase()}"  value="08:00" class="input" style="min-width:auto;width:100%;font-size:11px;padding:4px 6px;margin-bottom:4px;">
+            <input type="time" name="bh_close_${d.toLowerCase()}" value="18:30" class="input" style="min-width:auto;width:100%;font-size:11px;padding:4px 6px;">
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>
+  <input type="hidden" name="business_hours" id="hs_hours">
+  <button type="submit" class="btn-primary">Add Site</button>
+</form>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Users</h2>
+    <span class="muted" style="font-size:12px;">Email must match their Microsoft account for SSO login</span>
+  </div>
+  ${users.length > 0
+    ? `<div class="table-wrap" style="margin-bottom:20px;"><table class="table">
+        <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Status</th><th>Last Login</th><th>Auth</th><th></th></tr></thead>
+        <tbody>${userRows}</tbody>
+       </table></div>`
+    : '<p class="muted" style="margin-bottom:16px;font-size:13px;">No users yet.</p>'}
+  <form method="POST" action="/insights/customer/${customer.id}/users" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" name="email" placeholder="user@company.com" required class="input">
+    </div>
+    <div class="form-group">
+      <label>Display Name</label>
+      <input type="text" name="display_name" placeholder="Jane Smith" required class="input">
+    </div>
+    <div class="form-group">
+      <label>Role</label>
+      <select name="role" class="input">
+        <option value="viewer">Viewer</option>
+        <option value="admin">Admin</option>
+        ${customer.is_internal ? '<option value="lumen_admin">Lumen Admin</option>' : ''}
+      </select>
+    </div>
+    <div class="form-group" style="min-width:180px;">
+      <label>Site Access <span class="muted" style="font-size:10px;text-transform:none;">leave blank = all sites</span></label>
+      <div style="display:flex;flex-direction:column;gap:4px;padding:6px 0;">
+        ${sites.map(s => `
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:normal;cursor:pointer;">
+          <input type="checkbox" name="site_ids[]" value="${s.id}" checked> ${s.site_label}
+        </label>`).join('')}
+      </div>
+      <input type="hidden" name="total_sites" value="${sites.length}">
+    </div>
+    <button type="submit" class="btn-primary">Add User</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Data Manager</h2></div>
+  ${dataManagerHtml}
+</div>
+
+<script>
+function toggleDay(cb, day) {
+  document.getElementById('hours_' + day).style.display = cb.checked ? 'none' : '';
+}
+var addSiteForm = document.getElementById('add-site-form');
+if (addSiteForm) addSiteForm.addEventListener('submit', function() {
+  const days = ['mon','tue','wed','thu','fri','sat','sun'];
+  const hours = {};
+  days.forEach(d => {
+    const closed = this.querySelector('[name="bh_closed_' + d + '"]').checked;
+    if (closed) { hours[d] = { closed: true }; }
+    else {
+      hours[d] = {
+        open:  this.querySelector('[name="bh_open_'  + d + '"]').value,
+        close: this.querySelector('[name="bh_close_' + d + '"]').value,
+      };
+    }
+  });
+  document.getElementById('hs_hours').value = JSON.stringify(hours);
+});
+function testConnection(id) {
+  var el = document.getElementById('api-test-result');
+  el.textContent = 'Testing…'; el.style.color = 'var(--muted)';
+  fetch('/insights/customer/' + id + '/api-test')
+    .then(r => r.json())
+    .then(d => { el.textContent = d.message || (d.ok ? 'OK' : 'Failed'); el.style.color = d.ok ? '#16a34a' : '#dc2626'; })
+    .catch(() => { el.textContent = 'Test failed'; el.style.color = '#dc2626'; });
+}
+</script>
+` }) %>

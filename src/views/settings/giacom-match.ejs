@@ -1,0 +1,41 @@
+<%- include('../partials/header', { title: 'Match Giacom accounts', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); } %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">← Integrations</a></p><h1>Match supplier accounts</h1><p class="muted">Link each supplier account (Giacom, Lumen, …) to a portal customer so its service items land on the right card. Exact account/name matches link automatically; the rest appear here — check monthly as new lines come through.</p></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Source</th><th>Account</th><th style="text-align:right;">Items</th><th style="text-align:right;">Total</th><th>Linked to</th><th></th></tr></thead>
+      <tbody>
+        <% if (!accounts.length) { %><tr><td colspan="6"><div class="empty-state">No supplier data yet — run a Giacom sync or import the Lumen charges.</div></td></tr><% } %>
+        <% accounts.forEach(function(a){ %>
+          <tr>
+            <td><span class="badge badge-inactive" style="text-transform:capitalize;"><%= a.source %></span></td>
+            <td><strong><%= a.gname || '(unnamed)' %></strong><br><span class="muted" style="font-size:12px;"><%= a.gid %></span></td>
+            <td style="text-align:right;"><%= a.items %></td>
+            <td style="text-align:right;"><%= money(a.total) %></td>
+            <td>
+              <% if (a.customer_id) { %><span class="badge badge-sent">✓ <%= nameById[a.customer_id] || ('#'+a.customer_id) %></span><% } else { %><span class="badge badge-failed">Unmatched</span><% } %>
+            </td>
+            <td style="text-align:right;">
+              <form method="post" action="/settings/giacom/link" style="display:flex;gap:6px;justify-content:flex-end;margin:0;">
+                <input type="hidden" name="source" value="<%= a.source %>">
+                <input type="hidden" name="gid" value="<%= a.gid %>">
+                <select class="input" name="customer_id" style="width:auto;padding:5px 8px;">
+                  <option value="">— choose customer —</option>
+                  <% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= a.customer_id===c.id?'selected':'' %>><%= c.name %></option><% }); %>
+                </select>
+                <button class="btn" type="submit"><%= a.customer_id ? 'Re-link' : 'Link' %></button>
+              </form>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

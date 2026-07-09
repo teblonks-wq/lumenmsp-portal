@@ -1,0 +1,32 @@
+<%- include('header', { title: c.name, heading: c.name, subtitle: (c.status||''), back: '/m/customers', user, active }) %>
+<% function tel(p){ var n=String(p||'').replace(/[^0-9+]/g,''); if(n.indexOf('+44')===0)n='0'+n.slice(3); else if(n.indexOf('0044')===0)n='0'+n.slice(4); return 'tel:' + (n ? '141'+n : ''); } %>
+<div class="m-wrap">
+  <div class="actions">
+    <% if (c.phone) { %><a class="act-btn act-call" href="<%= tel(c.phone) %>"><i class="ti ti-phone ic"></i><span class="l">Call</span></a><% } else { %><span class="act-btn act-dim"><i class="ti ti-phone ic"></i><span class="l">No number</span></span><% } %>
+    <% if (addr) { %><a class="act-btn act-map" href="https://www.google.com/maps/search/?api=1&query=<%= encodeURIComponent(addr) %>" target="_blank"><i class="ti ti-map-pin ic"></i><span class="l">Map</span></a><% } else { %><span class="act-btn act-dim"><i class="ti ti-map-pin ic"></i><span class="l">No address</span></span><% } %>
+    <% if (c.email) { %><a class="act-btn act-mail" href="mailto:<%= c.email %>"><i class="ti ti-mail ic"></i><span class="l">Email</span></a><% } else { %><span class="act-btn act-dim"><i class="ti ti-mail ic"></i><span class="l">No email</span></span><% } %>
+  </div>
+
+  <% if (addr) { %><div class="sheet" style="padding:14px 16px;"><div class="s" style="font-size:13px;color:#475569;"><i class="ti ti-map-pin" style="color:#94a3b8;margin-right:6px;"></i><%= addr %></div></div><% } %>
+
+  <div class="m-label">Contacts</div>
+  <div class="sheet">
+    <% if (!(contacts||[]).length) { %><div class="row"><div class="main s">No contacts.</div></div><% } %>
+    <% (contacts||[]).forEach(function(p){ var dial = p.mobile_phone || p.phone; %>
+    <div class="row">
+      <div class="main"><div class="t"><%= p.full_name %><% if (p.is_primary) { %> <span class="pill info">primary</span><% } %></div><div class="s"><%= p.job_title || '' %><% if (dial) { %> · <%= dial %><% } %></div></div>
+      <% if (dial) { %><a class="call" href="<%= tel(dial) %>" aria-label="Call <%= p.full_name %> (number withheld)"><i class="ti ti-phone"></i></a><% } %>
+      <% if (p.email) { %><a class="call" href="mailto:<%= p.email %>" style="color:#475569;" aria-label="Email"><i class="ti ti-mail"></i></a><% } %>
+    </div>
+    <% }); %>
+  </div>
+
+  <div class="m-label">Open cases</div>
+  <div class="sheet">
+    <% if (!(tickets||[]).length) { %><div class="row"><div class="main s">No open cases.</div></div><% } %>
+    <% (tickets||[]).forEach(function(t){ %>
+    <a class="row" href="/m/support/<%= t.id %>"><i class="ti ti-headset ic"></i><div class="main"><div class="t"><%= t.subject || '(no subject)' %></div><div class="s"><%= t.ticket_number %> · <%= t.status %></div></div><i class="ti ti-chevron-right chev"></i></a>
+    <% }); %>
+  </div>
+</div>
+<%- include('footer', { active }) %>

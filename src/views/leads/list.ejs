@@ -1,0 +1,56 @@
+<%- include('../partials/header', { title: 'Leads', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:0,maximumFractionDigits:0}); } %>
+<% function cap(s){ return s ? s.replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
+<% function lbadge(s){ return s==='won'?'badge-sent':(s==='lost'?'badge-inactive':(s==='proposed'?'badge-failed':'badge-primary')); } %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><h1>Leads</h1><p class="muted">Sales pipeline — each lead tracks a prospect through to won or lost.</p></div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <form method="get" action="/leads" style="display:flex;gap:8px;align-items:center;">
+      <% if (stage) { %><input type="hidden" name="status" value="<%= stage %>"><% } %>
+      <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search name or source…" style="min-width:240px;">
+      <button class="btn" type="submit">Search</button>
+    </form>
+    <a class="btn btn-primary" href="/leads/new">+ New lead</a>
+  </div>
+</div>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">
+  <div class="card" style="background:#f0fdf9;"><div class="card-header"><h2>Conversion rate</h2></div><div class="stat" style="font-size:30px;color:#166534;"><%= stats.conversion %>%</div><p class="muted" style="margin:4px 0 0;"><%= stats.won %> won · <%= stats.lost %> lost</p></div>
+  <div class="card"><div class="card-header"><h2>Open pipeline</h2></div><div class="stat" style="font-size:30px;"><%= stats.open %></div><p class="muted" style="margin:4px 0 0;">new / open / proposed</p></div>
+  <div class="card"><div class="card-header"><h2>Pipeline value</h2></div><div class="stat" style="font-size:24px;color:var(--accent);"><%= money(stats.pipelineValue) %></div><p class="muted" style="margin:4px 0 0;">est. value of open leads</p></div>
+</div>
+
+<div class="tabs" style="margin:16px 0;flex-wrap:wrap;">
+  <a class="tab-btn <%= stage==='' ? 'active' : '' %>" href="/leads">All</a>
+  <a class="tab-btn <%= stage==='open' ? 'active' : '' %>" href="/leads?status=open">Open<% var openN=(counts.new||0)+(counts.open||0)+(counts.proposed||0); if (openN) { %> <span class="muted">(<%= openN %>)</span><% } %></a>
+  <% ['new','open','proposed','won','lost'].forEach(function(s){ %>
+    <a class="tab-btn <%= stage===s ? 'active' : '' %>" href="/leads?status=<%= s %>"><%= s==='won'?'Converted':cap(s) %><% if (counts[s]) { %> <span class="muted">(<%= counts[s] %>)</span><% } %></a>
+  <% }); %>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Prospect</th><th>Stage</th><th>Primary contact</th><th>Source</th><th>Owner</th><th>Follow-up</th><th style="text-align:center;">Quotes</th><th style="text-align:right;">Est. value</th><th>Added</th></tr></thead>
+      <tbody>
+        <% if (leads.length===0) { %><tr><td colspan="9"><div class="empty-state">No leads here. <a class="row-link" href="/leads/new">Create one →</a></div></td></tr><% } %>
+        <% leads.forEach(function(l){ %>
+          <tr>
+            <td><a class="row-link" href="/leads/<%= l.id %>"><%= l.customer_name %></a></td>
+            <td><span class="badge <%= lbadge(l.status) %>"><%= l.status==='won'?'Converted':cap(l.status) %></span></td>
+            <td class="muted"><%= l.primary_contact_name || '—' %><% if (l.primary_contact_email) { %><br><span style="font-size:12px;"><%= l.primary_contact_email %></span><% } %></td>
+            <td class="muted"><%= l.source || '—' %></td>
+            <td class="muted"><%= l.owner_name || '—' %></td>
+            <td><% if (l.follow_up_at) { var lfu=new Date(l.follow_up_at); var lov=lfu<new Date(new Date().toDateString()); %><span class="badge <%= lov?'badge-failed':'badge-primary' %>" title="<%= l.follow_up_note||'' %>"><%= lfu.toLocaleDateString('en-GB') %></span><% } else { %><span class="muted">—</span><% } %></td>
+            <td style="text-align:center;"><%= l.quote_count %></td>
+            <td style="text-align:right;"><% if (Number(l.estimated_value) > 0) { %><%= money(l.estimated_value) %><% } else if (Number(l.quote_pipeline) > 0) { %><span class="muted" title="from open quotes"><%= money(l.quote_pipeline) %></span><% } else { %>—<% } %></td>
+            <td class="muted"><%= new Date(l.created_at).toLocaleDateString('en-GB') %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

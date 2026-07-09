@@ -1,0 +1,57 @@
+<%- include('../partials/header', { title: 'GoCardless customer match', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">← Integrations</a></p>
+  <h1>GoCardless customer match</h1>
+  <p class="muted">New mandates auto-link by email hourly; the rest are left here to match by hand.</p></div>
+  <form method="post" action="/settings/gocardless/sync-mandates" style="margin:0;"><button class="btn btn-primary" type="submit">Sync mandates now</button></form>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:760px;"><%= notice %></div><% } %>
+<% if (stats.autoLinked > 0) { %><div class="alert" style="background:#f0fdf4;border:1px solid #bbf7d0;max-width:760px;">Auto-linked <strong><%= stats.autoLinked %></strong> exact match<%= stats.autoLinked===1?'':'es' %> this load.</div><% } %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));">
+  <div class="card"><div class="card-header"><h2>GC customers</h2></div><div class="stat"><%= stats.total %></div></div>
+  <div class="card"><div class="card-header"><h2>With mandate</h2></div><div class="stat"><%= stats.withMandate %></div></div>
+  <div class="card"><div class="card-header"><h2>Matched</h2></div><div class="stat" style="color:#166534;"><%= stats.linked %></div></div>
+  <div class="card"><div class="card-header"><h2>Suggested</h2></div><div class="stat" style="color:#2563eb;"><%= stats.suggested %></div></div>
+  <div class="card"><div class="card-header"><h2>No match</h2></div><div class="stat" style="color:#b45309;"><%= stats.unmatched %></div></div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:16px 20px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2>GoCardless customers</h2>
+    <input class="input card-filter" placeholder="Search name or email…" style="max-width:260px;font-size:13px;padding:5px 8px;"></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>GoCardless customer</th><th>Mandate</th><th>Status</th><th style="text-align:right;">Action</th></tr></thead>
+      <tbody>
+        <% rows.forEach(function(r){ %>
+          <tr>
+            <td><%= r.gcName %><% if (r.gcEmail) { %> <span class="muted" style="font-size:12px;"><%= r.gcEmail %></span><% } %></td>
+            <td><% if (r.mandateId) { %><span style="font-family:monospace;font-size:11px;"><%= r.mandateId %></span><% } else { %><span class="muted" style="font-size:12px;">no active mandate</span><% } %></td>
+            <td>
+              <% if (r.linked) { %><span class="badge badge-sent">Matched</span> <a class="row-link" href="/customers/<%= r.linked.id %>"><%= r.linked.name %></a>
+              <% } else if (r.suggest) { %><span class="badge badge-primary">Suggested</span> <span class="muted"><%= r.suggest.name %></span>
+              <% } else if (r.mandateId) { %><span class="badge badge-inactive">No portal match</span>
+              <% } else { %><span class="muted" style="font-size:12px;">—</span><% } %>
+            </td>
+            <td style="text-align:right;white-space:nowrap;">
+              <% if (r.linked) { %>
+                <form method="post" action="/settings/gocardless/unlink-customer" style="display:inline;"><input type="hidden" name="customer_id" value="<%= r.linked.id %>"><button class="btn" type="submit" style="font-size:12px;padding:4px 10px;">Unlink</button></form>
+              <% } else if (r.mandateId) { %>
+                <% if (r.suggest) { %><form method="post" action="/settings/gocardless/link-customer" style="display:inline;"><input type="hidden" name="mandate_id" value="<%= r.mandateId %>"><input type="hidden" name="customer_id" value="<%= r.suggest.id %>"><button class="btn btn-primary" type="submit">Link</button></form><% } %>
+                <form method="post" action="/settings/gocardless/link-customer" style="display:inline-flex;gap:4px;align-items:center;">
+                  <input type="hidden" name="mandate_id" value="<%= r.mandateId %>">
+                  <select class="input" name="customer_id" required style="width:auto;min-width:160px;padding:4px 7px;font-size:12px;"><option value="">— pick customer —</option><% portalCustomers.forEach(function(pc){ %><option value="<%= pc.id %>"><%= pc.name %></option><% }); %></select>
+                  <button class="btn" type="submit" style="font-size:12px;padding:4px 10px;">Link</button>
+                </form>
+              <% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,36 @@
+<%- include('../partials/header', { title: task && task.id ? 'Edit task' : 'New task', user }) %>
+<% var isEdit = task && task.id; %>
+<% function v(f){ return task && task[f] != null ? task[f] : ''; } %>
+<% function dateVal(f){ if(!task || !task[f]) return ''; try { return new Date(task[f]).toISOString().slice(0,10); } catch(e){ return task[f]; } } %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/tasks">← Tasks</a></p>
+  <h1><%= isEdit ? 'Edit task' : 'New task' %></h1>
+</div>
+
+<% if (error) { %><div class="alert alert-error" style="max-width:760px;"><%= error %></div><% } %>
+
+<form method="post" action="<%= isEdit ? '/tasks/' + task.id : '/tasks' %>" style="max-width:760px;">
+  <div class="card">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div class="form-group" style="grid-column:1 / -1;"><label>Title *</label><input class="input" name="title" required value="<%= v('title') %>"></div>
+      <div class="form-group" style="grid-column:1 / -1;"><label>Description</label><textarea class="input" name="description" rows="3" style="width:100%;"><%= v('description') %></textarea></div>
+      <div class="form-group"><label>Assigned to</label>
+        <select class="input" name="assigned_to_user_id"><% users.forEach(function(u){ %><option value="<%= u.id %>" <%= (task && task.assigned_to_user_id===u.id) || (!task && u.id===user.id) ? 'selected' : '' %>><%= u.display_name %></option><% }); %></select>
+      </div>
+      <div class="form-group"><label>Customer (optional)</label>
+        <select class="input" name="related_customer_id"><option value="">— none —</option><% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= (task && task.related_customer_id===c.id)?'selected':'' %>><%= c.name %></option><% }); %></select>
+      </div>
+      <div class="form-group"><label>Priority</label><select class="input" name="priority"><% ['low','medium','high'].forEach(function(p){ %><option value="<%= p %>" <%= v('priority')===p?'selected':'' %>><%= p.charAt(0).toUpperCase()+p.slice(1) %></option><% }); %></select></div>
+      <div class="form-group"><label>Status</label><select class="input" name="status"><% ['open','in_progress','done','cancelled'].forEach(function(s){ %><option value="<%= s %>" <%= v('status')===s?'selected':'' %>><%= s.replace('_',' ') %></option><% }); %></select></div>
+      <div class="form-group"><label>Due date</label><input class="input" type="date" name="due_date" value="<%= dateVal('due_date') %>"></div>
+      <div class="form-group"><label>Due time</label><input class="input" type="time" name="due_time" value="<%= task && task.due_time ? String(task.due_time).slice(0,5) : '' %>"></div>
+    </div>
+  </div>
+  <div style="display:flex;gap:10px;">
+    <button class="btn btn-primary" type="submit"><%= isEdit ? 'Save task' : 'Create task' %></button>
+    <a class="btn" href="/tasks">Cancel</a>
+  </div>
+</form>
+
+<%- include('../partials/footer') %>

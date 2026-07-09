@@ -1,0 +1,5 @@
+<%- include('header', { title: 'Not found', heading: 'Not found', back: '/m', user, active }) %>
+<div class="m-wrap">
+  <div class="empty"><i class="ti ti-mood-empty" style="font-size:36px;display:block;margin-bottom:8px;"></i><%= what || 'Item' %> not found.</div>
+</div>
+<%- include('footer', { active }) %>

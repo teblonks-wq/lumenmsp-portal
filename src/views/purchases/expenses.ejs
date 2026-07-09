@@ -1,0 +1,558 @@
+<%- include('../partials/header', { title: 'Expense Reconciliation', user }) %>
+<% function money(v){ var n=Number(v)||0; return (n<0?'-£':'£') + Math.abs(n).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+   function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : ''; }
+   function isPdf(d){ return /pdf/i.test(d.content_type||'') || /\.pdf$/i.test(d.file_name||''); }
+   function isImg(d){ return /^image\//i.test(d.content_type||'') || /\.(png|jpe?g|gif|webp|tiff?|heic)$/i.test(d.file_name||''); }
+   function isFramed(d){ return isPdf(d) || /html/i.test(d.content_type||'') || /\.html?$/i.test(d.file_name||''); }
+   var pending = (txns||[]).filter(function(t){return t.status!=='pushed' && t.status!=='ignored';});
+   var unattached = (docs||[]).filter(function(d){return d.status!=='attached';});
+   // Reconciled = done for the period (categorised/locked, pushed to QB, or ignored). The Expenses
+   // tab shows only what's still to do; the Reconciled tab holds everything finished.
+   var DONE = ['categorised','pushed','ignored'];
+   var isRecon = view==='reconciled';
+   var reconCount = (txns||[]).filter(function(t){ return DONE.indexOf(t.status)>=0; }).length;
+   var shownTxns = (txns||[]).filter(function(t){ var done = DONE.indexOf(t.status)>=0; return isRecon ? done : !done; }); %>
+
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;">
+  <div><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/purchases">← Purchase Ledger</a></p>
+    <h1>Expense Reconciliation <% if (closed && view!=='inbox') { %><span class="badge badge-sent" style="font-size:12px;vertical-align:middle;">month closed</span><% } %></h1>
+    <p class="muted" style="margin:0;">Run it month by month — import the statement, categorise, attach receipts, push to QuickBooks, then close the month.</p></div>
+  <% if (view!=='inbox') { %>
+  <form method="get" action="/purchases/expenses" style="margin:0;">
+    <span class="muted" style="font-size:11px;display:block;">Month</span>
+    <select class="input" name="period" onchange="this.form.submit()" style="font-size:14px;padding:6px 10px;">
+      <% (months||[]).forEach(function(m){ %><option value="<%= m %>" <%= m===period?'selected':'' %>><%= m %></option><% }); %>
+    </select>
+  </form>
+  <% } %>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<!-- Tabs -->
+<div style="display:flex;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:16px;">
+  <a href="/purchases/expenses?period=<%= encodeURIComponent(period) %>" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='expenses'?'#2563eb':'transparent' %>;color:<%= view==='expenses'?'#2563eb':'#64748b' %>;font-weight:<%= view==='expenses'?'600':'400' %>;">Expenses</a>
+  <a href="/purchases/expenses?view=reconciled&period=<%= encodeURIComponent(period) %>" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='reconciled'?'#2563eb':'transparent' %>;color:<%= view==='reconciled'?'#2563eb':'#64748b' %>;font-weight:<%= view==='reconciled'?'600':'400' %>;">Reconciled <% if (reconCount) { %><span class="badge badge-sent" style="font-size:10px;"><%= reconCount %></span><% } %></a>
+  <a href="/purchases/expenses?view=inbox" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='inbox'?'#2563eb':'transparent' %>;color:<%= view==='inbox'?'#2563eb':'#64748b' %>;font-weight:<%= view==='inbox'?'600':'400' %>;">Invoice inbox <% if (inboxCount) { %><span class="badge badge-sent" style="font-size:10px;"><%= inboxCount %></span><% } %></a>
+  <a href="/purchases/expenses?view=suppliers" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='suppliers'?'#2563eb':'transparent' %>;color:<%= view==='suppliers'?'#2563eb':'#64748b' %>;font-weight:<%= view==='suppliers'?'600':'400' %>;">Suppliers <% if ((suppliers||[]).length) { %><span class="badge badge-sent" style="font-size:10px;"><%= suppliers.length %></span><% } %></a>
+</div>
+
+<% if (view==='inbox') { %>
+<!-- ───────── Invoice inbox tab ───────── -->
+<div class="card" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+  <div style="flex:1;min-width:240px;">
+    <h2 style="margin:0 0 4px;font-size:16px;">Invoice inbox</h2>
+    <p class="muted" style="font-size:12px;margin:0;">Supplier invoices emailed to <strong><%= invoiceMailbox %></strong> pool here. Attach one to a transaction from the Expenses tab (the 📁 picker next to Browse), or upload one manually.</p>
+  </div>
+  <form method="post" action="/purchases/inbox/sync" style="margin:0;"><button class="btn" type="submit" title="Pull the invoice mailbox now">↻ Sync mailbox</button></form>
+  <form method="post" action="/purchases/inbox/automatch" style="margin:0;"><button class="btn" type="submit" title="Try to auto-match pooled invoices to transactions">🔗 Auto-match</button></form>
+  <form method="post" action="/purchases/inbox/upload" enctype="multipart/form-data" style="display:flex;gap:8px;align-items:flex-end;margin:0;">
+    <div><span class="muted" style="font-size:11px;display:block;">Upload invoice(s)</span><input type="file" name="files" accept=".pdf,.png,.jpg,.jpeg" multiple required style="font-size:12px;"></div>
+    <button class="btn btn-primary" type="submit">Add</button>
+  </form>
+</div>
+
+<div style="display:flex;gap:8px;margin-bottom:12px;">
+  <a class="btn <%= !showArchived ? 'btn-primary' : '' %>" href="/purchases/expenses?view=inbox">Inbox (<%= inboxCount %>)</a>
+  <a class="btn <%= showArchived ? 'btn-primary' : '' %>" href="/purchases/expenses?view=inbox&docs=archived">Archived (<%= archivedCount %>)</a>
+</div>
+<div class="px-grid">
+  <% if (!(docs||[]).length) { %><div class="empty-state" style="grid-column:1/-1;"><% if (showArchived) { %>Nothing archived yet. Use <strong>Archive</strong> on an inbox item to file it away here.<% } else { %>Nothing pooled yet. Get suppliers to email invoices to <strong><%= invoiceMailbox %></strong>, then hit “Sync mailbox”.<% } %></div><% } %>
+  <% (docs||[]).forEach(function(d){ %>
+  <div class="px-doc <%= d.status==='attached'?'is-attached':'' %>">
+    <div class="px-doc-prev" onclick="pxPreview(<%= d.id %>,'<%= (d.file_name||'').replace(/'/g,"\\'") %>',<%= isPdf(d) %>)">
+      <% if (isImg(d)) { %><img src="/purchases/doc/<%= d.id %>/view" loading="lazy" alt="">
+      <% } else if (isFramed(d)) { %><iframe src="/purchases/doc/<%= d.id %>/view#toolbar=0&navpanes=0" loading="lazy" scrolling="no"></iframe><div class="px-doc-shade"></div>
+      <% } else { %><div class="px-doc-file">📄</div><% } %>
+    </div>
+    <div class="px-doc-meta">
+      <div class="px-doc-name" title="<%= d.file_name %>"><%= d.file_name %></div>
+      <div class="muted" style="font-size:11px;"><%= d.from_name || d.from_email || (d.source==='upload'?'Manual upload':'—') %> · <%= dt(d.received_at || d.created_at) %></div>
+      <% if (d.parsed_amount || d.parsed_invoice_no) { %><div style="font-size:14px;color:#1e3a8a;margin-top:3px;font-weight:600;"><% if (d.parsed_amount) { %>£<%= Number(d.parsed_amount).toFixed(2) %><% } %><% if (d.parsed_invoice_no) { %> · Inv <%= d.parsed_invoice_no %><% } %></div><% } %>
+      <% if (d.status==='attached') { %><div style="font-size:11px;color:#16a34a;margin-top:3px;">✓ attached to <%= d.txn_payee || ('txn '+d.bank_transaction_id) %><% if (d.txn_amount) { %> (<%= money(d.txn_amount) %>)<% } %></div><% } %>
+      <div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap;">
+        <a class="btn" href="/purchases/doc/<%= d.id %>/view" target="_blank" style="font-size:11px;padding:3px 8px;">Open</a>
+        <% if (showArchived) { %>
+        <form method="post" action="/purchases/doc/<%= d.id %>/unarchive" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;">↩ Unarchive</button></form>
+        <% } else { %>
+        <form method="post" action="/purchases/doc/<%= d.id %>/archive" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;" title="Hide from the inbox — still findable on the Archived tab">🗄 Archive</button></form>
+        <% } %>
+        <form method="post" action="/purchases/doc/<%= d.id %>/delete" onsubmit="return confirm('Remove this invoice from the inbox?');" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:#b91c1c;">Delete</button></form>
+      </div>
+    </div>
+  </div>
+  <% }); %>
+</div>
+
+<% } else if (view==='suppliers') { %>
+<!-- ───────── Suppliers tab ───────── -->
+<%
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function telLink(p){ var n=String(p||'').replace(/[^0-9+]/g,''); return n ? '<a class="row-link" href="tel:'+n+'">'+esc(p)+'</a>' : ''; }
+%>
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-header" style="padding:14px 18px 0;"><h2 style="margin:0;font-size:16px;">Add a supplier</h2></div>
+  <form method="post" action="/purchases/suppliers" style="padding:14px 18px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-items:start;">
+    <div><label class="muted" style="font-size:11px;display:block;">Supplier name *</label><input class="input" name="name" required style="width:100%;font-size:13px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Contact name</label><input class="input" name="contact_name" style="width:100%;font-size:13px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Phone</label><input class="input" name="phone" style="width:100%;font-size:13px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Email</label><input class="input" name="email" type="email" style="width:100%;font-size:13px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Website</label><input class="input" name="website" style="width:100%;font-size:13px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Account no.</label><input class="input" name="account_ref" style="width:100%;font-size:13px;"></div>
+    <div style="grid-column:1/3;"><label class="muted" style="font-size:11px;display:block;">Address</label><textarea class="input" name="address" rows="2" style="width:100%;font-size:13px;resize:vertical;"></textarea></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Notes</label><textarea class="input" name="notes" rows="2" style="width:100%;font-size:13px;resize:vertical;"></textarea></div>
+    <div style="grid-column:1/4;"><button class="btn btn-primary" type="submit">Add supplier</button></div>
+  </form>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:16px 20px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+    <h2>Suppliers <span class="muted">(<%= (suppliers||[]).length %>)</span></h2>
+    <input class="input card-filter" placeholder="🔍 search name, phone, address…" style="max-width:280px;font-size:13px;padding:5px 8px;">
+  </div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Supplier</th><th>Contact</th><th>Phone</th><th>Email</th><th>Account no.</th><th>Address</th><th></th></tr></thead>
+    <tbody>
+      <% if (!(suppliers||[]).length) { %><tr><td colspan="7"><div class="empty-state">No suppliers yet — add one above.</div></td></tr><% } %>
+      <% (suppliers||[]).forEach(function(s){ %>
+      <tr>
+        <td><strong><a class="row-link" href="/purchases/suppliers/<%= s.id %>"><%= s.name %></a></strong><% if (s.url) { %><br><a class="row-link" href="<%= /^https?:/i.test(s.url)?s.url:'https://'+s.url %>" target="_blank" rel="noopener" style="font-size:12px;"><%= s.url %></a><% } %></td>
+        <td><%= s.contact_name || '' %></td>
+        <td><%- telLink(s.phone) %></td>
+        <td><% if (s.email) { %><a class="row-link" href="mailto:<%= s.email %>"><%= s.email %></a><% } %></td>
+        <td><%= s.account_ref || '' %></td>
+        <td style="white-space:pre-line;font-size:12px;max-width:260px;"><%= s.address || '' %><% if (s.notes) { %><br><span class="muted" style="font-style:italic;"><%= s.notes %></span><% } %></td>
+        <td style="white-space:nowrap;text-align:right;">
+          <a class="btn btn-primary" href="/purchases/suppliers/<%= s.id %>" style="font-size:11px;padding:3px 8px;">Open &middot; Logins</a>
+          <button type="button" class="btn" style="font-size:11px;padding:3px 8px;" onclick="document.getElementById('sup-edit-<%= s.id %>').style.display='table-row';this.closest('tr').style.display='none';">Edit</button>
+          <form method="post" action="/purchases/suppliers/<%= s.id %>/delete" onsubmit="return confirm('Remove <%= (s.name||'').replace(/'/g,'') %> from the supplier list?');" style="display:inline;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:#b91c1c;">Delete</button></form>
+        </td>
+      </tr>
+      <tr id="sup-edit-<%= s.id %>" class="px-supdetail" style="display:none;background:#f8fafc;">
+        <td colspan="7" style="padding:14px 18px;">
+          <form method="post" action="/purchases/suppliers/<%= s.id %>" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-items:start;">
+            <div><label class="muted" style="font-size:11px;display:block;">Supplier name *</label><input class="input" name="name" required value="<%= esc(s.name) %>" style="width:100%;font-size:13px;"></div>
+            <div><label class="muted" style="font-size:11px;display:block;">Contact name</label><input class="input" name="contact_name" value="<%= esc(s.contact_name) %>" style="width:100%;font-size:13px;"></div>
+            <div><label class="muted" style="font-size:11px;display:block;">Phone</label><input class="input" name="phone" value="<%= esc(s.phone) %>" style="width:100%;font-size:13px;"></div>
+            <div><label class="muted" style="font-size:11px;display:block;">Email</label><input class="input" name="email" value="<%= esc(s.email) %>" style="width:100%;font-size:13px;"></div>
+            <div><label class="muted" style="font-size:11px;display:block;">Website</label><input class="input" name="website" value="<%= esc(s.url) %>" style="width:100%;font-size:13px;"></div>
+            <div><label class="muted" style="font-size:11px;display:block;">Account no.</label><input class="input" name="account_ref" value="<%= esc(s.account_ref) %>" style="width:100%;font-size:13px;"></div>
+            <div style="grid-column:1/3;"><label class="muted" style="font-size:11px;display:block;">Address</label><textarea class="input" name="address" rows="2" style="width:100%;font-size:13px;resize:vertical;"><%= esc(s.address) %></textarea></div>
+            <div><label class="muted" style="font-size:11px;display:block;">Notes</label><textarea class="input" name="notes" rows="2" style="width:100%;font-size:13px;resize:vertical;"><%= esc(s.notes) %></textarea></div>
+            <div style="grid-column:1/4;display:flex;gap:8px;"><button class="btn btn-primary" type="submit">Save</button><button type="button" class="btn" onclick="document.getElementById('sup-edit-<%= s.id %>').style.display='none';document.getElementById('sup-edit-<%= s.id %>').previousElementSibling.style.display='table-row';">Cancel</button></div>
+          </form>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+
+<% } else { %>
+<!-- ───────── Expenses tab ───────── -->
+<% if (!qbOn) { %><div class="alert alert-danger" style="max-width:900px;">QuickBooks isn't connected — categories and the push to QB need it. Connect in <a class="row-link" href="/admin/integrations">Settings → Integrations</a>. You can still import &amp; categorise once connected.</div><% } %>
+
+<!-- Toolbar -->
+<% if (!isRecon) { %>
+<div class="card" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+  <form method="post" action="/purchases/import" enctype="multipart/form-data" style="display:flex;gap:8px;align-items:flex-end;margin:0;">
+    <div><span class="muted" style="font-size:11px;display:block;">Account</span>
+      <select class="input" name="account_ref_id" required style="font-size:13px;padding:5px 8px;min-width:170px;">
+        <option value="">— choose account —</option>
+        <% (accounts||[]).forEach(function(a){ %><option value="<%= a.id %>"><%= a.name %></option><% }); %>
+      </select></div>
+    <div><span class="muted" style="font-size:11px;display:block;">Bank statement CSV</span><input type="file" name="file" accept=".csv" required style="font-size:12px;"></div>
+    <button class="btn btn-primary" type="submit">Import</button>
+  </form>
+  <form method="post" action="/purchases/sync" style="margin:0;"><button class="btn" type="submit" title="Pull live from Open Banking (needs provider keys)">↻ Sync Open Banking</button></form>
+  <% if (!(accounts||[]).length) { %><span class="muted" style="font-size:12px;margin-left:auto;">No accounts yet — add them in <a class="row-link" href="/purchases/settings">Admin → Purchase Ledger</a>.</span><% } else { %><a class="row-link" href="/purchases/settings" style="margin-left:auto;font-size:12px;">Manage accounts / bookkeeper →</a><% } %>
+</div>
+<% } %>
+
+<div class="card px-expenses" style="padding:0;">
+  <div class="card-header" style="padding:16px 20px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+    <% if (isRecon) { %><h2>Reconciled <span class="muted">(<%= reconCount %> done this period — categorised, pushed or ignored)</span></h2>
+    <% } else { %><h2>Money out <span class="muted">(<%= shownTxns.length %> to reconcile)</span></h2><% } %>
+    <input class="input card-filter" placeholder="🔍 search payee, ref, description…" style="max-width:280px;font-size:13px;padding:5px 8px;">
+  </div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Date / time</th><th>Account</th><th>Payee</th><th>Description / ref</th><th style="text-align:right;">Amount</th><th>QB cost category</th><th>Receipt</th><th>Status</th></tr></thead>
+    <tbody>
+      <% if (!shownTxns.length) { %><tr><td colspan="8"><div class="empty-state"><%= isRecon ? 'Nothing reconciled yet this period — categorise, push or ignore items on the Expenses tab and they land here.' : 'Nothing left to reconcile — import a bank CSV or check the Reconciled tab.' %></div></td></tr><% } %>
+      <% (shownTxns).forEach(function(t){
+         var ignored = t.status==='ignored';
+         var pushed = t.status==='pushed';
+         var locked = t.status==='categorised' && !closed;   // saved → locked, with Unlock
+         var readonly = pushed || ignored || closed || locked;
+         var canEditAttach = !pushed && !closed;
+         var dim = pushed || ignored || closed;
+         var splits = (splitsByTxn && splitsByTxn[t.id]) ? splitsByTxn[t.id] : [];
+         var isSplit = splits.length > 0;
+         var total = Math.abs(Number(t.amount)||0);
+         var allocated = 0; splits.forEach(function(s){ allocated += Math.abs(Number(s.amount)||0); });
+         var remaining = total - allocated;
+         var withInv = splits.filter(function(s){ return s.attachment_name; }).length; %>
+      <tr id="txn-<%= t.id %>" style="<%= dim?'opacity:.55;':'' %>">
+        <td class="muted" style="font-size:12px;white-space:nowrap;"><%= dt(t.booked_at) %></td>
+        <td class="muted" style="font-size:12px;"><%= t.account_name || '—' %></td>
+        <td><%= t.counterparty || '—' %></td>
+        <td class="muted" style="font-size:12px;max-width:280px;"><%= t.description || '' %><% if (t.reference) { %> <span style="font-size:11px;">· <%= t.reference %></span><% } %></td>
+        <td style="text-align:right;font-weight:600;color:#b91c1c;"><%= money(t.amount) %></td>
+        <% if (readonly) { %>
+          <td class="muted" style="font-size:12px;"><% if (isSplit) { %><strong>Split</strong> · <%= splits.length %> categories<% } else { %><%= t.qb_account_name || '—' %><% } %></td>
+          <td class="muted" style="font-size:11px;"><% if (isSplit) { %><%= withInv %>/<%= splits.length %> with invoice<% } else if (t.attachment_name) { %>📎 <%= t.attachment_name %><% if (canEditAttach) { %> <button type="button" class="btn" onclick="pxUnlink(<%= t.id %>)" style="font-size:10px;padding:2px 6px;color:#b91c1c;">Unlink</button><% } %><% } else { %>—<% } %></td>
+          <td><span class="badge <%= pushed?'badge-sent':(locked?'badge-active':'badge-inactive') %>" style="font-size:10px;"><%= locked?'locked':t.status %></span>
+            <% if (locked) { %> <form class="px-ajax" method="post" action="/purchases/txn/<%= t.id %>/unlock" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:10px;padding:2px 6px;">🔓 Unlock</button></form><% } %>
+            <% if (ignored && !closed) { %> <form class="px-ajax" method="post" action="/purchases/txn/<%= t.id %>/ignore" style="display:inline;margin:0;"><input type="hidden" name="ignore" value="0"><button class="btn" type="submit" style="font-size:10px;padding:2px 6px;">Un-ignore</button></form><% } %>
+          </td>
+        <% } else if (isSplit) { %>
+          <td colspan="3">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <span style="font-size:13px;"><strong>Split</strong> · <%= splits.length %> categories · <%= money(allocated) %> of <%= money(total) %><% if (Math.abs(remaining)>=0.01) { %> <span style="color:#b91c1c;">(<%= money(remaining) %> unallocated)</span><% } %></span>
+              <button type="button" class="btn" onclick="pxToggleSplit(<%= t.id %>)" style="font-size:11px;padding:4px 8px;">Edit splits</button>
+              <form class="px-ajax" method="post" action="/purchases/txn/<%= t.id %>/lock" style="display:inline;margin:0;"><button class="btn btn-primary" type="submit" style="font-size:11px;padding:4px 9px;">Save &amp; lock</button></form>
+              <form class="px-ajax" method="post" action="/purchases/txn/<%= t.id %>/unsplit" onsubmit="return confirm('Remove the split and go back to a single category?');" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:4px 8px;color:#b91c1c;">Unsplit</button></form>
+              <label class="muted" style="font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;margin-left:4px;"><input type="checkbox" onchange="pxIgnore(<%= t.id %>)"> ignore</label>
+            </div>
+          </td>
+        <% } else { %>
+          <td colspan="3">
+            <form class="px-ajax px-row" method="post" action="/purchases/txn/<%= t.id %>" enctype="multipart/form-data" style="display:flex;gap:8px;align-items:center;margin:0;flex-wrap:wrap;">
+              <input type="hidden" name="qb_account_name" value="<%= t.qb_account_name || '' %>">
+              <select class="input px-cat" name="qb_account_id" style="font-size:12px;padding:4px 7px;min-width:170px;">
+                <option value="">— category —</option>
+                <% (cats||[]).forEach(function(c){ %><option value="<%= c.Id %>" <%= t.qb_account_id===c.Id?'selected':'' %>><%= c.Name %></option><% }); %>
+              </select>
+              <input type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png" style="font-size:11px;width:140px;">
+              <button type="button" class="btn" onclick="pxOpenPicker(<%= t.id %>,'<%= (t.counterparty||'').replace(/'/g,"\\'") %>',<%= total %>)" title="Pick an invoice from the inbox" style="font-size:11px;padding:4px 8px;">📁 Inbox<% if (unattached.length) { %> (<%= unattached.length %>)<% } %></button>
+              <% if (t.attachment_name) { %><span class="muted" style="font-size:11px;">📎 <%= t.attachment_name %></span> <button type="button" class="btn" onclick="pxUnlink(<%= t.id %>)" style="font-size:10px;padding:2px 6px;color:#b91c1c;">Unlink</button><% } %>
+              <button class="btn btn-primary" type="submit" style="font-size:11px;padding:4px 9px;">Save &amp; lock</button>
+              <button type="button" class="btn" onclick="pxToggleSplit(<%= t.id %>)" title="Split this payment across categories" style="font-size:11px;padding:4px 8px;">⇆ Split</button>
+              <label class="muted" style="font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;margin-left:4px;" title="Ignore — kept out of the reconcile list and the QB push">
+                <input type="checkbox" onchange="pxIgnore(<%= t.id %>)"> ignore
+              </label>
+            </form>
+          </td>
+        <% } %>
+      </tr>
+      <% if (!readonly) { %>
+      <tr class="px-splitrow" id="splitrow-<%= t.id %>" style="display:<%= isSplit?'table-row':'none' %>;">
+        <td colspan="8" style="background:#f8fafc;padding:14px 18px;">
+          <div style="font-weight:600;margin-bottom:8px;font-size:13px;">Split “<%= t.counterparty || 'transaction' %>” — total <%= money(t.amount) %></div>
+          <div class="px-splitlines" data-txn="<%= t.id %>" data-total="<%= total %>">
+            <% splits.forEach(function(s){ %>
+            <div class="px-splitline" data-split="<%= s.id %>" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+              <span>£</span><input type="number" step="0.01" class="input px-sl-amt" value="<%= Number(s.amount).toFixed(2) %>" style="width:110px;font-size:13px;">
+              <select class="input px-sl-cat" style="min-width:200px;font-size:13px;"><option value="">— category —</option><% (cats||[]).forEach(function(c){ %><option value="<%= c.Id %>" <%= s.qb_account_id===c.Id?'selected':'' %>><%= c.Name %></option><% }); %></select>
+              <% if (s.attachment_name) { %><span class="muted" style="font-size:12px;">📎 <%= s.attachment_name %></span> <button type="button" class="btn" onclick="pxSplitUnlink(<%= s.id %>)" style="font-size:10px;padding:2px 6px;color:#b91c1c;">Unlink</button>
+              <% } else { %>
+                <form class="px-ajax" method="post" action="/purchases/split/<%= s.id %>/receipt" enctype="multipart/form-data" style="display:inline;margin:0;"><input type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png" onchange="this.form.requestSubmit()" style="font-size:11px;width:130px;"></form>
+                <button type="button" class="btn" onclick="pxOpenPickerSplit(<%= s.id %>,'<%= (t.counterparty||'').replace(/'/g,"\\'") %>',<%= Number(s.amount) %>)" style="font-size:11px;padding:4px 8px;">📁 Inbox</button>
+              <% } %>
+              <button type="button" class="btn" onclick="pxRemoveSplitLine(this)" title="Remove line" style="font-size:11px;padding:4px 8px;color:#b91c1c;">✕</button>
+            </div>
+            <% }); %>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px;">
+            <button type="button" class="btn" onclick="pxAddSplitLine(<%= t.id %>)" style="font-size:12px;">+ Add category</button>
+            <span class="px-sl-remaining muted" data-txn="<%= t.id %>" style="font-size:12px;"></span>
+            <button type="button" class="btn btn-primary" onclick="pxSaveSplits(<%= t.id %>)" style="font-size:12px;">Save splits</button>
+            <span class="muted" style="font-size:11px;">Set amounts &amp; categories → Save → then attach an invoice to each line. Then “Save &amp; lock”.</span>
+          </div>
+        </td>
+      </tr>
+      <% } %>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+
+<div style="display:flex;gap:12px;align-items:center;margin:16px 0;flex-wrap:wrap;">
+  <% if (!closed) { %>
+  <% if (qbPushEnabled) { %>
+  <form method="post" action="/purchases/submit" onsubmit="return confirm('Push all categorised expenses for <%= period %> to QuickBooks?');" style="margin:0;">
+    <input type="hidden" name="period" value="<%= period %>">
+    <button class="btn btn-primary" type="submit" style="font-size:15px;padding:10px 18px;" <%= qbOn?'':'disabled' %>>Submit — push <%= period %> to QuickBooks</button>
+  </form>
+  <% } else { %>
+  <button class="btn" type="button" disabled title="Turn on in Admin → Purchase Ledger when ready" style="font-size:15px;padding:10px 18px;opacity:.6;">Push to QuickBooks (off)</button>
+  <% } %>
+  <form method="post" action="/purchases/close" onsubmit="return confirm('Close <%= period %>? It locks the month from further changes (you can re-open it).');" style="margin:0;">
+    <input type="hidden" name="period" value="<%= period %>">
+    <button class="btn" type="submit" style="font-size:14px;padding:10px 16px;">🔒 Close month</button>
+  </form>
+  <% } else { %>
+  <span class="badge badge-sent">Month <%= period %> closed</span>
+  <form method="post" action="/purchases/reopen" style="margin:0;"><input type="hidden" name="period" value="<%= period %>"><button class="btn" type="submit" style="font-size:13px;">Re-open month</button></form>
+  <% } %>
+  <a class="btn" href="/purchases/report?period=<%= encodeURIComponent(period) %>" target="_blank" style="font-size:13px;padding:10px 16px;">📄 Download report</a>
+  <form method="post" action="/purchases/report/send" onsubmit="return confirm('Email the Expense and Tax Receipts Report for <%= period %> (with receipts) to the bookkeeper?');" style="margin:0;">
+    <input type="hidden" name="period" value="<%= period %>">
+    <button class="btn" type="submit" style="font-size:13px;padding:10px 16px;">✉ Email report to bookkeeper</button>
+  </form>
+</div>
+<p class="muted" style="font-size:13px;margin:-4px 0 16px;">Submit pushes each categorised payment to QuickBooks (with its receipt). The report is a branded landscape PDF — “Expense and Tax Receipts Report” — that you can download or email to the bookkeeper with all receipts attached.</p>
+<% } %>
+
+<!-- ───────── Lightbox: invoice inbox picker / previewer ───────── -->
+<div id="pxLightbox" class="px-lb" style="display:none;">
+  <div class="px-lb-bar">
+    <div id="pxLbTitle" style="font-weight:600;">Invoice inbox</div>
+    <div id="pxLbAmount" style="font-size:24px;font-weight:800;color:#be185d;"></div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <span id="pxLbHint" class="muted" style="font-size:12px;"></span>
+      <button class="btn" type="button" id="pxLbGetBtn" onclick="pxGetInvoices(this)" title="Pull the invoice mailbox now, then come back to this picker" style="font-size:13px;">↻ Get invoices</button>
+      <button class="btn" type="button" onclick="pxClose()" style="font-size:13px;">✕ Close</button>
+    </div>
+  </div>
+  <div class="px-lb-body">
+    <div class="px-lb-list" id="pxLbList">
+      <% if (!unattached.length) { %><div class="empty-state">Inbox is empty. Get suppliers to email invoices to <%= invoiceMailbox %>.</div><% } %>
+      <% unattached.forEach(function(d){ %>
+      <div class="px-lb-item" data-id="<%= d.id %>" data-pdf="<%= isPdf(d) %>" onclick="pxSelect(this)">
+        <div class="px-lb-thumb">
+          <% if (isImg(d)) { %><img src="/purchases/doc/<%= d.id %>/view" loading="lazy" alt="">
+          <% } else { %><div class="px-doc-file" style="font-size:28px;">📄</div><% } %>
+        </div>
+        <div style="min-width:0;flex:1;">
+          <div class="px-doc-name" style="font-size:12px;" title="<%= d.file_name %>"><%= d.file_name %></div>
+          <div class="muted" style="font-size:10px;"><%= d.from_name || d.from_email || 'Upload' %> · <%= dt(d.received_at || d.created_at) %></div>
+        </div>
+      </div>
+      <% }); %>
+    </div>
+    <div class="px-lb-preview">
+      <iframe id="pxLbFrame" src="about:blank"></iframe>
+      <div id="pxLbAttachBar" class="px-lb-attach" style="display:none;">
+        <span id="pxLbSel" class="muted" style="font-size:12px;"></span>
+        <button class="btn btn-primary" type="button" id="pxLbAttachBtn">Attach to this expense</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  /* Invoice inbox cards — enlarged for easy reading */
+  .px-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:22px;}
+  .px-doc{border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;background:#fff;display:flex;flex-direction:column;}
+  .px-doc.is-attached{opacity:.6;}
+  .px-doc-prev{position:relative;height:300px;background:#f8fafc;cursor:pointer;overflow:hidden;display:flex;align-items:center;justify-content:center;}
+  .px-doc-prev img{width:100%;height:100%;object-fit:cover;}
+  .px-doc-prev iframe{width:100%;height:100%;border:0;pointer-events:none;}
+  .px-doc-shade{position:absolute;inset:0;}
+  .px-doc-file{font-size:80px;color:#94a3b8;}
+  .px-doc-meta{padding:16px 18px;}
+  .px-doc-name{font-weight:600;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .px-doc-meta .muted{font-size:15px !important;}
+  .px-doc-meta .btn{font-size:15px !important;padding:7px 14px !important;}
+  /* Full-screen picker — enlarged */
+  .px-lb{position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,.55);backdrop-filter:blur(2px);display:flex;flex-direction:column;}
+  .px-lb-bar{display:flex;justify-content:space-between;align-items:center;padding:16px 22px;background:#fff;border-bottom:1px solid #e2e8f0;font-size:18px;}
+  .px-lb-bar .muted{font-size:15px !important;}
+  .px-lb-bar .btn{font-size:16px !important;padding:8px 16px !important;}
+  .px-lb-body{flex:1;display:flex;min-height:0;background:#fff;}
+  .px-lb-list{width:440px;border-right:1px solid #e2e8f0;overflow:auto;padding:12px;}
+  .px-lb-item{display:flex;gap:14px;align-items:center;padding:12px;border-radius:8px;cursor:pointer;border:1px solid transparent;}
+  .px-lb-item:hover{background:#f1f5f9;}
+  .px-lb-item.sel{background:#eff6ff;border-color:#bfdbfe;}
+  .px-lb-item .px-doc-name{font-size:16px !important;}
+  .px-lb-item .muted{font-size:13px !important;}
+  .px-lb-thumb{width:84px;height:84px;flex:none;border-radius:6px;overflow:hidden;background:#f8fafc;display:flex;align-items:center;justify-content:center;}
+  .px-lb-thumb img{width:100%;height:100%;object-fit:cover;}
+  .px-lb-preview{flex:1;display:flex;flex-direction:column;min-width:0;}
+  .px-lb-preview iframe{flex:1;width:100%;border:0;background:#f1f5f9;}
+  .px-lb-attach{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 20px;border-top:1px solid #e2e8f0;background:#fff;}
+  .px-lb-attach .muted{font-size:15px !important;}
+  .px-lb-attach .btn{font-size:17px !important;padding:11px 20px !important;}
+  /* Reconciliation table — enlarged for easy reading */
+  .px-expenses h2{font-size:20px !important;}
+  .px-expenses .table th{font-size:14px !important;padding:12px 12px !important;}
+  .px-expenses .table td{font-size:16px !important;padding:13px 12px !important;}
+  .px-expenses .table td .muted,.px-expenses .table td span{font-size:15px !important;}
+  .px-expenses .px-row .input,.px-expenses .px-row select,.px-expenses .px-row .btn,.px-expenses .px-row label,.px-expenses .px-row input[type=file]{font-size:15px !important;}
+  .px-expenses .px-row .input,.px-expenses .px-row select{padding:8px 11px !important;min-width:200px !important;}
+  .px-expenses .px-row .btn{padding:8px 14px !important;}
+  .px-expenses .card-filter{font-size:16px !important;padding:9px 12px !important;max-width:360px !important;}
+</style>
+
+<select id="pxCatTemplate" style="display:none;"><option value="">— category —</option><% (cats||[]).forEach(function(c){ %><option value="<%= c.Id %>"><%= c.Name %></option><% }); %></select>
+
+<script>
+  // Keep your scroll position across the small saves/attaches (no more jumping to the top).
+  function pxSaveScroll(){ try { sessionStorage.setItem('pxScroll', String(window.scrollY)); } catch(e){} }
+  window.addEventListener('DOMContentLoaded', function(){
+    try { var y = sessionStorage.getItem('pxScroll'); if (y !== null){ window.scrollTo(0, parseInt(y,10)); sessionStorage.removeItem('pxScroll'); } } catch(e){}
+  });
+  // Any form tagged px-ajax submits in the background then reloads in place (keeps scroll).
+  document.querySelectorAll('form.px-ajax').forEach(function(f){
+    f.addEventListener('submit', function(e){
+      e.preventDefault();
+      pxSaveScroll();
+      fetch(f.action, { method:'POST', body:new FormData(f), headers:{ 'Accept':'application/json' } })
+        .then(function(){ location.reload(); })
+        .catch(function(){ location.reload(); });
+    });
+  });
+
+  // Category select → keep the hidden display name in sync.
+  document.querySelectorAll('.px-row .px-cat').forEach(function(sel){
+    sel.addEventListener('change',function(){ var h=sel.closest('form').querySelector('input[name="qb_account_name"]'); if(h) h.value = sel.options[sel.selectedIndex].text; });
+  });
+  document.querySelectorAll('.card-filter').forEach(function(inp){ inp.addEventListener('input',function(){ var q=inp.value.toLowerCase(); var card=inp.closest('.card'); card.querySelectorAll('tbody tr').forEach(function(tr){ if(tr.classList.contains('px-splitrow')||tr.classList.contains('px-supdetail')) return; tr.style.display=(!q||tr.textContent.toLowerCase().indexOf(q)>=0)?'':'none'; }); }); });
+
+  // Ignore a transaction — drops it off the list and out of the QB push.
+  function pxIgnore(id){
+    pxSaveScroll();
+    var fd = new URLSearchParams(); fd.append('ignore','1');
+    fetch('/purchases/txn/' + id + '/ignore', { method:'POST', body:fd, headers:{ 'Accept':'application/json' } })
+      .then(function(){ location.reload(); })
+      .catch(function(){ location.reload(); });
+  }
+
+  // Unlink the attached invoice/receipt from a transaction.
+  function pxUnlink(id){
+    if(!confirm('Unlink the invoice/receipt from this transaction?')) return;
+    pxSaveScroll();
+    var fd = new URLSearchParams();
+    fetch('/purchases/txn/' + id + '/unlink-invoice', { method:'POST', body:fd, headers:{ 'Accept':'application/json' } })
+      .then(function(){ location.reload(); })
+      .catch(function(){ location.reload(); });
+  }
+
+  // ── Splits ──
+  function pxToggleSplit(id){
+    var row = document.getElementById('splitrow-' + id);
+    if (!row) return;
+    var show = row.style.display === 'none' || !row.style.display;
+    row.style.display = show ? 'table-row' : 'none';
+    if (show){ var box = row.querySelector('.px-splitlines'); if (box && !box.querySelector('.px-splitline')) pxAddSplitLine(id, box.getAttribute('data-total')); pxSplitRemaining(id); }
+  }
+  function pxAddSplitLine(id, amount){
+    var box = document.querySelector('.px-splitlines[data-txn="' + id + '"]'); if (!box) return;
+    var line = document.createElement('div');
+    line.className = 'px-splitline';
+    line.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;';
+    var cats = document.getElementById('pxCatTemplate').innerHTML;
+    line.innerHTML = '<span>£</span><input type="number" step="0.01" class="input px-sl-amt" value="' + (amount ? Number(amount).toFixed(2) : '') + '" style="width:110px;font-size:13px;">' +
+      '<select class="input px-sl-cat" style="min-width:200px;font-size:13px;">' + cats + '</select>' +
+      '<span class="muted" style="font-size:11px;">save to attach an invoice</span>' +
+      '<button type="button" class="btn" onclick="pxRemoveSplitLine(this)" style="font-size:11px;padding:4px 8px;color:#b91c1c;">✕</button>';
+    box.appendChild(line);
+    line.querySelector('.px-sl-amt').addEventListener('input', function(){ pxSplitRemaining(id); });
+    pxSplitRemaining(id);
+  }
+  function pxRemoveSplitLine(btn){ var box = btn.closest('.px-splitlines'); var id = box.getAttribute('data-txn'); btn.closest('.px-splitline').remove(); pxSplitRemaining(id); }
+  function pxSplitRemaining(id){
+    var box = document.querySelector('.px-splitlines[data-txn="' + id + '"]'); if (!box) return;
+    var total = Number(box.getAttribute('data-total')) || 0, sum = 0;
+    box.querySelectorAll('.px-sl-amt').forEach(function(i){ sum += Number(i.value) || 0; });
+    var el = document.querySelector('.px-sl-remaining[data-txn="' + id + '"]');
+    var left = total - sum;
+    if (el){ el.textContent = 'Allocated £' + sum.toFixed(2) + ' of £' + total.toFixed(2) + (Math.abs(left) >= 0.01 ? ' · £' + left.toFixed(2) + ' left' : ' ✓'); el.style.color = Math.abs(left) >= 0.01 ? '#b91c1c' : '#16a34a'; }
+  }
+  function pxSaveSplits(id){
+    var box = document.querySelector('.px-splitlines[data-txn="' + id + '"]'); if (!box) return;
+    var lines = [];
+    box.querySelectorAll('.px-splitline').forEach(function(ln){
+      var amt = Number(ln.querySelector('.px-sl-amt').value) || 0;
+      var sel = ln.querySelector('.px-sl-cat');
+      if (!amt) return;
+      lines.push({ id: ln.getAttribute('data-split') || '', amount: amt, cat: sel.value, name: sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : '' });
+    });
+    pxSaveScroll();
+    var fd = new URLSearchParams(); fd.append('lines', JSON.stringify(lines));
+    fetch('/purchases/txn/' + id + '/splits', { method:'POST', body:fd, headers:{ 'Accept':'application/json' } })
+      .then(function(){ location.reload(); }).catch(function(){ location.reload(); });
+  }
+  function pxSplitUnlink(sid){
+    if(!confirm('Unlink the invoice from this split?')) return;
+    pxSaveScroll();
+    fetch('/purchases/split/' + sid + '/unlink', { method:'POST', body:new URLSearchParams(), headers:{ 'Accept':'application/json' } })
+      .then(function(){ location.reload(); }).catch(function(){ location.reload(); });
+  }
+
+  // ── Invoice-inbox lightbox ──
+  var pxTxnId = null, pxSelId = null, pxSplitId = null, pxPayee = '', pxAmount = 0;
+  function pxOpenPicker(txnId, payee, amount){
+    pxTxnId = txnId; pxSplitId = null; pxSelId = null; pxPayee = payee || ''; pxAmount = amount || 0;
+    document.getElementById('pxLbTitle').textContent = 'Pick an invoice for ' + (payee || 'this expense');
+    var amtTxt = (Number(amount)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
+    document.getElementById('pxLbAmount').textContent = amount ? ('Amount you’re looking for: £' + amtTxt) : '';
+    document.getElementById('pxLbHint').textContent = 'Click an invoice, then attach it.';
+    document.getElementById('pxLbFrame').src = 'about:blank';
+    document.getElementById('pxLbAttachBar').style.display = 'none';
+    document.querySelectorAll('.px-lb-item').forEach(function(el){ el.classList.remove('sel'); });
+    document.getElementById('pxLightbox').style.display = 'flex';
+  }
+  // Open the picker targeting a specific split line.
+  function pxOpenPickerSplit(splitId, payee, amount){
+    pxSplitId = splitId; pxTxnId = null; pxSelId = null; pxPayee = payee || ''; pxAmount = amount || 0;
+    document.getElementById('pxLbTitle').textContent = 'Pick an invoice for ' + (payee || 'this split');
+    var amtTxt = (Number(amount)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
+    document.getElementById('pxLbAmount').textContent = amount ? ('Amount you’re looking for: £' + amtTxt) : '';
+    document.getElementById('pxLbHint').textContent = 'Click an invoice, then attach it.';
+    document.getElementById('pxLbFrame').src = 'about:blank';
+    document.getElementById('pxLbAttachBar').style.display = 'none';
+    document.querySelectorAll('.px-lb-item').forEach(function(el){ el.classList.remove('sel'); });
+    document.getElementById('pxLightbox').style.display = 'flex';
+  }
+  function pxSelect(el){
+    pxSelId = el.getAttribute('data-id');
+    document.querySelectorAll('.px-lb-item').forEach(function(x){ x.classList.remove('sel'); });
+    el.classList.add('sel');
+    document.getElementById('pxLbFrame').src = '/purchases/doc/' + pxSelId + '/view';
+    if (pxTxnId || pxSplitId){
+      var name = el.querySelector('.px-doc-name').textContent;
+      document.getElementById('pxLbSel').textContent = 'Selected: ' + name;
+      document.getElementById('pxLbAttachBar').style.display = 'flex';
+    }
+  }
+  // Preview-only open (from the inbox tab cards).
+  function pxPreview(id, name, isPdf){
+    pxTxnId = null; pxSplitId = null; pxSelId = id;
+    document.getElementById('pxLbTitle').textContent = name || 'Invoice';
+    document.getElementById('pxLbAmount').textContent = '';
+    document.getElementById('pxLbHint').textContent = '';
+    document.getElementById('pxLbAttachBar').style.display = 'none';
+    document.getElementById('pxLbFrame').src = '/purchases/doc/' + id + '/view';
+    document.getElementById('pxLightbox').style.display = 'flex';
+  }
+  document.getElementById('pxLbAttachBtn').addEventListener('click', function(){
+    if (!pxSelId || (!pxTxnId && !pxSplitId)) return;
+    var fd = new URLSearchParams();
+    if (pxSplitId) fd.append('split_id', pxSplitId); else fd.append('txn_id', pxTxnId);
+    pxSaveScroll();
+    fetch('/purchases/doc/' + pxSelId + '/attach', { method:'POST', body:fd, headers:{ 'Accept':'application/json' } })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ if (j.ok){ location.reload(); } else { alert(j.error || 'Could not attach.'); } })
+      .catch(function(){ alert('Could not attach.'); });
+  });
+  function pxClose(){ document.getElementById('pxLightbox').style.display='none'; document.getElementById('pxLbFrame').src='about:blank'; }
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') pxClose(); });
+
+  // "Get invoices" — pull the mailbox now, then reload and drop the user back into the
+  // same picker so any freshly-arrived invoices are there to attach.
+  function pxGetInvoices(btn){
+    if (btn){ btn.disabled = true; btn.textContent = '↻ Getting…'; }
+    try {
+      if (pxTxnId || pxSplitId) sessionStorage.setItem('pxReopen', JSON.stringify({ txnId: pxTxnId, splitId: pxSplitId, payee: pxPayee, amount: pxAmount }));
+    } catch(e){}
+    pxSaveScroll();
+    fetch('/purchases/inbox/sync', { method:'POST', body:new URLSearchParams(), headers:{ 'Accept':'application/json' } })
+      .then(function(){ location.reload(); }).catch(function(){ location.reload(); });
+  }
+  // On load, if we just synced from inside a picker, reopen it.
+  window.addEventListener('DOMContentLoaded', function(){
+    var raw; try { raw = sessionStorage.getItem('pxReopen'); } catch(e){ raw = null; }
+    if (!raw) return;
+    try { sessionStorage.removeItem('pxReopen'); } catch(e){}
+    try {
+      var s = JSON.parse(raw);
+      if (s.txnId) pxOpenPicker(s.txnId, s.payee, s.amount);
+      else if (s.splitId) pxOpenPickerSplit(s.splitId, s.payee, s.amount);
+    } catch(e){}
+  });
+</script>
+
+<%- include('../partials/footer') %>

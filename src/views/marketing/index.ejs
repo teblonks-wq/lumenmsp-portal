@@ -1,0 +1,35 @@
+<%- include('../partials/header', { title: 'Marketing', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+  <h1 style="margin:0;">Marketing</h1>
+  <p class="muted" style="margin:4px 0 0;">Website chat and visitor analytics.</p>
+</div>
+
+<style>
+  .mk-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;align-items:stretch;}
+  .mk-card{display:flex;flex-direction:column;min-height:150px;border-radius:14px;padding:20px 22px;text-decoration:none;color:#fff;box-shadow:0 8px 22px rgba(2,6,23,.16);transition:transform .12s ease, box-shadow .12s ease;}
+  a.mk-card:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(2,6,23,.26);}
+  .mk-card h2{color:#fff;font-size:17px;margin:0 0 4px;}
+  .mk-card .muted{color:rgba(255,255,255,.9)!important;font-size:13px;margin-top:auto;}
+  .mk-blue{background:linear-gradient(135deg,#1e3a8a,#2563eb);}
+  .mk-green{background:linear-gradient(135deg,#065f46,#10b981);}
+  .mk-purple{background:linear-gradient(135deg,#5b21b6,#8b5cf6);}
+</style>
+
+<div class="mk-grid">
+  <a class="mk-card mk-blue" href="/marketing/website-stats">
+    <h2>📊 Website Stats</h2>
+    <p class="muted">Page views, unique visitors, top pages &amp; sources, and who's on the site now.</p>
+  </a>
+  <a class="mk-card mk-green" href="/marketing/chatbot">
+    <h2>💬 Chat Bot</h2>
+    <p class="muted">Turn the website live-chat on/off and set its available hours (9–5 Mon–Fri).</p>
+  </a>
+  <a class="mk-card mk-purple" href="/marketing/socials">
+    <h2>📣 Socials</h2>
+    <p class="muted">Review and post to LinkedIn, Facebook &amp; Google Business via Buffer — tick, push and track every upload.</p>
+  </a>
+</div>
+
+<%- include('../partials/footer') %>

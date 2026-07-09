@@ -1,0 +1,89 @@
+<%- include('../partials/header', { title: 'Backups', user }) %>
+<% function bytes(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; if(n<1073741824) return (n/1048576).toFixed(1)+' MB'; return (n/1073741824).toFixed(2)+' GB'; } %>
+<% function dt(x){ return x ? new Date(x).toLocaleString('en-GB') : '—'; } %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+  <h1>Backups</h1>
+  <p class="muted">Nightly encrypted backup of the portal database and uploaded files to Azure Blob.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<div class="card-grid" style="grid-template-columns:1fr 1fr;align-items:start;">
+  <!-- Status -->
+  <div class="card">
+    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <h2 style="margin:0;">Status</h2>
+      <% if (status.configured) { %>
+        <% if (status.enabled) { %><span class="badge badge-sent">Scheduled · <%= String(status.hour).padStart(2,'0') %>:30</span><% } else { %><span class="badge badge-inactive">Schedule off</span><% } %>
+      <% } else { %><span class="badge badge-failed">Not configured</span><% } %>
+    </div>
+    <table class="table" style="margin:0 0 14px;"><tbody>
+      <tr><th style="width:42%;">Last run</th><td><%= dt(status.lastRun) %><% if (status.lastTrigger) { %> <span class="muted">(<%= status.lastTrigger %>)</span><% } %></td></tr>
+      <tr><th>Result</th><td><% if (status.lastStatus==='ok') { %><span class="badge badge-sent">OK</span><% } else if (status.lastStatus==='failed') { %><span class="badge badge-failed">Failed</span><% } else { %>—<% } %></td></tr>
+      <% if (status.lastStatus==='ok') { %><tr><th>Size</th><td><%= bytes(status.lastSize) %></td></tr><tr><th>File</th><td style="word-break:break-all;font-size:12px;"><%= status.lastFile %></td></tr><% } %>
+      <% if (status.lastError) { %><tr><th>Error</th><td style="color:#b91c1c;font-size:12px;"><%= status.lastError %></td></tr><% } %>
+    </tbody></table>
+    <form method="post" action="/admin/backups/run" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Backing up… (may take a minute)';">
+      <button class="btn btn-primary" type="submit" <%= status.configured ? '' : 'disabled' %>>⤓ Back up now</button>
+      <% if (!status.configured) { %><span class="muted" style="font-size:12px;margin-left:8px;">Configure Azure + passphrase first.</span><% } %>
+    </form>
+  </div>
+
+  <!-- Settings -->
+  <div class="card">
+    <div class="card-header"><h2 style="margin:0;">Settings</h2></div>
+    <form method="post" action="/admin/backups/save" style="max-width:560px;">
+      <div class="form-group" style="margin-bottom:10px;"><label>Azure storage account</label><input class="input" name="az_account" value="<%= status.account %>" placeholder="webobjects" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:10px;"><label>Container</label><input class="input" name="az_container" value="<%= status.container %>" placeholder="lumenmsp" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:10px;"><label>Folder prefix</label><input class="input" name="az_prefix" value="<%= status.prefix %>" placeholder="portal-backups/" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:10px;"><label>Access key <% if (status.keySet) { %><span class="badge badge-sent">Set</span><% } %></label><input class="input" type="password" name="az_key" autocomplete="off" placeholder="<%= status.keySet ? 'leave blank to keep current' : 'storage account access key' %>" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:10px;"><label>Encryption passphrase <% if (status.passSet) { %><span class="badge badge-sent">Set</span><% } %> <span class="muted" style="font-size:12px;">— store this in your vault!</span></label><input class="input" type="password" name="passphrase" autocomplete="off" placeholder="<%= status.passSet ? 'leave blank to keep current' : 'long random string' %>" style="width:100%;"></div>
+      <div class="form-group" style="margin-bottom:10px;"><label>Passphrase clue <span class="muted" style="font-size:12px;">— a hint only, never the passphrase itself</span></label><input class="input" type="text" name="pass_clue" value="<%= status.passClue %>" autocomplete="off" placeholder="e.g. a memorable reminder" style="width:100%;"></div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <div class="form-group" style="margin-bottom:10px;"><label>Keep for (days)</label><input class="input" type="number" name="retention_days" value="<%= status.retentionDays %>" min="1" style="width:120px;"></div>
+        <div class="form-group" style="margin-bottom:10px;"><label>Run at (hour, 0–23)</label><input class="input" type="number" name="hour" value="<%= status.hour %>" min="0" max="23" style="width:120px;"></div>
+      </div>
+      <label style="display:flex;gap:8px;align-items:center;margin:6px 0 14px;"><input type="checkbox" name="enabled" <%= status.enabled ? 'checked' : '' %>> Run automatically every night</label>
+      <button class="btn btn-primary" type="submit">Save settings</button>
+    </form>
+  </div>
+</div>
+
+<!-- Recent backups -->
+<div class="card" style="padding:0;margin-top:16px;">
+  <div class="card-header" style="padding:16px 20px;display:flex;align-items:center;justify-content:space-between;">
+    <h2 style="margin:0;">Recent backups</h2>
+    <button class="btn" type="button" id="bkRefresh">↻ Refresh</button>
+  </div>
+  <div class="table-wrap"><table class="table" style="margin:0;">
+    <thead><tr><th>File</th><th>Size</th><th>When</th></tr></thead>
+    <tbody id="bkList"><tr><td colspan="3" class="muted" style="padding:14px;">Loading…</td></tr></tbody>
+  </table></div>
+</div>
+
+<p class="muted" style="font-size:12px;margin-top:12px;max-width:900px;">Each backup is one AES-256 encrypted archive containing a custom-format dump of the portal database, the uploaded files (attachments, branding, purchase docs) and the <code>.env</code>. Restore with <code>ops/restore.sh</code>. This covers the <strong>portal</strong>; other apps' databases are backed up separately.</p>
+
+<script>
+(function(){
+  function bytes(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; if(n<1073741824) return (n/1048576).toFixed(1)+' MB'; return (n/1073741824).toFixed(2)+' GB'; }
+  function esc(s){ return (s||'').replace(/[&<>]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c];}); }
+  var list = document.getElementById('bkList');
+  function load(){
+    list.innerHTML = '<tr><td colspan="3" class="muted" style="padding:14px;">Loading…</td></tr>';
+    fetch('/admin/backups/list.json').then(function(r){return r.json();}).then(function(rows){
+      if(!rows.length){ list.innerHTML = '<tr><td colspan="3" class="muted" style="padding:14px;">No backups found yet.</td></tr>'; return; }
+      list.innerHTML = rows.map(function(b){
+        var nm = b.name.split('/').pop();
+        return '<tr><td style="word-break:break-all;font-size:12px;">'+esc(nm)+'</td><td>'+bytes(b.size)+'</td><td class="muted" style="white-space:nowrap;">'+(b.modified?new Date(b.modified).toLocaleString('en-GB'):'—')+'</td></tr>';
+      }).join('');
+    }).catch(function(){ list.innerHTML = '<tr><td colspan="3" class="muted" style="padding:14px;">Could not load (check Azure settings).</td></tr>'; });
+  }
+  document.getElementById('bkRefresh').addEventListener('click', load);
+  load();
+})();
+</script>
+
+<%- include('../partials/footer') %>

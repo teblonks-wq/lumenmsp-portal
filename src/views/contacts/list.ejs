@@ -1,0 +1,80 @@
+<%- include('../partials/header', { title: 'Contacts', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><h1>Contacts</h1><p class="muted"><%= contacts.length %> of <%= total %></p></div>
+  <form method="get" action="/contacts" style="display:flex;gap:8px;align-items:center;">
+    <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search name, email, phone, customer…" style="min-width:280px;">
+    <% if (filter) { %><input type="hidden" name="filter" value="<%= filter %>"><% } %>
+    <button class="btn" type="submit">Search</button>
+    <% if (search) { %><a class="btn" href="/contacts<%= filter ? '?filter=' + filter : '' %>">Clear</a><% } %>
+  </form>
+</div>
+
+<div class="tabs" style="margin-bottom:16px;">
+  <a class="tab-btn <%= filter==='' ? 'active' : '' %>" href="/contacts<%= search ? '?search=' + encodeURIComponent(search) : '' %>">All</a>
+  <a class="tab-btn <%= filter==='primary' ? 'active' : '' %>" href="/contacts?filter=primary<%= search ? '&search=' + encodeURIComponent(search) : '' %>">Primary</a>
+  <a class="tab-btn <%= filter==='third_party' ? 'active' : '' %>" href="/contacts?filter=third_party<%= search ? '&search=' + encodeURIComponent(search) : '' %>">Third party</a>
+  <a class="tab-btn <%= showArchived ? 'active' : '' %>" href="/contacts?archived=<%= showArchived ? '0' : '1' %><%= search ? '&search=' + encodeURIComponent(search) : '' %><%= filter ? '&filter=' + filter : '' %>"><%= showArchived ? 'Hide archived' : 'Show archived' %></a>
+</div>
+
+<div id="mergePanel" class="card" style="display:none;max-width:640px;">
+  <div class="card-header"><h2>Merge contact</h2></div>
+  <p class="muted" style="margin-top:0;">Merging <strong id="mergeSource"></strong> into the master you pick — the master is kept, this duplicate's tickets, links and details fold into it, then it's removed.</p>
+  <input class="input" id="mergeSearch" placeholder="Search for the master contact…" autocomplete="off" style="width:100%;">
+  <div id="mergeResults" style="margin-top:8px;"></div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Name</th><th>Job title</th><th>Customer</th><th>Email</th><th>Phone</th><th>Mobile</th><th></th></tr></thead>
+      <tbody>
+        <% if (contacts.length===0) { %><tr><td colspan="7"><div class="empty-state">No contacts match.</div></td></tr><% } %>
+        <% contacts.forEach(function(ct){ %>
+          <tr>
+            <td><a class="row-link" href="/contacts/<%= ct.id %>"><%= ct.full_name %></a><% if (ct.is_primary) { %> <span class="badge badge-primary">Primary</span><% } %><% if (ct.is_third_party) { %> <span class="badge badge-inactive">3rd party</span><% } %><% if (ct.archived) { %> <span class="badge badge-inactive">archived</span><% } %></td>
+            <td class="muted"><%= ct.job_title || '—' %></td>
+            <td><a class="row-link" href="/customers/<%= ct.customer_id %>"><%= ct.customer_name %></a></td>
+            <td><% if (ct.email) { %><a class="row-link" href="mailto:<%= ct.email %>"><%= ct.email %></a><% } else { %>—<% } %></td>
+            <td><% if (ct.phone) { %><a class="row-link" href="tel:<%= ct.phone.replace(/[^+0-9]/g,'') %>">📞 <%= ct.phone %></a><% } else { %><span class="muted">—</span><% } %></td>
+            <td><% if (ct.mobile_phone) { %><a class="row-link" href="tel:<%= ct.mobile_phone.replace(/[^+0-9]/g,'') %>">📱 <%= ct.mobile_phone %></a><% } else { %><span class="muted">—</span><% } %></td>
+            <td style="text-align:right;white-space:nowrap;">
+              <button class="btn merge-btn" type="button" data-id="<%= ct.id %>" data-name="<%= ct.full_name %>">Merge</button>
+              <a class="btn" href="/customers/<%= ct.customer_id %>#contacts">Edit</a>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var panel = document.getElementById('mergePanel'), srcLabel = document.getElementById('mergeSource'),
+        search = document.getElementById('mergeSearch'), results = document.getElementById('mergeResults'), sourceId = null, t;
+    function startMerge(id, name) {
+      sourceId = id; srcLabel.textContent = name; panel.style.display = 'block';
+      search.value = ''; results.innerHTML = ''; search.focus();
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    document.querySelectorAll('.merge-btn').forEach(function (b) {
+      b.addEventListener('click', function () { startMerge(b.getAttribute('data-id'), b.getAttribute('data-name')); });
+    });
+    if (search) search.addEventListener('input', function () {
+      clearTimeout(t); var q = search.value.trim(); if (!q) { results.innerHTML = ''; return; }
+      t = setTimeout(function () {
+        fetch('/contacts/search.json?exclude=' + sourceId + '&q=' + encodeURIComponent(q)).then(function (r) { return r.json(); }).then(function (rows) {
+          if (!rows.length) { results.innerHTML = '<div class="muted" style="padding:8px;">No matches</div>'; return; }
+          results.innerHTML = rows.map(function (c) {
+            return '<form method="post" action="/contacts/' + sourceId + '/merge" onsubmit="return confirm(\'Merge into this contact? This cannot be undone.\');" style="border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:10px;">'
+              + '<span><strong>' + c.full_name + '</strong>' + (c.email ? ' · ' + c.email : '') + '<br><span class="muted" style="font-size:12px;">' + (c.customer_name || '') + '</span></span>'
+              + '<input type="hidden" name="target_id" value="' + c.id + '"><button class="btn btn-primary" type="submit">Make master</button></form>';
+          }).join('');
+        });
+      }, 200);
+    });
+  })();
+</script>
+
+<%- include('../partials/footer') %>

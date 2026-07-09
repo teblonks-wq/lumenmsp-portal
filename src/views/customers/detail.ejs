@@ -1,0 +1,1141 @@
+<%- include('../partials/header', { title: customer.name, user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
+
+<style>
+  .cust-tabs { display:flex; flex-wrap:wrap; gap:2px; border-bottom:2px solid var(--line); margin:10px 0 18px; }
+  .cust-tabs button { background:none; border:none; padding:10px 16px; font-size:14px; font-weight:600; color:#64748b; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; }
+  .cust-tabs button:hover { color:#0f172a; }
+  .cust-tabs button.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .tab-panel { display:none; }
+  .tab-panel.active { display:block; }
+</style>
+
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/customers">← Customers</a></p>
+    <h1 style="margin:0;display:flex;align-items:center;gap:12px;">
+      <%= customer.name %>
+      <% if (customer.status === 'active') { %><span class="badge badge-sent">Active</span>
+      <% } else if (customer.status === 'lead') { %><span class="badge badge-primary">Lead</span>
+      <% } else { %><span class="badge badge-inactive">Inactive</span><% } %>
+      <% if (typeof lead !== 'undefined' && lead) { %><a class="row-link" href="/leads/<%= lead.id %>" style="font-size:13px;font-weight:600;">View lead →</a>
+      <% } else { %><a class="row-link" href="/leads/new?customer=<%= customer.id %>" style="font-size:13px;">+ Lead</a><% } %>
+    </h1>
+    <p class="muted" style="margin:4px 0 0;">
+      <%= customer.account_number || 'No account number' %>
+      <% if (customer.is_itsm) { %> · <span class="badge badge-primary">Support</span><% } %>
+      <% if (customer.has_internet) { %> <span class="badge badge-primary">Internet</span><% } %>
+      <% if (customer.has_phones) { %> <span class="badge badge-primary">Phones</span><% } %>
+      <% if (customer.has_cloud) { %> <span class="badge badge-primary">Cloud</span><% } %>
+    </p>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <a class="btn" href="/it-report/<%= customer.id %>" title="Monthly IT Operations &amp; Security Snapshot">IT Report</a>
+    <a class="btn" href="/customers/<%= customer.id %>/edit">Edit</a>
+    <% if (user.role === 'admin') { %><a class="btn" href="/customers/<%= customer.id %>/merge" title="Merge a duplicate into / out of this customer">Merge</a><% } %>
+    <form method="post" action="/customers/<%= customer.id %>/delete" onsubmit="return confirm('Move this customer to the recycle bin?');" style="margin:0;">
+      <button class="btn" type="submit" style="color:var(--lumen-dark);">Delete</button>
+    </form>
+  </div>
+</div>
+
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error" style="max-width:900px;"><%= error %></div><% } %>
+
+<% var allItems = (typeof serviceItems !== 'undefined') ? serviceItems : []; %>
+<% function itemsTotal(a){ return a.reduce(function(s,i){ return s + Number(i.total_cost||0); }, 0); } %>
+<% function isTelecom(it){ var s=(it.source||'').toLowerCase(); if(s==='lumen') return true; var t=((it.description||'')+' '+(it.product_reference||'')).toLowerCase(); return /(line|call|hosted|telephon|voice|sip|mobile|broadband|sogea|fttp|adsl|ddi|number|minute|rental|analogue|isdn|trunk|softphone|webex|recording|collaboration|gointegrator)/.test(t); } %>
+<% var telecomItems = allItems.filter(isTelecom); %>
+<% var cloudItems = allItems.filter(function(it){ return !isTelecom(it); }); %>
+<% var ost = customer.onboarding_status; %>
+
+<nav class="cust-tabs">
+  <button type="button" data-tab="overview">Overview</button>
+  <button type="button" data-tab="contacts">Contacts (<%= contacts.length %>)</button>
+  <button type="button" data-tab="sites">Sites &amp; Domains</button>
+  <button type="button" data-tab="composer">Composer</button>
+  <button type="button" data-tab="cloud">IT &amp; Cloud</button>
+  <button type="button" data-tab="comms">Comms</button>
+  <button type="button" data-tab="quotes">Quotes (<%= quotes.length %>)</button>
+  <button type="button" data-tab="invoices">Invoices (<%= invoices.length %>)</button>
+  <button type="button" data-tab="contracts">Contracts (<%= contracts.length %>)</button>
+  <button type="button" data-tab="onboarding">Onboarding</button>
+  <button type="button" data-tab="review">Account Review</button>
+  <% if (typeof canVault!=='undefined' && canVault) { %><button type="button" data-tab="passwords">Passwords (<%= (typeof credentials!=='undefined'?credentials:[]).length %>)</button><% } %>
+  <button type="button" data-tab="documents">Documents (<%= (typeof documents!=='undefined'?documents:[]).length %>)</button>
+  <button type="button" data-tab="integrations">Integrations</button>
+</nav>
+
+<!-- ═══ Overview ═══ -->
+<section class="tab-panel" data-key="overview">
+  <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr));align-items:start;">
+    <div class="card">
+      <div class="card-header"><h2>Company</h2></div>
+      <table class="table"><tbody>
+        <tr><th style="width:40%;">Phone</th><td><% if (customer.phone) { %><a class="row-link" href="tel:<%= customer.phone.replace(/[^+0-9]/g,'') %>">📞 <%= customer.phone %></a><% } else { %>—<% } %></td></tr>
+        <tr><th>Email</th><td><%= customer.email || '—' %></td></tr>
+        <tr><th>Website</th><td><% if (customer.website) { %><a class="row-link" href="<%= customer.website.startsWith('http') ? customer.website : 'https://' + customer.website %>" target="_blank" rel="noopener"><%= customer.website %></a><% } else { %>—<% } %></td></tr>
+        <tr><th>Domain</th><td><%= customer.domain || '—' %></td></tr>
+        <tr><th>Address</th><td><%= [customer.address_line_1, customer.address_line_2, customer.city, customer.county, customer.postcode].filter(Boolean).join(', ') || '—' %></td></tr>
+        <% if (customer.legal_name || customer.company_number || customer.vat_number) { %>
+        <tr><th>Legal name</th><td><%= customer.legal_name || '—' %></td></tr>
+        <tr><th>Company no / VAT</th><td class="muted"><%= [customer.company_number, customer.vat_number].filter(Boolean).join(' · ') || '—' %></td></tr>
+        <% } %>
+        <tr><th>Lead source</th><td><%= customer.lead_source || '—' %></td></tr>
+      </tbody></table>
+      <% if (customer.notes) { %><p class="muted" style="margin:12px 0 0;white-space:pre-wrap;"><%= customer.notes %></p><% } %>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Key contacts</h2></div>
+      <% var roles = [['Principal','principal_contact_id',keyContacts.principal], ['Finance','billing_contact_id',keyContacts.billing], ['Service','service_contact_id',keyContacts.service]]; %>
+      <% roles.forEach(function (r) { %>
+        <form method="post" action="/customers/<%= customer.id %>/key-contact" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <input type="hidden" name="role" value="<%= r[1] %>">
+          <label style="width:80px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;"><%= r[0] %></label>
+          <select class="input" name="contact_id" style="flex:1;min-width:0;">
+            <option value="">— none —</option>
+            <% contacts.forEach(function (ct) { %>
+              <option value="<%= ct.id %>" <%= r[2] && r[2].id === ct.id ? 'selected' : '' %>><%= ct.full_name %></option>
+            <% }); %>
+          </select>
+          <button class="btn" type="submit">Set</button>
+        </form>
+      <% }); %>
+      <form method="post" action="/customers/<%= customer.id %>/key-contact-all" style="display:flex;align-items:center;gap:8px;margin-top:6px;padding-top:8px;border-top:1px solid var(--border);">
+        <label style="width:80px;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;">All roles</label>
+        <select class="input" name="contact_id" style="flex:1;min-width:0;">
+          <option value="">— pick a contact —</option>
+          <% contacts.forEach(function (ct) { %>
+            <option value="<%= ct.id %>"><%= ct.full_name %></option>
+          <% }); %>
+        </select>
+        <button class="btn" type="submit" title="Set this contact as Principal, Finance and Service in one go">Use for all</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ Contacts ═══ -->
+<section class="tab-panel" data-key="contacts" id="contacts">
+  <div class="card" style="padding:0;">
+    <div style="padding:14px 24px 4px;"><input class="input card-filter" placeholder="Search contacts…" style="max-width:280px;"></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Name</th><th>Job title</th><th>Email</th><th>Phone</th><th>Mobile</th><th style="text-align:right;">Actions</th></tr></thead>
+        <tbody>
+          <% if (contacts.length === 0) { %><tr><td colspan="6"><div class="empty-state">No contacts yet.</div></td></tr><% } %>
+          <% contacts.forEach(function (ct) { %>
+            <tr>
+              <td><a class="row-link" href="/contacts/<%= ct.id %>"><%= ct.full_name %></a> <% if (ct.is_primary) { %><span class="badge badge-primary">Primary</span><% } %><% if (ct.is_third_party) { %><span class="badge badge-inactive">3rd party</span><% } %></td>
+              <td class="muted"><%= ct.job_title || '—' %></td>
+              <td><%= ct.email || '—' %></td>
+              <td><% if (ct.phone) { %><a class="row-link" href="tel:<%= ct.phone.replace(/[^+0-9]/g,'') %>">📞 <%= ct.phone %></a><% } else { %><span class="muted">—</span><% } %></td>
+              <td><% if (ct.mobile_phone) { %><a class="row-link" href="tel:<%= ct.mobile_phone.replace(/[^+0-9]/g,'') %>">📱 <%= ct.mobile_phone %></a><% } else { %><span class="muted">—</span><% } %></td>
+              <td style="text-align:right;white-space:nowrap;">
+                <% if (!ct.is_primary) { %>
+                <form method="post" action="/customers/<%= customer.id %>/contacts/<%= ct.id %>/primary" style="display:inline;"><button class="btn" type="submit" title="Make primary">★</button></form>
+                <% } %>
+                <a class="btn" href="/contacts/<%= ct.id %>" title="Open the full contact card">Open</a>
+                <form method="post" action="/customers/<%= customer.id %>/contacts/<%= ct.id %>/delete" onsubmit="return confirm('Delete this contact?');" style="display:inline;"><button class="btn" type="submit">✕</button></form>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+    <form method="post" action="/customers/<%= customer.id %>/contacts" style="padding:16px 24px;border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(5,1fr) auto;gap:8px;align-items:end;">
+      <div class="form-group"><label>Name *</label><input class="input" name="full_name" required></div>
+      <div class="form-group"><label>Job title</label><input class="input" name="job_title"></div>
+      <div class="form-group"><label>Email</label><input class="input" name="email"></div>
+      <div class="form-group"><label>Phone</label><input class="input" name="phone"></div>
+      <div class="form-group"><label>Mobile</label><input class="input" name="mobile_phone"></div>
+      <button class="btn btn-primary" type="submit">Add</button>
+    </form>
+  </div>
+</section>
+
+<!-- ═══ Sites & Domains ═══ -->
+<section class="tab-panel" data-key="sites" id="sites">
+  <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(340px,1fr));align-items:start;">
+    <div class="card" style="padding:0;">
+      <div class="card-header" style="padding:20px 24px 0;"><h2>Sites <span class="muted">(<%= sites.length %>)</span></h2></div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Site</th><th>Location</th><th style="text-align:right;">Actions</th></tr></thead>
+          <tbody>
+            <% if (sites.length === 0) { %><tr><td colspan="3"><div class="empty-state">No sites yet.</div></td></tr><% } %>
+            <% sites.forEach(function (s) { %>
+              <tr>
+                <td><%= s.site_name %> <% if (s.is_primary) { %><span class="badge badge-primary">Primary</span><% } %></td>
+                <td class="muted"><%= [s.address_line_1, s.city, s.postcode].filter(Boolean).join(', ') || '—' %><% if (s.site_phone) { %><br><span style="font-size:12px;"><%= s.site_phone %></span><% } %></td>
+                <td style="text-align:right;white-space:nowrap;">
+                  <% if (!s.is_primary) { %><form method="post" action="/customers/<%= customer.id %>/sites/<%= s.id %>/primary" style="display:inline;"><button class="btn" type="submit" title="Make primary">★</button></form><% } %>
+                  <form method="post" action="/customers/<%= customer.id %>/sites/<%= s.id %>/delete" onsubmit="return confirm('Delete this site?');" style="display:inline;"><button class="btn" type="submit">✕</button></form>
+                </td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+      <form method="post" action="/customers/<%= customer.id %>/sites" style="padding:16px 24px;border-top:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:end;">
+        <div class="form-group" style="grid-column:1 / -1;"><label>Site name *</label><input class="input" name="site_name" required></div>
+        <div class="form-group"><label>Address line 1</label><input class="input" name="address_line_1"></div>
+        <div class="form-group"><label>City</label><input class="input" name="city"></div>
+        <div class="form-group"><label>Postcode</label><input class="input" name="postcode"></div>
+        <div class="form-group"><label>Phone</label><input class="input" name="site_phone"></div>
+        <button class="btn btn-primary" type="submit" style="grid-column:1 / -1;">Add site</button>
+      </form>
+    </div>
+
+    <div class="card" style="padding:0;">
+      <div class="card-header" style="padding:20px 24px 0;"><h2>Domains <span class="muted">(<%= domains.length %>)</span></h2></div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Domain</th><th style="text-align:right;">Actions</th></tr></thead>
+          <tbody>
+            <% if (domains.length === 0) { %><tr><td colspan="2"><div class="empty-state">No domains yet.</div></td></tr><% } %>
+            <% domains.forEach(function (d) { %>
+              <tr>
+                <td><%= d.domain %> <% if (d.is_primary) { %><span class="badge badge-primary">Primary</span><% } %></td>
+                <td style="text-align:right;white-space:nowrap;">
+                  <% if (!d.is_primary) { %><form method="post" action="/customers/<%= customer.id %>/domains/<%= d.id %>/primary" style="display:inline;"><button class="btn" type="submit" title="Make primary">★</button></form><% } %>
+                  <form method="post" action="/customers/<%= customer.id %>/domains/<%= d.id %>/delete" onsubmit="return confirm('Delete this domain?');" style="display:inline;"><button class="btn" type="submit">✕</button></form>
+                </td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+      <form method="post" action="/customers/<%= customer.id %>/domains" style="padding:16px 24px;border-top:1px solid var(--line);display:flex;gap:8px;align-items:end;">
+        <div class="form-group" style="flex:1;"><label>Domain</label><input class="input" name="domain" placeholder="example.co.uk" required></div>
+        <button class="btn btn-primary" type="submit">Add</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ Composer (email the client) ═══ -->
+<section class="tab-panel" data-key="composer">
+  <%- include('../partials/comms', { entityType: 'customer', entityId: customer.id, comms: comms, toEmail: commsTo, commsSubject: '' }) %>
+</section>
+
+<!-- ═══ Comms (telecoms service items) ═══ -->
+<section class="tab-panel" data-key="comms">
+  <!-- Section 1: Simply VoIP account — package billing, derived live from the Giacom feed -->
+  <% var pkg = (typeof commsPkg!=='undefined' && commsPkg) ? commsPkg : null; %>
+  <% var cid = customer.id;
+     function pfEsc(s){ return String(s==null?'':s).replace(/"/g,'&quot;'); }
+     // Inline editable price control — posts to /comms-price; ref is the engine's pricing key.
+     function pf(ref, unitCost, current, desc){
+       var cur = (current===null||current===undefined)?'':Number(current).toFixed(2);
+       return '<form method="post" action="/customers/'+cid+'/comms-price" style="display:inline-flex;gap:4px;margin:0;justify-content:flex-end;">'
+         + '<input type="hidden" name="ref" value="'+pfEsc(ref)+'">'
+         + '<input type="hidden" name="unit_cost" value="'+(Number(unitCost)||0).toFixed(4)+'">'
+         + '<input type="hidden" name="description" value="'+pfEsc(desc||'')+'">'
+         + '<input class="input" name="sale_price" type="text" inputmode="decimal" value="'+cur+'" placeholder="£" style="width:70px;text-align:right;font-size:12px;padding:3px 6px;">'
+         + '<button class="btn" type="submit" style="font-size:11px;padding:3px 7px;">Save</button></form>';
+     }
+     // Locked-by-default cell: shows the value; the inline form only appears in Edit mode.
+     function pfCell(ref, unitCost, current, desc){
+       var disp = (current===null||current===undefined) ? '<span class="badge badge-primary" style="font-size:10px;">unpriced</span>' : money(current);
+       return '<span class="rc-lock">'+disp+'</span><span class="rc-edit">'+pf(ref,unitCost,current,desc)+'</span>';
+     }
+     function locCell(cli, location){
+       var form = '<form method="post" action="/customers/'+cid+'/cli-location" style="display:inline-flex;gap:4px;margin:0;">'
+         + '<input type="hidden" name="cli" value="'+pfEsc(cli)+'">'
+         + '<input class="input" name="location" value="'+pfEsc(location||'')+'" placeholder="site…" style="width:110px;font-size:12px;padding:3px 6px;">'
+         + '<button class="btn" type="submit" style="font-size:11px;padding:3px 7px;">Save</button></form>';
+       return '<span class="rc-lock">'+(location||'—')+'</span><span class="rc-edit">'+form+'</span>';
+     } %>
+  <style>
+    #commsAcctCard .rc-edit{display:none;}
+    #commsAcctCard.editing .rc-edit{display:inline-flex;}
+    #commsAcctCard.editing .rc-lock{display:none;}
+  </style>
+  <div class="card" id="commsAcctCard">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2>Comms account
+      <% if (pkg && pkg.period) { %><span class="badge badge-primary" style="font-size:12px;margin-left:8px;vertical-align:middle;">Rate card · <%= pkg.period %></span><% } %></h2>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <% if (pkg && pkg.period) { %><span class="muted" style="font-size:12px;"><%= commsClis.length %> CLIs/refs</span><% } %>
+        <% if (pkg && (pkg.seats.count || pkg.broadband.length || pkg.lineRental.length || pkg.other.length)) { %>
+        <button type="button" id="rcEditBtn" class="btn" style="font-size:12px;padding:5px 12px;">✎ Edit</button>
+        <% } %>
+      </div>
+    </div>
+    <% if (pkg && pkg.period) { %><p class="muted" style="font-size:12px;margin:-4px 0 12px;">This rate card is for <strong><%= pkg.period %></strong> and changes month to month as the supplier feed updates.</p><% } %>
+    <% if (!pkg || (!pkg.seats.count && !pkg.broadband.length && !pkg.lineRental.length && !pkg.other.length)) { %>
+      <p class="muted" style="margin:0;">No comms services yet. They appear once the Giacom feed is imported and this customer's CLIs are allocated in the <a class="row-link" href="/bureau">Bureau</a>.</p>
+    <% } else { %>
+      <!-- headline numbers -->
+      <div style="display:flex;gap:30px;flex-wrap:wrap;margin-bottom:18px;">
+        <div><div class="muted" style="font-size:12px;">Monthly charge</div><div style="font-size:24px;font-weight:800;"><%= money(pkg.totals.sell) %></div></div>
+        <div><div class="muted" style="font-size:12px;">Our cost</div><div style="font-size:24px;font-weight:800;color:#64748b;"><%= money(pkg.totals.cost) %></div></div>
+        <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:24px;font-weight:800;color:<%= pkg.totals.margin>=0?'#166534':'#b91c1c' %>;"><%= money(pkg.totals.margin) %></div></div>
+        <% var ccp = (typeof commsCallPeriod!=='undefined'?commsCallPeriod:null); if (ccp) { %>
+        <div style="border-left:1px solid var(--border,#e5e7eb);padding-left:30px;"><div class="muted" style="font-size:12px;">Call charges<% if (ccp.period) { %> · <%= ccp.period %><% } %></div><div style="font-size:24px;font-weight:800;"><%= money(ccp.sell) %></div><div class="muted" style="font-size:11px;">cost <%= money(ccp.cost) %> · <%= ccp.calls.toLocaleString() %> calls</div></div>
+        <% } %>
+      </div>
+      <!-- Simply VoIP seats + add-ons -->
+      <% if (pkg.seats.count || pkg.callRecording.count || pkg.featurePack) { %>
+      <h3 style="font-size:12px;margin:0 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Simply VoIP</h3>
+      <div class="table-wrap" style="margin-bottom:18px;"><table class="table">
+        <thead><tr><th>Item</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit</th><th style="text-align:right;">Monthly</th></tr></thead>
+        <tbody>
+          <% if (pkg.seats.count) { %><tr><td><strong>Simply VoIP Seat</strong> <span class="muted" style="font-size:11px;">incl. handset, Webex, CRM</span></td><td style="text-align:right;"><%= pkg.seats.count %></td><td style="text-align:right;"><%- pfCell('SEAT', 0, pkg.seats.unitPrice, 'Simply VoIP Seat') %></td><td style="text-align:right;font-weight:600;"><%= money(pkg.seats.sell) %></td></tr><% } %>
+          <% if (pkg.callRecording.count) { %><tr><td>Call Recording</td><td style="text-align:right;"><%= pkg.callRecording.count %></td><td style="text-align:right;"><%- pfCell('REC', 0, pkg.callRecording.unitPrice, 'Call Recording') %></td><td style="text-align:right;"><%= money(pkg.callRecording.sell) %></td></tr><% } %>
+          <% if (pkg.featurePack) { %><tr><td>Feature Pack</td><td style="text-align:right;">—</td><td style="text-align:right;">—</td><td style="text-align:right;"><%- pfCell('FEATURE_PACK', 0, pkg.featurePack, 'Feature Pack') %></td></tr><% } %>
+        </tbody>
+      </table></div>
+      <% } %>
+      <!-- Broadband per circuit -->
+      <% if (pkg.broadband.length) { %>
+      <h3 style="font-size:12px;margin:0 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Broadband &amp; connectivity</h3>
+      <div class="table-wrap" style="margin-bottom:18px;"><table class="table">
+        <thead><tr><th>Circuit / Ref</th><th>Service</th><th>Location</th><th style="text-align:right;">Buy</th><th style="text-align:right;">Sell</th><th style="text-align:right;">Margin</th></tr></thead>
+        <tbody>
+          <% pkg.broadband.forEach(function(b){ %>
+            <tr>
+              <td style="font-size:12px;"><strong><%= b.cli %></strong></td>
+              <td><%= b.service %> <span class="muted" style="font-size:11px;">· <%= b.cli %></span></td>
+              <td class="muted" style="font-size:12px;"><%- locCell(b.cli, b.location) %></td>
+              <td style="text-align:right;" class="muted"><%= money(b.buy) %></td>
+              <td style="text-align:right;"><%- pfCell(b.cli, b.buy, b.sale, b.service) %></td>
+              <td style="text-align:right;color:<%= b.margin===null?'':(b.margin>=0?'#166534':'#b91c1c') %>;"><%= b.margin===null?'—':money(b.margin) %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table></div>
+      <% } %>
+      <!-- Line rental (standalone — separate billable product, may share a CLI with broadband) -->
+      <% if (pkg.lineRental.length) { %>
+      <h3 style="font-size:12px;margin:0 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Line rental</h3>
+      <div class="table-wrap" style="margin-bottom:18px;"><table class="table">
+        <thead><tr><th>CLI</th><th>Service</th><th>Location</th><th style="text-align:right;">Buy</th><th style="text-align:right;">Sell</th><th style="text-align:right;">Margin</th></tr></thead>
+        <tbody>
+          <% pkg.lineRental.forEach(function(b){ %>
+            <tr>
+              <td class="muted" style="font-size:12px;"><%= b.cli %></td>
+              <td><%= b.service %></td>
+              <td class="muted" style="font-size:12px;"><%- locCell(b.cli, b.location) %></td>
+              <td style="text-align:right;" class="muted"><%= money(b.buy) %></td>
+              <td style="text-align:right;"><%- pfCell('LR:'+b.cli, 0, b.sale, 'Line Rental') %></td>
+              <td style="text-align:right;color:<%= b.margin===null?'':(b.margin>=0?'#166534':'#b91c1c') %>;"><%= b.margin===null?'—':money(b.margin) %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table></div>
+      <% } %>
+      <!-- Mobile / other -->
+      <% if (pkg.other.length) { %>
+      <h3 style="font-size:12px;margin:0 0 6px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;">Mobile &amp; other</h3>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Ref</th><th style="text-align:right;">Buy</th><th style="text-align:right;">Sell</th></tr></thead>
+        <tbody>
+          <% pkg.other.forEach(function(o){ %><tr><td class="muted" style="font-size:12px;"><%= o.cli %> <span class="muted" style="font-size:11px;"><%= o.service %></span></td><td style="text-align:right;" class="muted"><%= money(o.buy) %></td><td style="text-align:right;"><% if (o.priceRef) { %><%- pfCell(o.priceRef, o.priceUnit||0, o.sale, o.service) %><% } else { %><% if (o.sale===null) { %><span class="badge badge-primary" style="font-size:10px;">unpriced</span><% } else { %><%= money(o.sale) %><% } %> <span class="muted" style="font-size:10px;">(set in Package Manager)</span><% } %></td></tr><% }); %>
+        </tbody>
+      </table></div>
+      <% } %>
+      <p class="muted" style="font-size:12px;margin:12px 0 0;">Lines are locked — press <strong>✎ Edit</strong> to change a sell price or location, then Save. Seats auto-count from live CLIs each month. Standards + bulk changes live in <a class="row-link" href="/bureau/pricing?source=comms">Service Pricing</a>.</p>
+      <script>(function(){var c=document.getElementById('commsAcctCard');if(!c)return;var b=document.getElementById('rcEditBtn');if(!b)return;b.addEventListener('click',function(){var on=c.classList.toggle('editing');b.textContent=on?'✓ Done':'✎ Edit';b.classList.toggle('btn-primary',on);});})();</script>
+    <% } %>
+  </div>
+
+  <!-- Number ranges owned by this customer (drive auto-allocation of new numbers) -->
+  <% var cranges = (typeof customerRanges!=='undefined'?customerRanges:[]); %>
+  <div class="card">
+    <div class="card-header"><h2>Number ranges <span class="muted">(<%= cranges.length %>)</span></h2></div>
+    <p class="muted" style="font-size:12px;margin:0 0 10px;">Number blocks this customer owns. Adding one immediately allocates every CLI and call record in the range to this customer, and new numbers that arrive in the range auto-pick up here (unless reallocated by hand).</p>
+    <% if (cranges.length) { %>
+    <div class="table-wrap" style="margin-bottom:10px;"><table class="table">
+      <thead><tr><th>From</th><th>To</th><th>Location</th><th></th></tr></thead>
+      <tbody>
+        <% cranges.forEach(function(r){ %>
+          <tr>
+            <td style="font-family:monospace;"><%= r.range_from %></td>
+            <td style="font-family:monospace;"><%= r.range_to %></td>
+            <td class="muted" style="font-size:12px;"><%= r.location || '—' %></td>
+            <td style="text-align:right;"><form method="post" action="/customers/<%= customer.id %>/number-ranges/<%= r.id %>/delete" style="margin:0;" onsubmit="return confirm('Remove this range? Existing allocations stay.');"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:#b91c1c;">Remove</button></form></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+    <% } %>
+    <form method="post" action="/customers/<%= customer.id %>/number-ranges/add" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+      <div><label class="muted" style="font-size:11px;display:block;">From</label><input class="input" name="from" placeholder="01793380190" required style="width:150px;font-size:13px;padding:5px 8px;"></div>
+      <div><label class="muted" style="font-size:11px;display:block;">To <span style="font-weight:400;">(blank = single)</span></label><input class="input" name="to" placeholder="01793380209" style="width:150px;font-size:13px;padding:5px 8px;"></div>
+      <div><label class="muted" style="font-size:11px;display:block;">Location</label><input class="input" name="location" placeholder="site / office" style="width:140px;font-size:13px;padding:5px 8px;"></div>
+      <button class="btn btn-primary" type="submit">Add range &amp; allocate</button>
+    </form>
+  </div>
+
+  <!-- Section 2: searchable list of CLIs / circuit refs -->
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2>List of CLIs / Refs <span class="muted">(<%= commsClis.length %>)</span></h2>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <form method="post" action="/customers/<%= customer.id %>/cli-assign" style="display:flex;gap:6px;align-items:center;margin:0;" title="Assign or reassign a CLI/ref to this customer — re-points its comms lines and call history here">
+          <input class="input" name="cli" placeholder="assign CLI / ref…" required style="width:160px;font-size:13px;padding:5px 8px;">
+          <button class="btn btn-primary" type="submit" style="font-size:12px;padding:5px 11px;">Assign</button>
+        </form>
+        <input class="input card-filter" placeholder="Search CLI, ref or service…" style="max-width:240px;font-size:13px;padding:5px 8px;">
+      </div>
+    </div>
+    <% if (!commsClis.length) { %>
+      <p class="muted" style="margin:0;">No CLIs/refs on this account yet.</p>
+    <% } else { %>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>CLI / Ref</th><th>Extension</th><th>Type</th><th>Location</th><th>Service(s)</th><th>Note</th><th style="text-align:right;">Cost /mo</th><th></th></tr></thead>
+        <tbody>
+          <% commsClis.forEach(function(c){ %>
+            <tr>
+              <td><strong><%= c.cli %></strong></td>
+              <td><%= c.extName || '—' %></td>
+              <td><span class="badge <%= c.type==='voice'?'badge-sent':'badge-primary' %>" style="font-size:10px;"><%= c.type==='voice'?'Number':'Circuit' %></span></td>
+              <td>
+                <form method="post" action="/customers/<%= customer.id %>/cli-location" style="display:flex;gap:4px;margin:0;">
+                  <input type="hidden" name="cli" value="<%= c.cli %>">
+                  <input class="input" name="location" value="<%= c.location || '' %>" placeholder="<%= c.type==='circuit'?'site / office…':'—' %>" style="width:120px;font-size:12px;padding:3px 6px;">
+                  <button class="btn" type="submit" style="font-size:11px;padding:3px 7px;">Save</button>
+                </form>
+              </td>
+              <td class="muted" style="font-size:12px;"><%= (c.services||[]).join(', ') %></td>
+              <td>
+                <form method="post" action="/customers/<%= customer.id %>/cli-note" style="display:flex;gap:4px;margin:0;">
+                  <input type="hidden" name="cli" value="<%= c.cli %>">
+                  <input class="input" name="note" value="<%= c.note || '' %>" placeholder="add note…" title="<%= c.note || '' %>" style="width:150px;font-size:12px;padding:3px 6px;<%= c.note?'background:#fef9c3;':'' %>">
+                  <button class="btn" type="submit" style="font-size:11px;padding:3px 7px;">Save</button>
+                </form>
+              </td>
+              <td style="text-align:right;"><%= money(c.cost) %></td>
+              <td style="text-align:right;white-space:nowrap;">
+                <a class="btn" href="/bureau/cli-report?cli=<%= encodeURIComponent(c.cli) %>" target="_blank" style="font-size:11px;padding:3px 7px;">Report</a>
+                <form method="post" action="/customers/<%= customer.id %>/cli-release" style="display:inline;margin:0;" onsubmit="return confirm('Release <%= c.cli %> from this customer? It will move to the Bureau as unallocated.');">
+                  <input type="hidden" name="cli" value="<%= c.cli %>">
+                  <button class="btn" type="submit" style="font-size:11px;padding:3px 7px;color:#b91c1c;">Release</button>
+                </form>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table></div>
+    <% } %>
+  </div>
+
+  <!-- Telephony physical assets — handsets registered to this customer (by device MAC/ID) -->
+  <% var hsets = (typeof commsHandsets!=='undefined'?commsHandsets:[]); %>
+  <% if (hsets.length) { %>
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2>Telephony devices <span class="muted">(<%= hsets.length %>)</span></h2>
+      <input class="input card-filter" placeholder="Search MAC or model…" style="max-width:240px;font-size:13px;padding:5px 8px;"></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>MAC / device ID</th><th>Model</th><th>Location</th></tr></thead>
+      <tbody>
+        <% hsets.forEach(function(h){ %><tr><td><strong style="font-family:monospace;font-size:12px;"><%= h.mac %></strong></td><td><%= h.model || '—' %></td><td class="muted" style="font-size:12px;"><%= h.location || '—' %></td></tr><% }); %>
+      </tbody>
+    </table></div>
+  </div>
+  <% } %>
+
+  <!-- Call-type markup — global default + per-customer override (override blank = use global) -->
+  <% var cm = (typeof callMarkups!=='undefined'?callMarkups:{global:{},customer:{},effective:{}}); var ctypes = (typeof callTypes!=='undefined'?callTypes:[]); %>
+  <div class="card">
+    <div class="card-header"><h2>Call markup</h2></div>
+    <p class="muted" style="font-size:12px;margin:0 0 10px;">Markup % per call type, applied only to chargeable calls. The override is pre-filled with the global default — change it to set a price just for this customer; clear it to revert to global.</p>
+    <form method="post" action="/customers/<%= customer.id %>/call-markups">
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Call type</th><th style="text-align:right;width:160px;">Global default %</th><th style="text-align:right;width:180px;">This customer %</th></tr></thead>
+        <tbody>
+          <% ctypes.forEach(function(t){ var ov = cm.customer[t.key]; var gl = cm.global[t.key]; %>
+            <tr>
+              <td><%= t.label %></td>
+              <td style="text-align:right;"><input class="input" name="global_<%= t.key %>" type="text" inputmode="decimal" value="<%= gl==null?'':gl %>" style="width:90px;text-align:right;font-size:13px;padding:4px 7px;"></td>
+              <td style="text-align:right;"><input class="input" name="cust_<%= t.key %>" type="text" inputmode="decimal" value="<%= ov==null?(gl==null?'':gl):ov %>" placeholder="<%= gl==null?'':gl %>" style="width:90px;text-align:right;font-size:13px;padding:4px 7px;"></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table></div>
+      <div style="margin-top:10px;"><button class="btn btn-primary" type="submit">Save markups</button></div>
+    </form>
+  </div>
+
+  <!-- Call history (itemized calls by period, as far back as records exist) -->
+  <div class="card" id="callHistCard">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2>Call history</h2>
+      <% var ch = (typeof callHistory!=='undefined'?callHistory:[]); var mk = (typeof callMarkupPct!=='undefined'?callMarkupPct:50); %>
+      <% if (ch.length) { %><span class="muted" id="chSummary"></span><% } %>
+    </div>
+    <% if (!ch.length) { %>
+      <p class="muted" style="margin:0;">No call records for this customer yet. Calls load from the DWS bill-runs and map by CLI — run <strong>Bring in all call records</strong> in the <a class="row-link" href="/bureau#calls">Bureau</a>, and make sure this customer's CLIs are mapped.</p>
+    <% } else { %>
+      <!-- Filter bar -->
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+        <div><label class="muted" style="font-size:11px;display:block;margin-bottom:2px;">From month</label><input type="month" id="chFrom" class="input" style="font-size:13px;padding:5px 8px;"></div>
+        <div><label class="muted" style="font-size:11px;display:block;margin-bottom:2px;">To month</label><input type="month" id="chTo" class="input" style="font-size:13px;padding:5px 8px;"></div>
+        <div><label class="muted" style="font-size:11px;display:block;margin-bottom:2px;">Min cost £</label><input type="number" id="chMinCost" class="input" min="0" step="1" placeholder="0" style="font-size:13px;padding:5px 8px;width:100px;"></div>
+        <button class="btn" type="button" id="chReset" style="font-size:12px;padding:6px 10px;">Reset</button>
+      </div>
+      <div class="table-wrap"><table class="table" id="chTable">
+        <thead><tr>
+          <th class="ch-sort" data-key="period" style="cursor:pointer;">Period <span class="ch-arrow"></span></th>
+          <th class="ch-sort" data-key="calls" style="text-align:right;cursor:pointer;">Calls <span class="ch-arrow"></span></th>
+          <th class="ch-sort" data-key="mins" style="text-align:right;cursor:pointer;">Minutes <span class="ch-arrow"></span></th>
+          <th class="ch-sort" data-key="cost" style="text-align:right;cursor:pointer;">Cost <span class="ch-arrow"></span></th>
+          <th class="ch-sort" data-key="sell" style="text-align:right;cursor:pointer;">Sell (+<%= mk %>%) <span class="ch-arrow"></span></th>
+          <th class="ch-sort" data-key="margin" style="text-align:right;cursor:pointer;">Margin <span class="ch-arrow"></span></th>
+          <th></th>
+        </tr></thead>
+        <tbody>
+          <% ch.forEach(function(r){ var cost=Number(r.cost||0), sell=cost*(1+mk/100), calls=Number(r.calls||0), mins=Math.round(Number(r.duration||0)/60); %>
+            <tr data-period="<%= r.billing_period %>" data-calls="<%= calls %>" data-mins="<%= mins %>" data-cost="<%= cost.toFixed(4) %>" data-sell="<%= sell.toFixed(4) %>" data-margin="<%= (sell-cost).toFixed(4) %>">
+              <td><%= r.billing_period %></td>
+              <td style="text-align:right;"><%= calls.toLocaleString() %></td>
+              <td style="text-align:right;"><%= mins.toLocaleString() %></td>
+              <td style="text-align:right;"><%= money(cost) %></td>
+              <td style="text-align:right;"><%= money(sell) %></td>
+              <td style="text-align:right;color:#166534;"><%= money(sell-cost) %></td>
+              <td style="text-align:right;"><a class="row-link" href="/customers/<%= customer.id %>/calls?period=<%= r.billing_period %>" style="font-size:12px;">View</a></td>
+            </tr>
+          <% }); %>
+        </tbody>
+        <tfoot><tr id="chTotals">
+          <td style="font-weight:700;">Total</td>
+          <td style="text-align:right;font-weight:700;" data-tot="calls"></td>
+          <td></td>
+          <td style="text-align:right;font-weight:700;" data-tot="cost"></td>
+          <td style="text-align:right;font-weight:700;" data-tot="sell"></td>
+          <td style="text-align:right;font-weight:700;color:#166534;" data-tot="margin"></td>
+          <td></td>
+        </tr></tfoot>
+      </table></div>
+      <p class="muted" id="chEmpty" style="display:none;margin:8px 0 0;">No periods match the filter.</p>
+      <script>(function(){
+        var card=document.getElementById('callHistCard'); if(!card) return;
+        var tbody=card.querySelector('#chTable tbody'); var rows=[].slice.call(tbody.querySelectorAll('tr'));
+        var fFrom=card.querySelector('#chFrom'), fTo=card.querySelector('#chTo'), fMin=card.querySelector('#chMinCost');
+        var gbp=function(n){return '£'+(n||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});};
+        var sort={key:null,dir:1};
+        function visible(r){
+          var p=r.getAttribute('data-period'), c=parseFloat(r.getAttribute('data-cost'));
+          if(fFrom.value && p<fFrom.value) return false;
+          if(fTo.value && p>fTo.value) return false;
+          if(fMin.value!=='' && c<parseFloat(fMin.value)) return false;
+          return true;
+        }
+        function num(r,k){return parseFloat(r.getAttribute('data-'+(k==='mins'?'mins':k)))||0;}
+        function apply(){
+          var shown=rows.filter(visible);
+          if(sort.key){
+            shown.sort(function(a,b){
+              if(sort.key==='period'){var x=a.getAttribute('data-period'),y=b.getAttribute('data-period');return (x<y?-1:x>y?1:0)*sort.dir;}
+              return (num(a,sort.key)-num(b,sort.key))*sort.dir;
+            });
+          }
+          rows.forEach(function(r){r.style.display='none';});
+          shown.forEach(function(r){r.style.display='';tbody.appendChild(r);});
+          var t={calls:0,mins:0,cost:0,sell:0,margin:0};
+          shown.forEach(function(r){t.calls+=num(r,'calls');t.mins+=num(r,'mins');t.cost+=parseFloat(r.getAttribute('data-cost'));t.sell+=parseFloat(r.getAttribute('data-sell'));t.margin+=parseFloat(r.getAttribute('data-margin'));});
+          card.querySelector('[data-tot="calls"]').textContent=t.calls.toLocaleString();
+          card.querySelector('[data-tot="cost"]').textContent=gbp(t.cost);
+          card.querySelector('[data-tot="sell"]').textContent=gbp(t.sell);
+          card.querySelector('[data-tot="margin"]').textContent=gbp(t.margin);
+          var sum=card.querySelector('#chSummary'); if(sum) sum.textContent=shown.length+' month'+(shown.length===1?'':'s')+' · '+t.calls.toLocaleString()+' calls · cost '+gbp(t.cost)+' · sell '+gbp(t.sell);
+          card.querySelector('#chEmpty').style.display=shown.length?'none':'';
+        }
+        [fFrom,fTo,fMin].forEach(function(el){el.addEventListener('input',apply);});
+        card.querySelector('#chReset').addEventListener('click',function(){fFrom.value='';fTo.value='';fMin.value='';sort={key:null,dir:1};card.querySelectorAll('.ch-arrow').forEach(function(a){a.textContent='';});apply();});
+        card.querySelectorAll('.ch-sort').forEach(function(th){th.addEventListener('click',function(){
+          var k=th.getAttribute('data-key'); sort.dir=(sort.key===k?-sort.dir:1); sort.key=k;
+          card.querySelectorAll('.ch-arrow').forEach(function(a){a.textContent='';});
+          th.querySelector('.ch-arrow').textContent=sort.dir>0?' ▲':' ▼'; apply();
+        });});
+        apply();
+      })();</script>
+    <% } %>
+  </div>
+</section>
+
+<!-- ═══ Quotes ═══ -->
+<section class="tab-panel" data-key="quotes">
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;display:flex;justify-content:space-between;align-items:center;">
+      <h2>Quotes <span class="muted">(<%= quotes.length %>)</span></h2>
+      <a class="btn btn-primary" href="/quotes/new?customer=<%= customer.id %>">+ New quote</a>
+    </div>
+    <div style="padding:8px 24px 4px;"><input class="input card-filter" placeholder="Search quotes…" style="max-width:280px;"></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Number</th><th>Title</th><th>Status</th><th style="text-align:right;">Total</th></tr></thead>
+        <tbody>
+          <% if (quotes.length===0) { %><tr><td colspan="4"><div class="empty-state">No quotes.</div></td></tr><% } %>
+          <% quotes.forEach(function(q){ %>
+            <tr><td><a class="row-link" href="/quotes/<%= q.id %>"><%= q.quote_number %></a></td><td><%= q.title %></td><td><span class="badge <%= q.status==='accepted'?'badge-sent':q.status==='sent'?'badge-primary':q.status==='lost'?'badge-failed':'badge-inactive' %>"><%= q.status %></span></td><td style="text-align:right;"><%= money(q.total) %></td></tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ Invoices ═══ -->
+<section class="tab-panel" data-key="invoices">
+  <div class="card" style="padding:0;">
+    <%
+      var off='#d1d5db';
+      function pstate(i){
+        if (i.status==='void') return { label:'Void', cls:'badge-inactive' };
+        if (i.payment_status==='paid') return { label:'Paid', cls:'badge-sent' };
+        var bal=Number(i.balance||0), tot=Number(i.total||0);
+        if (bal>0 && bal<tot) return { label:'Part-paid', cls:'badge-primary' };
+        var overdue=i.due_date && new Date(i.due_date) < new Date(new Date().toDateString());
+        return overdue ? { label:'Overdue', cls:'badge-failed' } : { label:'Unpaid', cls:'badge-primary' };
+      }
+      var custOutstanding = invoices.reduce(function(a,i){return a+Number(i.balance||0);},0);
+    %>
+    <div class="card-header" style="padding:20px 24px 0;display:flex;justify-content:space-between;align-items:center;">
+      <h2>Invoices <span class="muted">(<%= invoices.length %>)</span><% if (custOutstanding>0) { %> <span style="font-size:13px;font-weight:600;color:#b45309;">· <%= money(custOutstanding) %> outstanding</span><% } %><% if (typeof creditBalance!=='undefined' && creditBalance>0) { %> <span style="font-size:13px;font-weight:600;color:#166534;">· <%= money(creditBalance) %> credit</span><% } %></h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <% if (typeof canFinance !== 'undefined' && canFinance) { %>
+        <div style="position:relative;">
+          <button type="button" class="btn" onclick="var f=document.getElementById('ddInviteForm');f.style.display=f.style.display==='none'?'block':'none';">💳 Direct Debit invite</button>
+          <form id="ddInviteForm" method="post" action="/customers/<%= customer.id %>/dd-invite" style="display:none;position:absolute;right:0;top:42px;z-index:30;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 26px rgba(2,6,23,.18);padding:14px;min-width:300px;text-align:left;">
+            <label style="font-size:12px;color:#475569;display:block;margin-bottom:6px;">Email the Direct Debit setup link to:</label>
+            <input class="input" type="email" name="email" value="<%= customer.email || '' %>" placeholder="customer@example.com" style="width:100%;margin-bottom:10px;box-sizing:border-box;" required>
+            <button class="btn btn-primary btn-block" type="submit">Send invite</button>
+            <p class="muted" style="font-size:11px;margin:8px 0 0;">Sends a secure GoCardless link for the customer to set up Direct Debit.</p>
+          </form>
+        </div>
+        <% } %>
+        <a class="btn btn-primary" href="/invoices/new?customer=<%= customer.id %>">+ New invoice</a>
+      </div>
+    </div>
+    <div style="padding:8px 24px 4px;"><input class="input card-filter" placeholder="Search invoices…" style="max-width:280px;"></div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Number</th><th>Title</th><th>Paid?</th><th style="text-align:right;">Total</th><th style="text-align:right;">Outstanding</th><th>Issued</th><th style="text-align:center;">Sync</th></tr></thead>
+        <tbody>
+          <% if (invoices.length===0) { %><tr><td colspan="7"><div class="empty-state">No invoices.</div></td></tr><% } %>
+          <% invoices.forEach(function(i){ var ps=pstate(i); %>
+            <tr>
+              <td><a class="row-link" href="/invoices/<%= i.id %>"><%= i.invoice_number %></a><% if (i.is_legacy) { %> <span class="badge badge-inactive" title="Imported from QuickBooks" style="font-size:10px;">Legacy</span><% } %></td>
+              <td><%= i.title %></td>
+              <td><span class="badge <%= ps.cls %>"><%= ps.label %></span><% if (i.gocardless_mandate_id) { %><br><span class="muted" style="font-size:11px;">Direct Debit</span><% } %></td>
+              <td style="text-align:right;"><%= money(i.total) %></td>
+              <td style="text-align:right;"><% if (Number(i.balance)>0) { %><span style="color:#b45309;font-weight:600;"><%= money(i.balance) %></span><% } else if (i.payment_status==='paid') { %><span class="muted">—</span><% } else { %><span class="muted"><%= money(i.total) %></span><% } %></td>
+              <td class="muted"><%= i.issue_date ? new Date(i.issue_date).toLocaleDateString('en-GB') : '—' %></td>
+              <td style="text-align:center;white-space:nowrap;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.emailed ? '#2563eb' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title>Emailed to customer</title><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.gocardless_payment_id ? '#166534' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title>Submitted for payment (GoCardless)</title><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.quickbooks_invoice_id ? '#b45309' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= i.payment_synced_at ? 'In QuickBooks · synced ' + new Date(i.payment_synced_at).toLocaleString('en-GB') : 'In QuickBooks' %></title><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ Contracts ═══ -->
+<section class="tab-panel" data-key="contracts">
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;display:flex;justify-content:space-between;align-items:center;">
+      <h2>Contracts <span class="muted">(<%= contracts.length %>)</span></h2>
+      <a class="btn btn-primary" href="/contracts/new?customer=<%= customer.id %>">+ New contract</a>
+    </div>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Number</th><th>Title</th><th>Service</th><th>Status</th></tr></thead>
+        <tbody>
+          <% if (contracts.length===0) { %><tr><td colspan="4"><div class="empty-state">No contracts.</div></td></tr><% } %>
+          <% contracts.forEach(function(ct){ %>
+            <tr><td><a class="row-link" href="/contracts/<%= ct.id %>"><%= ct.contract_number %></a></td><td><%= ct.title %></td><td class="muted"><%= ct.service_type %></td><td><span class="badge <%= ct.status==='active'?'badge-sent':ct.status==='draft'?'badge-inactive':'badge-failed' %>"><%= ct.status %></span></td></tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ Cloud (cloud service items + M365 directory) ═══ -->
+<section class="tab-panel" data-key="cloud">
+  <% var tpl = (typeof itcloudTpl!=='undefined') ? itcloudTpl : null; %>
+  <% var itc = (typeof itcloud!=='undefined' && itcloud) ? itcloud : { itLines:[], cloudLines:[], totals:{cost:0,sale:0}, unpriced:0, giacomLinked:false }; %>
+  <% var history = (typeof itcloudHistory!=='undefined' && itcloudHistory) ? itcloudHistory : []; %>
+  <% var baseItems = tpl ? (tpl.items||[]).filter(function(i){ return i.source!=='giacom'; }) : []; %>
+  <% var baseSell = 0; baseItems.forEach(function(i){ baseSell += Number(i.line_total)||0; }); (itc.itLines||[]).forEach(function(l){ baseSell += Number(l.sale)||0; }); %>
+  <% var giacomSell = 0; (itc.cloudLines||[]).forEach(function(l){ if(l.sale!=null) giacomSell += Number(l.sale); }); %>
+
+  <% if (!tpl) { %>
+    <div class="card">
+      <h2 style="margin:0 0 8px;">IT &amp; Cloud rate card</h2>
+      <p class="muted" style="margin:0 0 14px;">No IT&amp;Cloud template yet. Create one to hold this customer's base services (Giacom lines auto-attach from the product list).</p>
+      <form method="post" action="/customers/<%= customer.id %>/cloud-template/create"><button class="btn btn-primary" type="submit">Create rate card / template</button></form>
+    </div>
+  <% } else { %>
+    <div class="card" style="margin-bottom:14px;display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
+      <div><div class="muted" style="font-size:12px;">Monthly sell (ex VAT)</div><div style="font-size:22px;font-weight:800;color:#166534;"><%= money(baseSell + giacomSell) %></div></div>
+      <div><div class="muted" style="font-size:12px;">Giacom cost (ex VAT)</div><div style="font-size:16px;font-weight:700;color:#64748b;"><%= money(itc.totals.cost) %></div></div>
+      <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:16px;font-weight:700;color:#166534;"><%= money(baseSell + giacomSell - itc.totals.cost) %></div></div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+        <% if (itc.unmatched) { %><span class="badge" style="background:#fee2e2;color:#b91c1c;font-size:11px;">⚠ <%= itc.unmatched %> not in product list</span><% } %>
+        <% if (itc.unpriced) { %><span class="badge" style="background:#fef3c7;color:#92400e;font-size:11px;"><%= itc.unpriced %> Giacom unpriced</span><% } %>
+        <a class="btn" href="/products" style="font-size:12px;padding:4px 10px;">Product list</a>
+        <a class="btn" href="/invoices/<%= tpl.id %>/edit" style="font-size:12px;padding:4px 10px;">Full editor</a>
+        <% var _giacomCount = (itc.cloudLines||[]).length; %>
+        <form method="post" action="/customers/<%= customer.id %>/cloud-template/delete" style="display:inline;margin:0;"
+              onsubmit="return confirm(<%= _giacomCount ? "'⚠ This customer has " + _giacomCount + " synced Giacom service(s). Deleting the template stops those cloud lines rolling onto a consolidated bill. The template will be recycled (restorable). Continue?'" : "'Delete this IT & Cloud template? It will be recycled (restorable from the recycle bin). Continue?'" %>);">
+          <button class="btn" type="submit" style="font-size:12px;padding:4px 10px;color:#b91c1c;border-color:#fca5a5;">Delete template</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- BASE SERVICES (manual / contract) -->
+    <div class="card" style="padding:0;margin-bottom:14px;">
+      <div class="card-header" style="padding:16px 20px 4px;"><h2>Base services <span class="muted" style="font-weight:500;font-size:12px;">— manual / contract lines on the template</span></h2></div>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Service</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit sell £</th><th style="text-align:right;">Line total</th><th></th></tr></thead>
+        <tbody>
+          <% if (!baseItems.length) { %><tr><td colspan="5"><div class="empty-state">No base services — add one below.</div></td></tr><% } %>
+          <% baseItems.forEach(function(it){ %>
+            <tr>
+              <form method="post" action="/customers/<%= customer.id %>/cloud-line" style="display:contents;">
+                <td><input type="hidden" name="item_id" value="<%= it.id %>"><input class="input" name="description" value="<%= it.description %>" style="width:100%;box-sizing:border-box;padding:3px 6px;font-size:13px;"></td>
+                <td style="text-align:right;"><input class="input" name="qty" value="<%= Number(it.quantity) %>" style="width:60px;text-align:right;padding:3px 6px;font-size:13px;"></td>
+                <td style="text-align:right;"><input class="input" name="sale_price" value="<%= Number(it.unit_price).toFixed(2) %>" style="width:84px;text-align:right;padding:3px 6px;font-size:13px;"></td>
+                <td style="text-align:right;font-weight:600;"><%= money(Number(it.unit_price)*Number(it.quantity)) %></td>
+                <td style="text-align:right;white-space:nowrap;"><button class="btn" type="submit" style="font-size:12px;padding:3px 8px;">Save</button></td>
+              </form>
+            </tr>
+            <tr style="border:0;"><td colspan="5" style="text-align:right;padding:0 12px 8px;border:0;"><form method="post" action="/customers/<%= customer.id %>/cloud-line/delete" onsubmit="return confirm('Remove this line?');" style="margin:0;display:inline;"><input type="hidden" name="item_id" value="<%= it.id %>"><button class="btn" type="submit" style="font-size:11px;padding:1px 7px;color:#b91c1c;">✕ remove</button></form></td></tr>
+          <% }); %>
+        </tbody>
+      </table></div>
+      <div style="padding:14px 20px;border-top:1px solid var(--line);">
+        <form method="post" action="/customers/<%= customer.id %>/cloud-line/add" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;">
+          <div class="form-group" style="flex:2;min-width:240px;margin:0;"><label style="font-size:11px;">Add service — pick from product list <span class="muted">(links QuickBooks + reporting)</span></label><input class="input rc-prod" name="description" list="rcProdList" placeholder="Search products… or type a name" autocomplete="off" required><input type="hidden" name="product_id" class="rc-pid"></div>
+          <div class="form-group" style="margin:0;"><label style="font-size:11px;">Qty</label><input class="input rc-qty" name="qty" value="1" style="width:64px;"></div>
+          <div class="form-group" style="margin:0;"><label style="font-size:11px;">Unit sell £</label><input class="input rc-price" name="sale_price" value="0.00" style="width:90px;text-align:right;"></div>
+          <button class="btn btn-primary" type="submit">+ Add</button>
+        </form>
+        <datalist id="rcProdList"></datalist>
+        <script>(function(){
+          var f=document.currentScript.closest('.card'); if(!f) return;
+          var search=f.querySelector('.rc-prod'), pid=f.querySelector('.rc-pid'), price=f.querySelector('.rc-price');
+          var prods=[];
+          fetch('/products/catalogue.json').then(function(r){return r.json();}).then(function(rows){
+            prods=rows||[]; var dl=document.getElementById('rcProdList');
+            prods.forEach(function(p){ var o=document.createElement('option'); o.value=p.name; dl.appendChild(o); });
+          }).catch(function(){});
+          if(search) search.addEventListener('input', function(){
+            var p=prods.find(function(x){ return x.name===search.value; });
+            if(p){ pid.value=p.id; if(price && (!price.value || price.value==='0.00')) price.value=Number(p.unit_price||p.sell||0).toFixed(2); }
+            else { pid.value=''; }
+          });
+        })();</script>
+      </div>
+    </div>
+
+    <!-- GIACOM (auto, priced from the product list) -->
+    <div class="card" style="padding:0;margin-bottom:14px;">
+      <div class="card-header" style="padding:16px 20px 4px;"><h2>Giacom services <span class="muted" style="font-weight:500;font-size:12px;">— auto from the feed · priced from the product list · ✓ standard / ◆ override</span></h2></div>
+      <% if (!itc.giacomLinked) { %><p class="muted" style="padding:0 20px 14px;">Not paired to a Giacom customer — match one on the <a class="row-link" href="/settings/giacom/match">matching screen</a>.</p><% } %>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Product</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit cost</th><th style="text-align:right;">Unit sell £</th><th style="text-align:right;">Line total</th><th style="text-align:right;">Margin</th></tr></thead>
+        <tbody>
+          <% if (!(itc.cloudLines||[]).length) { %><tr><td colspan="6"><div class="empty-state">No Giacom services for this customer.</div></td></tr><% } %>
+          <% (itc.cloudLines||[]).forEach(function(l){ %>
+            <tr>
+              <td><%= l.description %> <% if (l.inCatalogue===false) { %><span class="badge" style="background:#fee2e2;color:#b91c1c;font-size:9px;" title="This Giacom product (<%= l.ref %>) is not in the product list — add it so it can be priced and mapped to QuickBooks">⚠ not in product list</span><% } else if (l.customerOverride) { %><span class="badge" style="background:#ede9fe;color:#6d28d9;font-size:9px;">◆ override</span><% } else if (l.salePriceEach!=null) { %><span class="badge" style="background:#dbeafe;color:#1e40af;font-size:9px;">✓ standard</span><% } %></td>
+              <td style="text-align:right;"><%= Number(l.qty) %></td>
+              <td style="text-align:right;color:#64748b;"><%= money(l.unitCost) %></td>
+              <td style="text-align:right;">
+                <form method="post" action="/customers/<%= customer.id %>/cloud-price" style="display:inline-flex;align-items:center;gap:4px;justify-content:flex-end;margin:0;">
+                  <input type="hidden" name="ref" value="<%= l.ref || '' %>"><input type="hidden" name="unit_cost" value="<%= l.unitCost %>"><input type="hidden" name="description" value="<%= l.description %>">
+                  <span class="muted">£</span><input class="input" name="sale_price" value="<%= l.salePriceEach==null?'':Number(l.salePriceEach).toFixed(2) %>" placeholder="set…" style="width:70px;text-align:right;padding:3px 6px;font-size:13px;<%= l.salePriceEach==null?'background:#fffbeb;border-color:#fcd34d;':'' %>">
+                  <label class="muted" style="font-size:10px;white-space:nowrap;" title="Set as the standard price for ALL customers"><input type="checkbox" name="scope" value="global" style="vertical-align:middle;"> std</label>
+                  <button class="btn" type="submit" style="font-size:12px;padding:3px 8px;">Save</button>
+                </form>
+              </td>
+              <td style="text-align:right;font-weight:600;"><%= l.sale==null?'—':money(l.sale) %></td>
+              <td style="text-align:right;color:#166534;"><%= l.sale==null?'—':money(l.sale - Number(l.cost||0)) %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+        <tfoot><tr><td colspan="4" style="text-align:right;font-weight:700;">Giacom monthly (ex VAT)</td><td style="text-align:right;font-weight:700;"><%= money(giacomSell) %></td><td></td></tr></tfoot>
+      </table></div>
+      <p class="muted" style="padding:8px 20px 14px;font-size:11px;">Tick <strong>std</strong> to set the global product-list price (all customers); leave unticked to override just this customer. Edit costs on the <a class="row-link" href="/products">product list</a>.</p>
+    </div>
+
+    <!-- SERVICE HISTORY -->
+    <div class="card" style="padding:0;">
+      <div class="card-header" style="padding:16px 20px 4px;"><h2>Service history <span class="muted" style="font-weight:500;font-size:12px;">— detected Giacom changes</span></h2></div>
+      <% if (!history.length) { %>
+        <p class="muted" style="padding:0 20px 16px;">No changes recorded yet. Adds, removals and quantity changes from the Giacom sync will appear here.</p>
+      <% } else { %>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>When</th><th>Change</th><th>Service</th><th style="text-align:right;">Was → Now</th></tr></thead>
+          <tbody>
+            <% history.forEach(function(h){ var c=h.change_type; var col=c==='removed'?'#b91c1c':(c==='added'?'#166534':(c==='prorata'?'#1e40af':'#92400e')); var lbl=c==='added'?'+ added':(c==='removed'?'✕ removed':(c==='prorata'?'◴ part-month':(c==='qty_up'?'▲ qty up':'▼ qty down'))); %>
+              <tr>
+                <td class="muted" style="white-space:nowrap;font-size:12px;"><%= new Date(h.detected_at).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) %></td>
+                <td><span style="color:<%= col %>;font-weight:600;font-size:12px;"><%= lbl %></span></td>
+                <td style="font-size:13px;"><%= h.description %></td>
+                <td style="text-align:right;font-size:12px;"><%= h.old_qty==null?'—':h.old_qty %> → <%= h.new_qty==null?'—':h.new_qty %></td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table></div>
+      <% } %>
+    </div>
+  <% } %>
+</section>
+
+<!-- ═══ Onboarding ═══ -->
+<section class="tab-panel" data-key="onboarding">
+  <div class="card" id="onboarding" style="border-top:3px solid var(--accent);">
+    <div class="card-header"><h2>Onboarding</h2>
+      <span style="font-weight:400;margin-left:8px;">
+      <% if (ost==='applied') { %><span class="badge badge-sent">Completed</span>
+      <% } else if (ost==='submitted') { %><span class="badge badge-primary">Submitted — review</span>
+      <% } else if (ost==='sent') { %><span class="badge badge-failed">Sent — awaiting reply</span>
+      <% } else { %><span class="badge badge-inactive">Not started</span><% } %>
+      </span>
+    </div>
+    <% if (ost==='submitted' && customer.onboarding_data) { var od = customer.onboarding_data; var oc = od.contacts||{}; %>
+      <p class="muted" style="margin:0 0 10px;">The customer submitted these details<%= customer.onboarding_submitted_at ? ' on ' + new Date(customer.onboarding_submitted_at).toLocaleString('en-GB') : '' %>. Review and apply to the record.</p>
+      <table class="table" style="margin-bottom:12px;"><tbody>
+        <tr><th style="width:32%;">Legal name</th><td><%= od.legal_name || '—' %></td></tr>
+        <tr><th>Company no / VAT</th><td><%= [od.company_number, od.vat_number].filter(Boolean).join(' · ') || '—' %></td></tr>
+        <tr><th>Registered address</th><td><%= od.reg ? [od.reg.line1,od.reg.line2,od.reg.city,od.reg.county,od.reg.postcode].filter(Boolean).join(', ') : '—' %></td></tr>
+        <tr><th>Billing address</th><td><% if (od.billing==='same') { %>Same as registered<% } else if (od.billing) { %><%= [od.billing.line1,od.billing.line2,od.billing.city,od.billing.county,od.billing.postcode].filter(Boolean).join(', ') || '—' %><% } else { %>—<% } %></td></tr>
+        <tr><th>Finance contact</th><td><%= oc.finance && oc.finance.name ? oc.finance.name + (oc.finance.email?' · '+oc.finance.email:'') : '—' %></td></tr>
+        <tr><th>Lead contact</th><td><%= oc.lead && oc.lead.name ? oc.lead.name + (oc.lead.email?' · '+oc.lead.email:'') : '—' %></td></tr>
+        <tr><th>Service contact</th><td><%= oc.service && oc.service.name ? oc.service.name + (oc.service.email?' · '+oc.service.email:'') : '—' %></td></tr>
+        <tr><th>Sites</th><td><% if (od.sites && od.sites.length) { %><%= od.sites.map(function(s){return s.name + (s.address?' ('+s.address+')':'');}).join('; ') %><% } else { %>—<% } %></td></tr>
+      </tbody></table>
+      <form method="post" action="/customers/<%= customer.id %>/onboarding/apply" onsubmit="return confirm('Apply these details to the customer record? This sets the finance/lead/service contacts and fills in the business details.');" style="margin:0;">
+        <button class="btn btn-primary" type="submit">Apply to record</button>
+      </form>
+    <% } else { %>
+      <p class="muted" style="margin:0 0 12px;">Email the customer a secure form to collect their legal details, key contacts (finance / lead / service) and sites.</p>
+      <form method="post" action="/customers/<%= customer.id %>/onboarding/send" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+        <div class="form-group" style="margin:0;flex:1;min-width:240px;"><label>Send to <span class="muted">(optional — defaults to primary contact)</span></label><input class="input" type="email" name="send_to" placeholder="contact@customer.co.uk" style="width:100%;"></div>
+        <button class="btn btn-primary" type="submit"><%= ost==='sent' ? 'Resend form' : 'Send onboarding form' %></button>
+      </form>
+      <% if (ost==='sent' && customer.onboarding_sent_at) { %><p class="muted" style="font-size:12px;margin:8px 0 0;">Sent <%= new Date(customer.onboarding_sent_at).toLocaleString('en-GB') %> — waiting for the customer to complete it.</p><% } %>
+    <% } %>
+  </div>
+</section>
+
+<!-- ═══ Account Review (A-Z) ═══ -->
+<section class="tab-panel" data-key="review" id="review">
+  <div class="card">
+    <div style="display:flex;justify-content:flex-end;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+      <span class="muted" style="font-size:13px;">Last reviewed: <strong><%= customer.last_reviewed_at ? new Date(customer.last_reviewed_at).toLocaleDateString('en-GB') : 'never' %></strong></span>
+      <label style="font-size:12px;display:inline-flex;gap:4px;align-items:center;"><input type="checkbox" id="azHistory"> Show history</label>
+      <form method="post" action="/customers/<%= customer.id %>/mark-reviewed" style="margin:0;"><button class="btn btn-primary" type="submit">Mark reviewed</button></form>
+    </div>
+    <% var SECT = [['concern','Business Concerns'],['service','Service Review'],['future','Future Projects'],['current','Current Projects'],['note','Notes']]; %>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;">
+      <% SECT.forEach(function(s){ var items = (typeof reviewItems !== 'undefined' ? reviewItems : []).filter(function(r){ return r.section===s[0]; }); %>
+        <div>
+          <h3 style="font-size:14px;margin:0 0 6px;"><%= s[1] %></h3>
+          <% items.forEach(function(r){ %>
+            <div class="<%= r.status==='done' ? 'az-done' : '' %>" style="<%= r.status==='done' ? 'display:none;' : '' %>border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-bottom:5px;font-size:13px;display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
+              <span style="<%= r.status==='done' ? 'text-decoration:line-through;color:#9ca3af;' : '' %>"><%= r.body %><% if (r.due_date) { %> <span class="badge badge-failed" style="font-size:10px;">due <%= new Date(r.due_date).toLocaleDateString('en-GB') %></span><% } %></span>
+              <span style="white-space:nowrap;display:flex;gap:4px;">
+                <form method="post" action="/review-items/<%= r.id %>/toggle" style="margin:0;"><button class="btn" type="submit" style="padding:0 7px;font-size:11px;" title="<%= r.status==='done' ? 'Reopen' : 'Done' %>"><%= r.status==='done' ? '↺' : '✓' %></button></form>
+                <form method="post" action="/review-items/<%= r.id %>/delete" style="margin:0;" onsubmit="return confirm('Delete this item?');"><button class="btn" type="submit" style="padding:0 7px;font-size:11px;">✕</button></form>
+              </span>
+            </div>
+          <% }); %>
+          <form method="post" action="/customers/<%= customer.id %>/review-items" style="display:flex;gap:4px;margin-top:4px;">
+            <input type="hidden" name="section" value="<%= s[0] %>">
+            <input class="input" name="body" placeholder="Add…" style="flex:1;min-width:80px;font-size:12px;padding:4px 6px;" required>
+            <input class="input" type="date" name="due_date" style="font-size:11px;padding:4px;width:120px;" title="Optional due date">
+            <button class="btn" type="submit" style="padding:2px 9px;">+</button>
+          </form>
+        </div>
+      <% }); %>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ Documents ═══ -->
+<% var docList = (typeof documents!=='undefined'?documents:[]);
+   function fmtDocBytes(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+   function docFileUrl(cid,did,fid){ return '/customers/'+cid+'/documents/'+did+'/files/'+fid+'/view'; } %>
+<section class="tab-panel" data-key="documents" id="documents">
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;">
+      <h2>Documents <span class="muted">(<%= docList.length %>)</span></h2>
+      <button class="btn btn-primary" type="button" onclick="document.getElementById('doc-modal').style.display='block';">+ Upload document</button>
+    </div>
+    <p class="muted" style="padding:2px 24px 0;font-size:12px;">Stored privately on the server (staff-only). Each document can hold several files/photos. Up to 25&nbsp;MB per file.</p>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Title</th><th>Files</th><th>Added</th><th></th></tr></thead>
+        <tbody>
+          <% if (!docList.length) { %><tr><td colspan="4"><div class="empty-state">No documents yet.</div></td></tr><% } %>
+          <% docList.forEach(function(d){ var files=d.files||[]; %>
+            <tr>
+              <td style="max-width:280px;"><strong><%= d.title %></strong><% if (d.description) { %><br><span class="muted" style="font-size:12px;"><%= d.description %></span><% } %></td>
+              <td>
+                <% if (!files.length) { %><span class="muted">—</span><% } %>
+                <% files.forEach(function(f){ %>
+                  <a class="row-link" href="<%= docFileUrl(customer.id,d.id,f.id) %>" target="_blank" rel="noopener" style="display:inline-block;margin:0 8px 4px 0;"><%= f.file_name %> <span class="muted" style="font-size:11px;">(<%= fmtDocBytes(f.file_size) %>)</span></a>
+                <% }); %>
+              </td>
+              <td class="muted" style="white-space:nowrap;"><%= d.created_at ? new Date(d.created_at).toLocaleDateString('en-GB') : '' %><% if (d.uploaded_by) { %><br><span style="font-size:11px;"><%= d.uploaded_by %></span><% } %></td>
+              <td class="row-actions" style="white-space:nowrap;">
+                <button type="button" class="row-link" style="background:none;border:none;cursor:pointer;" onclick="document.getElementById('doc-edit-<%= d.id %>').style.display='block';">Edit</button>
+                <form method="post" action="/customers/<%= customer.id %>/documents/<%= d.id %>/delete" style="display:inline;margin:0;" onsubmit="return confirm('Delete this document and all its files?');"><button type="submit" class="row-link" style="background:none;border:none;cursor:pointer;color:#b91c1c;">Delete</button></form>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Upload drawer (new document) -->
+  <div id="doc-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:1000;">
+    <div style="position:absolute;top:0;right:0;bottom:0;width:min(460px,94vw);background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow:auto;padding:24px 28px;">
+      <h2 style="margin:0 0 16px;">Upload document</h2>
+      <form method="post" action="/customers/<%= customer.id %>/documents" enctype="multipart/form-data">
+        <div class="form-group"><label>Title *</label><input class="input" name="title" required placeholder="e.g. Network diagrams"></div>
+        <div class="form-group"><label>Description</label><textarea class="input" name="description" rows="3" placeholder="Optional notes about this document"></textarea></div>
+        <div class="form-group"><label>Files * <span class="muted" style="font-weight:400;">(select one or more)</span></label><input class="input" type="file" name="files" multiple required></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+          <button type="button" class="btn" onclick="document.getElementById('doc-modal').style.display='none';">Cancel</button>
+          <button type="submit" class="btn btn-primary">Upload</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit drawers (one per document) -->
+  <% docList.forEach(function(d){ var files=d.files||[]; %>
+  <div id="doc-edit-<%= d.id %>" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:1000;">
+    <div style="position:absolute;top:0;right:0;bottom:0;width:min(460px,94vw);background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow:auto;padding:24px 28px;">
+      <h2 style="margin:0 0 16px;">Edit document</h2>
+      <div class="form-group"><label>Files</label>
+        <% if (!files.length) { %><div class="muted" style="font-size:13px;">No files.</div><% } %>
+        <% files.forEach(function(f){ %>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line);">
+            <a class="row-link" href="<%= docFileUrl(customer.id,d.id,f.id) %>" target="_blank" rel="noopener" style="flex:1;"><%= f.file_name %></a>
+            <span class="muted" style="font-size:11px;"><%= fmtDocBytes(f.file_size) %></span>
+            <form method="post" action="/customers/<%= customer.id %>/documents/<%= d.id %>/files/<%= f.id %>/delete" style="margin:0;" onsubmit="return confirm('Remove this file?');"><button type="submit" class="row-link" style="background:none;border:none;cursor:pointer;color:#b91c1c;">Remove</button></form>
+          </div>
+        <% }); %>
+      </div>
+      <form method="post" action="/customers/<%= customer.id %>/documents/<%= d.id %>/edit" enctype="multipart/form-data" style="margin-top:14px;">
+        <div class="form-group"><label>Title *</label><input class="input" name="title" required value="<%= d.title %>"></div>
+        <div class="form-group"><label>Description</label><textarea class="input" name="description" rows="3"><%= d.description || '' %></textarea></div>
+        <div class="form-group"><label>Add more files <span class="muted" style="font-weight:400;">(optional)</span></label><input class="input" type="file" name="files" multiple></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+          <button type="button" class="btn" onclick="document.getElementById('doc-edit-<%= d.id %>').style.display='none';">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <% }); %>
+</section>
+
+<!-- ═══ Passwords (vault) ═══ -->
+<% var credList = (typeof credentials!=='undefined'?credentials:[]);
+   var pwCats = ['Microsoft 365','Email','Server','Workstation','Router / Firewall','Wi-Fi','Website / CMS','Domain / DNS','Banking / Finance','Software / License','Backup','Other']; %>
+<% if (typeof canVault!=='undefined' && canVault) { %>
+<section class="tab-panel" data-key="passwords" id="passwords">
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;">
+      <h2>Passwords <span class="muted">(<%= credList.length %>)</span></h2>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input class="input pw-filter" placeholder="Filter…" style="max-width:200px;padding:5px 10px;">
+        <button class="btn btn-primary" type="button" onclick="pwOpen()">+ Add password</button>
+      </div>
+    </div>
+    <p class="muted" style="padding:2px 24px 0;font-size:12px;">Stored encrypted (AES-256). Staff-only; every reveal and copy is recorded in the activity log.</p>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Name</th><th>Login URL</th><th>Username</th><th>Password</th><th>Category</th><th></th></tr></thead>
+        <tbody>
+          <% if (!credList.length) { %><tr><td colspan="6"><div class="empty-state">No passwords saved yet.</div></td></tr><% } %>
+          <% credList.forEach(function(cr){ %>
+            <tr data-id="<%= cr.id %>"
+                data-name="<%= cr.name || '' %>" data-login_url="<%= cr.login_url || '' %>" data-username="<%= cr.username || '' %>"
+                data-domain="<%= cr.domain || '' %>" data-category="<%= cr.category || '' %>" data-extra_value="<%= cr.extra_value || '' %>" data-note="<%= cr.note || '' %>">
+              <td><strong><%= cr.name %></strong><% if (cr.note) { %><br><span class="muted" style="font-size:12px;"><%= cr.note %></span><% } %></td>
+              <td><% if (cr.login_url) { %><a class="row-link" href="<%= /^https?:/.test(cr.login_url)?cr.login_url:('https://'+cr.login_url) %>" target="_blank" rel="noopener"><%= cr.login_url %></a><% } else { %><span class="muted">—</span><% } %></td>
+              <td><% if (cr.username) { %><span class="pw-user"><%= cr.username %></span> <button type="button" class="pw-mini" title="Copy username" onclick="pwCopyText('<%= (cr.username||'').replace(/'/g,"\\'") %>',this)">⧉</button><% } else { %><span class="muted">—</span><% } %></td>
+              <td>
+                <% if (cr.has_secret) { %>
+                  <span style="display:inline-flex;align-items:center;gap:6px;">
+                    <span class="pw-secret" data-shown="0">••••••••</span>
+                    <button type="button" class="pw-mini" title="Reveal" onclick="pwReveal(<%= cr.id %>,this)">👁</button>
+                    <button type="button" class="pw-mini" title="Copy password" onclick="pwCopy(<%= cr.id %>,this)">⧉</button>
+                  </span>
+                <% } else { %><span class="muted">—</span><% } %>
+              </td>
+              <td><% if (cr.category) { %><span class="badge badge-inactive"><%= cr.category %></span><% } else { %><span class="muted">—</span><% } %></td>
+              <td class="row-actions" style="white-space:nowrap;">
+                <button type="button" class="row-link" style="background:none;border:none;cursor:pointer;" onclick="pwEdit(this)">Edit</button>
+                <form method="post" action="/credentials/<%= cr.id %>/delete" style="display:inline;margin:0;" onsubmit="return confirm('Delete this password?');"><button type="submit" class="row-link" style="background:none;border:none;cursor:pointer;color:#b91c1c;">Delete</button></form>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Add/edit drawer -->
+  <div id="pw-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:1000;">
+    <div style="position:absolute;top:0;right:0;bottom:0;width:min(460px,94vw);background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow:auto;padding:24px 28px;">
+      <h2 id="pw-modal-title" style="margin:0 0 16px;">New password</h2>
+      <form id="pw-form" method="post" action="">
+        <div class="form-group"><label>Name *</label><input class="input" name="name" id="pw-name" required></div>
+        <div class="form-group"><label>Login URL</label><input class="input" name="login_url" id="pw-login_url" placeholder="https://…"></div>
+        <div class="form-group"><label>Username</label><input class="input" name="username" id="pw-username"></div>
+        <div class="form-group"><label>Password</label>
+          <div style="display:flex;gap:6px;">
+            <input class="input" type="password" name="password" id="pw-password" style="flex:1;" autocomplete="new-password">
+            <button type="button" class="btn" onclick="pwToggleField()">👁</button>
+          </div>
+          <span class="muted" id="pw-edit-hint" style="font-size:12px;display:none;">Leave blank to keep the current password.</span>
+        </div>
+        <div class="form-group"><label>Domain</label><input class="input" name="domain" id="pw-domain"></div>
+        <div class="form-group"><label>Category</label>
+          <select class="input" name="category" id="pw-category">
+            <option value="">Please select</option>
+            <% pwCats.forEach(function(c){ %><option value="<%= c %>"><%= c %></option><% }); %>
+          </select>
+        </div>
+        <div class="form-group"><label>Extra value</label><input class="input" name="extra_value" id="pw-extra_value"></div>
+        <div class="form-group"><label>Note</label><textarea class="input" name="note" id="pw-note" rows="3"></textarea></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+          <button type="button" class="btn" onclick="pwClose()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+
+<script>
+  var PW_ADD_ACTION = '/customers/<%= customer.id %>/credentials';
+  function pwOpen(){ document.getElementById('pw-form').reset(); document.getElementById('pw-form').action = PW_ADD_ACTION;
+    document.getElementById('pw-modal-title').textContent = 'New password'; document.getElementById('pw-edit-hint').style.display='none';
+    document.getElementById('pw-password').required = true; document.getElementById('pw-modal').style.display='block'; }
+  function pwClose(){ document.getElementById('pw-modal').style.display='none'; }
+  function pwEdit(btn){ var tr = btn.closest('tr'); var f = document.getElementById('pw-form');
+    f.action = '/credentials/' + tr.dataset.id + '/edit';
+    document.getElementById('pw-modal-title').textContent = 'Edit password';
+    ['name','login_url','username','domain','extra_value','note'].forEach(function(k){ document.getElementById('pw-'+k).value = tr.dataset[k] || ''; });
+    document.getElementById('pw-category').value = tr.dataset.category || '';
+    var p = document.getElementById('pw-password'); p.value=''; p.required=false;
+    document.getElementById('pw-edit-hint').style.display='block';
+    document.getElementById('pw-modal').style.display='block'; }
+  function pwToggleField(){ var p=document.getElementById('pw-password'); p.type = p.type==='password'?'text':'password'; }
+  function pwReveal(id, btn){ var span = btn.closest('span').querySelector('.pw-secret');
+    if (span.dataset.shown==='1'){ span.textContent='••••••••'; span.dataset.shown='0'; return; }
+    fetch('/credentials/'+id+'/secret?action=reveal').then(function(r){return r.json();}).then(function(d){
+      if(d.secret!=null){ span.textContent=d.secret; span.dataset.shown='1'; } else { alert(d.error||'Could not reveal'); }
+    }).catch(function(){ alert('Could not reveal'); }); }
+  function pwCopy(id, btn){ fetch('/credentials/'+id+'/secret?action=copy').then(function(r){return r.json();}).then(function(d){
+      if(d.secret!=null){ pwCopyText(d.secret, btn); } else { alert(d.error||'Could not copy'); }
+    }).catch(function(){ alert('Could not copy'); }); }
+  function pwCopyText(text, btn){ navigator.clipboard.writeText(text).then(function(){ var o=btn.textContent; btn.textContent='✓'; setTimeout(function(){btn.textContent=o;},900); }); }
+  document.querySelector('.pw-filter') && document.querySelector('.pw-filter').addEventListener('input', function(){
+    var q=this.value.toLowerCase(); this.closest('.card').querySelectorAll('tbody tr').forEach(function(tr){ tr.style.display=(!q||tr.textContent.toLowerCase().indexOf(q)>=0)?'':'none'; }); });
+  document.getElementById('pw-modal') && document.getElementById('pw-modal').addEventListener('click', function(e){ if(e.target===this) pwClose(); });
+</script>
+<style>
+  /* Vault text sized up ~12% for readability */
+  #passwords { font-size: 1.12em; }
+  #passwords .table th { font-size: 0.85em; }
+  #passwords .muted { font-size: 1em; }
+  .pw-mini { background:none;border:1px solid var(--line);border-radius:5px;cursor:pointer;font-size:13px;padding:1px 6px;line-height:1.4; }
+  .pw-mini:hover { border-color:var(--accent); }
+  .pw-secret { font-family:monospace;font-size:1em; }
+</style>
+<% } %>
+
+<!-- ═══ Integrations ═══ -->
+<section class="tab-panel" data-key="integrations">
+  <div class="card" style="max-width:560px;">
+    <div class="card-header"><h2>Linked systems</h2></div>
+    <table class="table"><tbody>
+      <tr><th style="width:45%;">Atera</th><td class="muted"><%= customer.atera_customer_id || '—' %></td></tr>
+      <tr><th>QuickBooks</th><td class="muted"><%= customer.quickbooks_customer_id || '—' %></td></tr>
+      <tr><th>GoCardless mandate</th><td class="muted"><%= customer.gocardless_mandate_id || '—' %></td></tr>
+    </tbody></table>
+    <p class="muted" style="font-size:12px;margin:10px 0 0;">Supplier accounts (Giacom / Lumen) and CLI/Ref → customer mappings are managed centrally on the <a class="row-link" href="/settings/giacom/match">supplier-account matching screen</a>. Charges from matched accounts appear under the <strong>Cloud</strong> and <strong>Comms</strong> tabs.</p>
+  </div>
+
+  <div class="card" style="max-width:560px;">
+    <div class="card-header"><h2>Microsoft 365 directory</h2></div>
+    <form method="post" action="/customers/<%= customer.id %>/entra-tenant" style="margin-bottom:10px;">
+      <div class="form-group" style="margin-bottom:8px;"><label>Entra / M365 Tenant ID</label><input class="input" name="entra_tenant_id" value="<%= customer.entra_tenant_id || '' %>" placeholder="xxxxxxxx-xxxx-…" style="width:100%;"></div>
+      <button class="btn" type="submit">Save tenant</button>
+    </form>
+    <form method="post" action="/customers/<%= customer.id %>/portal-access" style="margin:0 0 10px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;">
+        <input type="checkbox" name="portal_enabled" <%= customer.portal_enabled ? 'checked' : '' %>>
+        Enable customer portal login for this company
+      </label>
+      <p class="muted" style="font-size:12px;margin:6px 0 8px;">The master switch for this customer's logins. Having a tenant ID on file does <strong>not</strong> grant access on its own.</p>
+      <button class="btn" type="submit">Save access</button>
+    </form>
+    <% if (customer.entra_tenant_id) { %>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <a class="btn" href="https://login.microsoftonline.com/<%= customer.entra_tenant_id %>/adminconsent?client_id=<%= graphClientId %>" target="_blank" rel="noopener">1. Grant Microsoft consent</a>
+        <form method="post" action="/customers/<%= customer.id %>/sync-directory" style="margin:0;"><button class="btn btn-primary" type="submit">2. Sync directory now</button></form>
+      </div>
+      <p class="muted" style="font-size:12px;margin:8px 0 0;">First time only: click <strong>Grant Microsoft consent</strong>, sign in as a global admin of this client and accept. The page it lands on afterwards may show an error — that's fine, the consent still works. Then Sync imports active users and archives ones removed/disabled.</p>
+    <% } else { %>
+      <p class="muted" style="font-size:12px;margin:0;">Set the tenant ID to enable directory sync.</p>
+    <% } %>
+  </div>
+</section>
+
+<script>
+  (function () {
+    var KEY = 'custTab:<%= customer.id %>';
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.cust-tabs button'));
+    var panels = Array.prototype.slice.call(document.querySelectorAll('.tab-panel'));
+    function show(k) {
+      tabs.forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-tab') === k); });
+      panels.forEach(function (p) { p.classList.toggle('active', p.getAttribute('data-key') === k); });
+      try { localStorage.setItem(KEY, k); } catch (e) {}
+    }
+    tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.getAttribute('data-tab')); }); });
+    var saved = null; try { saved = localStorage.getItem(KEY); } catch (e) {}
+    // allow deep-link via #hash (e.g. #contacts)
+    var hash = (location.hash || '').replace('#', '');
+    var start = (hash && document.querySelector('.tab-panel[data-key="' + hash + '"]')) ? hash
+              : (saved && document.querySelector('.tab-panel[data-key="' + saved + '"]')) ? saved : 'overview';
+    show(start);
+
+    // In-table row filters (Contacts / Quotes / Invoices).
+    document.querySelectorAll('.card-filter').forEach(function (inp) {
+      inp.addEventListener('input', function () {
+        var q = inp.value.toLowerCase();
+        var card = inp.closest('.card');
+        if (!card) return;
+        card.querySelectorAll('table tbody tr').forEach(function (tr) {
+          tr.style.display = (!q || tr.textContent.toLowerCase().indexOf(q) >= 0) ? '' : 'none';
+        });
+      });
+    });
+
+    // A-Z review: show/hide completed (history) items.
+    var azH = document.getElementById('azHistory');
+    if (azH) azH.addEventListener('change', function () {
+      document.querySelectorAll('.az-done').forEach(function (el) { el.style.display = azH.checked ? '' : 'none'; });
+    });
+  })();
+</script>
+
+<%- include('../partials/footer') %>

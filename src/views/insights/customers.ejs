@@ -1,0 +1,49 @@
+<%
+// Locals (customers, flash, error) are always supplied by the route.
+const rows = customers.map(c => `
+  <tr>
+    <td><a class="row-link" href="/insights/customer/${c.id}">${c.name}</a></td>
+    <td><code style="font-size:12px;">${c.slug || ''}</code></td>
+    <td>${c.site_count}</td>
+    <td>${c.user_count}</td>
+    <td><span class="badge ${c.is_active ? 'badge-sent' : 'badge-inactive'}">${c.is_active ? 'Active' : 'Inactive'}</span></td>
+    <td><a href="/insights/customer/${c.id}" class="btn-secondary" style="font-size:12px;padding:4px 10px;">Manage</a></td>
+  </tr>
+`).join('');
+%>
+<%- include('_layout', { title: 'Customers', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;">
+  <div>
+    <h1>Customers</h1>
+    <p class="muted"><a href="/insights/admin">Admin</a> → Customers</p>
+  </div>
+</div>
+
+${flash ? `<div class="alert alert-success">${flash}</div>` : ''}
+${error ? `<div class="alert alert-error">${error}</div>` : ''}
+
+<div class="card">
+  <div class="card-header"><h2>Add Customer</h2></div>
+  <form method="POST" action="/insights/customers" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+    <div class="form-group">
+      <label>Name</label>
+      <input type="text" name="name" placeholder="Customer name" required class="input">
+    </div>
+    <div class="form-group">
+      <label>Slug <span class="muted" style="font-size:10px;text-transform:none;">(URL-safe ID)</span></label>
+      <input type="text" name="slug" placeholder="customer-name" required class="input" style="font-family:monospace;">
+    </div>
+    <button type="submit" class="btn-primary">Add Customer</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>All Customers</h2></div>
+  ${customers.length === 0
+    ? '<div class="empty-state"><p class="muted">No customers yet.</p></div>'
+    : `<div class="table-wrap"><table class="table">
+        <thead><tr><th>Name</th><th>Slug</th><th>Sites</th><th>Users</th><th>Status</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+       </table></div>`}
+</div>
+` }) %>

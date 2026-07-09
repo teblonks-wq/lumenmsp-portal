@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #374151; background: #fff; padding: 4px 6px; }
+  table { border-collapse: collapse; width: 100%; }
+  .lbl { font-size: 9px; font-weight: 700; color: #9ca3af; letter-spacing: .05em; text-transform: uppercase; }
+  th.h { font-size: 9px; font-weight: 700; color: #6b7280; letter-spacing: .04em; text-transform: uppercase; padding: 7px 8px; border-bottom: 2px solid #1e3a8a; text-align: left; }
+  td.c { padding: 6px 8px; border-bottom: 1px solid #eef2f7; font-size: 11px; vertical-align: top; }
+  .r { text-align: right; }
+  .muted { color: #9ca3af; }
+  .pill { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 8px; }
+  .ok { background: #dcfce7; color: #166534; }
+  .no { background: #fee2e2; color: #991b1b; }
+</style>
+</head>
+<body>
+<% function m(v){ return '£' + (Math.abs(Number(v)||0)).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); } %>
+<% function d(x){ return x ? new Date(x).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : ''; } %>
+<% function pm(p){ var dt=new Date(p+'-01'); return dt.toLocaleDateString('en-GB',{month:'long',year:'numeric'}); } %>
+
+<table style="margin-bottom:12px;"><tr>
+  <td style="vertical-align:top;width:55%;">
+    <% if (logoUrl) { %><img src="<%= logoUrl %>" alt="Lumen IT Solutions" style="display:block;max-width:170px;height:auto;border:0;margin-bottom:6px;"><% } %>
+    <div style="font-size:17px;font-weight:700;color:#1e3a8a;">Expense and Tax Receipts Report</div>
+    <div class="muted" style="font-size:12px;margin-top:2px;">Period: <strong style="color:#374151;"><%= pm(period) %></strong></div>
+  </td>
+  <td style="vertical-align:top;text-align:right;">
+    <strong style="font-size:13px;color:#111827;">Lumen IT Solutions Limited</strong><br>
+    <span style="font-size:10px;color:#6b7280;line-height:1.7;">
+      Gemini House, Hargreaves Road<br>Groundwell Industrial Estate<br>Swindon, SN25 5AZ<br>
+      back.office@lumensolutions.co.uk · VAT No. 443375688
+    </span>
+  </td>
+</tr></table>
+
+<!-- Summary strip -->
+<table style="margin-bottom:14px;"><tr>
+  <td style="width:25%;padding:8px 10px;background:#f8fafc;border:1px solid #eef2f7;">
+    <div class="lbl">Total expenses</div><div style="font-size:16px;font-weight:700;color:#111827;"><%= m(total) %></div></td>
+  <td style="width:25%;padding:8px 10px;background:#f8fafc;border:1px solid #eef2f7;">
+    <div class="lbl">Transactions</div><div style="font-size:16px;font-weight:700;color:#111827;"><%= rows.length %></div></td>
+  <td style="width:25%;padding:8px 10px;background:#f8fafc;border:1px solid #eef2f7;">
+    <div class="lbl">With receipt</div><div style="font-size:16px;font-weight:700;color:#111827;"><%= withReceipt %> / <%= rows.length %></div></td>
+  <td style="width:25%;padding:8px 10px;background:#f8fafc;border:1px solid #eef2f7;">
+    <div class="lbl">Generated</div><div style="font-size:12px;color:#374151;padding-top:3px;"><%= d(new Date()) %></div></td>
+</tr></table>
+
+<!-- By category -->
+<div class="lbl" style="margin:0 0 5px;">Summary by category</div>
+<table style="margin-bottom:16px;">
+  <thead><tr><th class="h">Category</th><th class="h r" style="width:120px;">Transactions</th><th class="h r" style="width:160px;">Total</th></tr></thead>
+  <tbody>
+    <% byCategory.forEach(function(c){ %>
+      <tr><td class="c"><%= c.name %></td><td class="c r"><%= c.count %></td><td class="c r"><%= m(c.total) %></td></tr>
+    <% }); %>
+    <tr><td class="c" style="font-weight:700;border-top:2px solid #1e3a8a;">Total</td><td class="c r" style="font-weight:700;border-top:2px solid #1e3a8a;"><%= rows.length %></td><td class="c r" style="font-weight:700;border-top:2px solid #1e3a8a;"><%= m(total) %></td></tr>
+  </tbody>
+</table>
+
+<!-- Detail -->
+<div class="lbl" style="margin:0 0 5px;">Expense detail</div>
+<table>
+  <thead><tr>
+    <th class="h" style="width:78px;">Date</th>
+    <th class="h" style="width:120px;">Account</th>
+    <th class="h" style="width:150px;">Payee</th>
+    <th class="h">Description / ref</th>
+    <th class="h" style="width:150px;">Category</th>
+    <th class="h r" style="width:90px;">Amount</th>
+    <th class="h" style="width:60px;">Receipt</th>
+  </tr></thead>
+  <tbody>
+    <% if (!rows.length) { %><tr><td class="c muted" colspan="7" style="padding:14px;text-align:center;">No expenses for this period.</td></tr><% } %>
+    <% rows.forEach(function(t){ %>
+      <tr>
+        <td class="c" style="white-space:nowrap;"><%= d(t.booked_at) %></td>
+        <td class="c"><%= t.account_name || '—' %></td>
+        <td class="c"><%= t.counterparty || '—' %></td>
+        <td class="c"><%= t.description || '' %><% if (t.reference) { %> <span class="muted">· <%= t.reference %></span><% } %></td>
+        <td class="c"><% if (t.qb_account_name) { %><%= t.qb_account_name %><% } else { %><span class="muted">Uncategorised</span><% } %></td>
+        <td class="c r" style="font-weight:600;"><%= m(t.amount) %></td>
+        <td class="c"><% if (t.attachment_name) { %><span class="pill ok">Yes</span><% } else { %><span class="pill no">No</span><% } %></td>
+      </tr>
+    <% }); %>
+  </tbody>
+</table>
+
+</body>
+</html>

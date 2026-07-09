@@ -1,0 +1,286 @@
+import cron from 'node-cron';
+import { config } from '../config';
+import { pool } from '../db/pool';
+import { getGroup, getSetting, setSetting } from './settings';
+import { htmlToPlain } from './whatsapp';
+import { logChannel } from './commslog';
+import { notify } from './notifications';
+
+// Two-way Teams as a customer channel, via Microsoft Graph DELEGATED as the support account
+// (sp@lumensolutions.co.uk). Mirrors WhatsApp: capture inbound chats, reply into the same chat.
+// Teams APIs are no longer metered (since 2025-08-25), so delegated Chat.Read/Chat.ReadWrite on
+// the signed-in user's own chats needs no protected-API enrolment. Config in settings group 'teams':
+//   graph_refresh_token, graph_account (UPN), graph_user_id, graph_since (ISO cutoff at connect).
+
+const AUTH = (tenant: string) => `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`;
+const TOKEN = (tenant: string) => `https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`;
+const GRAPH = 'https://graph.microsoft.com/v1.0';
+const SCOPES = 'offline_access openid profile User.Read Chat.Read Chat.ReadWrite';
+
+function redirectUri(): string {
+  return (config.APP_URL || 'https://portal.lumenmsp.co.uk').replace(/\/$/, '') + '/settings/integrations/teams-graph/callback';
+}
+
+export interface TeamsGraphStatus { connected: boolean; account: string; userId: string; }
+export async function teamsGraphStatus(): Promise<TeamsGraphStatus> {
+  const g = await getGroup('teams');
+  return { connected: !!g.graph_refresh_token, account: g.graph_account || '', userId: g.graph_user_id || '' };
+}
+export async function teamsGraphConnected(): Promise<boolean> {
+  return !!(await getSetting('teams', 'graph_refresh_token'));
+}
+
+// Step 1 of OAuth: the URL we send the admin/sp@ to. `prompt=select_account` forces the account
+// chooser so you can sign in as the SUPPORT account even if the browser is already signed into
+// your own Entra account (no incognito needed). login_hint pre-fills the support address.
+export function teamsGraphAuthUrl(state: string, loginHint?: string): string {
+  const tenant = config.GRAPH_TENANT_ID || 'common';
+  const p = new URLSearchParams({
+    client_id: config.GRAPH_CLIENT_ID, response_type: 'code', redirect_uri: redirectUri(),
+    response_mode: 'query', scope: SCOPES, state, prompt: 'select_account',
+  });
+  if (loginHint) p.set('login_hint', loginHint);
+  return `${AUTH(tenant)}?${p}`;
+}
+
+// Step 2: exchange the auth code for tokens, store the refresh token + who connected.
+export async function teamsGraphExchangeCode(code: string): Promise<{ ok: boolean; account?: string; error?: string }> {
+  const tenant = config.GRAPH_TENANT_ID || 'common';
+  const res = await fetch(TOKEN(tenant), {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: config.GRAPH_CLIENT_ID, client_secret: config.GRAPH_CLIENT_SECRET,
+      grant_type: 'authorization_code', code, redirect_uri: redirectUri(), scope: SCOPES,
+    }),
+  });
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok || !data.refresh_token) return { ok: false, error: data.error_description || data.error || ('HTTP ' + res.status) };
+  await setSetting('teams', 'graph_refresh_token', data.refresh_token);
+  // Identify the signed-in account so we can ignore our own outbound messages on poll.
+  try {
+    const me = await graphGet('/me?$select=id,userPrincipalName,mail', data.access_token);
+    await setSetting('teams', 'graph_user_id', me.id || '');
+    await setSetting('teams', 'graph_account', (me.userPrincipalName || me.mail || '').toLowerCase());
+  } catch { /* non-fatal */ }
+  await setSetting('teams', 'graph_since', new Date().toISOString());
+  _delegated = null;
+  return { ok: true, account: (await getSetting('teams', 'graph_account')) || '' };
+}
+
+export async function teamsGraphDisconnect(): Promise<void> {
+  for (const k of ['graph_refresh_token', 'graph_user_id', 'graph_account', 'graph_since']) await setSetting('teams', k, null);
+  _delegated = null;
+}
+
+// Delegated access token from the stored refresh token (cached in-memory until ~60s before expiry).
+let _delegated: { value: string; expires: number } | null = null;
+async function getDelegatedToken(): Promise<string> {
+  if (_delegated && Date.now() < _delegated.expires) return _delegated.value;
+  const refresh = await getSetting('teams', 'graph_refresh_token');
+  if (!refresh) throw new Error('Teams Graph not connected');
+  const tenant = config.GRAPH_TENANT_ID || 'common';
+  const res = await fetch(TOKEN(tenant), {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: config.GRAPH_CLIENT_ID, client_secret: config.GRAPH_CLIENT_SECRET,
+      grant_type: 'refresh_token', refresh_token: refresh, redirect_uri: redirectUri(), scope: SCOPES,
+    }),
+  });
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok || !data.access_token) throw new Error('Teams token refresh failed: ' + (data.error_description || data.error || res.status));
+  if (data.refresh_token) await setSetting('teams', 'graph_refresh_token', data.refresh_token); // rotate
+  _delegated = { value: data.access_token, expires: Date.now() + ((data.expires_in || 3600) - 60) * 1000 };
+  return _delegated.value;
+}
+
+async function graphGet(path: string, token?: string): Promise<any> {
+  const t = token || await getDelegatedToken();
+  const res = await fetch(GRAPH + path, { headers: { Authorization: `Bearer ${t}` } });
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`Graph GET ${path} ${res.status}: ${JSON.stringify(data.error || data).slice(0, 200)}`);
+  return data;
+}
+
+export interface TeamsSendOutcome { ok: boolean; id?: string; error?: string; }
+// Reply into an existing chat by id (delegated, as sp@).
+export async function sendTeamsChatMessage(chatId: string, text: string): Promise<TeamsSendOutcome> {
+  if (!chatId) return { ok: false, error: 'No Teams chat id on this case' };
+  try {
+    const token = await getDelegatedToken();
+    const res = await fetch(`${GRAPH}/chats/${encodeURIComponent(chatId)}/messages`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: { contentType: 'text', content: text } }),
+    });
+    const data: any = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: JSON.stringify(data.error || data).slice(0, 200) };
+    return { ok: true, id: data.id };
+  } catch (e: any) { return { ok: false, error: e.message }; }
+}
+
+// ── Inbound polling ───────────────────────────────────────────────────────────
+function escHtml(s: string): string {
+  return String(s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as Record<string, string>)[c]);
+}
+function ackText(name: string, ticketNumber: string): string {
+  const first = (name && !String(name).startsWith('+')) ? String(name).split(/\s+/)[0] : 'there';
+  return `Hi ${first}, thanks for contacting Lumen IT. We've logged your message as case ${ticketNumber} and a member of our team will be in touch shortly. You can reply here any time and it'll be added to this same case.\n\n— Lumen IT Support`;
+}
+async function nextTicketNumber(): Promise<string> {
+  const { rows } = await pool.query('SELECT ticket_number FROM inbox_tickets');
+  let max = 100000;
+  for (const r of rows) { const m = String(r.ticket_number).match(/(\d+)/); if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; } }
+  return 'LITS-' + (max + 1);
+}
+async function matchContactByEmail(email: string): Promise<{ id: number; customer_id: number; full_name: string } | null> {
+  const e = String(email || '').toLowerCase().trim();
+  if (!e || e.indexOf('@') < 0) return null;
+  const r = await pool.query(
+    `SELECT cc.id, cc.customer_id, cc.full_name FROM customer_contacts cc JOIN customers c ON c.id = cc.customer_id
+      WHERE c.deleted_at IS NULL AND LOWER(cc.email) = $1 ORDER BY cc.is_primary DESC LIMIT 1`, [e]
+  );
+  return r.rows[0] || null;
+}
+
+// Resolve the other party's email + name from a chat's members (skip our own account).
+async function otherMember(chatId: string, selfUserId: string): Promise<{ email: string; name: string }> {
+  try {
+    const m = await graphGet(`/chats/${encodeURIComponent(chatId)}/members`);
+    for (const mem of (m.value || [])) {
+      if (mem.userId && mem.userId === selfUserId) continue;
+      const email = (mem.email || mem.userPrincipalName || '').toLowerCase();
+      if (email || mem.displayName) return { email, name: mem.displayName || email };
+    }
+  } catch { /* ignore */ }
+  return { email: '', name: '' };
+}
+
+async function processChatMessage(chatId: string, lp: any, selfUserId: string): Promise<void> {
+  const msgId = 'teamsg:' + String(lp.id);
+  const dup = await pool.query('SELECT 1 FROM inbox_messages WHERE graph_message_id=$1', [msgId]);
+  if (dup.rows.length) return;
+
+  const text = htmlToPlain(lp.body?.content || '') || '[message]';
+  const fromName0 = lp.from?.user?.displayName || '';
+  const who = await otherMember(chatId, selfUserId);
+  const senderEmail = who.email;
+  const contact = await matchContactByEmail(senderEmail);
+  const custId = contact ? contact.customer_id : null;
+  const contactId = contact ? contact.id : null;
+  const senderName = (contact && contact.full_name) || who.name || fromName0 || 'Teams user';
+  const convJson = JSON.stringify({ chatId });
+
+  let ticketId: number | null = null;
+  let ticketNumber = '';
+  let isNew = false;
+  // Thread onto an OPEN case from THIS Teams chat only — never onto an unrelated case the contact
+  // happens to have open on another channel. A brand-new chat, or one whose last case is already
+  // resolved/closed, starts a fresh case.
+  const open = await pool.query(
+    `SELECT id, ticket_number FROM inbox_tickets
+       WHERE teams_conversation IS NOT NULL AND teams_conversation::text LIKE $1
+         AND deleted_at IS NULL AND is_spam=false AND status NOT IN ('resolved','closed')
+       ORDER BY updated_at DESC LIMIT 1`,
+    ['%' + chatId + '%']
+  );
+  if (open.rows.length) { ticketId = open.rows[0].id; ticketNumber = open.rows[0].ticket_number; }
+  if (!ticketId) {
+    isNew = true;
+    ticketNumber = await nextTicketNumber();
+    const subject = (text || 'Teams message').slice(0, 120);
+    const t = await pool.query(
+      `INSERT INTO inbox_tickets (ticket_number, source, customer_id, contact_id, status, department, category, subject, description, activity_status, stage, teams_conversation, updated_at)
+       VALUES ($1,'teams',$2,$3,'new','support','incident',$4,$5,'unread','awaiting_triage',$6, NOW()) RETURNING id`,
+      [ticketNumber, custId, contactId, subject, text, convJson]
+    );
+    ticketId = t.rows[0].id;
+    await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1, NULL, 'system_log', $2)`,
+      [ticketId, 'Created from Teams (' + senderName + (senderEmail ? ' · ' + senderEmail : '') + ')']);
+  } else {
+    await pool.query("UPDATE inbox_tickets SET prev_status=COALESCE(prev_status, status), prev_activity_status=COALESCE(prev_activity_status, activity_status), status='awaiting_engineer', activity_status='unread', teams_conversation=$2, updated_at=NOW() WHERE id=$1 AND status NOT IN ('resolved','closed')", [ticketId, convJson]);
+  }
+
+  await pool.query(
+    `INSERT INTO inbox_messages (ticket_id, mailbox, message_direction, channel, from_name, from_email, subject, body_text, body_html, received_at, graph_message_id, processing_status)
+     VALUES ($1,'teams','inbound','teams',$2,$3,$4,$5,$6,NOW(),$7,'matched') ON CONFLICT (graph_message_id) DO NOTHING`,
+    [ticketId, senderName, senderEmail || null, null, text, '<div style="white-space:pre-wrap;">' + escHtml(text) + '</div>', msgId]
+  );
+  await logChannel({ channel: 'teams', direction: 'inbound', status: 'received', ticketId, contactId, peer: senderEmail || null, peerName: senderName, preview: text, externalId: msgId });
+
+  if (isNew) {
+    const ack = ackText(senderName, ticketNumber);
+    const r = await sendTeamsChatMessage(chatId, ack);
+    await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, channel, body) VALUES ($1, NULL, 'public_reply', 'teams', $2)`,
+      [ticketId, '<div style="white-space:pre-wrap;">' + escHtml(ack) + '</div>']);
+    await logChannel({ channel: 'teams', direction: 'outbound', status: r.ok ? 'sent' : 'failed', ticketId, contactId, peer: senderEmail || null, peerName: senderName, preview: ack, externalId: r.id || null, error: r.ok ? null : r.error });
+  } else {
+    const asg = (await pool.query('SELECT assigned_user_id FROM inbox_tickets WHERE id=$1', [ticketId])).rows[0];
+    if (asg?.assigned_user_id) await notify(asg.assigned_user_id, 'Teams reply — ' + ticketNumber, { type: 'reopened', body: text.slice(0, 120), link: '/tickets/' + ticketId });
+  }
+}
+
+let _polling = false;
+export async function pollTeamsChats(): Promise<void> {
+  if (_polling) return;
+  if (!(await teamsGraphConnected())) return;
+  _polling = true;
+  try {
+    const selfId = (await getSetting('teams', 'graph_user_id')) || '';
+    const since = (await getSetting('teams', 'graph_since')) || new Date(0).toISOString();
+    const sinceMs = new Date(since).getTime();
+    const data = await graphGet('/me/chats?$expand=lastMessagePreview&$top=50');
+    for (const chat of (data.value || [])) {
+      const lp = chat.lastMessagePreview;
+      if (!lp || !lp.id) continue;
+      if (lp.from?.user?.id && lp.from.user.id === selfId) continue;     // our own message
+      if (!lp.from?.user) continue;                                       // system/membership events
+      if (lp.createdDateTime && new Date(lp.createdDateTime).getTime() < sinceMs) continue; // pre-connect history
+      try { await processChatMessage(chat.id, lp, selfId); }
+      catch (e) { console.error('[teamsgraph] process failed:', (e as Error).message); }
+    }
+  } catch (e) { console.error('[teamsgraph] poll failed:', (e as Error).message); }
+  finally { _polling = false; }
+}
+
+// One-shot diagnostic: what does /me/chats return, and what would the poller do with it?
+// Also processes any genuinely-new messages (so it doubles as a "sync now").
+export async function teamsGraphDebug(): Promise<any> {
+  if (!(await teamsGraphConnected())) return { connected: false };
+  const selfId = (await getSetting('teams', 'graph_user_id')) || '';
+  const since = (await getSetting('teams', 'graph_since')) || '';
+  const sinceMs = since ? new Date(since).getTime() : 0;
+  let data: any;
+  try { data = await graphGet('/me/chats?$expand=lastMessagePreview&$top=50'); }
+  catch (e: any) { return { connected: true, error: e.message }; }
+  const chats = data.value || [];
+  const samples = chats.slice(0, 20).map((c: any) => {
+    const lp = c.lastMessagePreview;
+    return {
+      chatId: c.id, chatType: c.chatType, hasPreview: !!lp,
+      fromUserId: lp?.from?.user?.id || null, fromApp: !!lp?.from?.application,
+      createdDateTime: lp?.createdDateTime || null,
+      isSelf: !!(lp?.from?.user?.id && lp.from.user.id === selfId),
+      beforeSince: lp?.createdDateTime ? (new Date(lp.createdDateTime).getTime() < sinceMs) : null,
+      preview: (lp?.body?.content || '').replace(/<[^>]+>/g, '').slice(0, 50),
+    };
+  });
+  let processed = 0;
+  const errors: string[] = [];
+  for (const chat of chats) {
+    const lp = chat.lastMessagePreview;
+    if (!lp || !lp.id) continue;
+    if (lp.from?.user?.id && lp.from.user.id === selfId) continue;
+    if (!lp.from?.user) continue;
+    if (lp.createdDateTime && new Date(lp.createdDateTime).getTime() < sinceMs) continue;
+    try { await processChatMessage(chat.id, lp, selfId); processed++; }
+    catch (e: any) { errors.push(e.message); }
+  }
+  return { connected: true, selfId, since, chatCount: chats.length, processed, errors, samples };
+}
+
+let _started = false;
+export function startTeamsGraphCron(): void {
+  if (_started) return;
+  _started = true;
+  // Every minute — light: one /me/chats call unless there's new activity.
+  cron.schedule('* * * * *', () => { pollTeamsChats().catch(() => { /* logged inside */ }); });
+}

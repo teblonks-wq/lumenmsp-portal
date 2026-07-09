@@ -1,0 +1,14 @@
+  </div><!-- /.myc -->
+</main>
+<script>
+  (function(){
+    var t = document.getElementById('sidebarToggle');
+    if (!t) return;
+    t.addEventListener('click', function(){
+      var c = document.documentElement.classList.toggle('nav-collapsed');
+      try { localStorage.setItem('portalNavCollapsed', c ? '1' : '0'); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,388 @@
+<%- include('../partials/header', { title: dom.domain + ' — DMARC', user }) %>
+
+<style>
+  /* Readability pass 2026-07-08 — team found Domain Health too small; everything scaled up. */
+  .card { font-size:16px; }
+  table.table th { font-size:13px !important; }
+  table.table td { font-size:16px !important; padding:14px 12px !important; }
+  .card pre { font-size:15px !important; line-height:1.6; }
+  .badge { font-size:13px !important; padding:4px 10px !important; }
+  .page-header .muted { font-size:15px !important; }
+  .stat-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:12px; margin:4px 0 4px; }
+  .stat { background:#f8fafc; border:1px solid #eef1f6; border-radius:12px; padding:18px 16px; text-align:center; }
+  .stat-good { background:#f0fdf4; border-color:#dcfce7; }
+  .stat-val { font-size:42px; font-weight:800; line-height:1.15; }
+  .stat-lbl { font-size:14px; color:#6b7280; margin-top:4px; }
+  .copy-wrap { position:relative; }
+  .copy-wrap pre { padding-right:150px !important; }
+  .copy-btns { position:absolute; top:5px; right:5px; display:flex; gap:4px; }
+  .copy-btn { font-size:13px; padding:2px 9px; border-radius:6px; border:1px solid #cbd5e1; background:#fff; cursor:pointer; color:#0f172a; }
+  .copy-btn:hover { background:#e0f2fe; border-color:#0ea5b7; }
+</style>
+<script>
+  function copyRec(btn) {
+    navigator.clipboard.writeText(btn.dataset.rec).then(function () {
+      var t = btn.textContent;
+      btn.textContent = 'Copied ✓';
+      btn.style.background = '#dcfce7';
+      setTimeout(function () { btn.textContent = t; btn.style.background = ''; }, 1500);
+    });
+  }
+</script>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/dmarc">&larr; Domain Health</a></p>
+  <h1><%= dom.domain %></h1>
+  <p class="muted">
+    <%= dom.customer_name ? dom.customer_name + ' · ' : '' %>
+    <%= dom.monitoring_enabled ? 'Monitoring on' : 'Monitoring paused' %>
+    <% if (dom.last_checked_at) { %> · DNS checked <%= new Date(dom.last_checked_at).toLocaleString('en-GB') %><% } %>
+  </p>
+</div>
+
+<% if (checked) { %><div class="card" style="border-left:4px solid #16a34a;">DNS check refreshed.</div><% } %>
+
+<div class="card">
+  <div class="card-header"><h2>DNS &amp; policy</h2></div>
+  <div style="display:flex;justify-content:flex-end;align-items:center;gap:8px;margin:-8px 0 12px;flex-wrap:wrap;">
+    <form method="post" action="/dmarc/<%= dom.id %>/target" style="display:inline-flex;align-items:center;gap:6px;">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <label class="muted" style="font-size:15px;">Target policy</label>
+      <select class="input" name="target_policy" onchange="this.form.submit()" style="padding:4px 8px;width:auto;">
+        <option value="none" <%= (dom.target_policy || 'none') === 'none' ? 'selected' : '' %>>p=none (monitor)</option>
+        <option value="quarantine" <%= dom.target_policy === 'quarantine' ? 'selected' : '' %>>p=quarantine</option>
+        <option value="reject" <%= dom.target_policy === 'reject' ? 'selected' : '' %>>p=reject (enforce)</option>
+      </select>
+    </form>
+    <form method="post" action="/dmarc/<%= dom.id %>/check" style="display:inline;">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn" type="submit">Re-run DNS check</button>
+    </form>
+    <form method="post" action="/dmarc/<%= dom.id %>/toggle" style="display:inline;">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn" type="submit"><%= dom.monitoring_enabled ? 'Pause monitoring' : 'Resume monitoring' %></button>
+    </form>
+    <form method="post" action="/dmarc/<%= dom.id %>/delete" style="display:inline;"
+          onsubmit="return confirm('Delete <%= dom.domain %> from monitoring?\n\nThis permanently removes the domain AND its <%= summary.totals.reports %> stored report(s). If you just want to stop collecting, use Pause instead.');">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn" type="submit" style="color:#dc2626;">Delete</button>
+    </form>
+  </div>
+  <% if (!check) { %>
+    <p class="muted">No DNS check stored yet — run one above.</p>
+  <% } else { %>
+  <div class="stat-grid">
+    <div class="stat"><div class="stat-val"><%= check.score %>/100</div><div class="stat-lbl">Email security score</div></div>
+    <div class="stat <%= check.spf.found ? 'stat-good' : '' %>"><div class="stat-val"><%= check.spf.found ? (check.spf.allMechanism || 'yes') : 'none' %></div><div class="stat-lbl">SPF</div></div>
+    <div class="stat <%= check.dkim.found ? 'stat-good' : '' %>"><div class="stat-val"><%= check.dkim.found ? check.dkim.selectors.length : 'none' %></div><div class="stat-lbl">DKIM selector(s)</div></div>
+    <div class="stat <%= check.dmarc.policy === 'reject' || check.dmarc.policy === 'quarantine' ? 'stat-good' : '' %>"><div class="stat-val" style="font-size:32px;"><%= check.dmarc.found ? ('p=' + (check.dmarc.policy || '?')) : 'none' %></div><div class="stat-lbl">DMARC policy</div></div>
+  </div>
+  <% var issues = [].concat(check.spf.issues || [], check.dmarc.issues || []); %>
+  <% if (issues.length) { %>
+    <p style="margin:12px 0 6px;"><strong>Issues</strong></p>
+    <ul style="margin:0;padding-left:20px;">
+      <% issues.forEach(function(i){ %><li style="padding:2px 0;color:#b45309;"><%= i %></li><% }); %>
+    </ul>
+  <% } else { %>
+    <p style="margin:12px 0 0;color:#16a34a;font-weight:600;">No issues found.</p>
+  <% } %>
+  <% } %>
+</div>
+
+<% if (check) { var reg = check.registry || null; %>
+<div class="card">
+  <div class="card-header"><h2>Domain info — who holds <%= dom.domain %></h2></div>
+  <div class="table-wrap"><table class="table">
+    <tbody>
+      <% if (reg && !reg.error) { %>
+      <tr><td style="width:220px;"><strong>Registrar</strong></td><td><%= reg.registrar || 'unknown' %></td></tr>
+      <% if (reg.registrarTag) { %><tr><td><strong>Nominet IPS TAG</strong></td><td><code style="font-size:15px;"><%= reg.registrarTag %></code> <span class="muted" style="font-size:14px;">— where a .uk domain transfer would go from/to</span></td></tr><% } %>
+      <tr><td><strong>Likely owner (registrant)</strong></td><td><%= reg.registrant || 'not published (redacted — common for individuals; companies usually show)' %></td></tr>
+      <tr><td><strong>Registered</strong></td><td><%= reg.registered || '—' %></td></tr>
+      <tr><td><strong>Expires</strong></td><td>
+        <%= reg.expires || '—' %>
+        <% if (reg.expires && new Date(reg.expires) < new Date(Date.now() + 60*24*3600*1000)) { %><span class="badge badge-failed" style="margin-left:8px;">renews within 60 days</span><% } %>
+      </td></tr>
+      <% if (reg.status && reg.status.length) { %><tr><td><strong>Registry status</strong></td><td class="muted" style="font-size:14px;"><%= reg.status.join(', ') %></td></tr><% } %>
+      <% } else { %>
+      <tr><td style="width:220px;"><strong>Registry lookup</strong></td><td class="muted"><%= (reg && reg.error) || 'No registry data yet — re-run the DNS check.' %></td></tr>
+      <% } %>
+      <tr><td><strong>Nameservers</strong></td><td style="font-family:monospace;font-size:14px;"><%= (check.nsHosts || []).join(' · ') || 'unknown' %></td></tr>
+      <tr><td><strong>DNS managed at</strong></td><td>
+        <% if (check.dnsManager) { %><strong><%= check.dnsManager %></strong><% if (check.dnsManagerUrl) { %> — <a href="<%= check.dnsManagerUrl %>" target="_blank" rel="noopener">open console ↗</a><% } %>
+        <% } else { %><span class="muted">provider not recognised from the nameservers</span><% } %>
+      </td></tr>
+      <tr><td><strong>Mail platform</strong></td><td><%= check.mailProvider || check.mxHost || 'unknown' %><% if (check.mailProvider === 'Microsoft 365') { %> <span class="muted" style="font-size:14px;">— the checklist below verifies the full Microsoft DNS set (MX, SPF include, DKIM, Autodiscover, Intune)</span><% } %></td></tr>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<% if (check) {
+     var spfOk    = check.spf.found && !(check.spf.issues || []).length;
+     var dkimOk   = check.dkim.found;
+     var dmarcOk  = check.dmarc.found;
+     var ruaOk    = !!check.dmarc.ruaIncludesUs;
+     var tick     = '<span style="color:#16a34a;font-weight:800;">&#10004; Set up</span>';
+     var cross    = '<span style="color:#dc2626;font-weight:800;">&#10007; Action needed</span>';
+     var part     = '<span style="color:#d97706;font-weight:800;">&#9888; Review</span>';
+%>
+<div class="card">
+  <div class="card-header"><h2>Setup checklist — SPF, DKIM &amp; DMARC</h2></div>
+  <p class="muted" style="margin:-6px 0 12px;">
+    Mail host: <strong><%= check.mailProvider || check.mxHost || 'unknown' %></strong>.
+    <% if (check.dnsManager) { %>
+      DNS is managed at <strong><%= check.dnsManager %></strong><% if (check.dnsManagerUrl) { %> — <a href="<%= check.dnsManagerUrl %>" target="_blank" rel="noopener">open their console ↗</a><% } %>.
+    <% } else if (check.nsHosts && check.nsHosts.length) { %>
+      Nameservers: <strong><%= check.nsHosts.join(', ') %></strong> (provider not recognised).
+    <% } %>
+    Publish anything marked below, then hit <em>Re-run DNS check</em> to confirm — each row flips green when the record is live.
+  </p>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th style="width:90px;">Record</th><th style="width:150px;">Status</th><th>Detail / record to publish</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>SPF</strong></td>
+        <td><%- check.spf.found ? (spfOk ? tick : part) : cross %></td>
+        <td>
+          <% if (check.spf.record) { %>
+            <p class="muted" style="margin:0 0 4px;font-size:15px;">Currently published:</p>
+            <pre style="margin:0 0 6px;padding:8px;background:#f1f5f9;border-radius:8px;overflow:auto;font-size:14px;"><%= dom.domain %>  TXT  "<%= check.spf.record %>"</pre>
+          <% } else { %>
+            <p class="muted" style="margin:0 0 4px;font-size:15px;">Currently published: <strong style="color:#dc2626;">nothing</strong></p>
+          <% } %>
+          <% if (check.suggestedSpf) { %>
+            <p class="muted" style="margin:0 0 4px;font-size:15px;"><%= check.spf.found ? 'Replace with:' : 'Publish:' %></p>
+            <div class="copy-wrap">
+              <pre style="margin:0;padding:8px;background:#ecfeff;border-radius:8px;overflow:auto;font-size:14px;"><%= dom.domain %>  TXT  "<%= check.suggestedSpf %>"</pre>
+              <span class="copy-btns">
+                <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="@">Copy host</button>
+                <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= check.suggestedSpf %>">Copy value</button>
+              </span>
+            </div>
+          <% } else if (spfOk) { %><span class="muted" style="font-size:15px;">Published and sound — nothing to do.</span><% } %>
+        </td>
+      </tr>
+      <tr>
+        <td><strong>DKIM</strong></td>
+        <td><%- dkimOk ? tick : cross %></td>
+        <td>
+          <% if (check.dkim.keys && check.dkim.keys.length) { %>
+            <span style="font-size:15px;">Keys detected:
+              <% check.dkim.keys.forEach(function(k, i){ %><%= i ? ', ' : ' ' %><strong><%= k.selector %></strong>&nbsp;(<%= k.keyType || 'rsa' %><%= k.keyBits ? ' ~' + k.keyBits + '-bit' : '' %><%= k.source === 'cname' ? ', via CNAME' : '' %>)<%- k.revoked ? ' <span style="color:#dc2626;font-weight:700;">REVOKED</span>' : '' %><% }); %>
+            </span>
+            <% if (check.dkim.keys.some(function(k){ return k.keyBits === 1024; })) { %>
+              <p class="muted" style="margin:6px 0 0;font-size:14px;">⚠ 1024-bit key(s) detected — rotate to 2048-bit at the provider when possible.</p>
+            <% } %>
+          <% } else if (dkimOk) { %>
+            <span class="muted" style="font-size:15px;">Signing with selector(s): <strong><%= check.dkim.selectors.join(', ') %></strong>.</span>
+          <% } else { %>
+            <span style="font-size:15px;"><%= check.dkimGuidance || 'Enable DKIM at the mail provider and publish the selector record they give you.' %></span>
+            <br><button type="button" class="btn btn-primary" style="margin-top:10px;" onclick="document.getElementById('dkimModal').style.display='flex'">📖 Get set up — step-by-step</button>
+          <% } %>
+        </td>
+      </tr>
+      <%
+        var targetPol = dom.target_policy || 'none';
+        var polRank = { none: 0, quarantine: 1, reject: 2 };
+        var belowTarget = dmarcOk && (polRank[check.dmarc.policy] || 0) < (polRank[targetPol] || 0);
+      %>
+      <tr>
+        <td><strong>DMARC</strong><br><span class="muted" style="font-size:13px;">target: p=<%= targetPol %></span></td>
+        <td><%- dmarcOk ? (belowTarget ? part : tick) : cross %></td>
+        <td>
+          <% if (check.dmarc.record) { %>
+            <p class="muted" style="margin:0 0 4px;font-size:15px;">Currently published:</p>
+            <pre style="margin:0 0 6px;padding:8px;background:#f1f5f9;border-radius:8px;overflow:auto;font-size:14px;">_dmarc.<%= dom.domain %>  TXT  "<%= check.dmarc.record %>"</pre>
+            <% if (belowTarget) { %>
+              <p style="margin:0 0 4px;font-size:15px;color:#b45309;">Published p=<%= check.dmarc.policy || 'none' %> is below the agreed target p=<%= targetPol %> — update the record to:</p>
+              <div class="copy-wrap">
+                <pre style="margin:0;padding:8px;background:#ecfeff;border-radius:8px;overflow:auto;font-size:14px;">_dmarc.<%= dom.domain %>  TXT  "<%= check.suggestedDmarc %>"</pre>
+                <span class="copy-btns">
+                  <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="_dmarc">Copy host</button>
+                  <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= check.suggestedDmarc %>">Copy value</button>
+                </span>
+              </div>
+            <% } else if (check.dmarc.policy === 'none') { %>
+              <span class="muted" style="font-size:15px;">Matches the target (monitor-only). Raise the target to p=quarantine, then p=reject once the sources table shows all legitimate senders authenticating.</span>
+            <% } %>
+          <% } else { %>
+            <p class="muted" style="margin:0;font-size:15px;">Currently published: <strong style="color:#dc2626;">nothing</strong> — the record in the <strong>Reporting</strong> row below covers both (policy + reporting in one record, generated at your target p=<%= targetPol %>).</p>
+          <% } %>
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Reporting</strong></td>
+        <td><%- ruaOk ? tick : cross %></td>
+        <td>
+          <% if (ruaOk) { %>
+            <span class="muted" style="font-size:15px;">Aggregate reports are coming to <strong><%= mailbox %></strong>.</span>
+          <% } else { %>
+            <p class="muted" style="margin:0 0 4px;font-size:15px;">
+              <% if (check.dmarc.record) { %>DMARC exists but reports don't reach us — <strong>add</strong> <code>mailto:<%= mailbox %></code> to the existing rua list (don't remove theirs), or replace with:<% } else { %>Publish:<% } %>
+            </p>
+            <div class="copy-wrap">
+              <pre style="margin:0;padding:8px;background:#ecfeff;border-radius:8px;overflow:auto;font-size:14px;">_dmarc.<%= dom.domain %>  TXT  "<%= check.suggestedDmarc %>"</pre>
+              <span class="copy-btns">
+                <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="_dmarc">Copy host</button>
+                <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= check.suggestedDmarc %>">Copy value</button>
+              </span>
+            </div>
+          <% } %>
+        </td>
+      </tr>
+      <% (check.platform || []).forEach(function(p){ %>
+      <tr>
+        <td><strong><%= p.record %></strong><% if (p.optional) { %><br><span class="muted" style="font-size:13px;">(optional)</span><% } %></td>
+        <td><%- p.ok ? tick : (p.optional ? part : cross) %></td>
+        <td>
+          <span class="muted" style="font-size:15px;"><%= p.detail %></span>
+          <% if (p.expected) {
+               var relHost = p.host === dom.domain ? '@' : p.host.replace('.' + dom.domain, '');
+               var recVal  = p.expected.replace('CNAME → ', '').replace(/\s*\(.*\)$/, ''); %>
+            <div class="copy-wrap">
+              <pre style="margin:6px 0 0;padding:8px;background:#ecfeff;border-radius:8px;overflow:auto;font-size:14px;"><%= p.host %>  <%= p.expected %></pre>
+              <span class="copy-btns">
+                <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= relHost %>">Copy host</button>
+                <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= recVal %>">Copy value</button>
+              </span>
+            </div>
+          <% } %>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Traffic — last <%= days %> days</h2>
+    <span>
+      <a class="btn <%= days === 7 ? 'btn-primary' : '' %>" href="/dmarc/<%= dom.id %>?days=7">7d</a>
+      <a class="btn <%= days === 30 ? 'btn-primary' : '' %>" href="/dmarc/<%= dom.id %>?days=30">30d</a>
+      <a class="btn <%= days === 90 ? 'btn-primary' : '' %>" href="/dmarc/<%= dom.id %>?days=90">90d</a>
+    </span>
+  </div>
+  <% var t = summary.totals; var pct = t.volume ? Math.round(t.aligned / t.volume * 1000) / 10 : null; %>
+  <div class="stat-grid">
+    <div class="stat"><div class="stat-val"><%= t.volume %></div><div class="stat-lbl">Emails observed</div></div>
+    <div class="stat stat-good"><div class="stat-val"><%= pct === null ? '—' : pct + '%' %></div><div class="stat-lbl">Authenticated (aligned)</div></div>
+    <div class="stat"><div class="stat-val"><%= t.failed %></div><div class="stat-lbl">Failed authentication</div></div>
+    <div class="stat"><div class="stat-val"><%= t.sources %></div><div class="stat-lbl">Sending IPs</div></div>
+    <div class="stat"><div class="stat-val"><%= t.reports %></div><div class="stat-lbl">Reports received</div></div>
+  </div>
+  <% if (summary.daily.length) { %>
+    <% var maxV = Math.max.apply(null, summary.daily.map(function(x){ return x.volume; })); %>
+    <div style="display:flex;align-items:flex-end;gap:2px;height:90px;margin-top:14px;">
+      <% summary.daily.forEach(function(x){
+           var h = maxV ? Math.max(3, Math.round(x.volume / maxV * 86)) : 3;
+           var ok = x.volume ? (x.aligned / x.volume) : 1; %>
+      <div title="<%= x.day %>: <%= x.volume %> emails, <%= x.aligned %> authenticated"
+           style="flex:1;height:<%= h %>px;border-radius:2px 2px 0 0;background:<%= ok >= 0.98 ? '#16a34a' : ok >= 0.9 ? '#d97706' : '#dc2626' %>;"></div>
+      <% }); %>
+    </div>
+    <p class="muted" style="font-size:14px;margin:6px 0 0;">Daily volume · green = &ge;98% authenticated, amber = &ge;90%, red = below.</p>
+  <% } %>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Sending sources</h2></div>
+  <% if (!summary.sources.length) { %>
+    <p class="muted">No report data yet. Reports usually arrive within 24–48 hours of the rua= record going live.</p>
+  <% } else { %>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Sender</th><th>IPs</th><th>Volume</th><th>Authenticated</th><th>DKIM pass</th><th>SPF pass</th><th>Blocked</th></tr></thead>
+    <tbody>
+      <% summary.sources.forEach(function(s){
+           var apct = s.volume ? Math.round(s.aligned / s.volume * 100) : 0;
+           var blocked = (s.quarantined || 0) + (s.rejected || 0); %>
+      <tr>
+        <td>
+          <%= s.sender_name %>
+          <% if (s.sender_known) { %><span class="badge badge-sent">Known</span>
+          <% } else if (apct < 50) { %><span class="badge badge-failed">Investigate</span><% } %>
+        </td>
+        <td><%= s.ips %></td>
+        <td><%= s.volume %></td>
+        <td><strong style="color:<%= apct >= 98 ? '#16a34a' : apct >= 90 ? '#d97706' : '#dc2626' %>;"><%= apct %>%</strong></td>
+        <td class="muted"><%= s.dkim_pass || 0 %></td>
+        <td class="muted"><%= s.spf_pass || 0 %></td>
+        <td class="muted"><%= blocked %></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <p class="muted" style="font-size:15px;margin:10px 0 0;">Unknown senders with low authentication are either spoofing attempts (good — the policy is working) or a legitimate service that needs SPF/DKIM set up before moving to <code>p=reject</code>.</p>
+  <% } %>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Recent reports</h2></div>
+  <% if (!summary.recentReports.length) { %>
+    <p class="muted">None yet.</p>
+  <% } else { %>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Receiver</th><th>Period</th><th>Messages</th><th>Received</th></tr></thead>
+    <tbody>
+      <% summary.recentReports.forEach(function(r){ %>
+      <tr>
+        <td><%= r.org_name || '(unnamed)' %></td>
+        <td class="muted" style="font-size:15px;"><%= new Date(r.date_begin).toLocaleDateString('en-GB') %> – <%= new Date(r.date_end).toLocaleDateString('en-GB') %></td>
+        <td><%= r.message_count %></td>
+        <td class="muted" style="font-size:15px;"><%= new Date(r.received_at).toLocaleString('en-GB') %></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <% } %>
+</div>
+
+<% if (check) { %>
+<!-- DKIM setup lightbox — provider-specific step-by-step -->
+<div id="dkimModal" style="display:none;position:fixed;inset:0;background:rgba(2,6,23,.55);z-index:1000;align-items:center;justify-content:center;"
+     onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:#fff;border-radius:16px;max-width:680px;width:94%;max-height:88vh;overflow:auto;padding:28px 32px;box-shadow:0 24px 60px rgba(2,6,23,.35);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <h2 style="margin:0;font-size:22px;">Set up DKIM for <%= dom.domain %></h2>
+      <button type="button" class="btn" onclick="document.getElementById('dkimModal').style.display='none'" style="font-size:16px;">✕ Close</button>
+    </div>
+    <p class="muted" style="font-size:15px;margin:0 0 16px;">
+      DKIM adds a digital signature to every email so receivers can prove it really came from <%= dom.domain %>.
+      <% if (check.dnsManager) { %>DNS records get published at <strong><%= check.dnsManager %></strong><% if (check.dnsManagerUrl) { %> (<a href="<%= check.dnsManagerUrl %>" target="_blank" rel="noopener">open console ↗</a>)<% } %>.<% } %>
+    </p>
+    <% if (check.mailProvider === 'Microsoft 365') { %>
+      <ol style="font-size:16px;line-height:1.75;padding-left:22px;margin:0 0 14px;">
+        <li>Sign in to <a href="https://security.microsoft.com/authentication?viewid=DKIM" target="_blank" rel="noopener">Microsoft Defender → Email authentication settings → DKIM</a> (needs admin).</li>
+        <li>Select <strong><%= dom.domain %></strong> in the list.</li>
+        <li>Toggle <strong>Sign messages for this domain with DKIM signatures</strong>. Microsoft will refuse the first time and show <strong>two CNAME records</strong> — that's expected.</li>
+        <li>Publish both CNAMEs<%= check.dnsManager ? ' at ' + check.dnsManager : '' %>:
+          <pre style="margin:8px 0;padding:10px;background:#f1f5f9;border-radius:8px;overflow:auto;font-size:14px;">selector1._domainkey  CNAME  selector1-&lt;value-Microsoft-shows&gt;._domainkey.&lt;tenant&gt;.onmicrosoft.com
+selector2._domainkey  CNAME  selector2-&lt;value-Microsoft-shows&gt;._domainkey.&lt;tenant&gt;.onmicrosoft.com</pre>
+          <span class="muted" style="font-size:14px;">Copy the exact values from the Defender screen — they include the tenant name.</span></li>
+        <li>Wait 15–30 minutes for DNS, then flip the toggle on again — it will enable.</li>
+        <li>Come back here and hit <strong>Re-run DNS check</strong> — the DKIM row goes green.</li>
+      </ol>
+    <% } else if (check.mailProvider === 'Google Workspace') { %>
+      <ol style="font-size:16px;line-height:1.75;padding-left:22px;margin:0 0 14px;">
+        <li>Sign in to <a href="https://admin.google.com/" target="_blank" rel="noopener">Google Admin</a> → Apps → Google Workspace → Gmail → <strong>Authenticate email</strong>.</li>
+        <li>Select <strong><%= dom.domain %></strong> and click <strong>Generate new record</strong> (choose 2048-bit).</li>
+        <li>Publish the TXT record Google shows<%= check.dnsManager ? ' at ' + check.dnsManager : '' %> — host <code>google._domainkey</code>, value starts <code>v=DKIM1;</code>.</li>
+        <li>Back in Google Admin, click <strong>Start authentication</strong>.</li>
+        <li>Come back here and hit <strong>Re-run DNS check</strong> — the DKIM row goes green.</li>
+      </ol>
+    <% } else { %>
+      <ol style="font-size:16px;line-height:1.75;padding-left:22px;margin:0 0 14px;">
+        <li>Log in to the email provider's admin area and find their <strong>DKIM / email authentication</strong> setting (we couldn't auto-detect the mail host<%= check.mxHost ? ' — MX points at ' + check.mxHost : '' %>).</li>
+        <li>Enable DKIM signing — the provider gives you a <strong>selector record</strong> (TXT or CNAME under <code>&lt;selector&gt;._domainkey.<%= dom.domain %></code>).</li>
+        <li>Publish that record<%= check.dnsManager ? ' at ' + check.dnsManager : '' %>.</li>
+        <li>Come back here and hit <strong>Re-run DNS check</strong> — the DKIM row goes green.</li>
+      </ol>
+    <% } %>
+    <p class="muted" style="font-size:14px;margin:0;">Tip: once reports start arriving, we also detect any selector the domain actually signs with automatically — so if a third-party sender (Mailchimp, SendGrid…) starts signing, it shows up here without any guessing.</p>
+  </div>
+</div>
+<% } %>
+
+<%- include('../partials/footer') %>

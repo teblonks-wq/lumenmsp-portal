@@ -1,0 +1,53 @@
+<%- include('../partials/header', { title: 'Products & Services', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><h1>Products &amp; Services</h1><p class="muted"><%= products.length %> shown</p></div>
+  <div style="display:flex;gap:8px;">
+    <a class="btn" href="/products/export.csv">Export to Excel</a>
+    <a class="btn" href="/products/duplicates">Find duplicates</a>
+    <a class="btn btn-primary" href="/products/new">+ New product</a>
+  </div>
+</div>
+
+<form method="get" action="/products" class="card" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+  <div class="form-group"><label>Search</label><input class="input" type="search" name="search" value="<%= search %>" placeholder="Name, code, supplier…" style="min-width:220px;"></div>
+  <div class="form-group"><label>Category</label>
+    <select class="input" name="category"><option value="">All</option><% categories.forEach(function(c){ %><option value="<%= c.id %>" <%= String(category)==String(c.id)?'selected':'' %>><%= c.name %></option><% }); %></select>
+  </div>
+  <div class="form-group"><label>Type</label>
+    <select class="input" name="type"><option value="">All</option><option value="product" <%= type==='product'?'selected':'' %>>Product</option><option value="service" <%= type==='service'?'selected':'' %>>Service</option></select>
+  </div>
+  <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" name="inactive" value="1" <%= showInactive?'checked':'' %>> Show inactive</label>
+  <button class="btn btn-primary" type="submit">Filter</button>
+  <a class="btn" href="/products">Reset</a>
+</form>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Name</th><th>Category</th><th>Type</th><th>Supplier</th><th style="text-align:right;">Cost</th><th style="text-align:right;">Price</th><th style="text-align:right;">VAT</th><th style="text-align:right;">Margin</th><th></th></tr></thead>
+      <tbody>
+        <% if (products.length===0) { %><tr><td colspan="9"><div class="empty-state">No products.</div></td></tr><% } %>
+        <% products.forEach(function(p){ var mg = Number(p.unit_price)-Number(p.cost_price); var mp = Number(p.unit_price)>0 ? (mg/Number(p.unit_price)*100):0; %>
+          <tr style="<%= p.is_active ? '' : 'opacity:.55;' %>">
+            <td><a class="row-link" href="/products/<%= p.id %>/edit"><%= p.name %></a><% if (!p.is_active) { %> <span class="badge badge-inactive">inactive</span><% } %><% if (p.code) { %><br><span class="muted" style="font-size:12px;"><%= p.code %></span><% } %></td>
+            <td class="muted"><%= p.category_name || '—' %></td>
+            <td><span class="badge <%= p.item_type==='product'?'badge-primary':'badge-inactive' %>"><%= p.item_type %></span></td>
+            <td class="muted"><%= p.supplier || '—' %></td>
+            <td style="text-align:right;"><%= money(p.cost_price) %></td>
+            <td style="text-align:right;"><%= money(p.unit_price) %></td>
+            <td style="text-align:right;"><%= Number(p.vat_rate) %>%</td>
+            <td style="text-align:right;color:<%= mp>=20?'#166534':mp>0?'#b45309':'#b91c1c' %>;"><%= mp.toFixed(0) %>%</td>
+            <td style="text-align:right;white-space:nowrap;">
+              <a class="btn" href="/products/<%= p.id %>/edit">Edit</a>
+              <% if (p.is_active) { %><form method="post" action="/products/<%= p.id %>/delete" onsubmit="return confirm('Deactivate this product?');" style="display:inline;"><button class="btn" type="submit">✕</button></form><% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

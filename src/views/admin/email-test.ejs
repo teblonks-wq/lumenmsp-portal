@@ -1,0 +1,68 @@
+<%- include('../partials/header', { title: 'Email delivery test', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+  <h1>Email delivery test</h1>
+  <p class="muted">Send a one-off test email to any address — free-text, or pre-filled from one of our templates.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:820px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:820px;"><%= error %></div><% } %>
+<% if (!graphOn) { %><div class="alert alert-danger" style="max-width:820px;">Microsoft Graph isn't configured, so emails won't actually send — they'll be logged to Mail flow as “not sent”. Configure Graph in Settings → Integrations to send for real.</div><% } %>
+
+<form method="post" action="/admin/email-test" class="card" style="max-width:820px;">
+  <div style="margin-bottom:14px;">
+    <label class="muted" style="font-size:12px;display:block;margin-bottom:4px;">Template</label>
+    <select id="tpl" class="input" style="min-width:280px;">
+      <% (templates||[]).forEach(function(t){ %><option value="<%= t.key %>"><%= t.label %></option><% }); %>
+    </select>
+    <span class="muted" style="font-size:12px;margin-left:8px;">picking one fills the subject &amp; body — edit before sending</span>
+  </div>
+
+  <div style="margin-bottom:14px;">
+    <label class="muted" style="font-size:12px;display:block;margin-bottom:4px;">To <span style="font-weight:400;">(comma-separate multiple addresses)</span></label>
+    <input class="input" type="text" name="to" required placeholder="someone@example.com, another@example.com" style="width:100%;">
+  </div>
+
+  <div style="margin-bottom:14px;">
+    <label class="muted" style="font-size:12px;display:block;margin-bottom:4px;">Subject</label>
+    <input id="subject" class="input" type="text" name="subject" required style="width:100%;">
+  </div>
+
+  <div style="margin-bottom:16px;">
+    <label class="muted" style="font-size:12px;display:block;margin-bottom:4px;">Body <span style="font-weight:400;">(HTML allowed)</span></label>
+    <textarea id="body" class="input" name="body" rows="12" style="width:100%;font-family:ui-monospace,Consolas,monospace;font-size:13px;"></textarea>
+  </div>
+
+  <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+    <button class="btn btn-primary" type="submit">Send test email</button>
+    <button class="btn" type="button" id="previewBtn">Preview</button>
+    <span class="muted" style="font-size:12px;">Sends from <%= fromAddr %></span>
+  </div>
+</form>
+
+<div id="preview" class="card" style="max-width:820px;margin-top:14px;display:none;">
+  <div class="card-header"><h2 style="font-size:15px;">Preview</h2></div>
+  <iframe id="previewFrame" style="width:100%;height:380px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;"></iframe>
+</div>
+
+<script>
+  var TEMPLATES = <%- JSON.stringify(templates || []) %>;
+  var byKey = {}; TEMPLATES.forEach(function(t){ byKey[t.key] = t; });
+  var tplSel = document.getElementById('tpl');
+  var subjectEl = document.getElementById('subject');
+  var bodyEl = document.getElementById('body');
+  tplSel.addEventListener('change', function(){
+    var t = byKey[tplSel.value]; if (!t) return;
+    if (t.key === 'blank') { return; }
+    subjectEl.value = t.subject || '';
+    bodyEl.value = t.html || '';
+  });
+  document.getElementById('previewBtn').addEventListener('click', function(){
+    var box = document.getElementById('preview'); box.style.display = 'block';
+    var f = document.getElementById('previewFrame');
+    f.srcdoc = bodyEl.value || '<p style="font-family:sans-serif;color:#94a3b8;padding:16px;">Nothing to preview yet.</p>';
+  });
+</script>
+
+<%- include('../partials/footer') %>

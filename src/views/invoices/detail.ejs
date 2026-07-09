@@ -1,0 +1,216 @@
+<%- include('../partials/header', { title: invoice.invoice_number, user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
+<% function sbadge(s){ return s==='paid'?'badge-sent':s==='issued'?'badge-primary':s==='void'?'badge-failed':'badge-inactive'; } %>
+<% function pbadge(s){ return s==='paid'?'badge-sent':s==='pending'?'badge-primary':s==='failed'?'badge-failed':'badge-inactive'; } %>
+
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/invoices">← Invoices</a></p>
+    <h1 style="margin:0;"><%= invoice.invoice_number %></h1>
+    <p class="muted" style="margin:4px 0 0;">
+      <%= invoice.title %>
+      <% if (invoice.customer_name) { %> · <a class="row-link" href="/customers/<%= invoice.customer_id %>"><%= invoice.customer_name %></a><% } %>
+      <% if (invoice.quote_number) { %> · from quote <a class="row-link" href="/quotes/<%= invoice.quote_id %>"><%= invoice.quote_number %></a><% } %>
+    </p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+    <% if (invoice.status === 'draft' && !invoice.emailed_at && !invoice.quickbooks_invoice_id) { %>
+      <a class="btn" href="/invoices/<%= invoice.id %>/edit">Edit</a>
+    <% } else { %>
+      <span class="btn" style="opacity:.55;cursor:not-allowed;" title="This invoice has been issued / sent / pushed to QuickBooks — locked from editing. Void it or raise a credit note to make changes.">🔒 Locked</span>
+    <% } %>
+    <a class="btn" href="/invoices/<%= invoice.id %>/pdf" target="_blank">Preview PDF</a>
+    <form method="post" action="/invoices/<%= invoice.id %>/resend-finance" onsubmit="return confirm('Email this invoice (PDF attached) to the finance contact?');" style="margin:0;"><button class="btn" type="submit">✉ Email to finance</button></form>
+    <form method="post" action="/invoices/<%= invoice.id %>/complete" onsubmit="return confirm('Complete this invoice — email the finance contact, push to QuickBooks and submit for Direct Debit?');" style="margin:0;"><button class="btn btn-primary" type="submit">Complete</button></form>
+    <% if (!invoice.recurring_parent_id) { %><button class="btn" type="button" onclick="invModal('recurring')">♻ <%= invoice.is_recurring ? 'Recurring' : 'Make recurring' %></button><% } %>
+    <button class="btn" type="button" onclick="invModal('credit')">Log overpayment</button>
+    <button class="btn" type="button" onclick="invModal('cancel')" style="color:#b91c1c;">Cancel</button>
+    <details class="dd">
+      <summary class="btn">⋯</summary>
+      <div class="dd-pop">
+        <a href="/invoices/<%= invoice.id %>/pdf?dl=1">Download PDF</a>
+        <form method="post" action="/invoices/<%= invoice.id %>/regenerate" onsubmit="return confirm('Rebuild this invoice\'s lines from current source data (Giacom / calls / IT &amp; Cloud)? Totals will change. QuickBooks is not auto-updated — re-push if it\'s already in QB.');"><button type="submit">↻ Regenerate from source</button></form>
+        <% if (invoice.invoice_scheme==='IC') { %>
+        <form method="post" action="/invoices/<%= invoice.id %>/sync-itcloud" onsubmit="return confirm('Sync the Giacom (Microsoft 365) lines from current data? Your manual base lines and locked overrides are kept; drift is flagged.');"><button type="submit">🔄 Sync Giacom lines</button></form>
+        <form method="post" action="/invoices/<%= invoice.id %>/promote-template" onsubmit="return confirm('Promote this invoice to next month\'s template? One-offs are stripped and it becomes the recurring base for this customer.');"><button type="submit">⭑ Promote to next template</button></form>
+        <% } %>
+        <% if (invoice.quickbooks_invoice_id) { %><div style="padding:9px 12px;font-size:13px;color:#166534;">✓ In QuickBooks</div>
+        <% } else { %><form method="post" action="/invoices/<%= invoice.id %>/push-to-qb"><button type="submit">Push to QuickBooks</button></form><% } %>
+        <form method="post" action="/invoices/<%= invoice.id %>/submit-for-payment" onsubmit="return confirm('Submit this invoice for Direct Debit collection?');"><button type="submit">Submit for payment</button></form>
+        <form method="post" action="/invoices/<%= invoice.id %>/delete" onsubmit="return confirm('Move this invoice to the recycle bin?');"><button type="submit" style="color:#b91c1c;">Delete invoice</button></form>
+      </div>
+    </details>
+  </div>
+</div>
+
+<!-- ── Lightbox modals (Cancel / Log overpayment / Make recurring) ── -->
+<div class="inv-modal" id="invm-cancel">
+  <div class="inv-box">
+    <h2 style="margin:0 0 4px;">Cancel invoice</h2>
+    <p class="muted" style="margin:0 0 14px;">Voids <%= invoice.invoice_number %> and emails the customer your message.</p>
+    <form method="post" action="/invoices/<%= invoice.id %>/cancel" onsubmit="return confirm('Cancel (void) this invoice and email the customer?');">
+      <div class="form-group"><label>Message to customer</label><textarea class="input" name="message" rows="4" placeholder="Reason for cancellation…"></textarea></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;"><button type="button" class="btn" onclick="invClose()">Cancel</button><button type="submit" class="btn btn-primary" style="background:#b91c1c;border-color:#b91c1c;">Cancel invoice &amp; email</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="inv-modal" id="invm-credit">
+  <div class="inv-box">
+    <h2 style="margin:0 0 14px;">Log overpayment / credit</h2>
+    <form method="post" action="/invoices/<%= invoice.id %>/log-credit">
+      <div class="form-group"><label>Amount (£)</label><input class="input" type="number" step="0.01" name="amount" placeholder="0.00"></div>
+      <div class="form-group"><label>Reason</label><input class="input" name="reason" placeholder="e.g. overpayment after amendment"></div>
+      <label style="display:flex;gap:8px;align-items:center;margin:6px 0 14px;"><input type="checkbox" name="to_qb" value="1"> Also raise a credit note in QuickBooks</label>
+      <div style="display:flex;gap:8px;justify-content:flex-end;"><button type="button" class="btn" onclick="invClose()">Cancel</button><button type="submit" class="btn btn-primary">Log credit</button></div>
+    </form>
+  </div>
+</div>
+
+<% if (!invoice.recurring_parent_id) { %>
+<div class="inv-modal" id="invm-recurring">
+  <div class="inv-box" style="max-width:560px;">
+    <h2 style="margin:0 0 14px;">Recurring invoice</h2>
+    <form method="post" action="/invoices/<%= invoice.id %>/recurring">
+      <div class="card-grid" style="grid-template-columns:2fr 1fr;gap:12px;">
+        <div class="form-group"><label>Template name</label><input class="input" name="recurring_name" value="<%= invoice.recurring_name || (invoice.customer_name ? invoice.customer_name + ' — monthly' : invoice.title) %>"></div>
+        <div class="form-group"><label>Type</label><input class="input" value="Scheduled" disabled></div>
+      </div>
+      <div class="form-group"><label>Customer</label><input class="input" value="<%= invoice.customer_name || '—' %>" disabled></div>
+      <p class="muted" style="font-size:12px;margin:-6px 0 10px;">Emailed to the customer's <strong>finance (billing) contact</strong> automatically — no address is stored on the template.</p>
+      <div class="card-grid" style="grid-template-columns:1fr 1fr;gap:12px;align-items:end;">
+        <div class="form-group"><label>Interval — invoice dated day of month</label>
+          <div style="display:flex;gap:6px;align-items:center;"><span class="muted">Monthly, day</span><input class="input" type="number" min="1" max="28" name="due_day" value="<%= invoice.due_day || 1 %>" style="width:70px;"></div>
+        </div>
+        <div class="form-group"><label>Generate &amp; collect on day</label><input class="input" type="number" min="1" max="28" name="send_day" value="<%= invoice.send_day || 23 %>"></div>
+      </div>
+      <p class="muted" style="font-size:12px;margin:0 0 10px;">e.g. generate on the 23rd → invoice dated/due the 1st of next month.</p>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:14px;">
+        <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="is_recurring" <%= invoice.is_recurring ? 'checked' : '' %>> <strong>Recurring active</strong></label>
+        <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="recurring_active" <%= (invoice.recurring_active===undefined||invoice.recurring_active) ? 'checked' : '' %>> Active (uncheck to pause)</label>
+        <label style="display:flex;gap:8px;align-items:center;">Contract type
+          <select class="input" name="contract_type" style="width:auto;">
+            <option value="" <%= !invoice.contract_type ? 'selected' : '' %>>None</option>
+            <option value="IT" <%= invoice.contract_type==='IT' ? 'selected' : '' %>>IT — pulls Giacom cloud licences each cycle</option>
+            <option value="Comms" <%= invoice.contract_type==='Comms' ? 'selected' : '' %>>Comms — pulls call charges each cycle</option>
+          </select>
+        </label>
+        <p class="muted" style="font-size:12px;margin:-2px 0 4px;">One contract of each type per customer. IT refreshes Giacom licence lines; Comms refreshes the call-charges line from imported call records.</p>
+        <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="auto_send" <%= invoice.auto_send ? 'checked' : '' %>> Automatically send emails</label>
+        <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="auto_qb" <%= invoice.auto_qb ? 'checked' : '' %>> Auto-push to QuickBooks</label>
+        <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="auto_gc" <%= invoice.auto_gc ? 'checked' : '' %>> Auto-submit to GoCardless</label>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">
+        <button type="submit" class="btn" formaction="/invoices/<%= invoice.id %>/pull-giacom" formmethod="post" title="Refresh the Giacom cloud lines now">Pull Giacom now</button>
+        <button type="submit" class="btn" formaction="/invoices/<%= invoice.id %>/pull-calls" formmethod="post" title="Refresh the call-charges line from imported call records">Pull call charges now</button>
+        <% if (invoice.is_recurring) { %><button type="submit" class="btn" formaction="/invoices/<%= invoice.id %>/generate-now" formmethod="post" onclick="return confirm('Generate the next invoice now?');">Generate next now</button><% } %>
+        <button type="button" class="btn" onclick="invClose()">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+<% } %>
+
+<style>
+  .inv-modal { display:none; position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:1000; align-items:flex-start; justify-content:center; padding:6vh 16px; }
+  .inv-modal.open { display:flex; }
+  .inv-box { background:#fff; border-radius:12px; padding:22px 24px; width:100%; max-width:440px; box-shadow:0 20px 50px rgba(0,0,0,.25); }
+</style>
+<script>
+  function invModal(k){ var m=document.getElementById('invm-'+k); if(m) m.classList.add('open'); }
+  function invClose(){ document.querySelectorAll('.inv-modal').forEach(function(m){ m.classList.remove('open'); }); }
+  document.querySelectorAll('.inv-modal').forEach(function(m){ m.addEventListener('click', function(e){ if(e.target===m) invClose(); }); });
+</script>
+
+<% if (notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<% if (typeof openCredits !== 'undefined' && openCredits.length) { %>
+<div class="card" style="border-left:3px solid #b45309;padding:0;">
+  <div class="card-header" style="padding:16px 20px;"><h2 style="margin:0;">Customer credit available <span class="muted" style="font-weight:400;">(<%= openCredits.length %>)</span></h2></div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Amount</th><th>Reason</th><th>Logged</th><th>QuickBooks</th><th></th></tr></thead>
+    <tbody>
+      <% openCredits.forEach(function(cr){ %>
+        <tr>
+          <td><strong>£<%= Number(cr.amount).toFixed(2) %></strong></td>
+          <td class="muted"><%= cr.reason || '—' %></td>
+          <td class="muted" style="font-size:12px;"><%= new Date(cr.created_at).toLocaleDateString('en-GB') %></td>
+          <td><% if (cr.quickbooks_credit_id) { %><span class="badge badge-sent" style="font-size:10px;">In QB</span><% } else { %>
+            <form method="post" action="/credits/<%= cr.id %>/submit-to-qb" style="margin:0;display:inline;"><input type="hidden" name="return" value="/invoices/<%= invoice.id %>"><button class="btn" type="submit" style="font-size:12px;padding:4px 10px;">Submit to QB</button></form>
+          <% } %></td>
+          <td style="text-align:right;">
+            <form method="post" action="/invoices/<%= invoice.id %>/apply-credit" style="margin:0;display:inline;"><input type="hidden" name="credit_id" value="<%= cr.id %>"><button class="btn btn-primary" type="submit">Apply to this invoice</button></form>
+          </td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<% if (invoice.recurring_parent_id) { %>
+<div class="card" style="border-left:3px solid var(--accent);">
+  <div class="card-header"><h2>Recurring</h2></div>
+  <p class="muted" style="margin:0;">Generated from recurring template <a class="row-link" href="/invoices/<%= invoice.recurring_parent_id %>">#<%= invoice.recurring_parent_id %></a>.</p>
+</div>
+<% } else if (invoice.is_recurring) { %>
+<div class="card" style="border-left:3px solid var(--accent);">
+  <div class="card-header"><h2>♻ Recurring <span class="badge <%= invoice.recurring_active ? 'badge-sent' : 'badge-inactive' %>" style="font-weight:400;"><%= invoice.recurring_active ? 'Active' : 'Paused' %></span><% if (invoice.contract_type) { %> <span class="badge badge-primary" style="font-weight:400;"><%= invoice.contract_type %> contract</span><% } %></h2></div>
+  <p class="muted" style="margin:0;">Generates on day <%= invoice.send_day || 23 %>, dated/due day <%= invoice.due_day || 1 %> of next month.
+    <% var aa=[]; if(invoice.auto_send)aa.push('email'); if(invoice.auto_qb)aa.push('QuickBooks'); if(invoice.auto_gc)aa.push('GoCardless'); %>
+    <%= aa.length ? 'Auto: ' + aa.join(', ') + '.' : 'No auto-actions.' %>
+    <button class="btn" type="button" onclick="invModal('recurring')" style="margin-left:8px;font-size:12px;padding:3px 10px;">Edit</button>
+    <% if (invoice.contract_type==='IT') { %><a class="btn" href="/invoices/<%= invoice.id %>/licenses" style="font-size:12px;padding:3px 10px;">Licences</a><% } %></p>
+</div>
+<% } %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+  <div class="card"><div class="card-header"><h2>Issued</h2></div><div><%= invoice.issue_date ? new Date(invoice.issue_date).toLocaleDateString('en-GB') : '—' %></div></div>
+  <div class="card"><div class="card-header"><h2>Due</h2></div><div><%= invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('en-GB') : '—' %></div></div>
+  <div class="card"><div class="card-header"><h2>Scheme</h2></div><div><%= invoice.invoice_scheme %> · <%= invoice.payment_method %></div></div>
+  <div class="card"><div class="card-header"><h2>Total</h2></div><div class="stat" style="font-size:24px;"><%= money(invoice.total) %></div></div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Payment &amp; references</h2></div>
+  <table class="table"><tbody>
+    <tr><th style="width:40%;">Method</th><td><% if (invoice.gocardless_mandate_id) { %><span style="color:#b45309;font-weight:600;">Direct Debit (GoCardless)</span><% } else { %>Bank transfer<% } %></td></tr>
+    <% if (invoice.gocardless_mandate_id) { %><tr><th>Direct Debit mandate</th><td class="muted"><%= invoice.gocardless_mandate_id %></td></tr><% } %>
+    <tr><th>GoCardless payment ref</th><td><% if (invoice.gocardless_payment_id) { %><span style="color:#166534;font-weight:600;"><%= invoice.gocardless_payment_id %></span><% } else { %><span class="muted">not submitted</span><% } %></td></tr>
+    <tr><th>QuickBooks invoice</th><td><% if (invoice.quickbooks_invoice_id) { %><span style="color:#b45309;font-weight:600;">#<%= invoice.quickbooks_invoice_id %></span><% } else { %><span class="muted">not pushed</span><% } %></td></tr>
+    <tr><th>Emailed</th><td><% if (invoice.emailed_at) { %><%= new Date(invoice.emailed_at).toLocaleString('en-GB') %><% } else { %><span class="muted">not yet</span><% } %></td></tr>
+  </tbody></table>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Line items</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit</th><th style="text-align:right;">VAT %</th><th style="text-align:right;">Line total</th></tr></thead>
+      <tbody>
+        <% if (items.length===0) { %><tr><td colspan="5"><div class="empty-state">No line items.</div></td></tr><% } %>
+        <% items.forEach(function(it){ %>
+          <tr><td><%= it.description %></td><td style="text-align:right;"><%= Number(it.quantity) %></td><td style="text-align:right;"><%= money(it.unit_price) %></td><td style="text-align:right;"><%= Number(it.tax_rate) %></td><td style="text-align:right;"><%= money(it.line_total) %></td></tr>
+        <% }); %>
+      </tbody>
+      <tfoot>
+        <tr><td colspan="4" style="text-align:right;" class="muted">Subtotal</td><td style="text-align:right;"><%= money(invoice.subtotal) %></td></tr>
+        <tr><td colspan="4" style="text-align:right;" class="muted">VAT</td><td style="text-align:right;"><%= money(invoice.tax_total) %></td></tr>
+        <tr><td colspan="4" style="text-align:right;font-weight:700;">Total</td><td style="text-align:right;font-weight:700;"><%= money(invoice.total) %></td></tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<% if (invoice.notes || invoice.terms) { %>
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));align-items:start;">
+  <% if (invoice.notes) { %><div class="card"><div class="card-header"><h2>Notes</h2></div><p style="white-space:pre-wrap;margin:0;"><%= invoice.notes %></p></div><% } %>
+  <% if (invoice.terms) { %><div class="card"><div class="card-header"><h2>Terms</h2></div><p style="white-space:pre-wrap;margin:0;"><%= invoice.terms %></p></div><% } %>
+</div>
+<% } %>
+
+<%- include('../partials/comms', { entityType: 'invoice', entityId: invoice.id, comms: comms, toEmail: commsTo, toContacts: commsContacts, commsSubject: 'Invoice ' + invoice.invoice_number }) %>
+
+<%- include('../partials/footer') %>

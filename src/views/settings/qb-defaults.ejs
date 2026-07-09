@@ -1,0 +1,28 @@
+<%- include('../partials/header', { title: 'QB defaults', user }) %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">← Integrations</a></p><h1>QuickBooks defaults</h1><p class="muted">The fallback service &amp; VAT code used for invoice lines that aren't mapped to a specific QB item.</p></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:600px;"><%= notice %></div><% } %>
+
+<form method="post" action="/settings/quickbooks/save-defaults" style="max-width:600px;">
+  <div class="card">
+    <div class="form-group" style="margin-bottom:16px;">
+      <label>Default service / item</label>
+      <select class="input" name="default_item_id" style="width:100%;">
+        <option value="">— choose a QB item —</option>
+        <% items.forEach(function(it){ %><option value="<%= it.Id %>" <%= currentItem===String(it.Id)?'selected':'' %>><%= it.Name %> (<%= it.Type %>)</option><% }); %>
+      </select>
+      <span class="muted" style="font-size:12px;">Used when an invoice line has no specific product mapping.</span>
+    </div>
+    <div class="form-group">
+      <label>Default VAT code</label>
+      <select class="input" name="default_tax_code" style="width:100%;">
+        <% if (taxCodes.length === 0) { %><option value="7" <%= currentTax==='7'?'selected':'' %>>Standard 20% (id 7)</option><% } %>
+        <% taxCodes.forEach(function(tc){ %><option value="<%= tc.Id %>" <%= currentTax===String(tc.Id)?'selected':'' %>><%= tc.Name %><%= tc.Description ? ' — ' + tc.Description : '' %> (id <%= tc.Id %>)</option><% }); %>
+      </select>
+    </div>
+  </div>
+  <button class="btn btn-primary" type="submit">Save defaults</button>
+</form>
+
+<%- include('../partials/footer') %>

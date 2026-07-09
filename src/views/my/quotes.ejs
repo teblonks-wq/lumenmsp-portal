@@ -1,0 +1,48 @@
+<%- include('header', { title: 'Quotes', company: (user && user.displayName) || '', user, active }) %>
+<%
+  function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function d(x){ return x ? new Date(x).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '—'; }
+  function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
+  function qbadge(s){ s=(s||'').toLowerCase(); return s==='accepted'?'badge-sent':(s==='lost'||s==='declined'||s==='expired'?'badge-inactive':(s==='sent'?'badge-primary':'badge-failed')); }
+%>
+
+<div class="page-header"><h1>Quotes</h1><p class="muted" style="margin:4px 0 0;">Quotes we've sent you.</p></div>
+
+<% if (!quotes || !quotes.length) { %>
+  <div class="card"><div class="empty">No quotes yet.</div></div>
+<% } else { %>
+  <div class="card" style="padding:0;">
+    <div style="padding:14px 24px 4px;"><input class="input card-filter" placeholder="Search quotes…" style="max-width:280px;"></div>
+    <div class="table-wrap">
+      <table class="table" style="margin:0;">
+        <thead><tr><th>Quote</th><th>Description</th><th>Issued</th><th>Valid until</th><th>Status</th><th style="text-align:right;">Total</th></tr></thead>
+        <tbody>
+          <% quotes.forEach(function(qt){ %>
+            <tr>
+              <td><a class="row-link" href="/my/quotes/<%= qt.id %>"><strong><%= qt.quote_number || ('#' + qt.id) %></strong></a></td>
+              <td><a class="row-link" href="/my/quotes/<%= qt.id %>" style="color:inherit;"><%= qt.title || '—' %></a></td>
+              <td class="muted" style="white-space:nowrap;"><%= d(qt.issue_date) %></td>
+              <td class="muted" style="white-space:nowrap;"><%= d(qt.valid_until) %></td>
+              <td><span class="badge <%= qbadge(qt.status) %>"><%= cap(qt.status || 'draft') %></span></td>
+              <td style="text-align:right;white-space:nowrap;"><%= money(qt.total) %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+<% } %>
+
+<script>
+(function(){
+  var inp = document.querySelector('.card-filter'); if (!inp) return;
+  inp.addEventListener('input', function(){
+    var q = inp.value.toLowerCase();
+    document.querySelectorAll('table tbody tr').forEach(function(tr){
+      tr.style.display = (!q || tr.textContent.toLowerCase().indexOf(q) >= 0) ? '' : 'none';
+    });
+  });
+})();
+</script>
+
+<%- include('footer', { active }) %>

@@ -1,0 +1,56 @@
+<%- include('header', { title: 'Invoice ' + (inv.invoice_number || ''), company: (user && user.displayName) || '', user, active }) %>
+<%
+  function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function d(x){ return x ? new Date(x).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '—'; }
+  function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
+  function ibadge(s){ s=(s||'').toLowerCase(); return s==='paid'?'badge-sent':(s==='void'||s==='cancelled'?'badge-inactive':(s==='overdue'?'badge-failed':'badge-primary')); }
+%>
+
+<p style="margin:0 0 12px;"><a class="row-link" href="/my/invoices">&larr; Back to invoices</a></p>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+    <div>
+      <h1 style="margin:0;">Invoice <%= inv.invoice_number || ('#' + inv.id) %></h1>
+      <p class="muted" style="margin:6px 0 0;"><%= inv.title || '' %></p>
+    </div>
+    <div style="text-align:right;">
+      <span class="badge <%= ibadge(inv.payment_status || inv.status) %>"><%= cap(inv.payment_status || inv.status || 'issued') %></span>
+      <div class="muted" style="font-size:12px;margin-top:8px;">Issued <%= d(inv.issue_date) %> &middot; Due <%= d(inv.due_date) %></div>
+      <button onclick="window.print()" class="btn" style="margin-top:8px;">&#128438; Print / Save PDF</button>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table" style="margin:0;">
+      <thead><tr><th>Description</th><th class="num" style="text-align:right;">Qty</th><th class="num" style="text-align:right;">Unit price</th><th class="num" style="text-align:right;">VAT</th><th class="num" style="text-align:right;">Amount</th></tr></thead>
+      <tbody>
+        <% if (!items || !items.length) { %>
+          <tr><td colspan="5" class="muted" style="padding:16px;">No line items.</td></tr>
+        <% } else { %>
+          <% items.forEach(function(it){ %>
+            <tr>
+              <td><%= it.description || '—' %></td>
+              <td style="text-align:right;"><%= Number(it.quantity)||0 %></td>
+              <td style="text-align:right;white-space:nowrap;"><%= money(it.unit_price) %></td>
+              <td style="text-align:right;"><%= (Number(it.tax_rate)||0) %>%</td>
+              <td style="text-align:right;white-space:nowrap;"><%= money(it.line_total) %></td>
+            </tr>
+          <% }); %>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+  <div style="display:flex;justify-content:flex-end;padding:16px 24px;border-top:1px solid var(--line);">
+    <table style="font-size:14px;">
+      <tr><td style="padding:3px 18px 3px 0;color:#64748b;">Total (inc. VAT)</td><td style="text-align:right;font-weight:700;"><%= money(inv.total) %></td></tr>
+      <tr><td style="padding:3px 18px 3px 0;color:#64748b;">Balance due</td><td style="text-align:right;font-weight:700;<%= (Number(inv.balance)||0) > 0 ? '' : 'color:#16a34a;' %>"><%= money(inv.balance) %></td></tr>
+    </table>
+  </div>
+</div>
+
+<% if (inv.notes) { %><div class="card"><h2 style="margin:0 0 8px;font-size:15px;">Notes</h2><div style="white-space:pre-wrap;line-height:1.5;"><%= inv.notes %></div></div><% } %>
+
+<%- include('footer', { active }) %>

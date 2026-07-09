@@ -1,0 +1,71 @@
+<%- include('partials/header', { title: 'Back Office', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); } %>
+
+<div class="page-header">
+  <h1>Back Office</h1>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<%
+  var hubCloud = (typeof cloudAcctCount!=='undefined') ? cloudAcctCount : 0;
+  var hubComms = (typeof commsCliCount!=='undefined') ? commsCliCount : 0; // distinct CLIs, matches Stage 1
+%>
+<style>
+  .hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;margin:4px 0 26px;}
+  .hub-card{display:block;border-radius:14px;padding:22px;text-decoration:none;color:#fff;box-shadow:0 8px 22px rgba(2,6,23,.16);transition:transform .12s ease, box-shadow .12s ease;}
+  a.hub-card:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(2,6,23,.26);}
+  .hub-card.soon{opacity:.55;cursor:default;background:linear-gradient(135deg,#475569,#64748b);}
+  .hub-ico{font-size:30px;line-height:1;} .hub-t{font-weight:800;font-size:18px;margin:10px 0 4px;letter-spacing:-.3px;}
+  .hub-card .muted{color:rgba(255,255,255,.9)!important;font-size:13px;}
+  .hub-card .badge{background:rgba(255,255,255,.28)!important;color:#fff!important;}
+  .hub-blue{background:linear-gradient(135deg,#1e3a8a,#2563eb);}
+  .hub-green{background:linear-gradient(135deg,#065f46,#10b981);}
+  .hub-purple{background:linear-gradient(135deg,#5b21b6,#7c3aed);}
+  .hub-amber{background:linear-gradient(135deg,#b45309,#f59e0b);}
+  .hub-teal{background:linear-gradient(135deg,#0e7490,#06b6d4);}
+</style>
+
+<div class="hub-grid">
+  <a class="hub-card hub-blue" href="/bureau/bill-run">
+    <div class="hub-ico">📋</div><div class="hub-t">Comms Bill Run</div>
+    <div class="muted">Allocate · cost · review · run the month</div>
+    <% if (hubComms) { %><div style="margin-top:10px;"><span class="badge" style="font-size:11px;"><%= hubComms %> to allocate</span></div><% } %>
+  </a>
+  <a class="hub-card hub-teal" href="/bureau/itcloud">
+    <div class="hub-ico">☁️</div><div class="hub-t">IT &amp; Cloud Bill Run</div>
+    <div class="muted">IT contracts + Giacom O365 → one invoice</div>
+    <% if (hubCloud) { %><div style="margin-top:10px;"><span class="badge" style="font-size:11px;"><%= hubCloud %> to match</span></div><% } %>
+  </a>
+  <a class="hub-card hub-green" href="/bureau/pricing">
+    <div class="hub-ico">💷</div><div class="hub-t">Pricing &amp; Profit</div>
+    <div class="muted">Set sale prices · what-if margin simulator</div>
+  </a>
+  <a class="hub-card hub-purple" href="/bureau/reports">
+    <div class="hub-ico">📊</div><div class="hub-t">Reports</div>
+    <div class="muted">Profit by customer &amp; category · watchlist</div>
+  </a>
+  <a class="hub-card hub-amber" href="/admin/packages">
+    <div class="hub-ico">📦</div><div class="hub-t">Package Manager</div>
+    <div class="muted">Bundle Giacom lines into set-price products</div>
+  </a>
+  <a class="hub-card hub-teal" href="/bureau/assets">
+    <div class="hub-ico">🗂️</div><div class="hub-t">Comms Asset List</div>
+    <div class="muted">Search/edit every CLI &amp; its products · duplicates</div>
+  </a>
+  <a class="hub-card hub-teal" href="/bureau/cli-report">
+    <div class="hub-ico">📊</div><div class="hub-t">CLI Charges Report</div>
+    <div class="muted">All charges on one CLI for a period</div>
+  </a>
+  <a class="hub-card hub-green" href="/bureau/erecycling">
+    <div class="hub-ico">♻️</div><div class="hub-t">E-Recycling</div>
+    <div class="muted">Audit IT kit with photos → manifest to e-waste firm</div>
+  </a>
+  <div class="hub-card soon">
+    <div class="hub-ico">🔗</div><div class="hub-t">Account Matching <span class="muted" style="font-weight:500;font-size:11px;">soon</span></div>
+    <div class="muted">Folds into the Cloud Bill Run</div>
+  </div>
+</div>
+
+<%- include('partials/footer') %>

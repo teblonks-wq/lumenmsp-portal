@@ -1,0 +1,57 @@
+<%- include('../partials/header', { title: customer.name + ' — Calls', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+   function money4(v){ return '£' + (Number(v)||0).toFixed(4); }
+   function dur(s){ s=Number(s)||0; var m=Math.floor(s/60), ss=s%60; return m+':'+(ss<10?'0':'')+ss; }
+   function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : ''; }
+   var totCost = (calls||[]).reduce(function(a,c){return a+Number(c.cost||0);},0);
+   var totSell = (calls||[]).reduce(function(a,c){return a+Number(c.sell||0);},0);
+   var totSecs = (calls||[]).reduce(function(a,c){return a+Number(c.duration_sec||0);},0); %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/customers/<%= customer.id %>#comms">← <%= customer.name %></a></p>
+  <h1>Calls — <%= customer.name %><% if (period) { %> <span class="muted" style="font-weight:400;">· <%= period %></span><% } %></h1></div>
+
+<form method="get" action="/customers/<%= customer.id %>/calls" style="margin-bottom:14px;display:flex;gap:8px;align-items:center;">
+  <label class="muted" style="font-size:12px;">Period</label>
+  <select class="input" name="period" onchange="this.form.submit()" style="width:auto;font-size:13px;padding:5px 8px;">
+    <option value="">All periods</option>
+    <% (periods||[]).forEach(function(p){ %><option value="<%= p %>" <%= period===p?'selected':'' %>><%= p %></option><% }); %>
+  </select>
+</form>
+
+<div class="card" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
+  <div><div class="muted" style="font-size:12px;">Calls</div><div style="font-size:20px;font-weight:800;"><%= (calls||[]).length.toLocaleString() %></div></div>
+  <div><div class="muted" style="font-size:12px;">Minutes</div><div style="font-size:20px;font-weight:800;"><%= Math.round(totSecs/60).toLocaleString() %></div></div>
+  <div><div class="muted" style="font-size:12px;">Cost</div><div style="font-size:20px;font-weight:800;color:#64748b;"><%= money(totCost) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Sell</div><div style="font-size:20px;font-weight:800;"><%= money(totSell) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(totSell-totCost) %></div></div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:16px 20px 0;"><h2>Calls — highest value first <span class="muted" style="font-weight:500;font-size:12px;">(<%= (calls||[]).length.toLocaleString() %>)</span></h2></div>
+  <% if (!(calls||[]).length) { %>
+    <p class="muted" style="padding:14px 20px;">No call records for this customer<% if (period) { %> in <%= period %><% } %>.</p>
+  <% } else { %>
+    <div class="table-wrap"><table class="table">
+      <thead><tr>
+        <th>When</th><th>CLI</th><th>Dialled</th><th>Description</th><th>Type</th>
+        <th style="text-align:right;">Duration</th><th style="text-align:right;">Cost</th><th style="text-align:right;">Sell</th>
+      </tr></thead>
+      <tbody>
+        <% calls.forEach(function(c){ var cost=Number(c.cost||0); %>
+          <tr>
+            <td style="white-space:nowrap;font-size:12px;"><%= dt(c.call_at) %></td>
+            <td style="font-size:12px;"><%= c.cli || '' %></td>
+            <td style="font-size:12px;"><%= c.dialled || '' %></td>
+            <td class="muted" style="font-size:12px;"><%= c.description || '' %></td>
+            <td style="font-size:11px;"><%= c.call_type_label || '' %><% if (cost>0) { %> <span class="muted">(+<%= c.markup_pct %>%)</span><% } %></td>
+            <td style="text-align:right;font-size:12px;"><%= dur(c.duration_sec) %></td>
+            <td style="text-align:right;"><%= money4(cost) %></td>
+            <td style="text-align:right;"><%= money4(c.sell||0) %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>

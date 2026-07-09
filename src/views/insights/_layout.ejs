@@ -1,0 +1,40 @@
+<%
+// Insights section layout — NATIVE Portal chrome (2026-07-07).
+// Previously this was a standalone HTML shell (own topnav + insights.css) iframed into the
+// Portal via /tools/insights. Now every insights page renders inside the real Portal
+// sidebar/header/footer like any other section, with a section tab strip for insights nav.
+// All component classes (card, table, badge, tabs, …) come from app.css — insights.css is
+// no longer loaded. CSRF + sortable tables + sidebar active-state come from the footer partial.
+%>
+<%- include('../partials/header', { title: (typeof title !== 'undefined' ? title + ' · Insights' : 'Insights'), user: user }) %>
+
+<div class="tabs" id="insightsTabs" style="margin-bottom:24px;">
+  <a class="tab-btn" href="/insights" data-exact="1">Dashboard</a>
+  <a class="tab-btn" href="/insights/reports">Reports</a>
+  <a class="tab-btn" href="/insights/templates">Templates</a>
+  <a class="tab-btn" href="/insights/run">Run</a>
+  <a class="tab-btn" href="/insights/customers">Customers</a>
+  <a class="tab-btn" href="/insights/number">Number lookup</a>
+</div>
+
+<%- body %>
+
+<script>
+  // Highlight the current insights tab (exact match for the dashboard, prefix for the rest).
+  (function () {
+    var path = window.location.pathname;
+    document.querySelectorAll('#insightsTabs .tab-btn').forEach(function (a) {
+      var href = a.getAttribute('href');
+      var active = a.hasAttribute('data-exact') ? (path === href) : path.indexOf(href) === 0;
+      if (active) a.classList.add('active');
+    });
+    // Detail pages (customer/site/config) belong to the Customers tab.
+    if (!document.querySelector('#insightsTabs .tab-btn.active') &&
+        /^\/insights\/(customer|site|report-config)/.test(path)) {
+      var c = document.querySelector('#insightsTabs a[href="/insights/customers"]');
+      if (c) c.classList.add('active');
+    }
+  })();
+</script>
+
+<%- include('../partials/footer') %>

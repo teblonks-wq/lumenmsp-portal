@@ -1,0 +1,44 @@
+<%- include('../partials/header', { title: 'IT Reports', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+  <h1>IT Operations &amp; Security Snapshot</h1>
+  <p class="muted">Monthly client report. Auto-generated at midnight on the 1st for the previous month (<%= periodLabel %> next). Configure per customer below.</p>
+</div>
+
+<div style="margin:0 0 16px;max-width:420px;">
+  <input id="itrSearch" class="input" type="search" placeholder="Search customers…" style="width:100%;" oninput="filterItr(this.value)" autofocus>
+</div>
+<script>
+function filterItr(q){
+  q = (q || '').toLowerCase().trim();
+  document.querySelectorAll('#itrTable tbody tr').forEach(function(tr){
+    tr.style.display = (!q || tr.textContent.toLowerCase().indexOf(q) >= 0) ? '' : 'none';
+  });
+}
+</script>
+
+<div class="card">
+  <div class="table-wrap"><table class="table" id="itrTable">
+    <thead><tr><th>Customer</th><th>Monthly</th><th>Tenant</th><th>Recipients</th><th style="text-align:right;">Actions</th></tr></thead>
+    <tbody>
+      <% customers.forEach(function(c){ %>
+      <tr>
+        <td><a class="row-link" href="/it-report/<%= c.id %>"><%= c.name %></a></td>
+        <td>
+          <% if (c.is_active) { %><span class="badge badge-sent">On<%= c.auto_send ? ' · auto-send' : ' · review' %></span>
+          <% } else { %><span class="badge badge-inactive">Off</span><% } %>
+        </td>
+        <td><% if (c.entra_tenant_id) { %><span class="badge badge-primary">Graph ready</span><% } else { %><span class="badge badge-inactive">No tenant</span><% } %></td>
+        <td class="muted" style="font-size:13px;"><%= (c.recipients||'').split(/[\n,;]+/).filter(function(s){return s.indexOf('@')>=0;}).length %> recipient(s)</td>
+        <td style="text-align:right;white-space:nowrap;">
+          <a class="btn" href="/it-report/<%= c.id %>/preview" target="_blank" title="Preview last month's report">Preview</a>
+          <a class="btn btn-primary" href="/it-report/<%= c.id %>">Settings</a>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,230 @@
+<%- include('../partials/header', { title: 'Invoices', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toFixed(2); }
+   function pstate(i){
+     if (i.status==='void') return { label:'Void', cls:'badge-inactive' };
+     if (i.payment_status==='paid') return { label:'Paid', cls:'badge-sent' };
+     var bal = Number(i.balance||0), tot = Number(i.total||0);
+     if (bal > 0 && bal < tot) return { label:'Part-paid', cls:'badge-primary' };
+     var overdue = i.due_date && new Date(i.due_date) < new Date(new Date().toDateString());
+     return overdue ? { label:'Overdue', cls:'badge-failed' } : { label:'Unpaid', cls:'badge-primary' };
+   } %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><h1>Invoices</h1><p class="muted"><%= invoices.length %> shown · <%= money(total) %><% if (Number(outstanding) > 0) { %> · <strong style="color:#b45309;"><%= money(outstanding) %> outstanding</strong><% } %><% if (period && period.from) { %> · <%= period.label %><% } %></p></div>
+  <a class="btn btn-primary" href="/invoices/new">+ New invoice</a>
+</div>
+
+<%
+  function qs(over){ var p = { status:status, search:search, source:source, period:(period&&period.key)||'', from:from, to:to };
+    for (var k in (over||{})) p[k]=over[k];
+    var a=[]; for (var k in p) if (p[k]!=='' && p[k]!=null) a.push(k+'='+encodeURIComponent(p[k]));
+    return '/invoices' + (a.length?'?'+a.join('&'):''); }
+%>
+
+<!-- Status tabs -->
+<div class="tabs" style="margin-bottom:14px;">
+  <a class="tab-btn <%= status==='' ? 'active' : '' %>" href="<%= qs({status:''}) %>">All</a>
+  <% ['draft','issued','paid','void'].forEach(function(s){ %>
+    <a class="tab-btn <%= status===s ? 'active' : '' %>" href="<%= qs({status:s}) %>"><%= s.charAt(0).toUpperCase()+s.slice(1) %> <span class="muted">(<%= statusCounts[s]||0 %>)</span></a>
+  <% }); %>
+</div>
+
+<!-- Filter bar: source + date period + search -->
+<form method="get" action="/invoices" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;">
+  <input type="hidden" name="status" value="<%= status %>">
+  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Source</label>
+    <select class="input" name="source" style="width:auto;" onchange="this.form.submit()">
+      <option value="" <%= source===''?'selected':'' %>>All invoices</option>
+      <option value="portal" <%= source==='portal'?'selected':'' %>>Portal-native</option>
+      <option value="legacy" <%= source==='legacy'?'selected':'' %>>Legacy (QuickBooks) (<%= legacyCount %>)</option>
+      <% if (unmatchedCount) { %><option value="nocustomer" <%= source==='nocustomer'?'selected':'' %>>⚠ No customer (<%= unmatchedCount %>)</option><% } %>
+    </select>
+  </div>
+  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Payment</label>
+    <select class="input" name="paid" style="width:auto;" onchange="this.form.submit()">
+      <option value="" <%= paid===''?'selected':'' %>>All</option>
+      <option value="unpaid" <%= paid==='unpaid'?'selected':'' %>>Unpaid</option>
+      <option value="paid" <%= paid==='paid'?'selected':'' %>>Paid</option>
+    </select>
+  </div>
+  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Direct Debit</label>
+    <select class="input" name="dd" style="width:auto;" onchange="this.form.submit()">
+      <option value="" <%= dd===''?'selected':'' %>>Any</option>
+      <option value="yes" <%= dd==='yes'?'selected':'' %>>DD only</option>
+      <option value="no" <%= dd==='no'?'selected':'' %>>Non-DD</option>
+    </select>
+  </div>
+  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Sent to GC</label>
+    <select class="input" name="gc" style="width:auto;" onchange="this.form.submit()">
+      <option value="" <%= (typeof gc==='undefined'||gc==='')?'selected':'' %>>Any</option>
+      <option value="yes" <%= gc==='yes'?'selected':'' %>>Sent to GC</option>
+      <option value="no" <%= gc==='no'?'selected':'' %>>Not sent</option>
+    </select>
+  </div>
+  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Sent to QB</label>
+    <select class="input" name="qb" style="width:auto;" onchange="this.form.submit()">
+      <option value="" <%= (typeof qb==='undefined'||qb==='')?'selected':'' %>>Any</option>
+      <option value="yes" <%= qb==='yes'?'selected':'' %>>Sent to QB</option>
+      <option value="no" <%= qb==='no'?'selected':'' %>>Not sent</option>
+    </select>
+  </div>
+  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Emailed</label>
+    <select class="input" name="emailed" style="width:auto;" onchange="this.form.submit()">
+      <option value="" <%= (typeof emailed==='undefined'||emailed==='')?'selected':'' %>>Any</option>
+      <option value="yes" <%= emailed==='yes'?'selected':'' %>>Emailed</option>
+      <option value="no" <%= emailed==='no'?'selected':'' %>>Not emailed</option>
+    </select>
+  </div>
+  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Period</label>
+    <select class="input" name="period" id="inv-period" style="width:auto;" onchange="invPeriodToggle();this.form.submit()">
+      <% periodOptions.forEach(function(o){ %><option value="<%= o.key %>" <%= (period&&period.key)===o.key?'selected':'' %>><%= o.label %></option><% }); %>
+    </select>
+  </div>
+  <div class="form-group inv-custom" style="margin:0;<%= (period&&period.key)==='custom'?'':'display:none;' %>"><label style="font-size:12px;">From</label><input class="input" type="date" name="from" value="<%= from %>"></div>
+  <div class="form-group inv-custom" style="margin:0;<%= (period&&period.key)==='custom'?'':'display:none;' %>"><label style="font-size:12px;">To</label><input class="input" type="date" name="to" value="<%= to %>"></div>
+  <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search number, title, customer…" style="min-width:220px;">
+  <button class="btn" type="submit">Filter</button>
+  <% if (status||search||source||paid||dd||(period&&period.from)) { %><a class="btn" href="/invoices">Clear</a><% } %>
+</form>
+<script>
+  function invPeriodToggle(){ var v=document.getElementById('inv-period').value; document.querySelectorAll('.inv-custom').forEach(function(e){ e.style.display = v==='custom'?'':'none'; }); }
+</script>
+
+<div id="batchStatus" style="display:none;margin-bottom:10px;padding:10px 14px;border-radius:8px;border:1px solid #bfdbfe;background:#eff6ff;font-size:13px;"></div>
+<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+  <span class="muted" style="font-size:13px;margin-right:auto;"><span id="batchCount">0</span> selected</span>
+  <select class="input" id="bulkAction" style="width:auto;font-size:13px;">
+    <option value="">Bulk action…</option>
+    <option value="email">Email to customer</option>
+    <option value="qb">Send to QuickBooks</option>
+    <option value="gc">Send to GoCardless (collect DD)</option>
+    <option value="reminder">Send reminders</option>
+    <option value="delete">Delete (move to recycle bin)</option>
+  </select>
+  <button class="btn" id="bulkApply" type="button" disabled>Apply</button>
+  <button class="btn" id="bulkDownload" type="button" disabled>Download</button>
+  <button class="btn" id="bulkPrint" type="button" disabled>Print</button>
+  <button class="btn btn-primary" type="submit" form="batchForm" id="batchBtn" disabled title="Email + QuickBooks + Direct Debit in one go">Complete</button>
+</div>
+<form method="post" action="/invoices/batch-complete" id="batchForm"></form>
+<script>
+  (function(){
+    function chks(){ return Array.prototype.slice.call(document.querySelectorAll('.batch-chk')); }
+    function selectedIds(){ return chks().filter(function(c){return c.checked;}).map(function(c){return c.value;}); }
+    var apply=document.getElementById('bulkApply'), dl=document.getElementById('bulkDownload'), pr=document.getElementById('bulkPrint'), act=document.getElementById('bulkAction');
+    function refreshBulk(){ var n=selectedIds().length; [apply,dl,pr].forEach(function(b){ if(b) b.disabled = (n===0); }); }
+    document.addEventListener('change', function(e){ if(e.target && (e.target.classList.contains('batch-chk') || e.target.id==='batchAll')) setTimeout(refreshBulk,0); });
+    refreshBulk();
+    var csrf = (document.querySelector('meta[name="csrf-token"]')||{}).content || '';
+    if(apply) apply.addEventListener('click', function(){
+      var ids=selectedIds(), a=act.value;
+      if(!ids.length) return;
+      if(!a){ alert('Choose a bulk action first.'); return; }
+      var nice={email:'email to customer',qb:'send to QuickBooks',gc:'send to GoCardless (collect by Direct Debit)',reminder:'send payment reminders',delete:'delete (move to recycle bin)'}[a];
+      var prompt = a==='delete' ? ('Move '+ids.length+' invoice(s) to the recycle bin? They can be restored from there.') : ('Apply "'+nice+'" to '+ids.length+' invoice(s)?');
+      if(!confirm(prompt)) return;
+      var f=document.createElement('form'); f.method='post'; f.action='/invoices/bulk';
+      function add(n,v){ var i=document.createElement('input'); i.type='hidden'; i.name=n; i.value=v; f.appendChild(i); }
+      add('action',a); add('_csrf',csrf); ids.forEach(function(id){ add('ids',id); });
+      document.body.appendChild(f); f.submit();
+    });
+    function openPdf(print){ var ids=selectedIds(); if(!ids.length) return; window.open('/invoices/bulk-pdf?ids='+ids.join(',')+(print?'&print=1':''),'_blank'); }
+    if(dl) dl.addEventListener('click', function(){ openPdf(false); });
+    if(pr) pr.addEventListener('click', function(){ openPdf(true); });
+  })();
+</script>
+<script>
+  (function(){
+    var box = document.getElementById('batchStatus');
+    if (!box) return;
+    var started = new URLSearchParams(location.search).get('batch') === 'running';
+    var form = document.getElementById('batchForm');
+    var btn = document.getElementById('batchBtn');
+    function render(s){
+      if (!s || (!s.running && (s.total||0) === 0)) { box.style.display='none'; return; }
+      box.style.display='block';
+      if (s.running) {
+        box.style.borderColor='#bfdbfe'; box.style.background='#eff6ff';
+        box.innerHTML = '⏳ Completing invoices… <strong>' + s.done + ' / ' + s.total + '</strong> done (' + s.ok + ' ok)';
+      } else {
+        var bad = (s.errs||[]).length;
+        box.style.borderColor = bad ? '#fde68a' : '#bbf7d0';
+        box.style.background = bad ? '#fffbeb' : '#f0fdf4';
+        box.innerHTML = '✓ Batch finished — <strong>' + s.ok + ' of ' + s.total + '</strong> completed'
+          + (bad ? '. <span style="color:#92400e;">' + bad + ' issue(s): ' + s.errs.slice(0,5).join('; ') + '</span>' : '.')
+          + ' <a href="/invoices" style="margin-left:6px;">Refresh list</a>';
+      }
+    }
+    function poll(){
+      fetch('/invoices/batch-status').then(function(r){return r.json();}).then(function(s){
+        render(s);
+        if (s && s.running) setTimeout(poll, 2500);
+      }).catch(function(){});
+    }
+    // Submit the batch over fetch — no full-page navigation, so a heavy list render can't 504 the action.
+    if (form) form.addEventListener('submit', function(ev){
+      ev.preventDefault();
+      var ids = Array.prototype.slice.call(document.querySelectorAll('.batch-chk')).filter(function(c){return c.checked;});
+      if (!ids.length) return;
+      if (!confirm('Complete ' + ids.length + ' invoice(s)? This emails the finance contact, pushes to QuickBooks and submits to GoCardless for each. It runs in the background.')) return;
+      var body = new URLSearchParams(); ids.forEach(function(c){ body.append('ids', c.value); });
+      if (btn) { btn.disabled = true; }
+      box.style.display='block'; box.style.borderColor='#bfdbfe'; box.style.background='#eff6ff'; box.innerHTML = '⏳ Starting…';
+      fetch('/invoices/batch-complete', { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded', 'X-Requested-With':'XMLHttpRequest', 'Accept':'application/json' }, body: body.toString() })
+        .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, j:j }; }); })
+        .then(function(res){
+          if (!res.ok || !res.j.ok) { box.style.borderColor='#fca5a5'; box.style.background='#fef2f2'; box.innerHTML = '⚠ ' + (res.j.error || 'Could not start batch.'); if (btn) btn.disabled=false; return; }
+          setTimeout(poll, 800);
+        })
+        .catch(function(){ box.style.borderColor='#fca5a5'; box.style.background='#fef2f2'; box.innerHTML = '⚠ Network error starting batch.'; if (btn) btn.disabled=false; });
+    });
+    poll();
+    if (started) setTimeout(poll, 1500);
+  })();
+</script>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th style="width:30px;"><input type="checkbox" id="batchAll" title="Select all"></th><th>Number</th><th>Title</th><th>Customer</th><th>Paid?</th><th style="text-align:right;">Total</th><th style="text-align:right;">Outstanding</th><th>Issued</th><th style="text-align:center;">Sync</th></tr></thead>
+      <tbody>
+        <% if (invoices.length===0) { %><tr><td colspan="9"><div class="empty-state">No invoices.</div></td></tr><% } %>
+        <% invoices.forEach(function(i){ var on='var(--accent)', off='#d1d5db'; %>
+          <tr>
+            <td style="text-align:center;"><input type="checkbox" class="batch-chk" name="ids" value="<%= i.id %>" form="batchForm"></td>
+            <td><a class="row-link" href="/invoices/<%= i.id %>"><%= i.invoice_number %></a><% if (i.is_recurring) { %> <span title="Recurring template">♻</span><% } %><% if (i.is_legacy) { %> <span class="badge badge-inactive" title="Imported from QuickBooks" style="font-size:10px;">Legacy</span><% } %></td>
+            <td><%= i.title %></td>
+            <td class="muted"><% if (i.customer_id) { %><a class="row-link" href="/customers/<%= i.customer_id %>"><%= i.customer_name %></a><% } else { %>—<% } %></td>
+            <td>
+              <% var ps = pstate(i); %><span class="badge <%= ps.cls %>"><%= ps.label %></span>
+              <% if (i.gocardless_mandate_id) { %><br><span class="muted" style="font-size:11px;">Direct Debit</span><% } %>
+            </td>
+            <td style="text-align:right;"><%= money(i.total) %></td>
+            <td style="text-align:right;"><% if (Number(i.balance) > 0) { %><span style="color:#b45309;font-weight:600;"><%= money(i.balance) %></span><% } else if (i.payment_status==='paid') { %><span class="muted">—</span><% } else { %><span class="muted"><%= money(i.total) %></span><% } %></td>
+            <td class="muted"><%= i.issue_date ? new Date(i.issue_date).toLocaleDateString('en-GB') : '—' %></td>
+            <td style="text-align:center;white-space:nowrap;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.emailed ? '#2563eb' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title>Emailed to customer</title><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.gocardless_payment_id ? '#166534' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= i.gocardless_payment_id ? 'Submitted for payment (GoCardless)' : 'Not submitted for payment' %></title><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.quickbooks_invoice_id ? '#b45309' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= i.payment_synced_at ? 'In QuickBooks · payment synced ' + new Date(i.payment_synced_at).toLocaleString('en-GB') : 'In QuickBooks' %></title><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  (function(){
+    var all = document.getElementById('batchAll');
+    var btn = document.getElementById('batchBtn');
+    var cnt = document.getElementById('batchCount');
+    function chks(){ return Array.prototype.slice.call(document.querySelectorAll('.batch-chk')); }
+    function refresh(){ var n = chks().filter(function(c){return c.checked;}).length; if(cnt) cnt.textContent = n; if(btn) btn.disabled = n===0; }
+    if (all) all.addEventListener('change', function(){ chks().forEach(function(c){ c.checked = all.checked; }); refresh(); });
+    chks().forEach(function(c){ c.addEventListener('change', refresh); });
+    refresh();
+  })();
+</script>
+
+<%- include('../partials/footer') %>

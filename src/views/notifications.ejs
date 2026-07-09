@@ -1,0 +1,31 @@
+<%- include('partials/header', { title: 'Notifications', user }) %>
+
+<div class="page-header"><h1>Notifications</h1><p class="muted">Everything you've been sent, including cleared and snoozed.</p></div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>When</th><th>Notification</th><th>Status</th></tr></thead>
+      <tbody>
+        <% if (items.length===0) { %><tr><td colspan="3"><div class="empty-state">No notifications yet.</div></td></tr><% } %>
+        <% items.forEach(function(n){ %>
+          <tr style="<%= n.read_at ? '' : 'font-weight:600;' %>">
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= new Date(n.created_at).toLocaleString('en-GB') %></td>
+            <td>
+              <% if (n.link) { %><a class="row-link" href="<%= n.link %>"><%= n.title %></a><% } else { %><%= n.title %><% } %>
+              <% if (n.body) { %><br><span class="muted" style="font-size:12px;"><%= n.body %></span><% } %>
+            </td>
+            <td>
+              <% if (n.cleared_at) { %><span class="badge badge-inactive">cleared</span>
+              <% } else if (n.snoozed_until && new Date(n.snoozed_until) > new Date()) { %><span class="badge badge-failed">snoozed</span>
+              <% } else if (n.read_at) { %><span class="badge badge-sent">read</span>
+              <% } else { %><span class="badge badge-primary">new</span><% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('partials/footer') %>

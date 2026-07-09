@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in — Lumen MSP Portal</title>
+  <link rel="icon" type="image/png" href="/static/lumen-crest.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0f172a">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <link rel="stylesheet" href="/static/app.css">
+  <script>if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js').catch(function(){});});}</script>
+  <style>
+    /* Roughly double the login box and scale its contents */
+    .login-card { max-width: 720px !important; width: 92%; padding: 56px 64px !important; }
+    .login-card img { height: 84px !important; margin-bottom: 24px !important; }
+    .login-card h1 { font-size: 36px; }
+    .login-card > .muted { font-size: 18px; }
+    .login-card .form-group label { font-size: 15px; }
+    .login-card input { font-size: 18px; padding: 14px 16px; }
+    .login-card .btn { font-size: 18px; padding: 15px 20px; }
+    .login-card summary { font-size: 16px; }
+  </style>
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <img src="/static/lumen-crest.png" alt="Lumen" style="height:48px;width:auto;margin-bottom:16px;">
+    <h1>Lumen MSP Portal</h1>
+    <p class="muted">Sign in to continue</p>
+
+    <% if (error) { %>
+    <div class="alert-error"><%= error %></div>
+    <% } %>
+
+    <a class="btn btn-primary btn-block" href="/login">Sign in with Microsoft</a>
+
+    <details class="login-local">
+      <summary class="muted">Sign in with email</summary>
+      <form method="post" action="/login/local">
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" name="email" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" name="password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn btn-block">Sign in</button>
+      </form>
+    </details>
+  </div>
+</body>
+</html>

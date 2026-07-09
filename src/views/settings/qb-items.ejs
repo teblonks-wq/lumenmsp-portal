@@ -1,0 +1,104 @@
+<%- include('../partials/header', { title: 'QB item match', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">← Integrations</a></p><h1>QuickBooks item match</h1><p class="muted">Map your products/services to QuickBooks items so invoice lines push correctly.</p></div>
+  <form method="post" action="/settings/quickbooks/import-all-items" onsubmit="return confirm('Link all name-matches and create the rest as products?');" style="margin:0;"><button class="btn btn-primary" type="submit">Import all unmatched</button></form>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:760px;"><%= notice %></div><% } %>
+
+<!-- Default QB items for source-based lines (comms etc.) + VAT tax codes -->
+<details class="card" style="margin-bottom:14px;" <%= (!defaults.item_comms) ? 'open' : '' %>>
+  <summary style="cursor:pointer;font-weight:600;">Default items &amp; VAT codes <span class="muted" style="font-weight:400;font-size:12px;">— how comms bill-run lines post (they have no catalogue product)</span></summary>
+  <form method="post" action="/settings/quickbooks/defaults" style="margin-top:12px;display:flex;flex-direction:column;gap:10px;max-width:560px;">
+    <% function itemSelect(nm, cur){ %>
+      <select class="input" name="<%= nm %>" style="width:100%;">
+        <option value="">— none —</option>
+        <% rows.forEach(function(r){ %><option value="<%= r.qbId %>" <%= String(cur)===String(r.qbId)?'selected':'' %>><%= r.qbName %></option><% }); %>
+      </select>
+    <% } %>
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:10px 12px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Comms category → QuickBooks item</div>
+      <p class="muted" style="font-size:12px;margin:0 0 8px;">Each comms invoice line posts under the QB item for its category. <strong>Don't have Simply VoIP / Simply Mobile in QB yet?</strong>
+        <form method="post" action="/settings/quickbooks/create-comms-items" style="display:inline;"><button class="btn btn-primary" type="submit" style="font-size:12px;padding:3px 9px;">Create them in QuickBooks</button></form>
+      </p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:150px;"><label class="muted" style="font-size:11px;">Voice (Simply VoIP)</label><%- itemSelect('item_cat_voice', defaults.item_cat_voice) %></div>
+        <div style="flex:1;min-width:150px;"><label class="muted" style="font-size:11px;">Mobile (Simply Mobile)</label><%- itemSelect('item_cat_mobile', defaults.item_cat_mobile) %></div>
+        <div style="flex:1;min-width:150px;"><label class="muted" style="font-size:11px;">Internet / broadband</label><%- itemSelect('item_cat_internet', defaults.item_cat_internet) %></div>
+        <div style="flex:1;min-width:150px;"><label class="muted" style="font-size:11px;">Additional</label><%- itemSelect('item_cat_additional', defaults.item_cat_additional) %></div>
+        <div style="flex:1;min-width:150px;"><label class="muted" style="font-size:11px;">One-off</label><%- itemSelect('item_cat_oneoff', defaults.item_cat_oneoff) %></div>
+        <div style="flex:1;min-width:150px;"><label class="muted" style="font-size:11px;">Call charges</label><%- itemSelect('item_cat_call', defaults.item_cat_call) %></div>
+      </div>
+    </div>
+    <div><label class="muted" style="font-size:12px;">Fallback comms item (if a category above is unset)</label><%- itemSelect('item_comms', defaults.item_comms) %></div>
+    <div><label class="muted" style="font-size:12px;">Cloud (Giacom) default item</label><%- itemSelect('item_giacom', defaults.item_giacom) %></div>
+    <div><label class="muted" style="font-size:12px;">Fallback default item (any other un-mapped source line)</label><%- itemSelect('item_default', defaults.item_default) %></div>
+    <div style="display:flex;gap:10px;">
+      <div style="flex:1;"><label class="muted" style="font-size:12px;">Standard-VAT tax code ID (UK 20%)</label><input class="input" name="tax_code_standard" value="<%= defaults.tax_code_standard %>" placeholder="7" style="width:100%;"></div>
+      <div style="flex:1;"><label class="muted" style="font-size:12px;">Zero/exempt-VAT tax code ID</label><input class="input" name="tax_code_zero" value="<%= defaults.tax_code_zero %>" placeholder="(set if you have 0% lines)" style="width:100%;"></div>
+    </div>
+    <div><button class="btn btn-primary" type="submit">Save defaults</button></div>
+  </form>
+</details>
+<% if (stats.autoLinked > 0) { %><div class="alert" style="background:#f0fdf4;border:1px solid #bbf7d0;max-width:760px;">Auto-linked <strong><%= stats.autoLinked %></strong> exact name match<%= stats.autoLinked===1?'':'es' %>.</div><% } %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
+  <div class="card"><div class="card-header"><h2>QB items</h2></div><div class="stat"><%= stats.total %></div></div>
+  <div class="card"><div class="card-header"><h2>Linked</h2></div><div class="stat" style="color:#166534;"><%= stats.linked %></div></div>
+  <div class="card"><div class="card-header"><h2>No match</h2></div><div class="stat" style="color:#b45309;"><%= stats.unmatched %></div></div>
+  <div class="card"><div class="card-header"><h2>Ignored</h2></div><div class="stat" style="color:var(--muted);"><%= stats.ignored %></div></div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>QuickBooks item</th><th>Type</th><th>Status</th><th style="text-align:right;">Action</th></tr></thead>
+      <tbody>
+        <% rows.forEach(function(r){ %>
+          <tr>
+            <td><%= r.qbName %> <span class="muted" style="font-size:12px;">#<%= r.qbId %></span></td>
+            <td class="muted"><%= r.qbType %></td>
+            <td>
+              <% if (r.linked) { %><span class="badge badge-sent">Linked</span> <%= r.linked.name %>
+              <% } else if (r.suggest) { %><span class="badge badge-primary">Match found</span> <span class="muted"><%= r.suggest.name %></span>
+              <% } else { %><span class="badge badge-inactive">No product match</span><% } %>
+            </td>
+            <td style="text-align:right;white-space:nowrap;">
+              <% if (r.linked) { %><span class="muted">✓</span>
+              <% } else { %>
+                <% if (r.suggest) { %><form method="post" action="/settings/quickbooks/link-item" style="display:inline;"><input type="hidden" name="qb_item_id" value="<%= r.qbId %>"><input type="hidden" name="product_id" value="<%= r.suggest.id %>"><button class="btn btn-primary" type="submit">Link</button></form>
+                <% } else { %><form method="post" action="/settings/quickbooks/create-product-from-item" style="display:inline;"><input type="hidden" name="qb_item_id" value="<%= r.qbId %>"><input type="hidden" name="name" value="<%= r.qbName %>"><button class="btn" type="submit">Create product</button></form><% } %>
+                <form method="post" action="/settings/quickbooks/ignore-item" style="display:inline;"><input type="hidden" name="qb_item_id" value="<%= r.qbId %>"><button class="btn" type="submit">Ignore</button></form>
+              <% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<% if (unmatchedProducts && unmatchedProducts.length) { %>
+<div class="page-header" style="margin-top:24px;display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><h1 style="font-size:20px;">Portal products not in QuickBooks <span class="muted" style="font-size:14px;">(<%= unmatchedProducts.length %>)</span></h1><p class="muted">Push these to QuickBooks — portal is the source of truth.</p></div>
+  <form method="post" action="/settings/quickbooks/create-all-items-in-qb" onsubmit="return confirm('Create all <%= unmatchedProducts.length %> products in QuickBooks as Service items?');" style="margin:0;"><button class="btn btn-primary" type="submit">Create all <%= unmatchedProducts.length %> in QB</button></form>
+</div>
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Product / service</th><th style="text-align:right;">Action</th></tr></thead>
+      <tbody>
+        <% unmatchedProducts.forEach(function(p){ %>
+          <tr>
+            <td><a class="row-link" href="/products/<%= p.id %>/edit"><%= p.name %></a></td>
+            <td style="text-align:right;"><form method="post" action="/settings/quickbooks/create-item-in-qb" style="display:inline;"><input type="hidden" name="product_id" value="<%= p.id %>"><button class="btn btn-primary" type="submit">Create in QB</button></form></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<% } %>
+
+<%- include('../partials/footer') %>

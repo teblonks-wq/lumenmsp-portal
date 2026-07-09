@@ -1,0 +1,27 @@
+<%- include('../partials/header', { title: 'Purchase Ledger', user }) %>
+
+<div class="page-header"><h1>Purchase Ledger</h1>
+  <p class="muted">Reconcile money out — categorise bank transactions, attach the receipt, push to QuickBooks.</p></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<style>
+  .hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px;}
+  .hub-card{display:block;border-radius:14px;padding:22px;text-decoration:none;color:#fff;box-shadow:0 8px 22px rgba(2,6,23,.16);transition:transform .12s ease, box-shadow .12s ease;}
+  a.hub-card:hover{transform:translateY(-3px);box-shadow:0 14px 30px rgba(2,6,23,.26);}
+  .hub-ico{font-size:30px;line-height:1;} .hub-t{font-weight:800;font-size:18px;margin:10px 0 4px;letter-spacing:-.3px;}
+  .hub-card .muted{color:rgba(255,255,255,.9)!important;font-size:13px;}
+  .hub-card .badge{background:rgba(255,255,255,.28)!important;color:#fff!important;}
+  .hub-green{background:linear-gradient(135deg,#065f46,#10b981);}
+</style>
+<div class="hub-grid">
+  <a class="hub-card hub-green" href="/purchases/expenses">
+    <div class="hub-ico">🧾</div>
+    <div class="hub-t">Expense Reconciliation</div>
+    <div class="muted">Bank transactions → COS category → receipt → QuickBooks</div>
+    <% if (toDo) { %><div style="margin-top:10px;"><span class="badge" style="font-size:11px;"><%= toDo %> to reconcile</span></div><% } %>
+  </a>
+</div>
+
+<%- include('../partials/footer') %>

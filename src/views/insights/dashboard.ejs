@@ -1,0 +1,147 @@
+<%
+const isAdmin = true; // portal users are staff — always full access
+const u = user || {};
+const userName = u.displayName || u.name || u.email || '';
+const recent = (typeof recentReports !== 'undefined' && recentReports) ? recentReports : [];
+const custs  = (typeof customers !== 'undefined' && customers) ? customers : [];
+const phonesUn = (typeof phonesUnlinked !== 'undefined' && phonesUnlinked) ? phonesUnlinked : [];
+const isConnected = (typeof connected === 'undefined') ? true : connected;
+const dbErr  = (typeof error !== 'undefined') ? error : null;
+const noticeMsg = (typeof notice !== 'undefined') ? notice : null;
+const qErr   = (typeof qerr !== 'undefined') ? qerr : null;
+const unlinkedCount = (typeof unlinked !== 'undefined') ? unlinked : 0;
+%>
+<%- include('_layout', { title: 'Dashboard', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
+<div class="page-header">
+  <h1>Dashboard</h1>
+  <p class="muted">Good to see you, ${userName}.</p>
+</div>
+
+${noticeMsg ? `<div class="alert alert-success">${noticeMsg}</div>` : ''}
+${qErr ? `<div class="alert alert-error">${qErr}</div>` : ''}
+
+${!isConnected ? `
+<div class="card">
+  <div class="card-header"><h2>Insights database not connected</h2></div>
+  <p class="muted" style="margin:0;">Set <code>INSIGHTS_DATABASE_URL</code> in the portal's <code>.env</code> (point it at the <code>lumenmsp_insights</code> database) and restart, then this section reads live from it.</p>
+</div>` : dbErr ? `
+<div class="alert alert-error">Couldn't read the Insights database: ${dbErr}</div>` : `
+
+${unlinkedCount > 0 ? `
+<div class="card" style="background:#fffbeb;border-color:#fde68a;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+  <div style="font-size:14px;"><strong>${unlinkedCount}</strong> Insights customer(s) aren't linked to a portal customer yet — their reports won't appear on the customer card until linked.</div>
+  <form method="POST" action="/insights/auto-link" style="margin:0;" onsubmit="return confirm('Auto-link Insights customers to portal customers by matching name?');"><button class="btn-primary" type="submit">Auto-link by name</button></form>
+</div>` : ''}
+
+${phonesUn.length ? `
+<div class="card" style="background:#f0f9ff;border-color:#bae6fd;">
+  <div class="card-header"><h2>Phones customers</h2><span class="muted" style="font-size:12px;">Ticked "Phones" in the portal · not yet set up in Insights</span></div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;">${phonesUn.map(c => `<a class="btn-secondary" href="/customers/${c.id}" style="font-size:13px;">${c.name}</a>`).join('')}</div>
+</div>` : ''}
+
+<div class="card" style="border:2px solid var(--accent);background:linear-gradient(135deg,#f0fdf9 0%,#e0f2fe 100%);">
+  <div class="card-header">
+    <h2>Number Lookup</h2>
+    <span class="muted" style="font-size:12px;">Search a caller's journey — last 4 weeks</span>
+  </div>
+  <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+    <div class="form-group" style="margin:0;">
+      <label>Customer</label>
+      <select id="dash-customer" class="input" style="min-width:200px;">
+        <option value="">— Select —</option>
+        ${custs.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;flex:1;min-width:220px;position:relative;">
+      <label>Number</label>
+      <input type="text" id="dash-number" class="input" placeholder="e.g. 07911 123456" autocomplete="off"
+             style="padding:10px 14px;font-size:15px;width:100%;box-sizing:border-box;">
+      <div id="dash-results" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:200;overflow:hidden;max-height:280px;overflow-y:auto;"></div>
+    </div>
+    <button id="dash-search-btn" class="btn-primary" style="padding:10px 20px;font-size:15px;" onclick="dashSearch()">Search</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  const custEl   = document.getElementById('dash-customer');
+  const numEl    = document.getElementById('dash-number');
+  const results  = document.getElementById('dash-results');
+  let timer;
+
+  numEl.addEventListener('input', function() {
+    clearTimeout(timer);
+    const cid = custEl.value;
+    const q   = this.value.trim();
+    if (!cid || q.length < 3) { results.style.display = 'none'; return; }
+    timer = setTimeout(() => {
+      fetch('/insights/number-search?customer=' + cid + '&q=' + encodeURIComponent(q))
+        .then(r => r.json())
+        .then(data => {
+          if (!data.length) {
+            results.innerHTML = '<div style="padding:12px 14px;color:var(--muted);font-size:13px;">No numbers found</div>';
+          } else {
+            results.innerHTML = data.map(function(row) {
+              const last = row.last_call ? new Date(row.last_call).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '';
+              return '<a class="np-result" data-number="' + row.number_normalised + '" ' +
+                'style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;text-decoration:none;color:var(--text);border-bottom:1px solid var(--border);cursor:pointer;">' +
+                '<span style="font-family:monospace;font-size:13px;font-weight:600;">' + row.number_normalised + '</span>' +
+                '<span style="font-size:12px;color:var(--muted);">' + row.call_count + ' calls' + (last ? ' · Last: '+last : '') + '</span>' +
+                '</a>';
+            }).join('');
+          }
+          results.style.display = 'block';
+        });
+    }, 280);
+  });
+
+  document.addEventListener('click', function(e) {
+    if (!numEl.contains(e.target) && !results.contains(e.target)) results.style.display = 'none';
+  });
+
+  results.addEventListener('click', function(e) {
+    const a = e.target.closest('.np-result');
+    if (!a) return;
+    const cid = custEl.value;
+    const num = a.getAttribute('data-number');
+    if (cid && num) window.location.href = '/insights/number?customer=' + cid + '&q=' + encodeURIComponent(num);
+  });
+  results.addEventListener('mouseover', function(e) { const a = e.target.closest('.np-result'); if (a) a.style.background = '#f9fafb'; });
+  results.addEventListener('mouseout',  function(e) { const a = e.target.closest('.np-result'); if (a) a.style.background = ''; });
+
+  numEl.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') dashSearch();
+    if (e.key === 'Escape') results.style.display = 'none';
+  });
+
+  window.dashSearch = function() {
+    const cid = custEl.value;
+    const num = numEl.value.trim();
+    if (!cid || num.length < 3) { alert('Please select a customer and enter at least 3 digits.'); return; }
+    window.location.href = '/insights/number?customer=' + cid + '&q=' + encodeURIComponent(num);
+  };
+})();
+</script>
+
+<div class="card">
+  <div class="card-header"><h2>Recent Reports</h2></div>
+  ${recent.length === 0 ? '<div class="empty-state"><p class="muted">No reports generated yet.</p></div>' : `
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Report</th><th>Customer</th><th>Period</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+      ${recent.map(r => `
+        <tr>
+          <td><strong>${r.config_label || r.report_type}</strong></td>
+          <td><span class="muted" style="font-size:12px;">${r.customer_name || ''}</span></td>
+          <td style="font-size:13px;">${new Date(r.report_start).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})} – ${new Date(r.report_end).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})}</td>
+          <td><span class="badge badge-${r.status === 'sent' ? 'sent' : r.status === 'generated' ? 'primary' : 'inactive'}">${r.status}</span></td>
+          <td><a href="/insights/reports/${r.id}" target="_blank" class="btn-secondary" style="font-size:12px;padding:4px 10px;">Open</a></td>
+        </tr>
+      `).join('')}
+      </tbody>
+    </table>
+  </div>`}
+</div>
+`}
+` }) %>

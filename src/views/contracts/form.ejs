@@ -1,0 +1,127 @@
+<%- include('../partials/header', { title: contract && contract.id ? 'Edit contract' : 'New contract', user }) %>
+<% var isEdit = contract && contract.id; %>
+<% function v(f){ return contract && contract[f] != null ? contract[f] : ''; } %>
+<% function dateVal(f){ if(!contract || !contract[f]) return ''; try { return new Date(contract[f]).toISOString().slice(0,10); } catch(e){ return contract[f]; } } %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="<%= isEdit ? '/contracts/' + contract.id : '/contracts' %>">← Back</a></p>
+  <h1><%= isEdit ? 'Edit contract' : 'New contract' %></h1>
+</div>
+
+<% if (error) { %><div class="alert alert-error" style="max-width:900px;"><%= error %></div><% } %>
+
+<form method="post" action="<%= isEdit ? '/contracts/' + contract.id : '/contracts' %>">
+  <div class="card">
+    <div class="card-header"><h2>Details</h2></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+      <div class="form-group" style="grid-column:1 / -1;"><label>Title *</label><input class="input" name="title" required value="<%= v('title') %>"></div>
+      <div class="form-group"><label>Customer</label>
+        <select class="input" name="customer_id"><option value="">— none —</option><% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= (contract && contract.customer_id===c.id)||(preselectCustomer===c.id)?'selected':'' %>><%= c.name %></option><% }); %></select>
+      </div>
+      <div class="form-group"><label>Status</label><select class="input" name="status"><% ['draft','active','expired','cancelled'].forEach(function(s){ %><option value="<%= s %>" <%= v('status')===s?'selected':'' %>><%= s.charAt(0).toUpperCase()+s.slice(1) %></option><% }); %></select></div>
+      <div class="form-group"><label>Service type</label><select class="input" name="service_type"><% ['IT','Cloud','Comms','Hardware'].forEach(function(s){ %><option value="<%= s %>" <%= v('service_type')===s?'selected':'' %>><%= s %></option><% }); %></select></div>
+      <div class="form-group"><label>Start date</label><input class="input" type="date" name="start_date" value="<%= dateVal('start_date') %>"></div>
+      <div class="form-group"><label>End date</label><input class="input" type="date" name="end_date" value="<%= dateVal('end_date') %>"></div>
+      <div class="form-group"><label>Notice (days)</label><input class="input" type="number" name="notice_days" value="<%= contract && contract.notice_days!=null ? contract.notice_days : 30 %>"></div>
+      <div class="form-group"><label>Payment method</label><select class="input" name="payment_method"><% ['upfront','delivery','direct_debit'].forEach(function(s){ %><option value="<%= s %>" <%= v('payment_method')===s?'selected':'' %>><%= s.replace('_',' ') %></option><% }); %></select></div>
+      <label style="display:flex;align-items:center;gap:8px;font-weight:500;"><input type="checkbox" name="auto_renew" <%= (!contract || contract.auto_renew) ? 'checked' : '' %>> Auto-renew</label>
+    </div>
+  </div>
+
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;"><h2>Contract lines</h2></div>
+    <div class="table-wrap">
+      <table class="table" id="itemsTable">
+        <thead><tr><th style="min-width:240px;">Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit £</th><th>Billing</th><th style="text-align:right;">Line £</th><th></th></tr></thead>
+        <tbody id="itemsBody">
+          <% var rows = (lines && lines.length) ? lines : [{}]; %>
+          <% rows.forEach(function(l){ %>
+            <tr class="item-row">
+              <td><input type="hidden" name="product_id[]" class="prod-id" value="<%= l.product_id || '' %>"><input class="input" name="desc[]" value="<%= l.description || '' %>" style="width:100%;"></td>
+              <td><input class="input num-qty" name="qty[]" type="number" step="0.01" value="<%= l.quantity!=null ? Number(l.quantity) : 1 %>" style="width:80px;text-align:right;"></td>
+              <td><input class="input num-price" name="price[]" type="number" step="0.01" value="<%= l.unit_price!=null ? Number(l.unit_price) : '' %>" style="width:100px;text-align:right;"></td>
+              <td><select class="input freq" name="freq[]"><% ['monthly','annual','one_off'].forEach(function(f){ %><option value="<%= f %>" <%= l.billing_frequency===f?'selected':'' %>><%= f.replace('_',' ') %></option><% }); %></select></td>
+              <td style="text-align:right;" class="line-total">£0.00</td>
+              <td><button type="button" class="btn remove-row">✕</button></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+    <div style="padding:12px 24px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button type="button" class="btn" id="addRow">+ Add line</button>
+        <input class="input" id="catSearch" list="catList" placeholder="Add from catalogue…" style="min-width:220px;">
+        <datalist id="catList"></datalist>
+        <button type="button" class="btn" id="addFromCat">+ From catalogue</button>
+      </div>
+      <div style="text-align:right;font-size:14px;">
+        <div class="muted">Monthly: <span id="sumMonthly">£0.00</span> · Annual: <span id="sumAnnual">£0.00</span> · One-off: <span id="sumOneOff">£0.00</span></div>
+        <div style="font-weight:700;font-size:16px;">Annualised: <span id="sumAnnualised">£0.00</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card"><div class="card-header"><h2>Notes</h2></div><textarea class="input" name="notes" rows="4" style="width:100%;"><%= v('notes') %></textarea></div>
+
+  <div style="display:flex;gap:10px;">
+    <button class="btn btn-primary" type="submit"><%= isEdit ? 'Save contract' : 'Create contract' %></button>
+    <a class="btn" href="<%= isEdit ? '/contracts/' + contract.id : '/contracts' %>">Cancel</a>
+  </div>
+</form>
+
+<script>
+  (function () {
+    var body = document.getElementById('itemsBody');
+    function money(x){ return '£' + (isNaN(x)?0:x).toFixed(2); }
+    function recalc(){
+      var mo=0, an=0, oo=0;
+      body.querySelectorAll('.item-row').forEach(function(row){
+        var q = parseFloat(row.querySelector('.num-qty').value) || 0;
+        var p = parseFloat(row.querySelector('.num-price').value) || 0;
+        var f = row.querySelector('.freq').value;
+        var line = q * p;
+        row.querySelector('.line-total').textContent = money(line);
+        if (f === 'monthly') mo += line; else if (f === 'annual') an += line; else oo += line;
+      });
+      document.getElementById('sumMonthly').textContent = money(mo);
+      document.getElementById('sumAnnual').textContent = money(an);
+      document.getElementById('sumOneOff').textContent = money(oo);
+      document.getElementById('sumAnnualised').textContent = money(mo*12 + an);
+    }
+    function addRow(){
+      var clone = body.querySelector('.item-row').cloneNode(true);
+      clone.querySelectorAll('input').forEach(function(i){ if (i.classList.contains('num-qty')) i.value = 1; else i.value = ''; });
+      body.appendChild(clone);
+      return clone;
+    }
+    document.getElementById('addRow').addEventListener('click', function(){ addRow(); recalc(); });
+    body.addEventListener('input', recalc);
+    body.addEventListener('change', recalc);
+    body.addEventListener('click', function(e){
+      if (e.target.classList.contains('remove-row')) {
+        if (body.querySelectorAll('.item-row').length > 1) e.target.closest('.item-row').remove();
+        else e.target.closest('.item-row').querySelectorAll('input').forEach(function(i){ if(!i.classList.contains('num-qty')) i.value=''; });
+        recalc();
+      }
+    });
+    var catalogue = [];
+    fetch('/products/catalogue.json').then(function(r){ return r.json(); }).then(function(rows){
+      catalogue = rows; var dl = document.getElementById('catList');
+      rows.forEach(function(p){ var o = document.createElement('option'); o.value = p.name; dl.appendChild(o); });
+    }).catch(function(){});
+    document.getElementById('addFromCat').addEventListener('click', function(){
+      var name = document.getElementById('catSearch').value.trim(); if (!name) return;
+      var p = catalogue.find(function(x){ return x.name === name; }); if (!p) return;
+      var row = addRow();
+      row.querySelector('[name="desc[]"]').value = p.description || p.name;
+      row.querySelector('.prod-id').value = p.id;
+      row.querySelector('.num-price').value = Number(p.unit_price) || 0;
+      document.getElementById('catSearch').value = '';
+      recalc();
+    });
+    recalc();
+  })();
+</script>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,91 @@
+<%- include('../partials/header', { title: 'Message', user }) %>
+<%
+  function d(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : ''; }
+  function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c];}); }
+  var chLabel = m.channel==='teams' ? 'Teams' : (m.channel==='whatsapp' ? 'WhatsApp' : m.channel);
+%>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/chat/channel/<%= m.channel %>">← <%= chLabel %> messages</a></p>
+  <h1><%= esc(m.from_name || 'Message') %></h1>
+  <p class="muted"><%= chLabel %> · <span style="font-family:monospace;"><%= esc(m.from_email||'') %></span> · <%= d(m.at) %></p>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;">
+    <div>
+      <% if(m.ticket_id){ %>Tagged to <a class="row-link" href="/tickets/<%= m.ticket_id %>"><strong><%= m.ticket_number || ('#'+m.ticket_id) %></strong></a><% if(m.ticket_subject){ %> — <span class="muted"><%= esc(m.ticket_subject) %></span><% } %>
+      <% } else { %><span class="badge badge-failed">Untagged</span> <span class="muted" style="font-size:13px;">— tag to a case to reply</span><% } %>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <% if (!m.ticket_id) { %>
+      <button class="btn btn-primary" id="newCaseBtn" onclick="newCase()">➕ Create case from this</button>
+      <% } %>
+      <button class="btn" onclick="openTag()"><%= m.ticket_id ? 'Re-tag / move' : 'Tag to existing case' %></button>
+    </div>
+  </div>
+  <div style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;background:#fafafa;">
+    <%- m.body_html || ('<div style="white-space:pre-wrap;">' + esc(m.body_text||'(no content)') + '</div>') %>
+  </div>
+
+  <% if(m.ticket_id && m.message_direction!=='outbound'){ %>
+    <div style="margin-top:16px;">
+      <label class="muted" style="font-size:13px;font-weight:700;">Reply</label>
+      <textarea id="replyBody" class="input" style="width:100%;margin-top:4px;" rows="4" placeholder="Type your reply…"></textarea>
+      <div style="text-align:right;margin-top:8px;"><button class="btn btn-primary" id="replySend" onclick="sendReply()">Send reply</button></div>
+    </div>
+  <% } %>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Conversation with <%= esc(m.from_name || m.from_email) %></h2></div>
+  <table class="table"><tbody>
+    <% thread.forEach(function(x){ %>
+    <tr<%= x.id===m.id ? ' style="background:#f0f9ff;"' : '' %>>
+      <td style="color:#9ca3af;width:24px;"><%= x.message_direction==='outbound' ? '↗' : '↘' %></td>
+      <td><a class="row-link" href="/chat/msg/<%= x.id %>"><%= esc((x.body_text||'').slice(0,90)) || '(attachment)' %></a></td>
+      <td class="muted" style="white-space:nowrap;"><%= d(x.at) %></td>
+      <td><% if(x.ticket_id){ %><span class="badge badge-sent"><%= x.ticket_number || ('#'+x.ticket_id) %></span><% } else { %><span class="badge badge-failed">Untagged</span><% } %></td>
+    </tr>
+    <% }); %>
+  </tbody></table>
+</div>
+
+<div id="tagModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:2000;align-items:flex-start;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;max-width:560px;width:92%;margin-top:8vh;padding:20px 22px;box-shadow:0 20px 50px rgba(0,0,0,.3);">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h2 style="margin:0;font-size:18px;">Tag message to a case</h2>
+      <button class="btn" style="padding:2px 10px;" onclick="closeTag()">✕</button>
+    </div>
+    <input id="tagSearch" class="input" style="width:100%;" placeholder="Case number, case name, or person…" oninput="searchCases(this.value)" autocomplete="off">
+    <div id="tagResults" style="margin-top:12px;max-height:320px;overflow-y:auto;"></div>
+  </div>
+</div>
+
+<script>
+var MSG_ID = <%= m.id %>;
+function csrf(){ var m=document.querySelector('meta[name="csrf-token"]'); return m?m.getAttribute('content'):''; }
+function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':s; return d.innerHTML; }
+function openTag(){ document.getElementById('tagModal').style.display='flex'; var s=document.getElementById('tagSearch'); s.value=''; document.getElementById('tagResults').innerHTML='<p class="muted">Type to search cases…</p>'; s.focus(); }
+function closeTag(){ document.getElementById('tagModal').style.display='none'; }
+var _t;
+function searchCases(q){ clearTimeout(_t); q=(q||'').trim(); if(!q){ document.getElementById('tagResults').innerHTML='<p class="muted">Type to search cases…</p>'; return; }
+  _t=setTimeout(function(){ fetch('/chat/msg/case-search?q='+encodeURIComponent(q)).then(function(r){return r.json();}).then(function(rows){
+    if(!rows.length){ document.getElementById('tagResults').innerHTML='<p class="muted">No matching cases.</p>'; return; }
+    document.getElementById('tagResults').innerHTML = rows.map(function(c){ return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px;"><div><strong>'+esc(c.ticket_number)+'</strong> — '+esc(c.subject||'(no subject)')+'<br><span class="muted" style="font-size:12px;">'+esc(c.customer_name||'')+'</span></div><button class="btn btn-primary" style="padding:4px 12px;" onclick="assign('+c.id+')">Tag</button></div>'; }).join('');
+  }); }, 200);
+}
+function assign(ticketId){ fetch('/chat/msg/'+MSG_ID+'/tag',{method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':csrf()},body:JSON.stringify({ticketId:ticketId})}).then(function(r){return r.json();}).then(function(j){ if(j.ok){ location.reload(); } else { alert(j.error||'Could not tag.'); } }); }
+function newCase(){
+  var b=document.getElementById('newCaseBtn'); if(b){ b.disabled=true; b.textContent='Creating…'; }
+  fetch('/chat/msg/'+MSG_ID+'/new-case',{method:'POST',headers:{'x-csrf-token':csrf()}})
+    .then(function(r){return r.json();})
+    .then(function(j){ if(j.ok){ location.href='/tickets/'+j.ticketId; } else { alert(j.error||'Could not create the case.'); if(b){ b.disabled=false; b.textContent='➕ Create case from this'; } } })
+    .catch(function(){ alert('Could not create the case.'); if(b){ b.disabled=false; b.textContent='➕ Create case from this'; } });
+}
+function sendReply(){ var body=(document.getElementById('replyBody').value||'').trim(); if(!body) return; var b=document.getElementById('replySend'); b.disabled=true; b.textContent='Sending…';
+  fetch('/chat/msg/'+MSG_ID+'/reply',{method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':csrf()},body:JSON.stringify({body:body})}).then(function(r){return r.json();}).then(function(j){ b.disabled=false; b.textContent='Send reply'; if(j.ok){ location.reload(); } else { alert(j.error||'Could not send.'); } }).catch(function(){ b.disabled=false; b.textContent='Send reply'; alert('Could not send.'); });
+}
+</script>
+
+<%- include('../partials/footer') %>

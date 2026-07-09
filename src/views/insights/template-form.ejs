@@ -1,0 +1,28 @@
+<%
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  var selected = {};
+  (tpl && Array.isArray(tpl.modules) ? tpl.modules : []).forEach(function(id){ selected[id] = true; });
+  var groups = {};
+  (modules || []).forEach(function(m){ (groups[m.group] = groups[m.group] || []).push(m); });
+  var modsHtml = Object.keys(groups).map(function(g){
+    var items = groups[g].map(function(m){
+      return '<label style="display:flex;gap:8px;align-items:center;padding:5px 0;font-size:14px;"><input type="checkbox" name="modules" value="' + m.id + '" ' + (selected[m.id] ? 'checked' : '') + '> ' + esc(m.name) + '</label>';
+    }).join('');
+    return '<div style="margin-bottom:14px;"><div style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#6b7280;font-weight:700;margin-bottom:4px;">' + esc(g) + '</div>' + items + '</div>';
+  }).join('');
+  var action = isNew ? '/insights/templates' : '/insights/templates/' + tpl.id;
+  var nameVal = tpl ? esc(tpl.name) : '';
+%>
+<%- include('_layout', { title: isNew ? 'New template' : 'Edit template', user, csrfToken: (typeof csrfToken !== 'undefined' ? csrfToken : ''), body: `
+  <p style="margin:0 0 12px;"><a href="/insights/templates" style="color:#2563eb;text-decoration:none;">&larr; Report pool</a></p>
+  <div class="card" style="max-width:640px;">
+    <h1 style="margin:0 0 4px;">${isNew ? 'New report template' : 'Edit template'}</h1>
+    <p style="color:#6b7280;margin:0 0 16px;">Give it a name and choose which modules it includes. The site's logic drives the numbers, so the same template works for every customer.</p>
+    <form method="post" action="${action}">
+      <div style="margin-bottom:16px;"><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Name</label><input class="input" name="name" value="${nameVal}" required style="width:100%;max-width:360px;"></div>
+      <div style="font-weight:700;margin-bottom:8px;">Modules <span style="color:#6b7280;font-weight:400;font-size:12px;">(rendered top-to-bottom in this order)</span></div>
+      ${modsHtml}
+      <div style="margin-top:16px;"><button class="btn-primary" type="submit" style="padding:9px 20px;">${isNew ? 'Create template' : 'Save'}</button></div>
+    </form>
+  </div>
+` }) %>

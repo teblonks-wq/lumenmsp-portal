@@ -1,0 +1,145 @@
+<%- include('partials/header', { title: 'E-Recycling', user }) %>
+
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">&larr; Bureau</a></p>
+    <h1>E-Recycling <span class="muted" style="font-weight:400;font-size:15px;">&middot; IT &amp; device disposal manifest</span></h1>
+  </div>
+  <div style="text-align:right;">
+    <div style="font-size:20px;font-weight:800;letter-spacing:-.3px;"><%= batch.reference %></div>
+    <% if (batch.status === 'open') { %>
+      <span class="badge" style="background:#dcfce7;color:#166534;font-size:11px;">open &middot; <%= batch.item_count %> item(s)</span>
+    <% } else { %>
+      <span class="badge" style="background:#e0e7ff;color:#3730a3;font-size:11px;">submitted <%= batch.submitted_at ? new Date(batch.submitted_at).toLocaleDateString('en-GB') : '' %></span>
+    <% } %>
+  </div>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:1000px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:1000px;"><%= error %></div><% } %>
+
+<% if (batch.status === 'submitted') { %>
+  <div class="card" style="margin-bottom:14px;display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
+    <div><div class="muted" style="font-size:12px;">Submitted to</div><div style="font-weight:700;"><%= batch.submitted_to || '-' %></div></div>
+    <div><div class="muted" style="font-size:12px;">Items</div><div style="font-weight:700;"><%= batch.item_count %></div></div>
+    <div style="margin-left:auto;display:flex;gap:8px;">
+      <a class="btn" href="/bureau/erecycling/<%= batch.id %>/pdf" target="_blank">Download manifest PDF</a>
+      <a class="btn btn-primary" href="/bureau/erecycling">Go to current batch</a>
+    </div>
+  </div>
+<% } %>
+
+<div style="display:grid;grid-template-columns:1fr;gap:14px;max-width:1100px;">
+
+  <% if (batch.status === 'open') { %>
+  <!-- ADD ITEM -->
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:16px 20px 4px;"><h2>Add equipment</h2></div>
+    <form method="post" action="/bureau/erecycling/<%= batch.id %>/item" enctype="multipart/form-data" style="padding:14px 20px;display:grid;grid-template-columns:repeat(2,1fr);gap:12px;">
+      <div class="form-group" style="margin:0;">
+        <label style="font-size:11px;">Category</label>
+        <select class="input" name="category" required>
+          <% categories.forEach(function(c){ %><option value="<%= c %>"><%= c %></option><% }); %>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label style="font-size:11px;">Condition</label>
+        <select class="input" name="condition">
+          <% conditions.forEach(function(c){ %><option value="<%= c %>"<%= c==='Working'?' selected':'' %>><%= c %></option><% }); %>
+        </select>
+      </div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Make</label><input class="input" name="make" placeholder="e.g. Dell, HP, Apple"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Model</label><input class="input" name="model" placeholder="e.g. OptiPlex 7090"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Serial</label><input class="input" name="serial"></div>
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">Asset tag <span class="muted">(optional)</span></label><input class="input" name="asset_tag"></div>
+      <div class="form-group" style="grid-column:1/3;margin:0;"><label style="font-size:11px;">Notes</label><input class="input" name="notes" placeholder="Faults, missing parts, accessories..."></div>
+      <label class="muted" style="grid-column:1/3;font-size:13px;display:flex;align-items:center;gap:6px;"><input type="checkbox" name="data_wiped"> Data wiped / no storage</label>
+      <div class="form-group" style="grid-column:1/3;margin:0;">
+        <label style="font-size:11px;">Photos <span class="muted">(take/upload up to 8 - make, model plate, condition)</span></label>
+        <input class="input" type="file" name="photos" accept="image/*" capture="environment" multiple style="padding:6px;">
+      </div>
+      <div style="grid-column:1/3;"><button class="btn btn-primary" type="submit">+ Add to batch</button></div>
+    </form>
+  </div>
+  <% } %>
+
+  <!-- ITEMS -->
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:16px 20px 4px;"><h2>Items in <%= batch.reference %> <span class="muted" style="font-weight:500;font-size:12px;">- <%= items.length %></span></h2></div>
+    <style>
+      .ew-row{border:1px solid var(--line,#e5e7eb);border-radius:10px;margin-bottom:7px;overflow:hidden;}
+      .ew-row > summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:12px;padding:10px 14px;background:#f8fafc;}
+      .ew-row > summary::-webkit-details-marker{display:none;}
+      .ew-chev{transition:transform .15s ease;color:#94a3b8;font-size:12px;}
+      .ew-row[open] .ew-chev{transform:rotate(90deg);}
+    </style>
+    <div style="padding:8px 16px 16px;">
+      <% if (!items.length) { %><div class="empty-state" style="padding:24px;">No items yet - add equipment above.</div><% } %>
+      <% items.forEach(function(it){ %>
+        <details class="ew-row">
+          <summary>
+            <span class="ew-chev">&#9656;</span>
+            <span style="font-weight:700;min-width:110px;"><%= it.category %></span>
+            <span style="flex:1;min-width:0;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><%= [it.make, it.model].filter(Boolean).join(' ') || '-' %><% if (it.serial) { %> <span class="muted">&middot; SN <%= it.serial %></span><% } %></span>
+            <span class="muted" style="font-size:12px;white-space:nowrap;"><%= it.condition || 'Unknown' %><% if (it.data_wiped) { %> &middot; wiped<% } %></span>
+            <span class="badge" style="background:#eef2ff;color:#3730a3;font-size:11px;white-space:nowrap;"><%= it.photoList.length %> photo<%= it.photoList.length===1?'':'s' %></span>
+            <% if (batch.status === 'open') { %>
+            <form method="post" action="/bureau/erecycling/item/<%= it.id %>/delete" onsubmit="return confirm('Remove this item?');" style="margin:0;" onclick="event.stopPropagation();">
+              <button class="btn" type="submit" style="font-size:11px;padding:2px 8px;color:#b91c1c;" onclick="event.stopPropagation();">&times;</button>
+            </form>
+            <% } %>
+          </summary>
+          <div style="padding:12px 14px;border-top:1px solid var(--line,#e5e7eb);">
+            <% if (it.asset_tag || it.notes) { %><div class="muted" style="font-size:12px;margin-bottom:8px;"><% if (it.asset_tag) { %>Asset tag: <%= it.asset_tag %><% } %><% if (it.asset_tag && it.notes) { %> &middot; <% } %><% if (it.notes) { %><%= it.notes %><% } %></div><% } %>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <% if (!it.photoList.length) { %><span class="muted" style="font-size:12px;">No photos.</span><% } %>
+              <% it.photoList.forEach(function(fn){ %><a href="/static/attachments/erecycling/<%= fn %>" target="_blank"><img src="/static/attachments/erecycling/<%= fn %>" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid #cbd5e1;"></a><% }); %>
+            </div>
+          </div>
+        </details>
+      <% }); %>
+    </div>
+  </div>
+
+  <% if (batch.status === 'open') { %>
+  <!-- SUBMIT -->
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:16px 20px 4px;"><h2>Submit to e-waste firm</h2></div>
+    <form method="post" action="/bureau/erecycling/<%= batch.id %>/submit"
+          onsubmit="return confirm('Email this manifest (<%= items.length %> item(s)) to the e-waste firm and close the batch?');"
+          style="padding:14px 20px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div class="form-group" style="margin:0;"><label style="font-size:11px;">E-waste firm email</label><input class="input" type="email" name="firm_email" value="<%= firmEmail %>" placeholder="recycler@example.com" required></div>
+      <label class="muted" style="font-size:13px;display:flex;align-items:end;gap:6px;padding-bottom:8px;"><input type="checkbox" name="remember_email" <%= firmEmail ? 'checked' : '' %>> Remember this email</label>
+      <div class="form-group" style="grid-column:1/3;margin:0;"><label style="font-size:11px;">Collection notes <span class="muted">(optional - appears on the manifest)</span></label><input class="input" name="notes" value="<%= batch.notes || '' %>" placeholder="Collection address, contact, preferred date..."></div>
+      <div style="grid-column:1/3;display:flex;gap:10px;align-items:center;">
+        <button class="btn" type="submit" style="font-size:15px;padding:10px 18px;background:#0e7490;border-color:#0e7490;color:#fff;"<%= items.length ? '' : ' disabled' %>>Submit manifest &amp; email firm</button>
+        <a class="btn" href="/bureau/erecycling/<%= batch.id %>/pdf" target="_blank" style="font-size:13px;">Preview PDF</a>
+        <% if (!items.length) { %><span class="muted" style="font-size:12px;">Add at least one item to submit.</span><% } %>
+      </div>
+    </form>
+  </div>
+  <% } %>
+
+  <!-- HISTORY -->
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:16px 20px 4px;"><h2>Submitted collections</h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Reference</th><th>Submitted</th><th>To</th><th style="text-align:right;">Items</th><th></th></tr></thead>
+      <tbody>
+        <% if (!history.length) { %><tr><td colspan="5"><div class="empty-state">No submitted collections yet.</div></td></tr><% } %>
+        <% history.forEach(function(h){ %>
+          <tr>
+            <td><a class="row-link" href="/bureau/erecycling/<%= h.id %>"><strong><%= h.reference %></strong></a></td>
+            <td><%= h.submitted_at ? new Date(h.submitted_at).toLocaleString('en-GB') : '-' %></td>
+            <td class="muted"><%= h.submitted_to || '-' %></td>
+            <td style="text-align:right;"><%= h.item_count %></td>
+            <td style="text-align:right;white-space:nowrap;"><a class="btn" href="/bureau/erecycling/<%= h.id %>/pdf" target="_blank" style="font-size:12px;padding:3px 9px;">PDF</a></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </div>
+
+</div>
+
+<%- include('partials/footer') %>

@@ -1,0 +1,146 @@
+<%- include('header', { title: title, company: (user && user.displayName) || '', user, active }) %>
+
+<%
+  function rtype(t){ return t === 'weekly_call_stats' ? 'Weekly'
+    : t === 'site_performance' ? 'Site Performance'
+    : t === 'group_call_performance' ? 'Daily' : (t || '—'); }
+  function d(x){ return x ? new Date(x).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'; }
+  function fmtT(x){ try { return new Date(x).toLocaleString('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } }
+  function fmtWait(s){ s = Number(s) || 0; if (s < 60) return s + 's'; var m = Math.floor(s/60), r = s % 60; return r ? m + 'm ' + r + 's' : m + 'm'; }
+%>
+
+<div class="page-header">
+  <h1>Insights</h1>
+  <p class="muted" style="margin:4px 0 0;">Track calls to your numbers and run your call-analytics reports.</p>
+</div>
+
+<% if (msg) { %><div class="alert alert-success" style="margin-bottom:14px;"><%= msg %></div><% } %>
+<% if (err) { %><div class="alert alert-danger" style="margin-bottom:14px;"><%= err %></div><% } %>
+
+<% if (state === 'down') { %>
+  <div class="card"><div class="empty">Insights is temporarily unavailable. Please try again shortly.</div></div>
+<% } else if (state === 'unlinked') { %>
+  <div class="card"><div class="empty">Your call insights aren't switched on yet. Please contact Lumen IT and we'll set them up for you.</div></div>
+<% } else { %>
+
+  <div class="my-tabs">
+    <a class="my-tab <%= tab === 'home' ? 'active' : '' %>" href="/my/insights?tab=home">Home</a>
+    <a class="my-tab <%= tab === 'reports' ? 'active' : '' %>" href="/my/insights?tab=reports">Reports</a>
+  </div>
+
+  <% if (tab === 'home') { %>
+    <div class="card">
+      <form method="get" action="/my/insights" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+        <input type="hidden" name="tab" value="home">
+        <div class="form-group" style="margin:0;flex:1;min-width:240px;">
+          <label>Call Tracker — look up a number</label>
+          <input class="input" name="q" value="<%= q %>" placeholder="e.g. 07700 900123 or 01235 …" style="width:100%;">
+        </div>
+        <button class="btn btn-primary" type="submit">Track calls</button>
+      </form>
+      <p class="muted" style="font-size:12px;margin:8px 0 0;">Searches the last 28 days of calls involving your numbers.</p>
+    </div>
+
+    <% if (q && q.length >= 3) { %>
+      <% if (stats && stats.total) { %>
+        <div class="grid">
+          <div class="stat"><div class="n"><%= stats.total %></div><div class="l">Calls</div></div>
+          <div class="stat"><div class="n"><%= stats.answered %></div><div class="l">Answered</div></div>
+          <div class="stat"><div class="n"><%= stats.missed %></div><div class="l">Missed</div></div>
+          <div class="stat"><div class="n"><%= stats.ansRate %>%</div><div class="l">Answer rate</div></div>
+          <div class="stat"><div class="n"><%= fmtWait(stats.avgWait) %></div><div class="l">Avg wait</div></div>
+        </div>
+        <div class="card" style="padding:0;">
+          <div class="table-wrap"><table class="table" style="margin:0;">
+            <thead><tr><th>Date / time</th><th>Number</th><th>Outcome</th><th>Wait</th><th>Answered by</th><th>Journey</th></tr></thead>
+            <tbody>
+              <% journeys.forEach(function(j){ %>
+                <tr>
+                  <td class="muted" style="white-space:nowrap;"><%= fmtT(j.datetime) %></td>
+                  <td style="font-family:monospace;font-size:13px;"><%= j.number || '—' %></td>
+                  <td><%= j.status %></td>
+                  <td class="num" style="white-space:nowrap;"><%= j.wait %></td>
+                  <td style="font-family:monospace;font-size:13px;"><%= j.answered_by || '—' %></td>
+                  <td class="muted" style="font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><%= j.route || '' %></td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table></div>
+        </div>
+      <% } else { %>
+        <div class="card"><div class="empty">No calls found for &ldquo;<%= q %>&rdquo; in the last 28 days.</div></div>
+      <% } %>
+    <% } %>
+
+  <% } else { %>
+
+    <div class="card">
+      <h2 style="margin:0 0 10px;font-size:16px;">Run a report</h2>
+      <% if (!templates.length || !sites.length) { %>
+        <p class="muted" style="margin:0;">No reports available yet — contact Lumen IT.</p>
+      <% } else { var todayStr = new Date().toISOString().slice(0,10); %>
+        <form method="post" action="/my/insights/run" target="_blank" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+          <div class="form-group" style="margin:0;min-width:220px;">
+            <label>Report</label>
+            <select class="input" name="template_id" required style="width:100%;">
+              <% templates.forEach(function(t){ %><option value="<%= t.id %>"><%= t.name %></option><% }); %>
+            </select>
+          </div>
+          <% if (sites.length > 1) { %>
+          <div class="form-group" style="margin:0;min-width:180px;">
+            <label>Site</label>
+            <select class="input" name="site_id" required style="width:100%;">
+              <% sites.forEach(function(s){ %><option value="<%= s.id %>"><%= s.site_label %></option><% }); %>
+            </select>
+          </div>
+          <% } else { %><input type="hidden" name="site_id" value="<%= sites[0].id %>"><% } %>
+          <div class="form-group" style="margin:0;"><label>From</label><input class="input" type="date" name="date_from" value="<%= todayStr %>"></div>
+          <div class="form-group" style="margin:0;"><label>To</label><input class="input" type="date" name="date_to" value="<%= todayStr %>"></div>
+          <button class="btn btn-primary" type="submit">Run report ↗</button>
+        </form>
+        <p class="muted" style="font-size:12px;margin:8px 0 0;">Runs against your own call data for the dates you choose, and opens in a new tab.</p>
+      <% } %>
+    </div>
+
+    <div class="card" style="padding:0;">
+      <div style="padding:14px 20px 4px;"><h2 style="margin:0;font-size:16px;">Recent reports</h2></div>
+      <datalist id="custEmails"><% (emails || []).forEach(function(e){ %><option value="<%= e %>"></option><% }); %></datalist>
+      <% if (!reports.length) { %>
+        <div class="empty" style="padding:14px 20px 20px;">No reports produced yet — run one above.</div>
+      <% } else { %>
+        <div class="table-wrap"><table class="table" style="margin:0;">
+          <thead><tr><th>Report</th><th>Site</th><th>Type</th><th>Period</th><th>Produced</th><th style="text-align:right;">Actions</th></tr></thead>
+          <tbody>
+            <% reports.forEach(function(r){ %>
+              <tr>
+                <td><strong><%= r.config_label %></strong></td>
+                <td class="muted"><%= r.site_label %></td>
+                <td><%= rtype(r.report_type) %></td>
+                <td class="muted" style="white-space:nowrap;"><%= d(r.report_start) %><% if (r.report_end) { %> &ndash; <%= d(r.report_end) %><% } %></td>
+                <td class="muted" style="white-space:nowrap;"><%= d(r.generated_at || r.created_at) %></td>
+                <td style="text-align:right;white-space:nowrap;">
+                  <a class="btn" href="/my/insights/report/<%= r.id %>" target="_blank" rel="noopener">View</a>
+                  <form method="post" action="/my/insights/report/<%= r.id %>/email" style="display:inline-flex;gap:4px;margin-left:6px;vertical-align:middle;">
+                    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+                    <input class="input" type="email" name="to" list="custEmails" placeholder="email address…" required style="font-size:12px;padding:5px 8px;min-width:150px;">
+                    <button class="btn" type="submit" title="Email this report">&#9993;</button>
+                  </form>
+                </td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table></div>
+      <% } %>
+    </div>
+
+  <% } %>
+<% } %>
+
+<style>
+  .my-tabs { display:flex; gap:2px; margin:0 0 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .my-tab { text-decoration:none; border-bottom:2px solid transparent; padding:9px 16px; font-size:14px; font-weight:600; color:#64748b; }
+  .my-tab.active { color:var(--accent,#0ea5b7); border-bottom-color:var(--accent,#0ea5b7); }
+</style>
+
+<%- include('footer', { active }) %>

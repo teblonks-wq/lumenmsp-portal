@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.env
+.env.*
+*.log
+storage/
+uploads/
+.DS_Store
+
+# Secrets & keys — never commit
+*.pem
+*.key
+*.keystore
+
+# Workspace material & customer data — not part of the app (stays on D:\, backed up there)
+# CLAUDE.md stays local too — it references credentials and internal infrastructure.
+CLAUDE.md
+01 Daily Logs/
+02 Projects/
+Getting Started.pdf
+*.csv
+*.CSV
+*.xlsx
+*.zip
+*.pdf
+_t.js

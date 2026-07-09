@@ -1,0 +1,154 @@
+<%
+// All of these locals are always supplied by the route (see GET /insights/number),
+// so reference them directly — do NOT redeclare with the same name (that shadows
+// the EJS `with(locals)` binding and throws a TDZ ReferenceError at render).
+const isConnected = (typeof connected === 'undefined') ? true : connected;
+
+const fmtDt = d => d ? new Date(d).toLocaleString('en-GB', {
+  day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit'
+}) : '—';
+const fmtD  = s => s ? new Date(s).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '';
+const fmtSecs = s => s >= 60 ? `${Math.floor(s/60)}m ${s%60}s` : `${s}s`;
+
+const statusColour = s => ({
+  'Answered':  'color:#16a34a;background:#f0fdf4;border-color:#bbf7d0',
+  'Missed':    'color:#dc2626;background:#fef2f2;border-color:#fecaca',
+  'Abandoned': 'color:#f59e0b;background:#fffbeb;border-color:#fde68a',
+  'Voicemail': 'color:#7c3aed;background:#faf5ff;border-color:#ddd6fe',
+  'Overflowed':'color:#0891b2;background:#f0f9ff;border-color:#bae6fd',
+}[s] || 'color:#6b7280;background:#f9fafb;border-color:#e5e7eb');
+
+const total = stats ? stats.total : 0;
+
+// Customer dropdown for the search bar.
+const customerOptions = customers.map(c => `<option value="${c.id}" ${cid === c.id ? 'selected' : ''}>${c.name}</option>`).join('');
+%>
+<%- include('_layout', { title: number ? `Number: ${number}` : 'Number Lookup', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+  <div>
+    <h1 style="font-family:monospace;letter-spacing:1px;">${number || 'Number Lookup'}</h1>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px;">${number ? `Showing the last 4 weeks · ${fmtD(fromDate)} – ${fmtD(toDate)}` : 'Search a number across the last 4 weeks of cached call data.'}</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+    <form method="GET" action="/insights/number" style="display:flex;gap:6px;align-items:flex-end;margin:0;">
+      <div>
+        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Customer</label>
+        <select name="customer" class="input" required style="padding:7px 10px;font-size:13px;min-width:180px;">
+          <option value="">— choose —</option>
+          ${customerOptions}
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Number</label>
+        <input type="text" name="q" id="np-number" value="${number}" list="numList" class="input" style="padding:7px 10px;font-size:13px;font-family:monospace;min-width:160px;" autocomplete="off">
+        <datalist id="numList"></datalist>
+      </div>
+      <button type="submit" class="btn-primary" style="padding:7px 14px;font-size:13px;">Search</button>
+    </form>
+    ${number ? '<button onclick="window.print()" class="btn-secondary" style="padding:7px 14px;font-size:13px;">&#128438; PDF</button>' : ''}
+  </div>
+</div>
+
+${error ? `<div class="alert alert-error">${error}</div>` : ''}
+
+${!isConnected ? `
+<div class="card"><div class="card-header"><h2>Insights database not connected</h2></div>
+  <p class="muted" style="margin:0;">Set <code>INSIGHTS_DATABASE_URL</code> in the portal's <code>.env</code>.</p></div>
+` : !number ? '' : total === 0 ? `
+  <div class="card">
+    <div class="empty-state"><p class="muted">No call records found for this number.</p></div>
+  </div>
+` : `
+
+<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px;">
+  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:26px;font-weight:800;color:var(--accent);">${stats.total}</div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Total Calls</div>
+  </div>
+  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:26px;font-weight:800;color:#16a34a;">${stats.answered}</div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Answered</div>
+  </div>
+  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:26px;font-weight:800;color:#dc2626;">${stats.missed}</div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Missed</div>
+  </div>
+  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:26px;font-weight:800;color:var(--accent);">${stats.ansRate}%</div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Answer Rate</div>
+  </div>
+  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:26px;font-weight:800;color:var(--accent);">${fmtSecs(stats.avgWait)}</div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Avg Wait</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+    <h2>Call History</h2>
+    <span class="muted" style="font-size:13px;">Most recent first</span>
+  </div>
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border);">
+          <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Date / Time</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Outcome</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Wait</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Journey</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Answered By</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">DDI</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${journeys.map((j, idx) => `
+        <tr style="border-bottom:1px solid var(--border);${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
+          <td style="padding:10px 12px;white-space:nowrap;font-weight:500;">${fmtDt(j.datetime)}</td>
+          <td style="padding:10px 12px;">
+            <span style="display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid;${statusColour(j.is_voicemail ? 'Voicemail' : j.status)}">
+              ${j.status}
+            </span>
+          </td>
+          <td style="padding:10px 12px;font-family:monospace;font-size:12px;">${j.wait || ''}</td>
+          <td style="padding:10px 12px;font-size:12px;color:var(--muted);">${j.route || ''}</td>
+          <td style="padding:10px 12px;font-size:12px;font-family:monospace;color:#111827;">${j.answered_by || '—'}</td>
+          <td style="padding:10px 12px;font-size:12px;color:var(--muted);">${j.ddi || ''}</td>
+        </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  </div>
+</div>
+`}
+
+<script>
+(function(){
+  var inp = document.getElementById('np-number');
+  var list = document.getElementById('numList');
+  var sel = document.querySelector('select[name="customer"]');
+  if (!inp || !sel) return;
+  var t;
+  inp.addEventListener('input', function(){
+    clearTimeout(t); var q = inp.value.trim(); var cid = sel.value;
+    if (!cid || q.length < 3) return;
+    t = setTimeout(function(){
+      fetch('/insights/number-search?customer=' + encodeURIComponent(cid) + '&q=' + encodeURIComponent(q))
+        .then(function(r){ return r.json(); })
+        .then(function(rows){ list.innerHTML = (rows||[]).map(function(x){ return '<option value="' + x.number_normalised + '">' + x.call_count + ' calls</option>'; }).join(''); })
+        .catch(function(){});
+    }, 250);
+  });
+})();
+</script>
+
+<style>
+@media print {
+  nav, .page-header form, .page-header button { display: none !important; }
+  .page-header { padding-bottom: 8px; border-bottom: 2px solid #000; margin-bottom: 16px; }
+  body { font-size: 11px; padding-top: 0; }
+  .card { box-shadow: none; border: 1px solid #ddd; page-break-inside: avoid; }
+  table { font-size: 10px; }
+  @page { margin: 15mm; }
+}
+</style>
+` }) %>
