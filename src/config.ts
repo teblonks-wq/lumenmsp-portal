@@ -32,6 +32,15 @@ const schema = z.object({
   // are Graph-polled from here every 30 min. Blank = DMARC ingest disabled.
   DMARC_MAILBOX:       z.string().default(''),   // e.g. dmarc@lumenmsp.co.uk
 
+  // Marketing studio "Push to website": directory the Portal writes news articles into
+  // (static HTML, served by the website's nginx). Lives at /news/live/ — a sub-path the
+  // Astro build does NOT own, so portal articles and the Astro news system never collide;
+  // the Astro news listing pulls /news/live/index.json client-side to show these instantly.
+  // One-off server setup: mkdir -p /var/www/lumenmsp/news/live (web root is lits-admin-owned).
+  // The website deploy.ps1 preserves news/live across site deploys.
+  WEBSITE_NEWS_DIR:    z.string().default('/var/www/lumenmsp/news/live'),
+  WEBSITE_BASE_URL:    z.string().default('https://www.lumenmsp.co.uk'),
+
   // QuickBooks Online (OAuth client creds; tokens stored in settings table)
   QB_CLIENT_ID:        z.string().default(''),
   QB_CLIENT_SECRET:    z.string().default(''),

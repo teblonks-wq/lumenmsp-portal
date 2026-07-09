@@ -148,6 +148,68 @@ export async function aiWriteItReport(input: ItReportInput): Promise<ItReportNar
   }
 }
 
+// ── Marketing studio (2026-07-09 rewrite): one meaty end-user article + social copy ──
+// Input is source URLs' extracted text, the raw content notes, and "Lumen's take".
+// Output is written for BUSINESS END USERS — owners, office managers — not IT people.
+export interface MarketingPostInput {
+  sources: { url: string; text: string }[]; // pre-fetched page extracts (may be empty)
+  content: string;                          // the raw material / notes
+  take: string;                             // Lumen's angle / opinion
+}
+export interface MarketingPostOutput {
+  title: string; slug: string; excerpt: string;
+  articleHtml: string; linkedin: string; facebook: string;
+  imageQuery: string; // suggested stock-photo search for the hero image
+}
+
+export async function aiMarketingPost(input: MarketingPostInput): Promise<MarketingPostOutput> {
+  const key = await resolveKey();
+  if (!key) throw new Error('Claude is not configured - add your API key in Settings -> Integrations (or ANTHROPIC_API_KEY in the server .env).');
+  const model = ((await getSetting('anthropic', 'model')) || '').trim() || DEFAULT_MODEL;
+
+  const system = [
+    'You write website news articles and social posts for Lumen IT Solutions, a UK managed IT provider (lumenmsp.co.uk).',
+    'AUDIENCE: business owners, office managers and everyday staff — intelligent people who are NOT technical. Never write for "tech boys". No jargon; when a technical term is unavoidable, explain it in one plain phrase. Explain WHY it matters to their business, money, time or safety.',
+    'TONE: British English (£, dd/mm/yyyy, organise/colour/whilst), confident, warm, direct. Meaty and substantial — real substance, concrete examples and practical takeaways, not fluff or listicle padding. Not salesy; Lumen\'s view comes through naturally.',
+    'You are given: source material extracted from URLs, raw content notes, and "Lumen\'s take" (our angle — this SHAPES the article\'s point of view and must come through clearly).',
+    'Produce:',
+    '- title: a strong, plain-English headline (no clickbait, no colons-everywhere).',
+    '- slug: url-safe kebab-case from the title (lowercase a-z, 0-9, hyphens; max 60 chars).',
+    '- excerpt: 1-2 sentences summarising the article (used as the preview).',
+    '- articleHtml: the article BODY as clean HTML — <p>, <h2>, <ul>/<li>, <strong> only (no <h1>, no inline styles, no scripts). 500-800 words. Structure: hook the reader with why this matters to them → the substance (what is happening / what it is, grounded in the source material) → Lumen\'s take woven through → a practical "what you should do" close. End with one sentence inviting them to talk to Lumen IT Solutions if they want help.',
+    '- linkedin: a LinkedIn post (120-220 words) written as a TEASER/summary of the article — hook + the most interesting point + why it matters, ending with a natural invitation to read the full piece on our website (the article link is appended automatically after your text, so do not write a URL or "link in comments"). Professional but human; 2-3 relevant hashtags at the end.',
+    '- facebook: a Facebook post (60-120 words), same teaser job but more conversational — make the reader want to click through to the full article (link appended automatically; no URL in the text). At most 1 hashtag.',
+    '- imageQuery: a 2-4 word stock-photo search phrase for a hero image that suits the article (concrete and visual, e.g. "office worker laptop" not "cyber security concept").',
+    'Never invent facts, prices, statistics or quotes that are not in the source material or notes. If sources conflict, prefer the notes and Lumen\'s take.',
+    'Return ONLY a JSON object {"title":"...","slug":"...","excerpt":"...","articleHtml":"...","linkedin":"...","facebook":"...","imageQuery":"..."} with no code fences and no other text.',
+  ].join('\n');
+
+  const userText = [
+    input.sources.length
+      ? 'Source material extracted from the provided URLs:\n' + input.sources.map((s, i) => `--- Source ${i + 1}: ${s.url} ---\n${s.text}`).join('\n\n')
+      : '(No URLs provided or none could be read.)',
+    `\nContent notes:\n${input.content || '(none)'}`,
+    `\nLumen's take (our angle — make sure this comes through):\n${input.take || '(none given — take a balanced, helpful stance)'}`,
+  ].join('\n');
+
+  const raw = await callClaude(key, model, system, userText, 3500);
+  try {
+    const json = JSON.parse(raw.replace(/^```json\s*|```\s*$/g, '').trim());
+    const slug = String(json.slug || json.title || 'news').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'news';
+    return {
+      title: String(json.title || '').trim(),
+      slug,
+      excerpt: String(json.excerpt || '').trim(),
+      articleHtml: String(json.articleHtml || '').trim(),
+      linkedin: String(json.linkedin || '').trim(),
+      facebook: String(json.facebook || '').trim(),
+      imageQuery: String(json.imageQuery || '').trim(),
+    };
+  } catch {
+    throw new Error('Claude did not return a clean draft — try Generate again.');
+  }
+}
+
 // Classify an inbound support message into ONE helpdesk category. Reads the content and returns
 // a category from the allowed list, or NULL when it isn't confident (so the ticket is left with
 // NO category and a human must choose before work starts). Never guesses.

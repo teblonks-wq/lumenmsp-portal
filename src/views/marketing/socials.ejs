@@ -1,405 +1,183 @@
-<%- include('../partials/header', { title: 'Socials', user }) %>
+<%- include('../partials/header', { title: 'Socials Studio', user }) %>
 
 <div class="page-header">
-  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">← Marketing</a></p>
-  <h1 style="margin:0;">Socials</h1>
-  <p class="muted" style="margin:4px 0 0;">Create posts with Claude, schedule the socials, and keep a tidy archive.</p>
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">&larr; Marketing</a></p>
+  <h1>Socials Studio</h1>
+  <p class="muted">Four steps: sources → generate with Claude → push to website → push to Buffer. Nothing is stored in the Portal.</p>
 </div>
 
-<style>
-  .soc-banner{padding:10px 14px;border-radius:10px;margin:0 0 14px;font-size:14px;}
-  .soc-banner.ok{background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;}
-  .soc-banner.err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;}
-  .soc-status{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0 14px;font-size:12.5px;}
-  .soc-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;background:#f1f5f9;border:1px solid var(--line);}
-  .soc-chip.ok{background:#ecfdf5;border-color:#a7f3d0;color:#065f46;}
-  .soc-chip.miss{background:#fff7ed;border-color:#fed7aa;color:#9a3412;}
+<% if (!aiReady) { %><div class="alert alert-error">Claude isn't configured — add the API key in Settings → Integrations before generating.</div><% } %>
+<% if (!websiteReady) { %><div class="alert alert-error">Website publishing isn't set up on the server yet — one-off: <code>mkdir -p /var/www/lumenmsp/news/live</code> (as lits-admin; the web root is already ours, no sudo). Site deploys preserve this folder automatically.</div><% } %>
+<% if (!bufferReady) { %><div class="alert alert-error">Buffer isn't configured — add the API key in Settings → Integrations to push socials.</div><% } %>
 
-  /* Tabs */
-  .soc-tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px;}
-  .soc-tab{padding:9px 16px;font-size:14px;font-weight:600;color:#64748b;cursor:pointer;border:1px solid transparent;border-bottom:none;border-radius:9px 9px 0 0;background:none;}
-  .soc-tab.on{color:var(--color-accent);background:#fff;border-color:var(--line);position:relative;top:1px;}
-  .soc-tab .badge{font-size:11px;background:#eef2ff;color:#3730a3;border-radius:999px;padding:0 6px;margin-left:4px;}
-
-  .soc-toolbar{position:sticky;top:46px;z-index:40;display:flex;flex-wrap:wrap;align-items:center;gap:8px;
-    background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:14px;box-shadow:0 4px 14px rgba(2,6,23,.06);}
-  .soc-toolbar .btn{font-size:13px;padding:6px 12px;}
-  .soc-toolbar input[type=date]{font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;}
-  .soc-filter{width:100%;max-width:340px;font-size:13px;padding:7px 11px;border:1px solid var(--line);border-radius:8px;margin-bottom:12px;}
-
-  .pcard{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:#fff;}
-  .prow{display:flex;align-items:center;gap:12px;padding:8px 12px;}
-  .pthumb{width:38px;height:38px;border-radius:7px;object-fit:cover;border:1px solid var(--line);flex:0 0 auto;}
-  .pthumb-none{display:flex;align-items:center;justify-content:center;background:#f1f5f9;color:#94a3b8;}
-  .pmeta{flex:1;min-width:0;}
-  .ptitle{font-size:13.5px;font-weight:600;color:var(--color-accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-  .pdate{font-size:11.5px;color:#64748b;margin-top:2px;}
-  .pdate b{color:#0f172a;font-weight:600;}
-  .tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;background:#eef2ff;color:#3730a3;border-radius:5px;padding:1px 6px;}
-  .tag.created{background:#ecfeff;color:#0e7490;}
-  .pbtn{flex:0 0 auto;background:#f1f5f9;border:1px solid var(--line);color:#475569;border-radius:8px;padding:5px 11px;font-size:12px;cursor:pointer;}
-  .pbtn.arch{color:#9a3412;border-color:#fed7aa;background:#fff7ed;}
-  .pchips{display:flex;gap:6px;margin:8px 0;flex-wrap:wrap;}
-  .ch-chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);cursor:pointer;color:#475569;user-select:none;}
-  .ch-chip input{margin:0;}
-  .ch-chip:has(input:checked){border-color:#0ea5b7;background:#e0f7fa;color:#0e7490;font-weight:600;}
-  .ppreview{padding:0 12px 12px;display:grid;gap:8px;}
-  .pvar{border:1px solid var(--line);border-radius:8px;padding:8px 10px;position:relative;}
-  .net{font-size:10px;font-weight:700;text-transform:uppercase;border-radius:5px;padding:1px 6px;color:#fff;margin-right:6px;}
-  .net-linkedin{background:#0a66c2;} .net-facebook{background:#1877f2;} .net-google{background:#1a73e8;} .net-website{background:#0e7490;}
-  .copy{white-space:pre-wrap;font-size:12.5px;line-height:1.5;color:#0f172a;margin-top:6px;}
-  .del{position:absolute;top:8px;right:10px;background:none;border:none;color:#b91c1c;font-size:11px;cursor:pointer;text-decoration:underline;}
-  .img-row{display:flex;align-items:center;gap:8px;}
-  .img-input{flex:1;font-size:12px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;}
-  .rel-row{display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;}
-  .rel-row input[type=date]{font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;}
-  .soc-empty{padding:30px;text-align:center;color:#64748b;border:1px dashed var(--line);border-radius:12px;}
-  details.soc-log-wrap{margin-top:18px;border:1px solid var(--line);border-radius:12px;padding:6px 14px;}
-  details.soc-log-wrap > summary{cursor:pointer;font-weight:600;padding:6px 0;}
-  .soc-log td,.soc-log th{font-size:12px;}
-  .st-ok{color:#065f46;font-weight:600;} .st-err{color:#b91c1c;font-weight:600;}
-
-  /* Create studio */
-  .studio{max-width:880px;}
-  .studio label{display:block;font-size:13px;font-weight:600;margin:12px 0 4px;}
-  .studio input[type=text],.studio input[type=url],.studio input[type=date],.studio textarea{width:100%;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;}
-  .studio textarea{line-height:1.5;}
-  .gen-out{margin-top:18px;display:grid;gap:14px;}
-  .gen-card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:#fff;}
-  .gen-card h4{margin:0 0 6px;font-size:13px;display:flex;align-items:center;gap:8px;}
-  .gen-card textarea{min-height:120px;}
-  .gen-card.web textarea{min-height:260px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;}
-  .gen-spin{display:none;font-size:13px;color:#64748b;}
-</style>
-
-<% if (notice) { %><div class="soc-banner ok"><%= notice %></div><% } %>
-<% if (error) { %><div class="soc-banner err"><%= error %></div><% } %>
-
-<div class="soc-tabs">
-  <button class="soc-tab <%= tab==='schedule'?'on':'' %>" data-tab="schedule" type="button">To schedule<% if (articles.length) { %> <span class="badge"><%= articles.length %></span><% } %></button>
-  <button class="soc-tab <%= tab==='create'?'on':'' %>" data-tab="create" type="button">✨ Create</button>
-  <button class="soc-tab <%= tab==='previous'?'on':'' %>" data-tab="previous" type="button">Previous<% if (archived.length) { %> <span class="badge"><%= archived.length %></span><% } %></button>
-</div>
-
-<!-- ───────── SCHEDULE ───────── -->
-<div class="soc-panel" id="panel-schedule" <%= tab==='schedule' ? '' : 'hidden' %>>
-  <div class="soc-status">
-    <% if (!bufferReady) { %>
-      <span class="soc-chip miss">⚠ Buffer not connected — add your key in <a href="/settings/integrations">Settings → Integrations</a></span>
-    <% } else if (channelError) { %>
-      <span class="soc-chip miss">⚠ Buffer error: <%= channelError %></span>
-    <% } else { %>
-      <span class="muted">Connected:</span>
-      <% ['linkedin','facebook','google'].forEach(function(net){
-           var ch = channels.find(function(c){ return String(c.service||'').toLowerCase().indexOf(net) >= 0; }); %>
-        <% if (ch) { %><span class="soc-chip ok">✓ <%= net %></span><% } else { %><span class="soc-chip miss">⚠ no <%= net %></span><% } %>
-      <% }); %>
-    <% } %>
+<!-- Step 1 — sources -->
+<div class="card">
+  <div class="card-header"><h2>1 · Sources</h2></div>
+  <div class="form-group" style="margin-bottom:12px;">
+    <label>URLs (one per line — I'll read them for source material, up to 4)</label>
+    <textarea id="stUrls" class="input" rows="3" style="width:100%;font-family:monospace;font-size:13.5px;" placeholder="https://www.ncsc.gov.uk/…&#10;https://…"></textarea>
   </div>
-
-  <input type="search" class="soc-filter" id="schedFilter" placeholder="Filter by title, date or network…">
-
-  <form id="pushForm" method="post" action="/marketing/socials/push">
-    <div class="soc-toolbar">
-      <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" id="selAll"> Select all</label>
-      <span id="selCount" class="muted" style="font-size:13px;">0 selected</span>
-      <span style="flex:1;"></span>
-      <button class="btn" type="submit" name="action" value="archive" onclick="return confirmArchive()" style="border-color:#cbd5e1;color:#475569;">Archive selected</button>
-      <label style="font-size:12px;display:flex;align-items:center;gap:5px;" title="First day for Schedule — blank = today">Schedule from <input type="date" name="start"></label>
-      <button class="btn" type="submit" name="action" value="queue" onclick="return confirmPush('your Buffer queue')">Add to queue</button>
-      <button class="btn" type="submit" name="action" value="schedule" onclick="return confirmPush('the daily schedule')">Schedule</button>
-      <button class="btn btn-primary" type="submit" name="action" value="now" onclick="return confirmPush('post NOW (~2 min)')">Post now</button>
-    </div>
-
-    <% if (!articles.length) { %>
-      <div class="soc-empty">🎉 Nothing waiting to schedule. Use the <b>✨ Create</b> tab, or add an ad-hoc post below.</div>
-    <% } %>
-
-    <% articles.forEach(function(a){
-         var relTxt = a.relevanceDate ? new Date(a.relevanceDate).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : null;
-         var pushable = ['linkedin','facebook','google'].filter(function(n){ return a.variants[n]; }); %>
-      <div class="pcard" data-search="<%= ((a.title||a.slug) + ' ' + (relTxt||'') + ' ' + Object.keys(a.variants).join(' ')).toLowerCase() %>">
-        <div class="prow">
-          <input type="checkbox" class="art-sel" title="Select all channels for this post">
-          <% if (a.image) { %><img class="pthumb" src="<%= a.image %>" alt="" loading="lazy"><% } else { %><span class="pthumb pthumb-none">🖼</span><% } %>
-          <div class="pmeta">
-            <div class="ptitle"><%= a.title || a.slug %><% if (a.kind === 'adhoc') { %> <span class="tag">ad-hoc</span><% } else if (a.kind === 'created') { %> <span class="tag created">created</span><% } %></div>
-            <div class="pdate"><% if (relTxt) { %>📅 <b><%= relTxt %></b> · <% } %><%= pushable.length %> channel<%= pushable.length===1?'':'s' %><% if (a.variants.website) { %> + website<% } %></div>
-          </div>
-          <button type="button" class="pbtn arch" data-arch="<%= a.slug %>">Archive</button>
-          <button type="button" class="pbtn" data-prev="<%= a.slug %>">Review ▾</button>
-        </div>
-        <div class="ppreview" id="prev-<%= a.slug %>" hidden>
-          <% if (a.link) { %><div style="font-size:12px;"><a class="row-link" href="<%= a.link %>" target="_blank" rel="noopener">view source ↗</a></div><% } %>
-          <div class="pchips">
-            <% ['linkedin','facebook','google'].forEach(function(net){ var v = a.variants[net]; if (!v) return; %>
-              <label class="ch-chip"><input type="checkbox" name="ids" value="<%= v.id %>"> <%= net === 'linkedin' ? 'LinkedIn' : net === 'facebook' ? 'Facebook' : 'Google' %></label>
-            <% }); %>
-          </div>
-          <% ['linkedin','facebook','google','website'].forEach(function(net){ var v = a.variants[net]; if (!v) return; %>
-            <div class="pvar">
-              <span class="net net-<%= net %>"><%= net === 'google' ? 'Google' : net === 'website' ? 'Website' : net %></span>
-              <% if (net !== 'website') { %><button type="button" class="del" data-del="<%= v.id %>">remove</button><% } else { %><span style="font-size:11px;color:#64748b;">published via website (Phase 2)</span><% } %>
-              <div class="copy"><%= v.body %></div>
-            </div>
-          <% }); %>
-          <div class="rel-row">
-            <span>📅 Relevance date</span>
-            <input type="date" class="rel-input" data-slug="<%= a.slug %>" value="<%= a.relevanceDate ? new Date(a.relevanceDate).toISOString().slice(0,10) : '' %>">
-            <button type="button" class="btn" data-rel-save="<%= a.slug %>" style="font-size:12px;padding:3px 10px;">Save date</button>
-          </div>
-          <div class="img-row">
-            <span class="muted" style="font-size:12px;">🖼 Image</span>
-            <input type="url" class="img-input" data-slug="<%= a.slug %>" value="<%= a.image || '' %>" placeholder="https://www.lumenmsp.co.uk/images/news/...">
-            <button type="button" class="btn" data-img-save="<%= a.slug %>" style="font-size:12px;padding:3px 10px;">Save image</button>
-          </div>
-        </div>
-      </div>
-    <% }); %>
-  </form>
-
-  <details style="margin:18px 0;">
-    <summary style="cursor:pointer;font-weight:600;">➕ Add an ad-hoc post (outside the news cycle)</summary>
-    <form method="post" action="/marketing/socials/add" style="max-width:680px;margin-top:12px;border:1px solid var(--line);border-radius:12px;padding:16px;">
-      <div style="display:grid;gap:10px;">
-        <label>Title (internal label)<br><input type="text" name="title" style="width:100%;" placeholder="e.g. Bank holiday hours"></label>
-        <label>Link (optional)<br><input type="url" name="link" style="width:100%;" placeholder="https://www.lumenmsp.co.uk/..."></label>
-        <label>Message<br><textarea name="body" rows="5" required style="width:100%;" placeholder="What do you want to say?"></textarea></label>
-        <label>Image URL (optional)<br><input type="url" name="image_url" style="width:100%;" placeholder="https://www.lumenmsp.co.uk/images/news/..."></label>
-        <div style="display:flex;gap:14px;flex-wrap:wrap;">
-          <label><input type="checkbox" name="networks" value="linkedin" checked> LinkedIn</label>
-          <label><input type="checkbox" name="networks" value="facebook" checked> Facebook</label>
-          <label><input type="checkbox" name="networks" value="google"> Google Business</label>
-        </div>
-        <div><button class="btn btn-primary" type="submit">Add post</button></div>
-      </div>
-    </form>
-  </details>
-
-  <details class="soc-log-wrap">
-    <summary>Upload log<% if (uploads.length) { %> <span class="muted">(<%= uploads.length %> recent)</span><% } %></summary>
-    <% if (!uploads.length) { %>
-      <p class="muted" style="padding:8px 0;">Nothing pushed to Buffer yet.</p>
-    <% } else { %>
-    <table class="table sortable soc-log" style="width:100%;">
-      <thead><tr><th>When</th><th>Status</th><th>Network</th><th>Action</th><th>Post</th><th>Scheduled for</th><th>Detail</th><th>By</th></tr></thead>
-      <tbody>
-        <% uploads.forEach(function(u){ %>
-          <tr>
-            <td data-sort="<%= new Date(u.created_at).getTime() %>"><%= new Date(u.created_at).toLocaleString('en-GB') %></td>
-            <td class="<%= u.status === 'ok' ? 'st-ok' : 'st-err' %>"><%= u.status === 'ok' ? '✓ ok' : '✗ error' %></td>
-            <td><%= u.network %></td><td><%= u.action %></td><td><%= u.slug %></td>
-            <td><%= u.due_at ? new Date(u.due_at).toLocaleString('en-GB') : '—' %></td>
-            <td><%= u.message || (u.buffer_post_id ? 'Buffer id ' + u.buffer_post_id : '') %></td>
-            <td><%= u.created_by || '' %></td>
-          </tr>
-        <% }); %>
-      </tbody>
-    </table>
-    <% } %>
-  </details>
-</div>
-
-<!-- ───────── CREATE ───────── -->
-<div class="soc-panel" id="panel-create" <%= tab==='create' ? '' : 'hidden' %>>
-  <% if (!aiReady) { %>
-    <div class="soc-empty">Claude isn't connected — add your API key in <a href="/settings/integrations">Settings → Integrations</a> to use the studio.</div>
-  <% } %>
-  <div class="studio" id="studio" style="<%= aiReady ? '' : 'opacity:.5;pointer-events:none;' %>">
-    <form id="createForm" method="post" action="/marketing/socials/create">
-      <label>Topic</label>
-      <input type="text" name="topic" id="st-topic" placeholder="e.g. Windows 10 end of life — what SMBs must do now" required>
-
-      <label>Source URLs (up to 3)</label>
-      <input type="url" name="url1" id="st-url1" placeholder="https://…" style="margin-bottom:6px;">
-      <input type="url" name="url2" id="st-url2" placeholder="https://… (optional)" style="margin-bottom:6px;">
-      <input type="url" name="url3" id="st-url3" placeholder="https://… (optional)">
-
-      <label>Your steer / context (optional)</label>
-      <textarea name="context" id="st-context" rows="3" placeholder="Angle, audience, tone, anything to emphasise or avoid. Used to refine — tweak and re-generate."></textarea>
-
-      <label>Context images (optional) <span class="muted" style="font-weight:400;">— Claude can see these to match the tone &amp; subject (up to 4)</span></label>
-      <input type="file" id="st-images" accept="image/*" multiple>
-
-      <div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;">
-        <button type="button" class="btn btn-primary" id="genBtn">✨ Generate with Claude</button>
-        <span class="gen-spin" id="genSpin">Claude is reading your sources and writing…</span>
-        <span id="genErr" class="muted" style="color:#b91c1c;font-size:13px;"></span>
-      </div>
-
-      <div class="gen-out" id="genOut" hidden>
-        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
-          <div><label style="margin-top:0;">Relevance date</label><input type="date" name="relevance_date" id="st-rel"></div>
-          <div style="flex:1;min-width:220px;"><label style="margin-top:0;">Link (optional, shown on the post)</label><input type="url" name="link" id="st-link" placeholder="https://www.lumenmsp.co.uk/news/…"></div>
-          <div style="flex:1;min-width:220px;"><label style="margin-top:0;">Image URL (optional)</label><input type="url" name="image_url" id="st-image" placeholder="pick one below, or paste a URL"></div>
-        </div>
-
-        <div class="gen-card" id="imgFinder">
-          <h4>🖼 Matching free images <span class="muted" style="font-weight:400;">— Claude's suggestion, from Pexels. Click one to use it.</span></h4>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <input type="text" id="st-imgquery" placeholder="image search term" style="flex:1;min-width:180px;">
-            <button type="button" class="btn" id="findImgBtn">🔍 Find images</button>
-            <span id="imgErr" class="muted" style="color:#b91c1c;font-size:12px;"></span>
-          </div>
-          <div id="imgResults" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:10px;"></div>
-        </div>
-
-        <div class="gen-card"><h4><span class="net net-linkedin">LinkedIn</span></h4><textarea name="linkedin" id="st-linkedin"></textarea></div>
-        <div class="gen-card"><h4><span class="net net-facebook">Facebook</span></h4><textarea name="facebook" id="st-facebook"></textarea></div>
-        <div class="gen-card"><h4><span class="net net-google">Google Business</span></h4><textarea name="google" id="st-google"></textarea></div>
-        <div class="gen-card web"><h4><span class="net net-website">Website article</span> <span class="muted" style="font-weight:400;">ready-to-paste Astro markdown (frontmatter + body)</span></h4><textarea name="website" id="st-website"></textarea></div>
-
-        <div style="display:flex;gap:10px;align-items:center;">
-          <button type="submit" class="btn btn-primary">Save to schedule</button>
-          <button type="button" class="btn" id="genAgain">Re-generate (with your edits to the steer)</button>
-        </div>
-      </div>
-    </form>
+  <div class="form-group" style="margin-bottom:12px;">
+    <label>Content (notes, key points, anything to include)</label>
+    <textarea id="stContent" class="input" rows="5" style="width:100%;" placeholder="What's the story? Paste rough notes, bullet points, an email — anything."></textarea>
+  </div>
+  <div class="form-group">
+    <label>Lumen's take (our angle — this shapes the article)</label>
+    <textarea id="stTake" class="input" rows="3" style="width:100%;" placeholder="e.g. Most small firms think this doesn't apply to them — it does, and the fix is cheap."></textarea>
   </div>
 </div>
 
-<!-- ───────── PREVIOUS ───────── -->
-<div class="soc-panel" id="panel-previous" <%= tab==='previous' ? '' : 'hidden' %>>
-  <input type="search" class="soc-filter" id="prevFilter" placeholder="Filter archived posts…">
-  <% if (!archived.length) { %>
-    <div class="soc-empty">Nothing archived yet. Posts land here when you archive them or after they're posted.</div>
-  <% } %>
-  <% archived.forEach(function(a){
-       var relTxt = a.relevanceDate ? new Date(a.relevanceDate).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : null; %>
-    <div class="pcard" data-search="<%= ((a.title||a.slug) + ' ' + (relTxt||'')).toLowerCase() %>">
-      <div class="prow">
-        <% if (a.image) { %><img class="pthumb" src="<%= a.image %>" alt="" loading="lazy"><% } else { %><span class="pthumb pthumb-none">🖼</span><% } %>
-        <div class="pmeta">
-          <div class="ptitle"><%= a.title || a.slug %></div>
-          <div class="pdate"><% if (relTxt) { %>📅 <b><%= relTxt %></b> · <% } %><%= Object.keys(a.variants).length %> channel variant(s)</div>
-        </div>
-        <form method="post" action="/marketing/socials/restore" style="margin:0;">
-          <input type="hidden" name="slug" value="<%= a.slug %>">
-          <button class="pbtn" type="submit" style="color:#0e7490;border-color:#a5f3fc;background:#ecfeff;">↩ Restore</button>
-        </form>
-        <button type="button" class="pbtn" data-prev="arch-<%= a.slug %>">View ▾</button>
-      </div>
-      <div class="ppreview" id="prev-arch-<%= a.slug %>" hidden>
-        <% Object.keys(a.variants).forEach(function(net){ var v = a.variants[net]; %>
-          <div class="pvar"><span class="net net-<%= net %>"><%= net %></span><div class="copy"><%= v.body %></div></div>
-        <% }); %>
-      </div>
+<!-- Step 2 — generate -->
+<div class="card">
+  <div class="card-header"><h2>2 · Generate</h2></div>
+  <p class="muted" style="margin:0 0 12px;">Claude writes one meaty article for <strong>end users</strong> (plain English, no tech-speak) plus LinkedIn and Facebook copy. Everything below stays editable.</p>
+  <button class="btn btn-primary" id="genBtn" onclick="stGenerate()" <%= aiReady ? '' : 'disabled' %>>✨ Generate with Claude</button>
+  <span id="genStatus" class="muted" style="margin-left:10px;"></span>
+
+  <div id="genOut" style="display:none;margin-top:18px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+      <div class="form-group" style="flex:2;min-width:280px;"><label>Title</label><input id="outTitle" class="input" style="width:100%;"></div>
+      <div class="form-group" style="flex:1;min-width:200px;"><label>Slug (page address)</label><input id="outSlug" class="input" style="width:100%;font-family:monospace;font-size:13.5px;"></div>
     </div>
-  <% }); %>
+    <div class="form-group" style="margin-bottom:12px;"><label>Excerpt (preview line)</label><input id="outExcerpt" class="input" style="width:100%;"></div>
+    <div class="form-group" style="margin-bottom:12px;"><label>Website article (HTML)</label><textarea id="outArticle" class="input" rows="16" style="width:100%;font-size:14.5px;"></textarea></div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;">
+      <div class="form-group" style="flex:1;min-width:300px;"><label>LinkedIn</label><textarea id="outLinkedin" class="input" rows="8" style="width:100%;"></textarea></div>
+      <div class="form-group" style="flex:1;min-width:300px;"><label>Facebook</label><textarea id="outFacebook" class="input" rows="8" style="width:100%;"></textarea></div>
+    </div>
+    <div class="form-group" style="margin-top:14px;">
+      <label>Hero photo (goes on the article and the social posts)</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <input id="imgQuery" class="input" placeholder="search free photos…" style="min-width:220px;">
+        <button type="button" class="btn" onclick="imgSearch()">🔍 Search photos</button>
+        <input id="imgUrl" class="input" placeholder="…or paste an image URL" style="min-width:260px;font-family:monospace;font-size:13px;" oninput="imgPick(this.value, null)">
+      </div>
+      <div id="imgGrid" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+      <div id="imgSel" class="muted" style="margin-top:6px;font-size:14px;">No photo selected — everything goes out text-only.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Step 3 — website -->
+<div class="card">
+  <div class="card-header"><h2>3 · Push to website</h2></div>
+  <p class="muted" style="margin:0 0 12px;">Publishes the article live at <strong>lumenmsp.co.uk/news/&lt;slug&gt;/</strong> instantly — no site rebuild.</p>
+  <button class="btn" id="prevBtn" onclick="stPreview()" disabled>👁 Preview</button>
+  <button class="btn btn-primary" id="webBtn" onclick="stPublish()" disabled>🌐 Push to website</button>
+  <span id="webStatus" style="margin-left:10px;"></span>
+</div>
+
+<!-- Step 4 — Buffer -->
+<div class="card">
+  <div class="card-header"><h2>4 · Push to Buffer</h2></div>
+  <p class="muted" style="margin:0 0 12px;">Sends the LinkedIn + Facebook copy (with the article link attached once it's published).</p>
+  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="radio" name="bufMode" value="now" checked> Post now</label>
+    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="radio" name="bufMode" value="schedule"> Schedule for</label>
+    <input type="datetime-local" id="bufWhen" class="input" style="width:auto;">
+  </div>
+  <button class="btn btn-primary" id="bufBtn" onclick="stBuffer()" disabled>📣 Push to Buffer</button>
+  <span id="bufStatus" style="margin-left:10px;"></span>
 </div>
 
 <script>
-  (function () {
-    // ── Tabs ──
-    var tabs = document.querySelectorAll('.soc-tab');
-    var panels = { schedule: document.getElementById('panel-schedule'), create: document.getElementById('panel-create'), previous: document.getElementById('panel-previous') };
-    function show(t) {
-      Object.keys(panels).forEach(function (k) { if (panels[k]) panels[k].hidden = (k !== t); });
-      tabs.forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-tab') === t); });
-      try { history.replaceState(null, '', '?tab=' + t); } catch (e) {}
-    }
-    tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.getAttribute('data-tab')); }); });
+function csrf(){ var m=document.querySelector('meta[name="csrf-token"]'); return m?m.getAttribute('content'):''; }
+function jpost(url, body){ return fetch(url, { method:'POST', headers:{'Content-Type':'application/json','x-csrf-token':csrf()}, body: JSON.stringify(body) }).then(function(r){ return r.json(); }); }
+var publishedUrl = '';
+var selectedImage = '';
 
-    // ── Schedule: selection ──
-    var form = document.getElementById('pushForm');
-    var selAll = document.getElementById('selAll');
-    var count = document.getElementById('selCount');
-    function boxes() { return form ? form.querySelectorAll('input[name="ids"]') : []; }
-    function update() { var n = 0; boxes().forEach(function (b) { if (b.checked) n++; }); if (count) count.textContent = n + ' selected'; }
-    if (selAll) selAll.addEventListener('change', function () { boxes().forEach(function (b) { b.checked = selAll.checked; }); update(); });
-    if (form) form.addEventListener('change', function (e) { if (e.target && e.target.name === 'ids') update(); });
-    // Per-card "select all channels" toggles that card's network boxes.
-    document.addEventListener('change', function (e) {
-      if (e.target && e.target.classList.contains('art-sel')) {
-        var card = e.target.closest('.pcard'); if (!card) return;
-        card.querySelectorAll('input[name="ids"]').forEach(function (b) { b.checked = e.target.checked; });
-        update();
-      }
+function imgSearch(){
+  var q = document.getElementById('imgQuery').value.trim(); if(!q) return;
+  var grid = document.getElementById('imgGrid');
+  grid.innerHTML = '<span class="muted">Searching…</span>';
+  fetch('/marketing/socials/image-search?q=' + encodeURIComponent(q)).then(function(r){ return r.json(); }).then(function(d){
+    if(!d.ok || !d.images || !d.images.length){ grid.innerHTML = '<span class="muted">' + (d.error || 'No photos found — try different words, or paste a URL.') + '</span>'; return; }
+    grid.innerHTML = '';
+    d.images.forEach(function(im){
+      var img = document.createElement('img');
+      img.src = im.thumb; img.title = im.alt + ' — ' + im.credit;
+      img.style.cssText = 'width:130px;height:88px;object-fit:cover;border-radius:8px;cursor:pointer;border:3px solid transparent;';
+      img.onclick = function(){ imgPick(im.url, img); };
+      grid.appendChild(img);
     });
-    update();
-    window.confirmPush = function (label) { var n = 0; boxes().forEach(function (b) { if (b.checked) n++; }); if (!n) { alert('Tick at least one channel first (open Review to pick channels).'); return false; } return confirm('Send ' + n + ' selected post(s) to ' + label + '?'); };
-    window.confirmArchive = function () { var n = 0; boxes().forEach(function (b) { if (b.checked) n++; }); if (!n) { alert('Tick at least one post to archive.'); return false; } return confirm('Archive ' + n + ' selected post(s)?'); };
+  }).catch(function(){ grid.innerHTML = '<span class="muted">Search failed.</span>'; });
+}
+function imgPick(url, el){
+  selectedImage = (url || '').trim();
+  document.querySelectorAll('#imgGrid img').forEach(function(i){ i.style.borderColor = 'transparent'; });
+  if (el) el.style.borderColor = '#0ea5b7';
+  document.getElementById('imgSel').innerHTML = selectedImage
+    ? '✔ Photo selected — it will appear on the article and both social posts.'
+    : 'No photo selected — everything goes out text-only.';
+  document.getElementById('imgSel').style.color = selectedImage ? '#166534' : '';
+}
 
-    // ── Filters ──
-    function wireFilter(inputId, panelId) {
-      var inp = document.getElementById(inputId); if (!inp) return;
-      inp.addEventListener('input', function () {
-        var q = inp.value.trim().toLowerCase();
-        document.querySelectorAll('#' + panelId + ' .pcard').forEach(function (c) {
-          c.style.display = (!q || (c.getAttribute('data-search') || '').indexOf(q) >= 0) ? '' : 'none';
-        });
-      });
-    }
-    wireFilter('schedFilter', 'panel-schedule');
-    wireFilter('prevFilter', 'panel-previous');
+function stPreview(){
+  // POST an invisible form to the preview endpoint in a new tab — the exact page publish would produce.
+  var f = document.createElement('form');
+  f.method = 'POST'; f.action = '/marketing/socials/preview-website'; f.target = '_blank';
+  [['_csrf', csrf()], ['title', document.getElementById('outTitle').value], ['slug', document.getElementById('outSlug').value],
+   ['excerpt', document.getElementById('outExcerpt').value], ['articleHtml', document.getElementById('outArticle').value],
+   ['imageUrl', selectedImage]].forEach(function(kv){
+    var i = document.createElement('input'); i.type = 'hidden'; i.name = kv[0]; i.value = kv[1]; f.appendChild(i);
+  });
+  document.body.appendChild(f); f.submit(); f.remove();
+}
 
-    // ── Expand / delete / image (shared) ──
-    document.addEventListener('click', function (e) {
-      var pv = e.target.closest && e.target.closest('[data-prev]');
-      if (pv) { var box = document.getElementById('prev-' + pv.getAttribute('data-prev')); if (box) { box.hidden = !box.hidden; pv.textContent = box.hidden ? (pv.textContent.indexOf('View') >= 0 ? 'View ▾' : 'Review ▾') : 'Hide ▴'; } return; }
-      var del = e.target.closest && e.target.closest('[data-del]');
-      if (del) { e.preventDefault(); if (!confirm('Remove this channel post?')) return; fetch('/marketing/socials/' + del.getAttribute('data-del') + '/delete', { method: 'POST' }).then(function () { location.reload(); }).catch(function () { alert('Could not remove the post.'); }); return; }
-      var img = e.target.closest && e.target.closest('[data-img-save]');
-      if (img) { e.preventDefault(); var slug = img.getAttribute('data-img-save'); var inp = document.querySelector('.img-input[data-slug="' + slug + '"]'); var url = inp ? inp.value.trim() : ''; fetch('/marketing/socials/image', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'slug=' + encodeURIComponent(slug) + '&image_url=' + encodeURIComponent(url) }).then(function () { location.reload(); }).catch(function () { alert('Could not save the image.'); }); return; }
-      // Per-card archive.
-      var arch = e.target.closest && e.target.closest('[data-arch]');
-      if (arch) { e.preventDefault(); if (!confirm('Archive this post?')) return; fetch('/marketing/socials/archive-slug', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'slug=' + encodeURIComponent(arch.getAttribute('data-arch')) }).then(function () { location.reload(); }).catch(function () { alert('Could not archive.'); }); return; }
-      // Save a relevance date.
-      var rel = e.target.closest && e.target.closest('[data-rel-save]');
-      if (rel) { e.preventDefault(); var rslug = rel.getAttribute('data-rel-save'); var rinp = document.querySelector('.rel-input[data-slug="' + rslug + '"]'); var rd = rinp ? rinp.value : ''; fetch('/marketing/socials/relevance', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'slug=' + encodeURIComponent(rslug) + '&relevance_date=' + encodeURIComponent(rd) }).then(function () { location.reload(); }).catch(function () { alert('Could not save the date.'); }); return; }
-    });
+function stGenerate(){
+  var b=document.getElementById('genBtn'), s=document.getElementById('genStatus');
+  b.disabled=true; b.textContent='✨ Writing…'; s.textContent='Reading sources and drafting — 20–40 seconds.'; s.style.color='';
+  jpost('/marketing/socials/generate', {
+    urls: document.getElementById('stUrls').value,
+    content: document.getElementById('stContent').value,
+    take: document.getElementById('stTake').value
+  }).then(function(d){
+    b.disabled=false; b.textContent='✨ Generate with Claude';
+    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='#b91c1c'; return; }
+    document.getElementById('outTitle').value=d.title; document.getElementById('outSlug').value=d.slug;
+    document.getElementById('outExcerpt').value=d.excerpt; document.getElementById('outArticle').value=d.articleHtml;
+    document.getElementById('outLinkedin').value=d.linkedin; document.getElementById('outFacebook').value=d.facebook;
+    document.getElementById('genOut').style.display='block';
+    document.getElementById('webBtn').disabled=false; document.getElementById('bufBtn').disabled=false;
+    document.getElementById('prevBtn').disabled=false;
+    if (d.imageQuery) { document.getElementById('imgQuery').value = d.imageQuery; imgSearch(); }
+    s.textContent='Done — read ' + d.sourcesRead + ' of ' + d.sourcesGiven + ' URL(s). Edit anything below, then push.'; s.style.color='#166534';
+  }).catch(function(){ b.disabled=false; b.textContent='✨ Generate with Claude'; s.textContent='Request failed.'; s.style.color='#b91c1c'; });
+}
 
-    // ── Create: generate ──
-    var genBtn = document.getElementById('genBtn'), genAgain = document.getElementById('genAgain');
-    var spin = document.getElementById('genSpin'), gerr = document.getElementById('genErr'), out = document.getElementById('genOut');
-    function val(id) { var el = document.getElementById(id); return el ? el.value.trim() : ''; }
-    function setv(id, v) { var el = document.getElementById(id); if (el) el.value = v || ''; }
-    function generate() {
-      var topic = val('st-topic');
-      if (!topic) { gerr.textContent = 'Add a topic first.'; return; }
-      gerr.textContent = ''; spin.style.display = 'inline'; if (genBtn) genBtn.disabled = true; if (genAgain) genAgain.disabled = true;
-      var fd = new FormData();
-      fd.append('topic', topic);
-      fd.append('url1', val('st-url1')); fd.append('url2', val('st-url2')); fd.append('url3', val('st-url3'));
-      fd.append('context', val('st-context'));
-      var imgs = document.getElementById('st-images');
-      if (imgs && imgs.files) { for (var i = 0; i < imgs.files.length && i < 4; i++) fd.append('images', imgs.files[i]); }
-      // NB: no Content-Type header — the browser sets the multipart boundary; the footer adds CSRF.
-      fetch('/marketing/socials/generate', { method: 'POST', body: fd })
-        .then(function (r) { return r.json(); }).then(function (d) {
-        if (d && d.ok) {
-          setv('st-linkedin', d.linkedin); setv('st-facebook', d.facebook); setv('st-google', d.google); setv('st-website', d.website);
-          setv('st-rel', d.relevanceDate || ''); setv('st-imgquery', d.imageQuery || '');
-          out.hidden = false; out.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        } else { gerr.textContent = (d && d.error) || 'Generation failed.'; }
-      }).catch(function () { gerr.textContent = 'Generation failed — network error.'; })
-        .finally(function () { spin.style.display = 'none'; if (genBtn) genBtn.disabled = false; if (genAgain) genAgain.disabled = false; });
-    }
-    if (genBtn) genBtn.addEventListener('click', generate);
-    if (genAgain) genAgain.addEventListener('click', generate);
+function stPublish(){
+  var b=document.getElementById('webBtn'), s=document.getElementById('webStatus');
+  b.disabled=true; b.textContent='🌐 Publishing…'; s.textContent='';
+  jpost('/marketing/socials/publish-website', {
+    title: document.getElementById('outTitle').value, slug: document.getElementById('outSlug').value,
+    excerpt: document.getElementById('outExcerpt').value, articleHtml: document.getElementById('outArticle').value,
+    imageUrl: selectedImage
+  }).then(function(d){
+    b.disabled=false; b.textContent='🌐 Push to website';
+    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='#b91c1c'; return; }
+    publishedUrl=d.url;
+    s.innerHTML='✔ Live: <a href="'+d.url+'" target="_blank" rel="noopener">'+d.url+'</a>'; s.style.color='#166534';
+  }).catch(function(){ b.disabled=false; b.textContent='🌐 Push to website'; s.textContent='Request failed.'; s.style.color='#b91c1c'; });
+}
 
-    // ── Create: find matching free images (Pexels) ──
-    var findBtn = document.getElementById('findImgBtn');
-    function findImages() {
-      var qEl = document.getElementById('st-imgquery'); var q = qEl ? qEl.value.trim() : '';
-      var box = document.getElementById('imgResults'); var ierr = document.getElementById('imgErr');
-      if (!q) { if (ierr) ierr.textContent = 'Enter a search term.'; return; }
-      if (ierr) ierr.textContent = ''; if (box) box.innerHTML = '<span class="muted" style="font-size:12px;">Searching…</span>';
-      fetch('/marketing/socials/image-search?q=' + encodeURIComponent(q)).then(function (r) { return r.json(); }).then(function (d) {
-        if (!d || !d.ok) { if (ierr) ierr.textContent = (d && d.error) || 'Search failed.'; if (box) box.innerHTML = ''; return; }
-        if (!d.images.length) { box.innerHTML = '<span class="muted" style="font-size:12px;">No images found — try another term.</span>'; return; }
-        box.innerHTML = '';
-        d.images.forEach(function (im) {
-          var b = document.createElement('button'); b.type = 'button'; b.title = (im.alt || '') + ' — © ' + im.credit;
-          b.style.cssText = 'border:2px solid transparent;border-radius:8px;padding:0;cursor:pointer;overflow:hidden;background:none;';
-          b.innerHTML = '<img src="' + im.thumb + '" alt="" style="width:100%;height:80px;object-fit:cover;display:block;">';
-          b.addEventListener('click', function () { setv('st-image', im.url); box.querySelectorAll('button').forEach(function (x) { x.style.borderColor = 'transparent'; }); b.style.borderColor = '#0ea5b7'; });
-          box.appendChild(b);
-        });
-      }).catch(function () { if (ierr) ierr.textContent = 'Search failed — network error.'; if (box) box.innerHTML = ''; });
-    }
-    if (findBtn) findBtn.addEventListener('click', findImages);
-  })();
+function stBuffer(){
+  var b=document.getElementById('bufBtn'), s=document.getElementById('bufStatus');
+  var mode=document.querySelector('input[name="bufMode"]:checked').value;
+  var when=document.getElementById('bufWhen').value;
+  var dueAt = (mode==='schedule' && when) ? new Date(when).toISOString() : undefined;
+  if(mode==='schedule' && !dueAt){ s.textContent='Pick a date and time first.'; s.style.color='#b91c1c'; return; }
+  if(!publishedUrl && !confirm('The article hasn\'t been pushed to the website yet, so the posts will go out without a link. Continue?')) return;
+  b.disabled=true; b.textContent='📣 Pushing…'; s.textContent='';
+  jpost('/marketing/socials/push-buffer', {
+    linkedin: document.getElementById('outLinkedin').value, facebook: document.getElementById('outFacebook').value,
+    mode: mode, dueAt: dueAt, link: publishedUrl, imageUrl: selectedImage
+  }).then(function(d){
+    b.disabled=false; b.textContent='📣 Push to Buffer';
+    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='#b91c1c'; return; }
+    s.textContent = Object.keys(d.results).map(function(k){ return k+': '+d.results[k]; }).join(' · ');
+    s.style.color = JSON.stringify(d.results).indexOf('FAILED')>=0 ? '#b45309' : '#166534';
+  }).catch(function(){ b.disabled=false; b.textContent='📣 Push to Buffer'; s.textContent='Request failed.'; s.style.color='#b91c1c'; });
+}
 </script>
 
 <%- include('../partials/footer') %>

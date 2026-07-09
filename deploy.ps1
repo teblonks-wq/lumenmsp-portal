@@ -40,12 +40,6 @@ Compress-Archive -Path "$staging\*" -DestinationPath $zip -Force
 $old = Get-ChildItem $backupDir -Filter "portal_*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -Skip 5
 if ($old) { $old | Remove-Item -Force; Write-Host ("Pruned {0} old backup(s); keeping 5 (git is the real history)." -f $old.Count) -ForegroundColor DarkGray }
 
-# Gentle nudge: deploying code that git doesn't know about means no history for it.
-$gitDirty = (git -C $localPath status --porcelain 2>$null)
-if ($gitDirty) {
-    Write-Host "NOTE: you have UNCOMMITTED changes - this deploy isn't in git history yet." -ForegroundColor Yellow
-    Write-Host "      After deploying:  git add . ; git commit -m `"describe the change`" ; git push" -ForegroundColor Yellow
-}
 
 # Step 3: Package into ONE tarball, then upload it (a single-file transfer is far more
 # resilient than scp -r over hundreds of files, which drops on a flaky link).
@@ -84,3 +78,23 @@ Remove-Item $tar -Force
 Write-Host ""
 Write-Host "Deploy complete!" -ForegroundColor Green
 Write-Host "Live at: https://portal.lumenmsp.co.uk"
+
+# Step 6: Record this deploy in git (commit + push to GitHub). Non-fatal — a git
+# hiccup (offline, auth expired) never undoes a completed deploy.
+try {
+    $dirty = git status --porcelain 2>$null
+    if ($dirty) {
+        Write-Host ""
+        $msg = Read-Host "Git commit message for this deploy (Enter = 'Deploy $stamp')"
+        if (-not $msg) { $msg = "Deploy $stamp" }
+        git add -A
+        git commit -m $msg | Out-Null
+        git push
+        if ($LASTEXITCODE -eq 0) { Write-Host "Committed + pushed to GitHub: $msg" -ForegroundColor Green }
+        else { Write-Host "Committed locally but PUSH FAILED - run 'git push' when back online." -ForegroundColor Yellow }
+    } else {
+        Write-Host "Git: nothing new to commit." -ForegroundColor DarkGray
+    }
+} catch {
+    Write-Host "Git step failed (the deploy itself is fine): $_" -ForegroundColor Yellow
+}

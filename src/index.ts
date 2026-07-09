@@ -46,7 +46,7 @@ import aiRoutes from './routes/ai';
 import tvRoutes from './routes/tv';
 import { ensureChatTables } from './lib/chat';
 import { ensureAlertsTable } from './lib/alerts';
-import { ensureSocialsTables, seedSocialPosts, backfillImages } from './lib/socials';
+import { ensureSocialsTables } from './lib/socials';
 import { startGiacomStatus } from './lib/giacom-status';
 import { startUnifiPoll } from './lib/unifi';
 import { hasFinanceAccess, hasVaultAccess } from './middleware/auth';
@@ -366,7 +366,7 @@ server.listen(config.PORT, () => {
   startItReportScheduler(); // Monthly IT Snapshot: 00:00 on the 1st, previous month
   ensureDmarcTables().catch((e) => console.error('ensureDmarcTables failed:', e.message)); // LITS-DMARC domains/reports/records
   startDmarcIngest();       // LITS-DMARC: poll the rua mailbox every 30 min (no-op until DMARC_MAILBOX set)
-  ensureSocialsTables().then(seedSocialPosts).then(backfillImages).catch((e) => console.error('ensureSocialsTables failed:', e.message)); // Marketing → Socials
+  ensureSocialsTables().catch((e) => console.error('ensureSocialsTables failed:', e.message)); // legacy socials table kept; seeding retired with the 2026-07-09 stateless studio rewrite
   startGiacomStatus();   // N3twrx: poll Giacom status feed
   startUnifiPoll();      // N3twrx: poll UniFi Site Manager API for offline devices
 });
