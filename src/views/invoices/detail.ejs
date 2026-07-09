@@ -179,6 +179,7 @@
     <tr><th style="width:40%;">Method</th><td><% if (invoice.gocardless_mandate_id) { %><span style="color:#b45309;font-weight:600;">Direct Debit (GoCardless)</span><% } else { %>Bank transfer<% } %></td></tr>
     <% if (invoice.gocardless_mandate_id) { %><tr><th>Direct Debit mandate</th><td class="muted"><%= invoice.gocardless_mandate_id %></td></tr><% } %>
     <tr><th>GoCardless payment ref</th><td><% if (invoice.gocardless_payment_id) { %><span style="color:#166534;font-weight:600;"><%= invoice.gocardless_payment_id %></span><% } else { %><span class="muted">not submitted</span><% } %></td></tr>
+    <tr><th>GoCardless payout ref</th><td><% if (invoice.gocardless_payout_ref) { %><span style="color:#166534;font-weight:600;"><%= invoice.gocardless_payout_ref %></span><% if (invoice.gocardless_paid_out_at) { %> <span class="muted">— paid out <%= new Date(invoice.gocardless_paid_out_at).toLocaleDateString('en-GB') %></span><% } %><% } else { %><span class="muted">not paid out yet</span><% } %></td></tr>
     <tr><th>QuickBooks invoice</th><td><% if (invoice.quickbooks_invoice_id) { %><span style="color:#b45309;font-weight:600;">#<%= invoice.quickbooks_invoice_id %></span><% } else { %><span class="muted">not pushed</span><% } %></td></tr>
     <tr><th>Emailed</th><td><% if (invoice.emailed_at) { %><%= new Date(invoice.emailed_at).toLocaleString('en-GB') %><% } else { %><span class="muted">not yet</span><% } %></td></tr>
   </tbody></table>

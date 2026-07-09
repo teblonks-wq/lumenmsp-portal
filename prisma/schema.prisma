@@ -742,6 +742,8 @@ model Invoice {
   quoteId             Int?      @map("quote_id")
   quickbooksInvoiceId String?   @map("quickbooks_invoice_id")
   gocardlessPaymentId String?   @map("gocardless_payment_id")
+  gocardlessPayoutRef String?   @map("gocardless_payout_ref")  // bank-statement ref of the GC payout that included this payment
+  gocardlessPaidOutAt DateTime? @db.Date @map("gocardless_paid_out_at") // payout arrival date
   paymentStatus       String    @default("unpaid") @map("payment_status") // unpaid | pending | paid | failed
   invoiceNumber       String?   @unique @map("invoice_number") // NULL while staged — allocated at Complete
   staged              Boolean   @default(false) // staged in Bureau (no number, hidden from Invoices list) until completed

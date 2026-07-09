@@ -94,6 +94,7 @@
   <strong>No action required.</strong> As a Direct Debit customer, payment for this invoice will be collected automatically via GoCardless. You do not need to do anything.
   <% if (invoice.gocardless_payment_id) { %><br><span style="color:#15803d;">GoCardless payment reference: <strong><%= invoice.gocardless_payment_id %></strong></span>
   <% } else if (invoice.gocardless_mandate_id) { %><br><span style="color:#15803d;">Direct Debit mandate: <strong><%= invoice.gocardless_mandate_id %></strong></span><% } %>
+  <% if (invoice.gocardless_payout_ref) { %><br><span style="color:#15803d;">Payout reference: <strong><%= invoice.gocardless_payout_ref %></strong><% if (invoice.gocardless_paid_out_at) { %> (paid out <%= new Date(invoice.gocardless_paid_out_at).toLocaleDateString('en-GB') %>)<% } %></span><% } %>
 </div>
 <% } else { %>
 <div style="margin:20px 0;padding:14px 16px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:6px;font-size:13px;color:#374151;line-height:1.6;">

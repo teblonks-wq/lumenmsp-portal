@@ -113,6 +113,13 @@ export class GoCardless {
     return d?.payments || {};
   }
 
+  // Fetch a payout — gives the bank-statement reference + arrival date for the payout
+  // a paid_out payment was bundled into (printed on the invoice next to the payment ref).
+  async getPayout(payoutId: string): Promise<any> {
+    const d = await this.apiGet('/payouts/' + encodeURIComponent(payoutId));
+    return d?.payouts || {};
+  }
+
   // Create a payment against a mandate. amountPence = GBP × 100.
   // chargeDate (YYYY-MM-DD) = the collection date (your invoice due date). If omitted,
   // or if it's too soon for the scheme, GoCardless collects at the earliest valid date.

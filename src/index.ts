@@ -350,7 +350,10 @@ server.listen(config.PORT, () => {
   startExtLabelSync();      // 04:30: label CLIs with their extension name from Insights
   startReviewReminders();
   startTaskReminders();
-  startQbPaymentSync();
+  // startQbPaymentSync();  // DISABLED 2026-07-09 (Terry): QB must NOT push invoice/payment
+  // state into the portal — it was overwriting GoCardless-confirmed payments with QB's stale
+  // balances. GoCardless payout status now drives "paid" (gocardless-sync). The manual sync
+  // button on Settings → Integrations still exists for a deliberate one-off pull if ever needed.
   startRecurringBilling();
   startTollringSync();      // Insights: hourly Tollring call sync → call_events
   startReportScheduler();   // Insights: per-minute due-report generate + email

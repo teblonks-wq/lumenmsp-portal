@@ -56,10 +56,14 @@ export async function syncGoCardlessPayments(): Promise<{ checked: number; paid:
   const out = { checked: 0, paid: 0, failed: 0 };
   const gc = await GoCardless.load();
   if (!gc.isConfigured()) return out;
+  // 'pending' AND 'unpaid': the old QB payment sync (now disabled) had been knocking
+  // GC-submitted invoices back to 'unpaid', which made them invisible to this sync —
+  // include them so everything GoCardless has actually collected gets caught up.
   const rows = (await pool.query(
     `SELECT id, invoice_number, gocardless_payment_id, created_by
        FROM invoices
-      WHERE deleted_at IS NULL AND gocardless_payment_id IS NOT NULL AND payment_status = 'pending'
+      WHERE deleted_at IS NULL AND gocardless_payment_id IS NOT NULL
+        AND payment_status IN ('pending', 'unpaid')
       ORDER BY id`
   )).rows;
   for (const inv of rows) {
@@ -68,12 +72,24 @@ export async function syncGoCardlessPayments(): Promise<{ checked: number; paid:
       const st = String(p?.status || '').toLowerCase();
       out.checked++;
       if (st === 'paid_out') {
-        // Draft/void invoice statuses are left alone (same rule as the QB payment sync).
+        // Pull the payout so the invoice can show the bank-statement reference + date.
+        let payoutRef = '', paidOutAt: string | null = null;
+        const payoutId = p?.links?.payout;
+        if (payoutId) {
+          try {
+            const po = await gc.getPayout(payoutId);
+            payoutRef = String(po?.reference || '');
+            paidOutAt = po?.arrival_date || null;
+          } catch (e: any) { console.error(`[gocardless-sync] payout lookup failed for ${payoutId}:`, e.message); }
+        }
+        // Draft/void invoice statuses are left alone (same rule as the old QB payment sync).
         await pool.query(
           `UPDATE invoices SET payment_status='paid',
                   status = CASE WHEN status IN ('draft','void') THEN status ELSE 'paid' END,
+                  gocardless_payout_ref = COALESCE(NULLIF($2,''), gocardless_payout_ref),
+                  gocardless_paid_out_at = COALESCE($3::date, gocardless_paid_out_at),
                   payment_synced_at = NOW()
-            WHERE id=$1`, [inv.id]);
+            WHERE id=$1`, [inv.id, payoutRef, paidOutAt]);
         out.paid++;
         if (inv.created_by) {
           await notify(inv.created_by, `Invoice ${inv.invoice_number} paid (GoCardless)`,
