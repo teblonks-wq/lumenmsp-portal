@@ -28,15 +28,24 @@ robocopy $localPath $staging /E /NFL /NDL /NJH /NJS `
     /XD "node_modules" ".git" "01 Daily Logs" "02 Projects" `
     /XF ".env" "*.log" "CLAUDE.md" "Getting Started.pdf" | Out-Null
 
-# Step 2.5: Local revision backup (zip the built payload; keep the most recent 30)
+# Step 2.5: Local revision backup. Since 2026-07-09 the code lives on GitHub
+# (teblonks-wq/lumenmsp-portal) — git is the real history now, so we keep only a
+# handful of zips as a safety net for deploys made with UNCOMMITTED changes.
 $backupDir = "D:\LITS\LumenMSP-Portal-Backups"
 if (-not (Test-Path $backupDir)) { New-Item -ItemType Directory -Path $backupDir | Out-Null }
 $stamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
 $zip   = Join-Path $backupDir "portal_$stamp.zip"
 Write-Host "Backing up this revision -> $zip" -ForegroundColor Yellow
 Compress-Archive -Path "$staging\*" -DestinationPath $zip -Force
-$old = Get-ChildItem $backupDir -Filter "portal_*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -Skip 30
-if ($old) { $old | Remove-Item -Force; Write-Host ("Pruned {0} old backup(s); keeping 30." -f $old.Count) -ForegroundColor DarkGray }
+$old = Get-ChildItem $backupDir -Filter "portal_*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -Skip 5
+if ($old) { $old | Remove-Item -Force; Write-Host ("Pruned {0} old backup(s); keeping 5 (git is the real history)." -f $old.Count) -ForegroundColor DarkGray }
+
+# Gentle nudge: deploying code that git doesn't know about means no history for it.
+$gitDirty = (git -C $localPath status --porcelain 2>$null)
+if ($gitDirty) {
+    Write-Host "NOTE: you have UNCOMMITTED changes - this deploy isn't in git history yet." -ForegroundColor Yellow
+    Write-Host "      After deploying:  git add . ; git commit -m `"describe the change`" ; git push" -ForegroundColor Yellow
+}
 
 # Step 3: Package into ONE tarball, then upload it (a single-file transfer is far more
 # resilient than scp -r over hundreds of files, which drops on a flaky link).
