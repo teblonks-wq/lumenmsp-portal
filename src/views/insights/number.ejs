@@ -111,7 +111,7 @@ ${!isConnected ? `
           </td>
           <td style="padding:10px 12px;font-family:monospace;font-size:12px;">${j.wait || ''}</td>
           <td style="padding:10px 12px;font-size:12px;color:var(--muted);">${j.route || ''}</td>
-          <td style="padding:10px 12px;font-size:12px;font-family:monospace;color:#111827;">${j.answered_by || '—'}</td>
+          <td style="padding:10px 12px;font-size:12px;font-family:monospace;color:#111827;">${j.answered_by ? `<a href="/insights/reverse?customer=${cid}&ext=${encodeURIComponent(j.answered_by)}" title="Reverse lookup — all calls answered by ${j.answered_by}" style="color:inherit;text-decoration:underline dotted;">${j.answered_by}</a>` : '—'}</td>
           <td style="padding:10px 12px;font-size:12px;color:var(--muted);">${j.ddi || ''}</td>
         </tr>
         `).join('')}

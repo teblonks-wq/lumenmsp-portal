@@ -1,6 +1,6 @@
 // App version + changelog. Bump APP_VERSION and prepend a new CHANGELOG entry on each release.
 // Minor work accumulates under the current version; ship a new MAJOR (v2, v3…) after a big batch.
-export const APP_VERSION = 'v1.51';
+export const APP_VERSION = 'v3.0';
 
 export interface ChangelogGroup { area: string; items: string[]; }
 export interface ChangelogEntry {
@@ -11,6 +11,77 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: 'v3.0',
+    date: '2026-07-09',
+    title: 'Domain Health (LITS-DMARC), Insights reporting rebuilt, payment authority, Socials Studio & platform refresh',
+    groups: [
+      { area: 'Domain Health — NEW (Admin → Domain Health)', items: [
+        'LITS-DMARC: per-domain email-security monitoring — DMARC aggregate reports collected to our mailbox, ingested every 30 minutes, with sending sources, alignment rates, SLA and daily volume per customer domain.',
+        'Setup checklist with live ✓/✖ per record: SPF, DKIM (real key detection incl. selectors seen in reports, key size, revoked keys), DMARC vs an agreed target policy (p=none/quarantine/reject dropdown), MX, Autodiscover and Intune CNAMEs — with copy-host/copy-value buttons and a step-by-step DKIM setup lightbox per mail provider.',
+        'Domain info panel: registrar, Nominet IPS TAG, likely owner, registered/expiry dates (60-day renewal badge), nameservers and detected DNS manager (20i/Stack and ~20 others) with a console link.',
+        'Microsoft 365 verification: when M365 hosts the mail, the full Microsoft DNS set is demanded — including SPF containing spf.protection.outlook.com.',
+        'Daily 06:15 + post-boot sweep re-checks every monitored domain identically; DMARC data feeds the monthly IT Snapshot\'s email-security section automatically.',
+        'Customer domains drive everything: Domain Health suggestions and the IT report\'s DNS checks now resolve from the customer record\'s domains (config fields demoted to fallback).',
+      ] },
+      { area: 'Insights reporting', items: [
+        'ONE renderer: scheduled emails, manual generates and the Run tab all use the template/modules pipeline — UK times, Answered-by column and every configured section (a legacy renderer had been sending customers UTC-shifted, cut-down reports).',
+        'Business hours enforced 100%: staff, outbound and voicemail figures (and the CSV) can no longer include out-of-hours calls.',
+        'Staff table always reconciles with the scorecard — active extensions missing from the site\'s staff list are surfaced in a footnote; "Passed On" fixed to count real hand-offs, not same-group retries.',
+        'Generate fixes: multi-day selection works, Send names exactly who received each report (and only marks sent when it truly went), report schedules can be deleted, and the config page warns that call-flow logic lives on the SITE.',
+        'New send-daily-range script emails a backdated run of dailies in one command.',
+      ] },
+      { area: 'Invoicing & payments', items: [
+        'Payment authority settled: GoCardless payout status marks DD invoices paid (with the payout\'s bank reference + date stored and printed on the invoice); QuickBooks payment sync handles bank-transfer invoices ONLY and can never touch a GoCardless-managed invoice.',
+        'Back-link tool matches GoCardless payments to invoices imported without a GC reference (exact amount per mandate), then flips paid-out ones immediately.',
+      ] },
+      { area: 'Support & comms', items: [
+        'Composer: one context-aware ✨ Claude button (Polish merged in), 📄 insert-template dropdown with a managed template library (incl. Microsoft Bookings sync — a template per bookable service), 🔗 labelled links, and an 👥 All-contacts button for bulk notices.',
+        'Create a case straight from a WhatsApp/Teams message — not just tag to an existing one.',
+        'New customer portal access level: Support & Insights (all company tickets + call insights, nothing financial).',
+      ] },
+      { area: 'Marketing — Socials Studio (rebuilt)', items: [
+        'Stateless 4-step studio: source URLs + notes + Lumen\'s take → Claude writes one substantial plain-English article for end users plus LinkedIn/Facebook teasers → preview and push the article live to lumenmsp.co.uk/news instantly (no site rebuild) → push socials to Buffer now or scheduled, with the article link and hero photo attached.',
+        'Free stock-photo picker (Pexels) with Claude-suggested searches; the website news page shows live articles at the top automatically.',
+      ] },
+      { area: 'Platform', items: [
+        'Whole-portal readability pass: modern type scale everywhere (16px-era text, bigger tables, buttons and headings).',
+        'Bookmarks dropdown on the dashboard (managed in Settings), shared staff quick-links.',
+        'Staff user sync with Microsoft 365 — matches on Entra ID so name and domain changes update in place; leavers deactivate automatically.',
+        'Codebase now on GitHub with one-button deploys that commit + push automatically.',
+      ] },
+    ],
+  },
+  {
+    version: 'v2.0',
+    date: '2026-07-07',
+    title: 'Insights becomes part of the Portal, customer portal, unified comms inbox & monthly IT reports',
+    groups: [
+      { area: 'Insights — one platform', items: [
+        'The standalone Insights app was retired: call analytics, dashboards, report templates and the report scheduler now live inside the Portal at /insights, against the same customer records.',
+        'Same-day security hardening: per-site data scoping enforced end-to-end (cross-company bleed audit), legacy CSV import removed estate-wide, and report/sync jobs consolidated so only one scheduler can ever email customers.',
+        'Tollring call sync runs hourly into the Portal; call-flow logic moved to one-logic-per-site.',
+      ] },
+      { area: 'Customer portal (/my)', items: [
+        'Customers sign in to the Portal itself (Microsoft SSO from their own tenant) with per-contact access levels — tickets-only, finance, service or full.',
+        'Self-service tickets (raise + track), invoices and quotes, their own call-insights reports, and monthly IT report copies.',
+        'Read-only bookkeeper portal: external Microsoft login scoped to an expenses dashboard.',
+      ] },
+      { area: 'Unified comms', items: [
+        'One messaging inbox for website chat, WhatsApp Business and Teams — per-message case tagging, WhatsApp template sending and a composer with loud new-message notifications.',
+        'WhatsApp softphone: browser calling via the WhatsApp Business Calling API with call history.',
+        'Claude auto-picks the support category on new tickets (email and message-created), left blank when unsure so a human decides before work starts.',
+      ] },
+      { area: 'Monthly IT reports', items: [
+        'IT Operations & Security Snapshot per customer: Intune devices/compliance, Secure Score, live DNS checks, helpdesk stats and vulnerability figures auto-filled, SDM running notes consolidated by Claude into polished narrative.',
+        'Runs automatically at 00:00 on the 1st (review-before-send per customer), with a 3-day staff reminder to finalise notes.',
+      ] },
+      { area: 'Marketing & web', items: [
+        'Website live chat with staff console; marketing area with website stats (page views, visitors, live-now).',
+        'Social content pipeline v1: Claude-drafted multi-network posts pushed to Buffer on a schedule.',
+      ] },
+    ],
+  },
   {
     version: 'v1.51',
     date: '2026-06-25',

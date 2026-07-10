@@ -222,6 +222,72 @@ router.get('/insights/number', requireAuth, async (req: Request, res: Response) 
   res.render('insights/number', base);
 });
 
+// Reverse lookup — the pair to Number Lookup. Pick a customer + answering extension/user +
+// a date & time range → every call that extension ANSWERED in the window. Caller numbers
+// link straight back into Number Lookup for the full journey history of that number.
+router.get('/insights/reverse', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const today = new Date().toISOString().slice(0, 10);
+  const weekAgo = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+  const base: any = {
+    user, connected: !!insightsPool, customers: [], cid: 0, ext: '',
+    fromDate: weekAgo, toDate: today, fromTime: '00:00', toTime: '23:59',
+    calls: [], stats: null, error: null, searched: false,
+  };
+  if (!insightsPool) { res.render('insights/reverse', base); return; }
+  try {
+    base.customers = (await insightsPool.query('SELECT id, name FROM customers WHERE is_active=true ORDER BY name')).rows;
+  } catch (e: any) { base.error = e.message; res.render('insights/reverse', base); return; }
+
+  const cid = parseInt(String(req.query.customer || ''), 10) || 0;
+  const ext = String(req.query.ext || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || ''))) base.fromDate = String(req.query.from);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || '')))   base.toDate   = String(req.query.to);
+  if (/^\d{2}:\d{2}$/.test(String(req.query.from_time || '')))  base.fromTime = String(req.query.from_time);
+  if (/^\d{2}:\d{2}$/.test(String(req.query.to_time || '')))    base.toTime   = String(req.query.to_time);
+  base.cid = cid; base.ext = ext;
+  if (!cid || !ext) { res.render('insights/reverse', base); return; }
+
+  if (base.toDate < base.fromDate) { base.error = 'The end date is before the start date.'; res.render('insights/reverse', base); return; }
+  const spanDays = Math.round((new Date(base.toDate).getTime() - new Date(base.fromDate).getTime()) / 86400000) + 1;
+  if (spanDays > 92) { base.error = 'Date range is too wide — pick 92 days or fewer.'; res.render('insights/reverse', base); return; }
+
+  try {
+    // Pull EVERY event for the customer in the window (not just this extension's rows) so the
+    // journey builder sees all legs of each call and attributes "answered by" correctly.
+    const rows = (await insightsPool.query(
+      `SELECT * FROM call_events
+        WHERE customer_id=$1 AND event_datetime >= $2 AND event_datetime <= $3
+        ORDER BY event_datetime ASC`,
+      [cid, base.fromDate + ' 00:00:00', base.toDate + ' 23:59:59']
+    )).rows as CallEventRow[];
+    const journeys = buildJourneys(rows, { business_hours_only: false });
+    // Match ignores any @domain suffix + case — the same normalisation answered_by itself uses.
+    const normExt = (s: string) => String(s || '').replace(/@.*$/, '').trim().toLowerCase();
+    const target = normExt(ext);
+    const [fh, fm] = String(base.fromTime).split(':').map(Number);
+    const [th, tm] = String(base.toTime).split(':').map(Number);
+    const lo = fh * 60 + fm, hi = th * 60 + tm;
+    // Time-of-day filter uses the journey's local wall-clock start — the same clock the table shows.
+    const calls = journeys
+      .filter((j) => j.status === 'Answered' && normExt(j.answered_by || '') === target)
+      .filter((j) => { const d = new Date(j.datetime); const mins = d.getHours() * 60 + d.getMinutes(); return mins >= lo && mins <= hi; })
+      .reverse()
+      .map((j) => ({ ...j, route: formatRoute(j) }));
+    const dayKey = (iso: string) => { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+    const byDay = new Map<string, number>();
+    for (const c of calls) { const k = dayKey(c.datetime); byDay.set(k, (byDay.get(k) || 0) + 1); }
+    let busiestDay = ''; let busiestN = 0;
+    for (const [d, n] of byDay) if (n > busiestN) { busiestDay = d; busiestN = n; }
+    const uniqueCallers = new Set(calls.map((c) => c.number)).size;
+    const avgWait = calls.length ? Math.round(calls.reduce((s, j) => s + j.wait_secs, 0) / calls.length) : 0;
+    base.calls = calls;
+    base.stats = { total: calls.length, uniqueCallers, avgWait, busiestDay, busiestN };
+    base.searched = true;
+  } catch (e: any) { base.error = e.message; }
+  res.render('insights/reverse', base);
+});
+
 // Report config page — the editable visual builder + generate panel, exactly like the
 // standalone /admin/report-configs/:id (the config IS the builder; there's no thin detail page).
 router.get('/insights/report-config/:id', requireAuth, requireAdmin, async (req: Request, res: Response, next) => {

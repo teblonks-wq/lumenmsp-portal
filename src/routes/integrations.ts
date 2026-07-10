@@ -9,7 +9,7 @@ import { GoCardless, chargeDateFor } from '../lib/gocardless';
 import { sendMail } from '../lib/mailer';
 import { renderInvoicePdf } from '../lib/invoice-pdf';
 import { invoiceEmailHtml } from '../lib/emails';
-import { syncGoCardlessMandates } from '../lib/gocardless-sync';
+import { syncGoCardlessMandates, linkGcPaymentsToInvoices, syncGoCardlessPayments } from '../lib/gocardless-sync';
 const isEmailAddr = (e: any): boolean => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(e || '').trim());
 import { giacomBillingTest } from '../lib/giacom';
 import { syncGiacomBilling } from '../lib/giacom-sync';
@@ -975,6 +975,20 @@ router.post('/settings/gocardless/unlink-customer', requireAuth, requireAdmin, a
   const customerId = parseInt(String(req.body.customer_id || ''), 10);
   if (customerId) await pool.query('UPDATE customers SET gocardless_mandate_id=NULL WHERE id=$1', [customerId]);
   res.redirect('/settings/gocardless/match-customers?msg=Unlinked');
+});
+
+// Back-link invoices that arrived without a GC payment ref (e.g. QB imports): match each
+// mandate's GC payments to unlinked unpaid invoices by exact amount, then immediately run
+// the payout sync so anything already paid_out flips to paid with its payout reference.
+router.post('/settings/gocardless/link-payments', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const r = await linkGcPaymentsToInvoices();
+    const p = await syncGoCardlessPayments();
+    res.redirect('/settings/gocardless/match-customers?msg=' + encodeURIComponent(
+      `Payment back-link: ${r.linked} invoice(s) linked across ${r.customers} customer(s), ${r.unmatched} with no matching GC payment. Payout sync: ${p.paid} marked paid, ${p.failed} failed.`));
+  } catch (e: any) {
+    res.redirect('/settings/gocardless/match-customers?msg=' + encodeURIComponent('Back-link failed: ' + (e.message || '').slice(0, 100)));
+  }
 });
 
 router.post('/invoices/:id/submit-for-payment', requireAuth, async (req: Request, res: Response) => {

@@ -1,0 +1,162 @@
+<%
+// Reverse Lookup — the pair to Number Lookup. All locals are always supplied by the route
+// (see GET /insights/reverse) — reference them directly, do NOT redeclare with the same
+// name (that shadows the EJS `with(locals)` binding and throws a TDZ ReferenceError).
+const isConnected = (typeof connected === 'undefined') ? true : connected;
+
+const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const fmtDt = d => d ? new Date(d).toLocaleString('en-GB', {
+  day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit'
+}) : '—';
+const fmtD  = s => s ? new Date(s).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '';
+const fmtSecs = s => s >= 60 ? `${Math.floor(s/60)}m ${s%60}s` : `${s}s`;
+const allDay = fromTime === '00:00' && toTime === '23:59';
+
+// A caller number we can usefully send to Number Lookup (withheld/anonymous rows can't be searched).
+const linkable = n => !!n && !/^(anonymous|withheld)$/i.test(String(n).trim());
+
+const customerOptions = customers.map(c => `<option value="${c.id}" ${cid === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+%>
+<%- include('_layout', { title: ext ? `Answered by ${ext}` : 'Reverse Lookup', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+  <div>
+    <h1 style="font-family:monospace;letter-spacing:1px;">${ext ? esc(ext) : 'Reverse Lookup'}</h1>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px;">${searched
+      ? `Calls answered by this extension · ${fmtD(fromDate)} – ${fmtD(toDate)}${allDay ? '' : ` · ${esc(fromTime)}–${esc(toTime)}`}`
+      : 'Pick a customer and an answering extension/user, then a date &amp; time range — see every call they answered. Click a number to run Number Lookup on it.'}</div>
+  </div>
+  <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+    <form method="GET" action="/insights/reverse" style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap;margin:0;">
+      <div>
+        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Customer</label>
+        <select name="customer" id="rl-customer" class="input" required style="padding:7px 10px;font-size:13px;min-width:170px;">
+          <option value="">— choose —</option>
+          ${customerOptions}
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Answered by</label>
+        <input type="text" name="ext" id="rl-ext" value="${esc(ext)}" list="extList" class="input" placeholder="extension / user" style="padding:7px 10px;font-size:13px;font-family:monospace;min-width:150px;" autocomplete="off">
+        <datalist id="extList"></datalist>
+      </div>
+      <div>
+        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">From</label>
+        <input type="date" name="from" value="${esc(fromDate)}" class="input" style="padding:7px 10px;font-size:13px;">
+      </div>
+      <div>
+        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">To</label>
+        <input type="date" name="to" value="${esc(toDate)}" class="input" style="padding:7px 10px;font-size:13px;">
+      </div>
+      <div>
+        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Between</label>
+        <input type="time" name="from_time" value="${esc(fromTime)}" class="input" style="padding:7px 8px;font-size:13px;">
+      </div>
+      <div>
+        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">And</label>
+        <input type="time" name="to_time" value="${esc(toTime)}" class="input" style="padding:7px 8px;font-size:13px;">
+      </div>
+      <button type="submit" class="btn-primary" style="padding:7px 14px;font-size:13px;">Search</button>
+    </form>
+    ${searched && stats && stats.total ? '<button onclick="window.print()" class="btn-secondary" style="padding:7px 14px;font-size:13px;">&#128438; PDF</button>' : ''}
+  </div>
+</div>
+
+${error ? `<div class="alert alert-error">${esc(error)}</div>` : ''}
+
+${!isConnected ? `
+<div class="card"><div class="card-header"><h2>Insights database not connected</h2></div>
+  <p class="muted" style="margin:0;">Set <code>INSIGHTS_DATABASE_URL</code> in the portal's <code>.env</code>.</p></div>
+` : !searched ? '' : stats.total === 0 ? `
+  <div class="card">
+    <div class="empty-state"><p class="muted">No calls answered by <strong>${esc(ext)}</strong> in this window.</p></div>
+  </div>
+` : `
+
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;">
+  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:26px;font-weight:800;color:#16a34a;">${stats.total}</div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Calls Answered</div>
+  </div>
+  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:26px;font-weight:800;color:var(--accent);">${stats.uniqueCallers}</div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Unique Callers</div>
+  </div>
+  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:26px;font-weight:800;color:var(--accent);">${fmtSecs(stats.avgWait)}</div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Avg Caller Wait</div>
+  </div>
+  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:26px;font-weight:800;color:var(--accent);">${stats.busiestDay ? fmtD(stats.busiestDay) : '—'}</div>
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Busiest Day${stats.busiestN ? ` (${stats.busiestN} calls)` : ''}</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+    <h2>Calls Answered</h2>
+    <span class="muted" style="font-size:13px;">Most recent first · click a number for its full journey history</span>
+  </div>
+  <div style="overflow-x:auto;">
+    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--border);">
+          <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Date / Time</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Caller</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Wait</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Journey</th>
+          <th style="text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">DDI</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${calls.map((j, idx) => `
+        <tr style="border-bottom:1px solid var(--border);${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
+          <td style="padding:10px 12px;white-space:nowrap;font-weight:500;">${fmtDt(j.datetime)}</td>
+          <td style="padding:10px 12px;font-family:monospace;font-size:12px;">
+            ${linkable(j.number)
+              ? `<a href="/insights/number?customer=${cid}&q=${encodeURIComponent(j.number)}" title="Number Lookup: ${esc(j.number)}" style="font-weight:600;">${esc(j.number)}</a>`
+              : `<span class="muted">${esc(j.number || 'Withheld')}</span>`}
+          </td>
+          <td style="padding:10px 12px;font-family:monospace;font-size:12px;">${j.wait || ''}</td>
+          <td style="padding:10px 12px;font-size:12px;color:var(--muted);">${esc(j.route || '')}</td>
+          <td style="padding:10px 12px;font-size:12px;color:var(--muted);">${esc(j.ddi || '')}</td>
+        </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  </div>
+</div>
+`}
+
+<script>
+(function(){
+  var sel = document.getElementById('rl-customer');
+  var list = document.getElementById('extList');
+  if (!sel || !list) return;
+  function loadExts(){
+    var cid = sel.value;
+    list.innerHTML = '';
+    if (!cid) return;
+    fetch('/insights/api/customer-groups?customer_id=' + encodeURIComponent(cid))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var exts = (d && d.extensions) || [];
+        list.innerHTML = exts.map(function(e){ return '<option value="' + String(e).replace(/"/g,'&quot;') + '"></option>'; }).join('');
+      })
+      .catch(function(){});
+  }
+  sel.addEventListener('change', loadExts);
+  if (sel.value) loadExts();
+})();
+</script>
+
+<style>
+@media print {
+  nav, .page-header form, .page-header button { display: none !important; }
+  .page-header { padding-bottom: 8px; border-bottom: 2px solid #000; margin-bottom: 16px; }
+  body { font-size: 11px; padding-top: 0; }
+  .card { box-shadow: none; border: 1px solid #ddd; page-break-inside: avoid; }
+  table { font-size: 10px; }
+  @page { margin: 15mm; }
+}
+</style>
+` }) %>

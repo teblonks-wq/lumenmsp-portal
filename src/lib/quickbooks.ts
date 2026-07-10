@@ -455,12 +455,17 @@ export class QuickBooks {
         const balance = Number(qi.Balance ?? total);
         const payStatus = balance <= 0 ? 'paid' : (balance < total ? 'pending' : 'unpaid');
         // Only touch invoices that exist in the portal; don't override draft/void.
+        // DIVISION OF AUTHORITY (2026-07-09): invoices with a GoCardless payment linked are
+        // owned by the GC payout sync — QB must NEVER touch them (it was overwriting GC's
+        // paid status with stale balances). QB is authoritative ONLY for bank-transfer
+        // invoices (no gocardless_payment_id), where the bookkeeper is the one who knows.
         const r = await pool.query(
           `UPDATE invoices SET balance=$1::numeric, payment_status=$2,
              status = CASE WHEN status IN ('draft','void') THEN status WHEN $1::numeric <= 0 THEN 'paid' ELSE 'issued' END,
              quickbooks_invoice_id = COALESCE(quickbooks_invoice_id, $3),
              payment_synced_at = NOW()
-           WHERE invoice_number = $4 AND deleted_at IS NULL`,
+           WHERE invoice_number = $4 AND deleted_at IS NULL
+             AND gocardless_payment_id IS NULL`,
           [balance.toFixed(2), payStatus, String(qi.Id), doc]
         );
         if (r.rowCount) updated += r.rowCount;

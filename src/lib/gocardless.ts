@@ -120,6 +120,23 @@ export class GoCardless {
     return d?.payouts || {};
   }
 
+  // All payments collected against one mandate (paginated) — used to back-link invoices
+  // that were imported (e.g. from QB) without a GoCardless payment reference.
+  async listPayments(mandateId: string): Promise<any[]> {
+    const all: any[] = [];
+    let after: string | null = null;
+    do {
+      let path = '/payments?limit=500&mandate=' + encodeURIComponent(mandateId);
+      if (after) path += '&after=' + encodeURIComponent(after);
+      const data = await this.apiGet(path);
+      const batch = data?.payments || [];
+      all.push(...batch);
+      after = data?.meta?.cursors?.after || null;
+      if (batch.length === 0) break;
+    } while (after);
+    return all;
+  }
+
   // Create a payment against a mandate. amountPence = GBP × 100.
   // chargeDate (YYYY-MM-DD) = the collection date (your invoice due date). If omitted,
   // or if it's too soon for the scheme, GoCardless collects at the earliest valid date.

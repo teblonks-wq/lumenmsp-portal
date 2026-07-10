@@ -111,6 +111,60 @@ export async function syncGoCardlessPayments(): Promise<{ checked: number; paid:
   return out;
 }
 
+// ── Back-link imported invoices to their GoCardless payments ─────────────────────
+// Invoices imported from QB have no gocardless_payment_id, so the paid-sync can't see
+// them. For every customer with a mandate, pull that mandate's GC payments and match
+// unlinked, unpaid invoices by EXACT amount (nearest charge date when several payments
+// share an amount). Linked invoices then flow through the normal paid-out sync.
+export async function linkGcPaymentsToInvoices(): Promise<{ customers: number; linked: number; unmatched: number }> {
+  const out = { customers: 0, linked: 0, unmatched: 0 };
+  const gc = await GoCardless.load();
+  if (!gc.isConfigured()) return out;
+
+  // Every GC payment id already linked to ANY invoice — never link one payment twice.
+  const used = new Set<string>(
+    (await pool.query('SELECT gocardless_payment_id AS id FROM invoices WHERE gocardless_payment_id IS NOT NULL')).rows.map((r: any) => String(r.id)));
+
+  const custs = (await pool.query(
+    `SELECT DISTINCT c.id, c.gocardless_mandate_id
+       FROM customers c JOIN invoices i ON i.customer_id = c.id
+      WHERE c.deleted_at IS NULL AND c.gocardless_mandate_id IS NOT NULL
+        AND i.deleted_at IS NULL AND i.gocardless_payment_id IS NULL
+        AND i.payment_status IN ('unpaid', 'pending') AND i.status NOT IN ('draft', 'void')`
+  )).rows;
+
+  for (const c of custs) {
+    out.customers++;
+    let payments: any[] = [];
+    try { payments = await gc.listPayments(c.gocardless_mandate_id); }
+    catch (e: any) { console.error(`[gocardless-sync] listPayments failed for customer ${c.id}:`, e.message); continue; }
+
+    const invoices = (await pool.query(
+      `SELECT id, invoice_number, total, due_date, issue_date FROM invoices
+        WHERE customer_id=$1 AND deleted_at IS NULL AND gocardless_payment_id IS NULL
+          AND payment_status IN ('unpaid','pending') AND status NOT IN ('draft','void')
+        ORDER BY issue_date NULLS LAST, id`, [c.id])).rows;
+
+    for (const inv of invoices) {
+      const pence = Math.round(Number(inv.total || 0) * 100);
+      if (!pence) { out.unmatched++; continue; }
+      const anchor = new Date(inv.due_date || inv.issue_date || Date.now()).getTime();
+      const candidates = payments
+        .filter((p) => Number(p.amount) === pence && !used.has(String(p.id)) && !['cancelled', 'customer_approval_denied'].includes(String(p.status)))
+        .sort((a, b) => Math.abs(new Date(a.charge_date).getTime() - anchor) - Math.abs(new Date(b.charge_date).getTime() - anchor));
+      if (!candidates.length) { out.unmatched++; continue; }
+      const pick = candidates[0];
+      used.add(String(pick.id));
+      await pool.query(
+        `UPDATE invoices SET gocardless_payment_id=$2, payment_status='pending' WHERE id=$1`,
+        [inv.id, pick.id]);
+      out.linked++;
+      console.log(`[gocardless-sync] linked ${inv.invoice_number} → ${pick.id} (${pick.status}, £${(pence / 100).toFixed(2)}, ${pick.charge_date})`);
+    }
+  }
+  return out;
+}
+
 let _started = false;
 export function startGoCardlessSync(): void {
   if (_started) return;
