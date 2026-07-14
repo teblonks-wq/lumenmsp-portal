@@ -79,7 +79,11 @@ async function attachPerms(req: Request, res: Response, next: NextFunction): Pro
   // 'support_insights' = company-wide ticket overview + call insights, NOTHING financial
   // and no services/users/IT-report areas (added 2026-07-08 for insight-service contacts).
   const isSupportInsights = level === 'support_insights';
-  if (level === 'full' || level === 'finance' || level === 'service' || level === 'tickets' || isSupportInsights) {
+  // 'tickets_insights' = their OWN tickets only + call insights (added 2026-07-14) — the
+  // own-support sibling of 'support_insights'; every role flag stays false so ticket scope
+  // falls back to contact_id, and only the insights permission is switched on below.
+  const isTicketsInsights = level === 'tickets_insights';
+  if (level === 'full' || level === 'finance' || level === 'service' || level === 'tickets' || isSupportInsights || isTicketsInsights) {
     isPrincipal = level === 'full';
     isFinance   = level === 'finance';
     isService   = level === 'service';
@@ -95,7 +99,7 @@ async function attachPerms(req: Request, res: Response, next: NextFunction): Pro
     finance:    isPrincipal || isFinance,            // invoices
     services:   isPrincipal || isService,            // services & contracts
     viewUsers:  isPrincipal || isService,            // view (not manage) company users
-    insights:   isPrincipal || isService || isSupportInsights, // call insights / number lookup (their own data only)
+    insights:   isPrincipal || isService || isSupportInsights || isTicketsInsights, // call insights / number lookup (their own data only)
     itReports:  isPrincipal || isService,            // monthly IT Operations & Security Snapshots
   };
   (req as any).perms = p;

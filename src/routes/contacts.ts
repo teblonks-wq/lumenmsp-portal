@@ -108,7 +108,7 @@ router.get('/contacts/:id', requireAuth, async (req: Request, res: Response) => 
 });
 
 // ── Customer-portal access (per contact) ────────────────────────────────────────
-const ACCESS_LEVELS = ['none', 'tickets', 'support_insights', 'finance', 'service', 'full'];
+const ACCESS_LEVELS = ['none', 'tickets', 'tickets_insights', 'support_insights', 'finance', 'service', 'full'];
 
 // Set this contact's portal access level. The "enable" tick gates it: unticked ⇒ none.
 router.post('/contacts/:id/portal-access', requireAuth, async (req: Request, res: Response) => {

@@ -71,7 +71,7 @@
         <div class="form-group" style="margin-bottom:12px;">
           <label>Access level</label>
           <select id="lvlSel" class="input" name="portal_access_level" <%= on ? '' : 'disabled' %> style="width:100%;">
-            <% [['tickets','Tickets — their own tickets only'],['support_insights','Support & Insights — all company tickets + call insights (no financial)'],['finance','Finance — tickets + invoices'],['service','Service — tickets, services, insights, users'],['full','Full — everything']].forEach(function(o){ %>
+            <% [['tickets','Tickets — their own tickets only'],['tickets_insights','Own Support & Insights — their own tickets only + call insights'],['support_insights','Support & Insights — all company tickets + call insights (no financial)'],['finance','Finance — tickets + invoices'],['service','Service — tickets, services, insights, users'],['full','Full — everything']].forEach(function(o){ %>
               <option value="<%= o[0] %>" <%= lvl===o[0]?'selected':'' %>><%= o[1] %></option>
             <% }); %>
           </select>
