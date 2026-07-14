@@ -43,7 +43,14 @@
         site.innerHTML = opts.length ? opts.join('') : '<option value="">— no sites —</option>';
       });
     })();
-    function syncWeek(){ var w = document.getElementById('runWeek'); var f = document.getElementById('runFrom'); if (w && f) f.value = w.value; }
+    function syncWeek(){
+      // Weekly report = the chosen Mon–Sun, nothing more. Sync BOTH dates (previously only
+      // date_from was set, so the run silently spanned from the chosen Monday through TODAY).
+      var w = document.getElementById('runWeek'); var f = document.getElementById('runFrom'); var t = document.getElementById('runTo');
+      if (!w || !f) return;
+      f.value = w.value;
+      if (t) { var d = new Date(w.value + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 6); t.value = d.toISOString().slice(0, 10); }
+    }
     function onTpl(){
       var sel = document.getElementById('runTpl');
       var opt = sel.options[sel.selectedIndex];

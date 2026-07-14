@@ -946,10 +946,20 @@ router.post('/insights/run', requireAuth, async (req: Request, res: Response) =>
   const siteId = parseInt(String(b.site_id || ''), 10);
   const templateId = parseInt(String(b.template_id || ''), 10);
   const today = new Date().toISOString().slice(0, 10);
-  const from = new Date(b.date_from || today);
-  const to = new Date(b.date_to || b.date_from || today);
+  let from = new Date(b.date_from || today);
+  let to = new Date(b.date_to || b.date_from || today);
   if (!siteId || !templateId) { res.redirect('/insights/run?err=' + encodeURIComponent('Pick a site and a report.')); return; }
   if (isNaN(from.getTime()) || isNaN(to.getTime()) || to < from) { res.redirect('/insights/run?err=' + encodeURIComponent('Pick a valid date range.')); return; }
+  // Weekly call stats is ALWAYS one Mon–Sun week: snap to the Monday of the chosen week and clamp
+  // the end to +6 days. (Belt & braces with the form's week picker — previously date_to defaulted
+  // to today, so an ad-hoc weekly quietly reported from the chosen Monday right through today.)
+  const tplType = (await insightsPool.query('SELECT base_type FROM report_templates WHERE id=$1', [templateId]).catch(() => ({ rows: [] as any[] }))).rows[0];
+  if (tplType?.base_type === 'weekly_call_stats') {
+    from.setUTCHours(0, 0, 0, 0);
+    const dow = from.getUTCDay();
+    from.setUTCDate(from.getUTCDate() + (dow === 0 ? -6 : 1 - dow));
+    to = new Date(from); to.setUTCDate(to.getUTCDate() + 6);
+  }
   try {
     const { html } = await generateFromTemplate(templateId, siteId, from, to);
     res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline' data: blob: https:; img-src * data: blob:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; font-src 'self' data: https:");
