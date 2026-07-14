@@ -46,3 +46,30 @@ Remove-Item $tar -Force
 Write-Host ""
 Write-Host "Hot view/static deploy complete — no restart, no logouts." -ForegroundColor Green
 Write-Host "Live at: https://portal.lumenmsp.co.uk"
+
+# Record this hot deploy in git (same idea as deploy.ps1's Step 6, but scoped to the
+# folders this script actually ships — src/views and static — so un-deployed code
+# changes are NOT swept into a "deployed" commit). Non-fatal: a git hiccup never
+# undoes a completed deploy.
+try {
+    Set-Location $localPath
+    $stamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+    git add src/views static 2>$null
+    git diff --cached --quiet
+    if ($LASTEXITCODE -ne 0) {
+        $msg = Read-Host "Git commit message for this view deploy (Enter = 'Hot deploy $stamp (views/static)')"
+        if (-not $msg) { $msg = "Hot deploy $stamp (views/static)" }
+        git commit -m $msg | Out-Null
+        git push
+        if ($LASTEXITCODE -eq 0) { Write-Host "Committed + pushed to GitHub: $msg" -ForegroundColor Green }
+        else { Write-Host "Committed locally but PUSH FAILED - run 'git push' when back online." -ForegroundColor Yellow }
+    } else {
+        Write-Host "Git: no view/static changes to commit." -ForegroundColor DarkGray
+    }
+    $other = git status --porcelain 2>$null | Where-Object { $_ -notmatch '^\s*.. src/views/' -and $_ -notmatch '^\s*.. static/' }
+    if ($other) {
+        Write-Host "Note: other files are still uncommitted (code/route changes?) - they need the FULL deploy.ps1 to go live + commit." -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "Git step failed (the deploy itself is fine): $_" -ForegroundColor Yellow
+}

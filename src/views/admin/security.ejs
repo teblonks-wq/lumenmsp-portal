@@ -7,13 +7,25 @@
     <div class="card-header" style="padding:20px 24px 0;"><h2>Recent login attempts</h2></div>
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th>When</th><th>Email</th><th>IP</th><th>Result</th></tr></thead>
+        <thead><tr><th>When</th><th>Email</th><th>Who</th><th>IP</th><th>Result</th></tr></thead>
         <tbody>
-          <% if (attempts.length===0) { %><tr><td colspan="4"><div class="empty-state">No attempts logged.</div></td></tr><% } %>
+          <% if (attempts.length===0) { %><tr><td colspan="5"><div class="empty-state">No attempts logged.</div></td></tr><% } %>
           <% attempts.forEach(function(a){ %>
             <tr>
               <td class="muted"><%= new Date(a.created_at).toLocaleString('en-GB') %></td>
               <td><%= a.email %></td>
+              <td style="white-space:nowrap;">
+                <% if (a.role === 'customer') { %>
+                  <span class="badge" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;">customer</span>
+                  <span class="muted" style="font-size:12px;"><%= a.company || '' %></span>
+                <% } else if (a.role === 'bookkeeper') { %>
+                  <span class="badge" style="background:#faf5ff;color:#7c3aed;border:1px solid #ddd6fe;">bookkeeper</span>
+                <% } else if (a.role) { %>
+                  <span class="badge"><%= a.role %></span>
+                <% } else { %>
+                  <span class="muted" style="font-size:12px;">no account</span>
+                <% } %>
+              </td>
               <td class="muted"><%= a.ip %></td>
               <td><span class="badge <%= a.success ? 'badge-sent' : 'badge-failed' %>"><%= a.success ? 'success' : 'failed' %></span></td>
             </tr>
@@ -36,6 +48,26 @@
         </tbody>
       </table>
     </div>
+  </div>
+</div>
+
+<div class="card" style="padding:0;margin-top:20px;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Customer portal activity</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Company</th><th style="text-align:right;">Portal users</th><th>Last portal login</th><th style="text-align:right;">Logins (30 days)</th></tr></thead>
+      <tbody>
+        <% if (portalCustomers.length===0) { %><tr><td colspan="4"><div class="empty-state">No customers have portal access enabled yet.</div></td></tr><% } %>
+        <% portalCustomers.forEach(function(pc){ %>
+          <tr>
+            <td><a class="row-link" href="/customers/<%= pc.id %>"><%= pc.name %></a></td>
+            <td style="text-align:right;"><%= pc.user_count %></td>
+            <td class="muted"><%= pc.last_login ? new Date(pc.last_login).toLocaleString('en-GB') : 'Never' %></td>
+            <td style="text-align:right;<%= Number(pc.logins_30d) === 0 ? 'color:#b45309;' : '' %>"><%= pc.logins_30d %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
   </div>
 </div>
 

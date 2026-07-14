@@ -374,7 +374,7 @@ function parseRecipients(raw?: string): string[] {
 
 // Distinct group + extension names for a customer, read from the synced raw data
 // (tollring_calls) UNION any legacy CSV-imported call_events rows. Fast + indexed.
-async function getGroupsAndExtensions(customerId: number): Promise<{ groups: string[]; extensions: string[] }> {
+export async function getGroupsAndExtensions(customerId: number): Promise<{ groups: string[]; extensions: string[] }> {
   if (!insightsPool) return { groups: [], extensions: [] };
   try {
     const [grpRes, extRes] = await Promise.all([

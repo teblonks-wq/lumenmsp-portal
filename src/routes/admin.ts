@@ -515,12 +515,33 @@ router.post('/admin/customer-users/:id/delete', async (req: Request, res: Respon
 
 // ── Security log ───────────────────────────────────────────────────────────────
 router.get('/admin/security', async (req: Request, res: Response) => {
-  const [attempts, topIps] = await Promise.all([
-    pool.query('SELECT email, ip, success, created_at FROM login_attempts ORDER BY created_at DESC LIMIT 100'),
+  const [attempts, topIps, portalCustomers] = await Promise.all([
+    // Each attempt enriched with WHO it was (role + company) via the users table — so a
+    // customer-portal login stands out from staff at a glance. No user row = unknown/scanner.
+    pool.query(
+      `SELECT la.email, la.ip, la.success, la.created_at, u.role, c.name AS company
+         FROM login_attempts la
+         LEFT JOIN users u ON lower(u.email) = lower(la.email)
+         LEFT JOIN customers c ON c.id = u.customer_id
+        ORDER BY la.created_at DESC LIMIT 100`),
     pool.query(`SELECT ip, COUNT(*)::int n, COUNT(*) FILTER (WHERE success=false)::int failed
                 FROM login_attempts WHERE created_at >= NOW() - INTERVAL '7 days' GROUP BY ip ORDER BY failed DESC, n DESC LIMIT 10`),
+    // Per-customer portal usage: who's actually using the access they've been given.
+    pool.query(
+      `SELECT c.id, c.name,
+              COUNT(u.id)::int AS user_count,
+              MAX(u.last_login_at) AS last_login,
+              (SELECT COUNT(*)::int FROM login_attempts la
+                 JOIN users u2 ON lower(u2.email) = lower(la.email)
+                WHERE u2.customer_id = c.id AND u2.role = 'customer'
+                  AND la.success = true AND la.created_at >= NOW() - INTERVAL '30 days') AS logins_30d
+         FROM customers c
+         LEFT JOIN users u ON u.customer_id = c.id AND u.role = 'customer' AND u.is_active = true
+        WHERE c.deleted_at IS NULL AND c.portal_enabled = true
+        GROUP BY c.id, c.name
+        ORDER BY c.name`),
   ]);
-  res.render('admin/security', { user: req.session.user!, attempts: attempts.rows, topIps: topIps.rows });
+  res.render('admin/security', { user: req.session.user!, attempts: attempts.rows, topIps: topIps.rows, portalCustomers: portalCustomers.rows });
 });
 
 // ── Email delivery test (Admin → Tools) ───────────────────────────────────────────

@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { requireCustomer } from '../middleware/auth';
 import { pool, insightsPool } from '../db/pool';
 import { nextTicketNumber } from './tickets';
+import { getGroupsAndExtensions } from './insights';
 import { buildJourneys, formatRoute, type CallEventRow } from '../lib/insights-journeys';
 import { generateFromTemplate } from '../lib/insights/report-generator';
 import { sendMail } from '../lib/mailer';
@@ -314,11 +315,12 @@ router.get('/my/services', need('services'), (req: Request, res: Response) =>
 router.get('/my/insights', need('insights'), async (req: Request, res: Response) => {
   const u = req.session.user!;
   const c = cid(req);
-  const tab = req.query.tab === 'reports' ? 'reports' : 'home';
+  const tab = req.query.tab === 'reports' ? 'reports' : req.query.tab === 'reverse' ? 'reverse' : 'home';
   const q = String(req.query.q || '').trim();
   const base: any = {
     active: 'insights', user: u, title: 'Insights', tab, q,
     journeys: [], stats: null, templates: [], sites: [], reports: [], emails: [], insName: '',
+    ext: '', fromDate: '', toDate: '', fromTime: '00:00', toTime: '23:59', extensions: [], calls: [], rstats: null,
     msg: req.query.msg || null, err: req.query.err || null, state: 'ok',
   };
   try {
@@ -348,6 +350,68 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
       base.journeys = journeys;
       base.stats = { total, answered, missed, ansRate: total ? Math.round(answered / total * 100) : 0, avgWait };
     }
+
+    // "Answered by" (reverse lookup) tab — every call a chosen extension/user ANSWERED in a
+    // date + time window, the customer-portal pair of the staff /insights/reverse tool.
+    // BOUNDARIES: the Insights customer id comes ONLY from the session's lumenmsp bridge
+    // (ins.id) — no customer/site parameter is accepted from the client; the extension
+    // autocomplete list is scoped to ins.id; staff /insights/* routes stay blocked to the
+    // customer role by requireAuth. Same anti-IDOR posture as the rest of /my.
+    if (tab === 'reverse') {
+      base.extensions = (await getGroupsAndExtensions(ins.id)).extensions;
+      const ext = String(req.query.ext || '').trim().slice(0, 80);
+      base.ext = ext;
+      const today2 = new Date().toISOString().slice(0, 10);
+      const weekAgo = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+      base.fromDate = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || '')) ? String(req.query.from) : weekAgo;
+      base.toDate   = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to   || '')) ? String(req.query.to)   : today2;
+      base.fromTime = /^\d{2}:\d{2}$/.test(String(req.query.from_time || '')) ? String(req.query.from_time) : '00:00';
+      base.toTime   = /^\d{2}:\d{2}$/.test(String(req.query.to_time   || '')) ? String(req.query.to_time)   : '23:59';
+      if (ext) {
+        if (base.toDate < base.fromDate) { base.err = 'The end date is before the start date.'; res.render('my/insights', base); return; }
+        const spanDays = Math.round((new Date(base.toDate).getTime() - new Date(base.fromDate).getTime()) / 86400000) + 1;
+        if (spanDays > 92) { base.err = 'Date range is too wide — pick 92 days or fewer.'; res.render('my/insights', base); return; }
+        // All the customer's events in the window (not just this extension's rows) so the journey
+        // builder sees every leg of each call and attributes "answered by" correctly.
+        const evRows = (await insightsPool.query(
+          `SELECT * FROM call_events
+            WHERE customer_id = $1 AND event_datetime >= $2 AND event_datetime <= $3
+            ORDER BY event_datetime ASC LIMIT 50000`,
+          [ins.id, base.fromDate + ' 00:00:00', base.toDate + ' 23:59:59'])).rows as CallEventRow[];
+        const revJourneys = buildJourneys(evRows, { business_hours_only: false });
+        const normExt = (s: string) => String(s || '').replace(/@.*$/, '').trim().toLowerCase();
+        const target = normExt(ext);
+        // Wall-clock in Europe/London — the same clock this page displays (fmtT in the view).
+        const ldn = (iso: string) => {
+          const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+          }).formatToParts(new Date(iso));
+          const g = (t: string) => parts.find((p) => p.type === t)?.value || '00';
+          return { day: `${g('year')}-${g('month')}-${g('day')}`, mins: parseInt(g('hour'), 10) * 60 + parseInt(g('minute'), 10) };
+        };
+        const [fh, fm] = base.fromTime.split(':').map(Number);
+        const [th, tm] = base.toTime.split(':').map(Number);
+        const lo = fh * 60 + fm, hi = th * 60 + tm;
+        const calls = revJourneys
+          .filter((j) => j.status === 'Answered' && normExt(j.answered_by || '') === target)
+          .filter((j) => { const m = ldn(j.datetime).mins; return m >= lo && m <= hi; })
+          .reverse()
+          .map((j) => ({ ...j, route: formatRoute(j) }));
+        const byDay = new Map<string, number>();
+        for (const cj of calls) { const k = ldn(cj.datetime).day; byDay.set(k, (byDay.get(k) || 0) + 1); }
+        let busiestDay = ''; let busiestN = 0;
+        for (const [dk, n] of byDay) if (n > busiestN) { busiestDay = dk; busiestN = n; }
+        base.calls = calls;
+        base.rstats = {
+          total: calls.length,
+          uniqueCallers: new Set(calls.map((x) => x.number)).size,
+          avgWait: calls.length ? Math.round(calls.reduce((s, j) => s + j.wait_secs, 0) / calls.length) : 0,
+          busiestDay, busiestN,
+        };
+      }
+    }
+
 
     // Reports tab — their predetermined report configs (per site) + the reports already produced.
     if (tab === 'reports') {

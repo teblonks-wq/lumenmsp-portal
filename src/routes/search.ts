@@ -24,7 +24,7 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
           WHERE ct.full_name ILIKE $1 OR ct.email ILIKE $1 OR ct.phone ILIKE $1 OR ct.mobile_phone ILIKE $1 OR c.name ILIKE $1
           ORDER BY ct.full_name LIMIT 8`, [like]),
       pool.query(
-        `SELECT t.id, t.ticket_number, t.subject, t.status, c.name AS customer_name
+        `SELECT t.id, t.ticket_number, t.subject, t.status, t.created_at, c.name AS customer_name
            FROM inbox_tickets t
            LEFT JOIN customers c ON c.id = t.customer_id
            LEFT JOIN customer_contacts ct ON ct.id = t.contact_id
@@ -57,6 +57,7 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
     ]);
 
     const money = (v: any) => '£' + (Number(v) || 0).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    const fmtDate = (d: any) => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
     const groups: any[] = [];
 
     if (cust.rows.length) groups.push({ type: 'Companies', icon: '🏢', items: cust.rows.map((r) => ({
@@ -73,7 +74,7 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
 
     if (tick.rows.length) groups.push({ type: 'Tickets', icon: '🎫', items: tick.rows.map((r) => ({
       label: r.ticket_number + ' — ' + (r.subject || '(no subject)'),
-      sub: [r.customer_name, r.status].filter(Boolean).join(' · '),
+      sub: [r.customer_name, r.status, r.created_at ? 'Received ' + fmtDate(r.created_at) : ''].filter(Boolean).join(' · '),
       url: '/tickets/' + r.id,
     })) });
 

@@ -25,6 +25,7 @@
 
   <div class="my-tabs">
     <a class="my-tab <%= tab === 'home' ? 'active' : '' %>" href="/my/insights?tab=home">Home</a>
+    <a class="my-tab <%= tab === 'reverse' ? 'active' : '' %>" href="/my/insights?tab=reverse">Answered by</a>
     <a class="my-tab <%= tab === 'reports' ? 'active' : '' %>" href="/my/insights?tab=reports">Reports</a>
   </div>
 
@@ -60,7 +61,7 @@
                   <td style="font-family:monospace;font-size:13px;"><%= j.number || '—' %></td>
                   <td><%= j.status %></td>
                   <td class="num" style="white-space:nowrap;"><%= j.wait %></td>
-                  <td style="font-family:monospace;font-size:13px;"><%= j.answered_by || '—' %></td>
+                  <td style="font-family:monospace;font-size:13px;"><% if (j.answered_by) { %><a href="/my/insights?tab=reverse&ext=<%= encodeURIComponent(j.answered_by) %>" title="See all calls answered by <%= j.answered_by %>"><%= j.answered_by %></a><% } else { %>—<% } %></td>
                   <td class="muted" style="font-size:12px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><%= j.route || '' %></td>
                 </tr>
               <% }); %>
@@ -69,6 +70,55 @@
         </div>
       <% } else { %>
         <div class="card"><div class="empty">No calls found for &ldquo;<%= q %>&rdquo; in the last 28 days.</div></div>
+      <% } %>
+    <% } %>
+
+  <% } else if (tab === 'reverse') { %>
+
+    <div class="card">
+      <form method="get" action="/my/insights" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+        <input type="hidden" name="tab" value="reverse">
+        <div class="form-group" style="margin:0;min-width:210px;">
+          <label>Answered by — extension / user</label>
+          <input class="input" name="ext" value="<%= ext %>" list="extList" placeholder="e.g. 201 or a name" style="width:100%;" autocomplete="off">
+          <datalist id="extList"><% (extensions || []).forEach(function(e){ %><option value="<%= e %>"></option><% }); %></datalist>
+        </div>
+        <div class="form-group" style="margin:0;"><label>From</label><input class="input" type="date" name="from" value="<%= fromDate %>"></div>
+        <div class="form-group" style="margin:0;"><label>To</label><input class="input" type="date" name="to" value="<%= toDate %>"></div>
+        <div class="form-group" style="margin:0;"><label>Between</label><input class="input" type="time" name="from_time" value="<%= fromTime %>"></div>
+        <div class="form-group" style="margin:0;"><label>And</label><input class="input" type="time" name="to_time" value="<%= toTime %>"></div>
+        <button class="btn btn-primary" type="submit">Search</button>
+      </form>
+      <p class="muted" style="font-size:12px;margin:8px 0 0;">Lists every call this person answered in the window. Click a number to track its full call history.</p>
+    </div>
+
+    <% if (ext) { %>
+      <% if (rstats && rstats.total) { %>
+        <div class="grid">
+          <div class="stat"><div class="n"><%= rstats.total %></div><div class="l">Calls answered</div></div>
+          <div class="stat"><div class="n"><%= rstats.uniqueCallers %></div><div class="l">Unique callers</div></div>
+          <div class="stat"><div class="n"><%= fmtWait(rstats.avgWait) %></div><div class="l">Avg caller wait</div></div>
+          <div class="stat"><div class="n" style="font-size:18px;line-height:1.6;"><%= rstats.busiestDay ? d(rstats.busiestDay) : '—' %></div><div class="l">Busiest day<%= rstats.busiestN ? ' (' + rstats.busiestN + ' calls)' : '' %></div></div>
+        </div>
+        <div class="card" style="padding:0;">
+          <div class="table-wrap"><table class="table" style="margin:0;">
+            <thead><tr><th>Date / time</th><th>Caller</th><th>Wait</th><th>Journey</th></tr></thead>
+            <tbody>
+              <% calls.forEach(function(j){ var linkableNum = j.number && !/^(anonymous|withheld)$/i.test(String(j.number).trim()); %>
+                <tr>
+                  <td class="muted" style="white-space:nowrap;"><%= fmtT(j.datetime) %></td>
+                  <td style="font-family:monospace;font-size:13px;">
+                    <% if (linkableNum) { %><a href="/my/insights?tab=home&q=<%= encodeURIComponent(j.number) %>" title="Track this number"><%= j.number %></a><% } else { %><span class="muted"><%= j.number || 'Withheld' %></span><% } %>
+                  </td>
+                  <td class="num" style="white-space:nowrap;"><%= j.wait %></td>
+                  <td class="muted" style="font-size:12px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><%= j.route || '' %></td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table></div>
+        </div>
+      <% } else { %>
+        <div class="card"><div class="empty">No calls answered by &ldquo;<%= ext %>&rdquo; in this window.</div></div>
       <% } %>
     <% } %>
 
