@@ -1,0 +1,1563 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ── Users (Lumen staff + future customer-scoped external users) ────────────────
+model User {
+  id           Int       @id @default(autoincrement())
+  customerId   Int?      @map("customer_id") // null = Lumen staff; set = customer-scoped external user
+  email        String    @unique
+  displayName  String    @map("display_name")
+  passwordHash String?   @map("password_hash")
+  entraOid     String?   @unique @map("entra_oid")
+  role           String    @default("staff") // staff | admin | customer
+  isActive       Boolean   @default(true) @map("is_active")
+  inSupportGroup Boolean   @default(false) @map("support_group") // receives helpdesk/new-case alerts; also gates the password vault
+  inSalesGroup   Boolean   @default(false) @map("sales_group")   // receives quote/lead alerts
+  inFinanceGroup Boolean   @default(false) @map("finance_group") // gates invoices + the dashboard invoices card
+  hiddenFromLookups Boolean @default(false) @map("hidden_from_lookups") // break-glass/login accounts: hide from engineer + assignee pickers
+  lastLoginAt    DateTime? @map("last_login_at")
+  oneboardPrefs  Json?     @map("oneboard_prefs") // OneBoard: per-user saved site selection {"sites":[ids]}
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  customer     Customer? @relation(fields: [customerId], references: [id])
+
+  @@map("users")
+}
+
+// ── Customers (the anchor entity — everything attaches to a customer) ──────────
+model Customer {
+  id                   Int       @id @default(autoincrement())
+  accountNumber        String?   @unique @map("account_number") // e.g. lar-001
+  name                 String
+  status               String    @default("lead") // lead | active | inactive
+  website              String?
+  domain               String?
+  phone                String?
+  email                String?
+  isItsm               Boolean   @default(false) @map("is_itsm")
+  isPlaceholder        Boolean   @default(false) @map("is_placeholder") // system catch-all records (e.g. "Unassigned")
+  hasInternet          Boolean   @default(false) @map("has_internet")
+  hasPhones            Boolean   @default(false) @map("has_phones")
+  hasCloud             Boolean   @default(false) @map("has_cloud")
+  addressLine1         String?   @map("address_line_1")
+  addressLine2         String?   @map("address_line_2")
+  city                 String?
+  county               String?
+  postcode             String?
+  logoPath             String?   @map("logo_path")
+  notes                String?
+  leadSource           String?   @map("lead_source")
+  leadStatus           String?   @map("lead_status") // sales pipeline: new | open | proposed | won | lost
+  entraTenantId        String?   @map("entra_tenant_id") // customer's Microsoft 365 / Entra tenant for directory sync
+  lastReviewedAt       DateTime? @map("last_reviewed_at") // last Customer A-Z review
+  ateraCustomerId      String?   @map("atera_customer_id")
+  quickbooksCustomerId String?   @map("quickbooks_customer_id")
+  gocardlessMandateId  String?   @map("gocardless_mandate_id")
+  principalContactId   Int?      @map("principal_contact_id") // → customer_contacts.id (resolved in app, not a FK relation)
+  billingContactId     Int?      @map("billing_contact_id")
+  serviceContactId     Int?      @map("service_contact_id")
+  portalEnabled        Boolean   @default(false) @map("portal_enabled") // customer-portal login master switch (must live in the schema or `prisma db push` drops it each deploy)
+  // Onboarding / legal details (collected via the emailed onboarding form)
+  legalName            String?   @map("legal_name")
+  companyNumber        String?   @map("company_number")
+  vatNumber            String?   @map("vat_number")
+  billingAddressLine1  String?   @map("billing_address_line_1")
+  billingAddressLine2  String?   @map("billing_address_line_2")
+  billingCity          String?   @map("billing_city")
+  billingCounty        String?   @map("billing_county")
+  billingPostcode      String?   @map("billing_postcode")
+  onboardingToken      String?   @unique @map("onboarding_token")
+  onboardingStatus     String?   @map("onboarding_status")        // sent | submitted | applied
+  onboardingSentAt     DateTime? @map("onboarding_sent_at")
+  onboardingSubmittedAt DateTime? @map("onboarding_submitted_at")
+  onboardingData       Json?     @map("onboarding_data")          // raw submission, pending review
+  createdBy            Int?      @map("created_by")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt            DateTime? @map("deleted_at") // soft delete
+  deletedByUserId      Int?      @map("deleted_by_user_id")
+
+  contacts    Contact[]
+  sites       Site[]
+  domains     CustomerDomain[]
+  externalIds CustomerExternalId[]
+  users       User[]
+  quotes      Quote[]
+  invoices    Invoice[]
+  contracts   Contract[]
+  tickets     Ticket[]
+  leads       Lead[]
+  credentials CustomerCredential[]
+  credits     CustomerCredit[]
+
+  @@index([status])
+  @@index([deletedAt])
+  @@map("customers")
+}
+
+// ── Leads (first-class sales-pipeline object) ───────────────────────────────────
+// A lead points at a prospect Customer so contacts/comms/quotes live on the customer
+// and persist through conversion. The lead itself survives won/lost for pipeline history.
+model Lead {
+  id                 Int       @id @default(autoincrement())
+  customerId         Int       @map("customer_id")   // the prospect customer
+  status             String    @default("new") // new | open | proposed | won | lost
+  source             String?                          // where the lead came from
+  servicesInterested String?   @map("services_interested") // free text — what they're after
+  details            String?                          // free-text notes / context
+  reference          String?   @unique                 // website order ref - idempotency key (one per order)
+  product            String?                            // e.g. simply_voip | broadband
+  monthly            Decimal?  @db.Decimal(12, 2)       // GBP ex-VAT recurring
+  oneoff             Decimal?  @db.Decimal(12, 2)       // GBP ex-VAT one-off
+  estimatedValue     Decimal?  @map("estimated_value") @db.Decimal(12, 2)
+  ownerUserId        Int?      @map("owner_user_id")
+  followUpAt         DateTime? @map("follow_up_at")    // next chase date for this lead
+  followUpNote       String?   @map("follow_up_note")  // what the follow-up is for
+  wonAt              DateTime? @map("won_at")
+  lostAt             DateTime? @map("lost_at")
+  lostReason         String?   @map("lost_reason")
+  createdBy          Int?      @map("created_by")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt          DateTime? @map("deleted_at")
+  deletedByUserId    Int?      @map("deleted_by_user_id")
+
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@index([customerId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("leads")
+}
+
+// ── Customer credentials (per-customer password vault) ──────────────────────────
+// The password is encrypted at rest (AES-256-GCM) in secret_encrypted; everything
+// else is searchable metadata. Decryption happens server-side only, on an explicit
+// reveal/copy request, and every reveal is written to the activity log.
+model CustomerCredential {
+  id              Int       @id @default(autoincrement())
+  customerId      Int       @map("customer_id")
+  name            String
+  loginUrl        String?   @map("login_url")
+  username        String?
+  secretEncrypted String?   @map("secret_encrypted") // AES-256-GCM blob (iv:tag:ciphertext, base64)
+  domain          String?
+  category        String?
+  extraValue      String?   @map("extra_value")
+  note            String?
+  createdBy       Int?      @map("created_by")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+  deletedByUserId Int?      @map("deleted_by_user_id")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("customer_credentials")
+}
+
+// Per-customer documents — uploaded files with a title + description, shown on the customer card
+// next to the password vault. Files live PRIVATELY under uploads/customer-docs and are streamed
+// via an auth-gated route (never the public static dir).
+model CustomerDocument {
+  id               Int       @id @default(autoincrement())
+  customerId       Int       @map("customer_id")
+  title            String
+  description      String?
+  uploadedByUserId Int?      @map("uploaded_by_user_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+  deletedByUserId  Int?      @map("deleted_by_user_id")
+
+  @@index([customerId])
+  @@map("customer_documents")
+}
+
+// Website logins for a supplier (multiple per supplier). Mirrors customer_credentials — the
+// password is AES-256-GCM encrypted at rest and only decrypted on an explicit reveal.
+model SupplierCredential {
+  id              Int       @id @default(autoincrement())
+  supplierId      Int       @map("supplier_id")
+  name            String
+  loginUrl        String?   @map("login_url")
+  username        String?
+  secretEncrypted String?   @map("secret_encrypted")
+  note            String?
+  createdBy       Int?      @map("created_by")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+
+  @@index([supplierId])
+  @@map("supplier_credentials")
+}
+
+// Files attached to a CustomerDocument — a document can hold many photos/files (resolved in app).
+model CustomerDocumentFile {
+  id          Int      @id @default(autoincrement())
+  documentId  Int      @map("document_id")
+  fileName    String   @map("file_name")    // original filename
+  filePath    String   @map("file_path")    // absolute path on disk (private)
+  contentType String?  @map("content_type")
+  fileSize    Int?     @map("file_size")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([documentId])
+  @@map("customer_document_files")
+}
+
+// ── Customer credits (overpayments / goodwill, applied against a later invoice) ──
+model CustomerCredit {
+  id               Int       @id @default(autoincrement())
+  customerId       Int       @map("customer_id")
+  amount           Decimal   @db.Decimal(12, 2) // positive = credit owed to the customer
+  reason           String?
+  sourceInvoiceId  Int?      @map("source_invoice_id")  // the over-paid / amended invoice
+  appliedInvoiceId Int?      @map("applied_invoice_id") // the invoice it was used against
+  quickbooksCreditId String? @map("quickbooks_credit_id") // QB CreditMemo id once submitted
+  status           String    @default("open") // open | applied | void
+  createdBy        Int?      @map("created_by")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  appliedAt        DateTime? @map("applied_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([status])
+  @@map("customer_credits")
+}
+
+// ── Customer contacts ──────────────────────────────────────────────────────────
+model Contact {
+  id             Int      @id @default(autoincrement())
+  customerId     Int      @map("customer_id")
+  ateraContactId String?  @map("atera_contact_id")
+  entraOid       String?  @map("entra_oid")   // Azure AD object id (directory sync match)
+  archived       Boolean  @default(false)     // user left/disabled in directory — hidden from lists
+  fullName       String   @map("full_name")
+  email          String?
+  phone          String?
+  mobilePhone    String?  @map("mobile_phone")
+  jobTitle       String?  @map("job_title")
+  department     String?
+  isPrimary      Boolean  @default(false) @map("is_primary")
+  isThirdParty   Boolean  @default(false) @map("is_third_party") // 3rd party (covered by the customer's support agreement)
+  protected      Boolean  @default(false)  // manually curated — directory sync must never update or archive this contact
+  portalAccessLevel String? @map("portal_access_level") // customer-portal access: none|tickets|finance|service|full (null = none)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([email])
+  @@index([fullName])
+  @@map("customer_contacts")
+}
+
+// ── Customer sites ─────────────────────────────────────────────────────────────
+model Site {
+  id           Int      @id @default(autoincrement())
+  customerId   Int      @map("customer_id")
+  siteName     String   @map("site_name")
+  siteCode     String?  @map("site_code")
+  addressLine1 String?  @map("address_line_1")
+  addressLine2 String?  @map("address_line_2")
+  city         String?
+  county       String?
+  postcode     String?
+  country      String?
+  sitePhone    String?  @map("site_phone")
+  siteEmail    String?  @map("site_email")
+  notes        String?
+  isPrimary    Boolean  @default(false) @map("is_primary")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, siteCode])
+  @@index([customerId])
+  @@map("customer_sites")
+}
+
+// ── Customer domains ───────────────────────────────────────────────────────────
+model CustomerDomain {
+  id         Int      @id @default(autoincrement())
+  customerId Int      @map("customer_id")
+  domain     String
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, domain])
+  @@index([domain])
+  @@map("customer_domains")
+}
+
+// ── Customer external IDs (Atera, QuickBooks, etc.) ────────────────────────────
+model CustomerExternalId {
+  id           Int      @id @default(autoincrement())
+  customerId   Int      @map("customer_id")
+  sourceSystem String   @map("source_system") // atera | quickbooks | quickbooks_online | cli | ...
+  externalId   String   @map("external_id")
+  billingStart DateTime? @map("billing_start") @db.Date // CLI: date billing starts from (drives first-month prorata)
+  metadata     Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceSystem, externalId])
+  @@index([customerId])
+  @@map("customer_external_ids")
+}
+
+// Durable note against a comms CLI / ref (e.g. "line rental ceasing next month"). Kept in its own
+// table because service_items are wiped & re-imported, so a note on the line itself would be lost.
+model CommsLineNote {
+  id               Int      @id @default(autoincrement())
+  customerId       Int?     @map("customer_id")
+  productReference String   @map("product_reference") // the CLI / ref the note is about
+  note             String
+  createdBy        Int?     @map("created_by")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([productReference])
+  @@index([customerId])
+  @@map("comms_line_notes")
+}
+
+// IT & Cloud change-ledger. Tracks the last-known Giacom state per (customer, product, buy price)
+// so we can bill ADDS a month upfront and keep REMOVALS billing for a 30-day notice period — even
+// though Giacom service_items are wiped & re-inserted nightly (no built-in history to diff).
+model ItCloudServiceState {
+  id                Int       @id @default(autoincrement())
+  customerId        Int       @map("customer_id")
+  description       String
+  unitCost          Decimal   @map("unit_cost") @db.Decimal(12, 4)
+  qty               Int       @default(0)
+  saleEach          Decimal   @default(0) @map("sale_each") @db.Decimal(12, 2)
+  upfrontPendingQty Int       @default(0) @map("upfront_pending_qty") // added qty not yet billed a month upfront
+  firstSeen         DateTime  @default(now()) @map("first_seen")
+  removedAt         DateTime? @map("removed_at") // set when it drops off Giacom; kept billing 30 days then purged
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([customerId, description, unitCost])
+  @@index([customerId])
+  @@map("it_cloud_service_state")
+}
+
+// Service history — every detected change to a customer's monthly IT&Cloud services, so staff can
+// see exactly what Giacom sent (adds / removals / qty changes). Recorded by syncItCloudDeltas.
+model ItCloudChangeLog {
+  id          Int      @id @default(autoincrement())
+  customerId  Int      @map("customer_id")
+  description String
+  changeType  String   @map("change_type") // added | removed | qty_up | qty_down
+  oldQty      Int?     @map("old_qty")
+  newQty      Int?     @map("new_qty")
+  detectedAt  DateTime @default(now()) @map("detected_at")
+
+  @@index([customerId, detectedAt])
+  @@map("it_cloud_change_log")
+}
+
+// Per-CLI extension/user label, derived OVERNIGHT from Insights call data (the extension that
+// most handles that number). Display-only — shows next to the CLI on the comms asset list.
+model CliExtensionLabel {
+  id        Int      @id @default(autoincrement())
+  cli       String   @unique // digits-only normalised number
+  extName   String   @map("ext_name")
+  calls     Int      @default(0) // calls seen for the winning extension (confidence)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("cli_extension_labels")
+}
+
+// Number ranges OWNED by a customer. Drive auto-allocation: any comms CLI / call record whose
+// digits fall in a range is attributed to that customer (unless manually pinned elsewhere).
+model CustomerNumberRange {
+  id         Int      @id @default(autoincrement())
+  customerId Int      @map("customer_id")
+  rangeFrom  String   @map("range_from") // digits only
+  rangeTo    String   @map("range_to")
+  location   String?
+  label      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@map("customer_number_ranges")
+}
+
+// Per-customer call-type markup overrides. Absent row = use the global default
+// (settings comms/call_markup_<type>). Markup only ever applies to chargeable calls.
+model CustomerCallMarkup {
+  id         Int      @id @default(autoincrement())
+  customerId Int      @map("customer_id")
+  callType   String   @map("call_type") // on_net | uk_geo | uk_mobile | nongeo_intl
+  markupPct  Decimal  @map("markup_pct") @db.Decimal(6, 2)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([customerId, callType])
+  @@index([customerId])
+  @@map("customer_call_markups")
+}
+
+// ── Package Manager ──────────────────────────────────────────────────────────────
+// A Package is a customer-facing sell product that hides one or more underlying Giacom cost
+// lines behind one set price (e.g. Simply VoIP Seat, Simply Mobile — Unlimited). Cost comes
+// from the live matched lines (tier floats); the customer sees the package name + set price.
+model Package {
+  id            Int      @id @default(autoincrement())
+  name          String   // customer-facing, e.g. "Simply Mobile — Unlimited (EE) 24m"
+  category      String   @default("voice") // internet|voice|mobile|additional (drives invoice bucket)
+  kind          String   @default("per_cli") // per_cli (1 per matching CLI @ standard) | per_cli_priced (per-instance price) | flat (one per customer, manual price)
+  matchPattern  String?  @map("match_pattern") // regex (case-insensitive) over the Giacom description; null = manual-only
+  requiresSeat  Boolean  @default(false) @map("requires_seat") // add-on: only bills on a CLI that also carries a seat package
+  standardPrice Decimal  @default(0) @map("standard_price") @db.Decimal(12, 2) // default sell (override per customer)
+  termLabel     String?  @map("term_label") // e.g. "12m" / "24m"
+  bundledNote   String?  @map("bundled_note") // what's included free (handset, Webex…) — display only
+  sortOrder     Int      @default(100) @map("sort_order")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  prices   PackagePrice[]
+  products PackageProduct[]
+  @@map("packages")
+}
+
+// The Giacom core products that make up a package (intuitive pick-list). A CLI matches the
+// package if one of its lines is one of these products (or the family pattern matches).
+model PackageProduct {
+  id          Int    @id @default(autoincrement())
+  packageId   Int    @map("package_id")
+  productName String @map("product_name") // Giacom description, e.g. "EE30ES2-Everyway Standard 2GB"
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  @@unique([packageId, productName])
+  @@map("package_products")
+}
+
+// Per-customer price override for a package (the standard-with-override model).
+model PackagePrice {
+  id         Int      @id @default(autoincrement())
+  packageId  Int      @map("package_id")
+  customerId Int      @map("customer_id")
+  salePrice  Decimal  @map("sale_price") @db.Decimal(12, 2)
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at")
+
+  package Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  @@unique([packageId, customerId])
+  @@map("package_prices")
+}
+
+// Manual override of auto-matching: force a CLI into a package, or exclude it (packageId null).
+model PackageCliOverride {
+  id        Int      @id @default(autoincrement())
+  cli       String   @unique
+  packageId Int?     @map("package_id") // null = exclude this CLI from all packages
+  createdAt DateTime @default(now()) @map("created_at")
+  @@map("package_cli_overrides")
+}
+
+// ── Purchase Ledger — our managed list of accounts (bank / card) money is spent from ──
+model BankAccountRef {
+  id            Int      @id @default(autoincrement())
+  name          String   // e.g. "Barclays Current", "Amex Business"
+  qbAccountId   String?  @map("qb_account_id")   // maps to the QuickBooks bank/CC account for posting
+  qbAccountName String?  @map("qb_account_name")
+  isActive      Boolean  @default(true) @map("is_active")
+  sortOrder     Int      @default(100) @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+  @@map("bank_account_refs")
+}
+
+// ── Purchase Ledger — bank transactions to reconcile into expenses ──────────────
+model BankTransaction {
+  id             Int       @id @default(autoincrement())
+  source         String    @default("csv") // openbanking | csv | qb
+  externalId     String?   @map("external_id") // bank/provider transaction id (dedupe key)
+  accountRefId   Int?      @map("account_ref_id") // which of our managed accounts it belongs to
+  accountName    String?   @map("account_name") // account label (denormalised for display)
+  bookedAt       DateTime  @map("booked_at") // date + time of the transaction
+  amount         Decimal   @db.Decimal(12, 2) // negative = money out (expense)
+  currencyCode   String    @default("GBP") @map("currency_code")
+  description    String?   // bank narrative
+  counterparty   String?   // merchant / payee
+  reference      String?   // bank reference
+  qbAccountId    String?   @map("qb_account_id")   // chosen QB COS / expense account id
+  qbAccountName  String?   @map("qb_account_name")
+  attachmentPath String?   @map("attachment_path") // uploaded invoice/receipt
+  attachmentName String?   @map("attachment_name")
+  status         String    @default("new") // new | categorised | submitted | pushed
+  qbPurchaseId   String?   @map("qb_purchase_id")  // set when pushed to QuickBooks
+  notes          String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([source, externalId])
+  @@index([status])
+  @@index([bookedAt])
+  @@map("bank_transactions")
+}
+
+// ── Purchase Ledger — pooled supplier invoices (invoice@ mailbox + manual uploads) ─
+model PurchaseDocument {
+  id                Int       @id @default(autoincrement())
+  source            String    @default("email") // email | upload
+  fromEmail         String?   @map("from_email")
+  fromName          String?   @map("from_name")
+  subject           String?
+  receivedAt        DateTime? @map("received_at")
+  fileName          String    @map("file_name")
+  filePath          String    @map("file_path")   // on-disk path (private, streamed via auth route)
+  contentType       String?   @map("content_type")
+  sizeBytes         Int?      @map("size_bytes")
+  status            String    @default("new") // new | attached
+  bankTransactionId Int?      @map("bank_transaction_id") // set when attached to an expense
+  graphMessageId    String?   @map("graph_message_id")
+  // Extracted from the document text (PDF / HTML body) to power auto-matching.
+  parsedAmount      Decimal?  @db.Decimal(12, 2) @map("parsed_amount") // invoice gross total
+  parsedInvoiceNo   String?   @map("parsed_invoice_no")
+  parsedDate        String?   @map("parsed_date")
+  parseStatus       String?   @map("parse_status") // ok | no_text | error | null(=not tried)
+  // Category chosen at capture (mobile receipt logger) — carried onto the matched txn.
+  categoryId        String?   @map("category_id")
+  categoryName      String?   @map("category_name")
+  archivedAt        DateTime? @map("archived_at")   // hidden from the inbox; still findable on the Archived tab
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  @@unique([graphMessageId, fileName])
+  @@index([status])
+  @@index([archivedAt])
+  @@map("purchase_documents")
+}
+
+// ── Purchase Ledger — split a single bank transaction across several categories ─────
+model BankTransactionSplit {
+  id             Int      @id @default(autoincrement())
+  transactionId  Int      @map("transaction_id")
+  amount         Decimal  @db.Decimal(12, 2) // positive magnitude of this allocation
+  qbAccountId    String?  @map("qb_account_id")   // category (QB account id, or local:<name>)
+  qbAccountName  String?  @map("qb_account_name")
+  attachmentPath String?  @map("attachment_path") // invoice/receipt for this split
+  attachmentName String?  @map("attachment_name")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([transactionId])
+  @@map("bank_transaction_splits")
+}
+
+// ── Service items (billing lines pulled from suppliers — Giacom now, Comms later) ─
+model ServiceItem {
+  id                   Int       @id @default(autoincrement())
+  source               String    @default("giacom") // giacom | comms | ...
+  customerId           Int?      @map("customer_id") // null until the supplier account is matched to a portal customer
+  externalCustomerId   String?   @map("external_customer_id")   // supplier's customer id (e.g. Giacom customerId)
+  externalCustomerName String?   @map("external_customer_name")
+  productId            String?   @map("product_id")
+  productReference     String?   @map("product_reference")
+  description          String?
+  quantity             Decimal   @default(0) @db.Decimal(12, 2)
+  unitCost             Decimal   @default(0) @map("unit_cost") @db.Decimal(12, 4) // costPerSeat
+  totalCost            Decimal   @default(0) @map("total_cost") @db.Decimal(12, 2)
+  billingDate          DateTime? @map("billing_date")
+  billingFrom          DateTime? @map("billing_from") @db.Date // service start in period (mid-period = new = prorata)
+  billingTo            DateTime? @map("billing_to") @db.Date
+  billingPeriod        String?   @map("billing_period") // YYYY-MM of the line (from billing_from)
+  isProrata            Boolean   @default(false) @map("is_prorata") // true = part-period (mid-month start/end), not a full recurring month
+  location             String?   // customer-set label for a circuit/CLI (e.g. broadband site/office)
+  isManual             Boolean   @default(false) @map("is_manual") // added by hand (not from Giacom) — survives the import wipe
+  isOneOff             Boolean   @default(false) @map("is_one_off") // install/cease/connection fee — bill once
+  billedAt             DateTime? @map("billed_at") // when a one-off was billed; once set it drops off the rate card
+  invoiceCategory      String?   @map("invoice_category") // internet|voice|mobile|additional|oneoff|call (override; else classified from description)
+  vatStatus            String?   @map("vat_status") // supplier VAT flag (e.g. "VAT 20%" | "DRC 20%") — sell is always 20% standard
+  syncedAt             DateTime  @default(now()) @map("synced_at") // last import that included this line ("live")
+  createdAt            DateTime  @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@index([source])
+  @@index([externalCustomerId])
+  @@map("service_items")
+}
+
+// Generic recycle store for rows that are removed from churny/synced tables (e.g. service_items,
+// which is wiped + re-inserted nightly). The whole row is snapshotted as JSON so a delete is fully
+// recoverable from /recycle-bin without scattering deleted_at filters through every billing query.
+model RecycleItem {
+  id              Int       @id @default(autoincrement())
+  entityType      String    @map("entity_type")   // e.g. comms_line
+  sourceTable     String    @map("source_table")  // table the row came from
+  label           String?                          // headline for the recycle-bin list
+  sublabel        String?                          // secondary text
+  snapshot        Json                             // the full original row
+  reason          String?
+  deletedByUserId Int?      @map("deleted_by_user_id")
+  deletedAt       DateTime  @default(now()) @map("deleted_at")
+  restoredAt      DateTime? @map("restored_at")
+
+  @@index([entityType, restoredAt])
+  @@map("recycle_items")
+}
+
+// ── DWS / Giacom bill-run files pulled over SFTP (leave-and-track ingest) ────────
+model DwsFile {
+  id         Int      @id @default(autoincrement())
+  filename   String   @unique
+  remotePath String?  @map("remote_path")
+  size       Int?
+  hash       String?
+  status     String   @default("downloaded") // downloaded | parsed | error
+  rowsParsed Int      @default(0) @map("rows_parsed")
+  columns    String?  // detected header columns (for mapping)
+  error      String?
+  ingestedAt DateTime @default(now()) @map("ingested_at")
+
+  @@index([status])
+  @@map("dws_files")
+}
+
+// ── Itemized call records (CDRs) — for billing customers (cost + markup) ─────────
+model CallRecord {
+  id            Int       @id @default(autoincrement())
+  source        String    @default("landline") // landline | mobile
+  sourceFile    String?   @map("source_file")
+  cli           String?   // the customer's line (Customer CLI / mobile number)
+  customerId    Int?      @map("customer_id") // resolved via the CLI directory
+  dialled       String?   // number dialled
+  callAt        DateTime? @map("call_at")
+  durationSec   Int       @default(0) @map("duration_sec")
+  description   String?
+  cost          Decimal   @default(0) @db.Decimal(12, 4) // what the carrier charges us
+  billingPeriod String?   @map("billing_period")          // YYYY-MM
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@index([cli])
+  @@index([billingPeriod])
+  @@map("call_records")
+}
+
+// ── Durable sell prices for supplier service lines ──────────────────────────────
+// service_items are refreshed from suppliers (Giacom is wiped & re-inserted nightly),
+// so the SELL price can't live there. This table persists the sale price per
+// customer + product + BUY PRICE — a different buy price for the same product is a
+// distinct row (so it bills/reports on its own line). Billing & reports resolve sale
+// here; a missing row means the service is uncosted (surfaces in the bureau queue).
+model ServicePricing {
+  id                 Int      @id @default(autoincrement())
+  source             String   @default("giacom") // giacom | lumen | comms | ...
+  customerId         Int?     @map("customer_id")
+  productReference   String?  @map("product_reference")
+  description        String?
+  unitCost           Decimal  @default(0) @map("unit_cost") @db.Decimal(12, 4) // buy price this pricing applies to
+  salePrice          Decimal  @default(0) @map("sale_price") @db.Decimal(12, 4) // per-unit sell
+  catalogueProductId Int?     @map("catalogue_product_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([source, customerId, productReference, unitCost], name: "uq_service_pricing", map: "uq_service_pricing")
+  @@index([customerId])
+  @@map("service_pricing")
+}
+
+// ── Quotes ──────────────────────────────────────────────────────────────────────
+model Quote {
+  id              Int       @id @default(autoincrement())
+  customerId      Int?      @map("customer_id")
+  inboxTicketId   Int?      @map("inbox_ticket_id") // → future helpdesk module (no FK yet)
+  quoteNumber     String    @unique @map("quote_number")
+  title           String
+  status          String    @default("draft") // draft | sent | accepted | lost
+  acceptToken     String?   @unique @map("accept_token")
+  viewCount       Int       @default(0) @map("view_count")
+  issueDate       DateTime? @map("issue_date") @db.Date
+  validUntil      DateTime? @map("valid_until") @db.Date
+  currencyCode    String    @default("GBP") @map("currency_code")
+  subtotal        Decimal   @default(0) @db.Decimal(12, 2)
+  taxTotal        Decimal   @default(0) @map("tax_total") @db.Decimal(12, 2)
+  total           Decimal   @default(0) @db.Decimal(12, 2)
+  notes           String?
+  terms           String?
+  createdBy       Int?      @map("created_by")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+  acceptedByName  String?   @map("accepted_by_name")
+  acceptedByEmail String?   @map("accepted_by_email")
+  acceptedAt      DateTime? @map("accepted_at")
+  approveNote     String?   @map("approve_note")
+  rejectReason    String?   @map("reject_reason")
+  sentTo          String?   @map("sent_to")
+  deletedAt       DateTime? @map("deleted_at")
+  deletedByUserId Int?      @map("deleted_by_user_id")
+
+  customer Customer?   @relation(fields: [customerId], references: [id])
+  items    QuoteItem[]
+  invoices Invoice[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("quotes")
+}
+
+model QuoteItem {
+  id           Int      @id @default(autoincrement())
+  quoteId      Int      @map("quote_id")
+  productId    Int?     @map("product_id")  // → future catalogue (no FK yet)
+  supplierId   Int?     @map("supplier_id")
+  sortOrder    Int      @default(1) @map("sort_order")
+  description  String
+  quantity     Decimal  @default(1) @db.Decimal(12, 2)
+  unitPrice    Decimal  @default(0) @map("unit_price") @db.Decimal(12, 2)
+  taxRate      Decimal  @default(20) @map("tax_rate") @db.Decimal(6, 2)
+  lineTotal    Decimal  @default(0) @map("line_total") @db.Decimal(12, 2)
+  buyPrice     Decimal  @default(0) @map("buy_price") @db.Decimal(12, 2)
+  supplierName String?  @map("supplier_name")
+  supplierUrl  String?  @map("supplier_url")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId])
+  @@map("quote_items")
+}
+
+// ── Invoices ────────────────────────────────────────────────────────────────────
+model Invoice {
+  id                  Int       @id @default(autoincrement())
+  customerId          Int?      @map("customer_id")
+  quoteId             Int?      @map("quote_id")
+  quickbooksInvoiceId String?   @map("quickbooks_invoice_id")
+  gocardlessPaymentId String?   @map("gocardless_payment_id")
+  gocardlessPayoutRef String?   @map("gocardless_payout_ref")  // bank-statement ref of the GC payout that included this payment
+  gocardlessPaidOutAt DateTime? @db.Date @map("gocardless_paid_out_at") // payout arrival date
+  paymentStatus       String    @default("unpaid") @map("payment_status") // unpaid | pending | paid | failed
+  invoiceNumber       String?   @unique @map("invoice_number") // NULL while staged — allocated at Complete
+  staged              Boolean   @default(false) // staged in Bureau (no number, hidden from Invoices list) until completed
+  approvedAt          DateTime? @map("approved_at") // ticked off in Bureau, ready to complete
+  invoiceScheme       String    @default("IT") @map("invoice_scheme") // IT | CS
+  title               String
+  paymentMethod       String    @default("upfront") @map("payment_method")
+  status              String    @default("draft") // draft | issued | paid | void
+  emailedAt           DateTime? @map("emailed_at")
+  isLocked            Boolean   @default(false) @map("is_locked")
+  issueDate           DateTime? @map("issue_date") @db.Date
+  dueDate             DateTime? @map("due_date") @db.Date
+  currencyCode        String    @default("GBP") @map("currency_code")
+  subtotal            Decimal   @default(0) @db.Decimal(12, 2)
+  taxTotal            Decimal   @default(0) @map("tax_total") @db.Decimal(12, 2)
+  total               Decimal   @default(0) @db.Decimal(12, 2)
+  balance             Decimal   @default(0) @db.Decimal(12, 2) // outstanding, synced from QuickBooks
+  paymentSyncedAt     DateTime? @map("payment_synced_at")      // last time payment state was pulled from QB
+  syncedAt            DateTime? @map("synced_at")              // last IT&Cloud Giacom sync run for this invoice
+  // Recurring billing — any invoice can become a monthly template.
+  isRecurring         Boolean   @default(false) @map("is_recurring")
+  contractType        String?   @map("contract_type") // IT | Comms | Cloud — the customer's contract invoice (one per type)
+  billingPeriod       String?   @map("billing_period") // YYYY-MM the bill run produced this for (comms)
+  recurringName       String?   @map("recurring_name")
+  recurringActive     Boolean   @default(true)  @map("recurring_active")
+  recurringParentId   Int?      @map("recurring_parent_id")  // set on generated invoices → their template
+  sendDay             Int?      @map("send_day")  // day of month it generates/sends/collects (e.g. 23)
+  dueDay              Int?      @map("due_day")   // day of month due / issue date (e.g. 1, next month)
+  autoSend            Boolean   @default(false) @map("auto_send")
+  autoQb              Boolean   @default(false) @map("auto_qb")
+  autoGc              Boolean   @default(false) @map("auto_gc")
+  lastGeneratedAt     DateTime? @map("last_generated_at")
+  notes               String?
+  terms               String?
+  createdBy           Int?      @map("created_by")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt           DateTime? @map("deleted_at")
+  deletedByUserId     Int?      @map("deleted_by_user_id")
+
+  customer Customer?     @relation(fields: [customerId], references: [id])
+  quote    Quote?        @relation(fields: [quoteId], references: [id])
+  items    InvoiceItem[]
+
+  @@index([customerId])
+  @@index([quoteId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id          Int      @id @default(autoincrement())
+  invoiceId   Int      @map("invoice_id")
+  productId   Int?     @map("product_id")
+  source      String   @default("manual") // manual | giacom | contract | product — drives selective refresh
+  invoiceCategory String? @map("invoice_category") // internet|voice|mobile|additional|oneoff|call — page-1 summary bucket
+  sortOrder   Int      @default(1) @map("sort_order")
+  description String
+  quantity    Decimal  @default(1) @db.Decimal(12, 2)
+  unitPrice   Decimal  @default(0) @map("unit_price") @db.Decimal(12, 2)
+  taxRate     Decimal  @default(20) @map("tax_rate") @db.Decimal(6, 2)
+  lineTotal   Decimal  @default(0) @map("line_total") @db.Decimal(12, 2)
+  isOneOff    Boolean  @default(false) @map("is_one_off") // ad-hoc one-off — stripped on template roll-over
+  // ── Hybrid IT&Cloud sync (source='giacom' = synced line) ──
+  syncLocked  Boolean  @default(false) @map("sync_locked")  // manually edited synced line — sync won't overwrite
+  syncRef     String?  @map("sync_ref")                     // Giacom match key (product_reference|unit_cost)
+  syncDrift   String?  @map("sync_drift")                   // note when a locked override differs from current Giacom
+  lastSyncedAt DateTime? @map("last_synced_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+// ── Tickets / Helpdesk / Inbox ──────────────────────────────────────────────────
+model Ticket {
+  id                    Int       @id @default(autoincrement())
+  ticketNumber          String    @unique @map("ticket_number")
+  source                String    @default("email") // email | manual | phone | whatsapp | teams | atera_import
+  customerId            Int?      @map("customer_id")
+  siteId                Int?      @map("site_id")
+  contactId             Int?      @map("contact_id")
+  assignedUserId        Int?      @map("assigned_user_id")
+  assignedByUserId      Int?      @map("assigned_by_user_id")
+  status                String    @default("new") // new | open | in_progress | pending | resolved | closed
+  priority              String    @default("normal") // normal | high | urgent
+  stage                 String    @default("awaiting_triage")
+  activityStatus        String    @default("unread") @map("activity_status") // unread | read | waiting_customer | awaiting_tech
+  category              String    @default("incident") // incident | problem | service_request | change_request | enquiry | order | repair | warranty
+  department            String?   // support | sales | repair_center | comms | quotes | invoices | leads | general
+  subject               String
+  description           String?
+  mailbox               String    @default("portal@lumenmsp.co.uk")
+  lastCustomerMessageAt DateTime? @map("last_customer_message_at")
+  lastPublicReplyAt     DateTime? @map("last_public_reply_at")
+  assignedAt            DateTime? @map("assigned_at")
+  closedAt              DateTime? @map("closed_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
+  isSpam                Boolean   @default(false) @map("is_spam")
+  deletedAt             DateTime? @map("deleted_at")
+  ateraTicketId         Int?      @map("atera_ticket_id")
+  deletedByUserId       Int?      @map("deleted_by_user_id")
+  deleteReason          String?   @map("delete_reason")
+  escalatedAt           DateTime? @map("escalated_at")
+  postponedUntil        DateTime? @map("postponed_until") // when a 'postponed' case auto-returns to awaiting_engineer
+  escalatedToUserId     Int?      @map("escalated_to_user_id")
+  teamsConversation     String?   @map("teams_conversation") // JSON: Bot Framework conversation reference for Teams replies
+  prevStatus            String?   @map("prev_status")          // status before a Teams/WhatsApp message bumped the case — used to restore on "move message"
+  prevActivityStatus    String?   @map("prev_activity_status")
+  persistentCc          String?   @map("persistent_cc")        // CC kept for every reply on this case (engineer ticked "remember")
+  persistentBcc         String?   @map("persistent_bcc")
+
+  customer Customer?       @relation(fields: [customerId], references: [id])
+  messages TicketMessage[]
+  notes    TicketNote[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([department])
+  @@index([assignedUserId])
+  @@index([deletedAt])
+  @@map("inbox_tickets")
+}
+
+model TicketMessage {
+  id                Int       @id @default(autoincrement())
+  ticketId          Int?      @map("ticket_id")
+  mailbox           String
+  graphMessageId    String?   @unique @map("graph_message_id")
+  internetMessageId String?   @map("internet_message_id")
+  conversationId    String?   @map("conversation_id")
+  messageDirection  String    @default("inbound") @map("message_direction") // inbound | outbound
+  channel           String    @default("email") // email | teams | whatsapp — how this message travelled
+  processingStatus  String    @default("new") @map("processing_status") // new | matched | unmatched | suppressed | error
+  suppressionReason String?   @map("suppression_reason")
+  autoReplyScore    Decimal?  @map("auto_reply_score") @db.Decimal(5, 2)
+  isAutoReply       Boolean   @default(false) @map("is_auto_reply")
+  isUnread          Boolean   @default(true) @map("is_unread")
+  hasAttachments    Boolean   @default(false) @map("has_attachments")
+  fromName          String?   @map("from_name")
+  fromEmail         String?   @map("from_email")
+  toRaw             String?   @map("to_raw")
+  ccRaw             String?   @map("cc_raw")
+  bccRaw            String?   @map("bcc_raw")
+  subject           String?
+  bodyHtml          String?   @map("body_html")
+  bodyText          String?   @map("body_text")
+  headersJson       Json?     @map("headers_json")
+  parsedIntelligence Json?    @map("parsed_intelligence")
+  receivedAt        DateTime? @map("received_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  ticket Ticket? @relation(fields: [ticketId], references: [id])
+
+  @@index([ticketId])
+  @@index([receivedAt])
+  @@map("inbox_messages")
+}
+
+model TicketNote {
+  id        Int      @id @default(autoincrement())
+  ticketId  Int      @map("ticket_id")
+  userId    Int?     @map("user_id")
+  noteType  String   @default("private_note") @map("note_type") // public_reply | private_note | system_log | bot | side_convo
+  channel   String?  // email | teams | whatsapp — the rail an outbound reply used (null for internal/system)
+  body      String
+  toRaw     String?  @map("to_raw")
+  ccRaw     String?  @map("cc_raw")
+  bccRaw    String?  @map("bcc_raw")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@map("inbox_notes")
+}
+
+// ── Contracts ─────────────────────────────────────────────────────────────────
+model Contract {
+  id              Int       @id @default(autoincrement())
+  customerId      Int?      @map("customer_id")
+  quoteId         Int?      @map("quote_id")
+  contractNumber  String    @unique @map("contract_number")
+  title           String
+  status          String    @default("draft") // draft | active | expired | cancelled
+  serviceType     String    @default("IT") @map("service_type") // IT | Cloud | Comms | Hardware
+  startDate       DateTime? @map("start_date") @db.Date
+  endDate         DateTime? @map("end_date") @db.Date
+  noticeDays      Int       @default(30) @map("notice_days")
+  autoRenew       Boolean   @default(true) @map("auto_renew")
+  paymentMethod   String    @default("upfront") @map("payment_method") // upfront | delivery | direct_debit
+  notes           String?
+  createdBy       Int?      @map("created_by")
+  deletedAt       DateTime? @map("deleted_at")
+  deletedByUserId Int?      @map("deleted_by_user_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  customer Customer?      @relation(fields: [customerId], references: [id])
+  lines    ContractLine[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("contracts")
+}
+
+model ContractLine {
+  id               Int      @id @default(autoincrement())
+  contractId       Int      @map("contract_id")
+  productId        Int?     @map("product_id")
+  description      String
+  quantity         Decimal  @default(1) @db.Decimal(12, 2)
+  unitPrice        Decimal  @default(0) @map("unit_price") @db.Decimal(12, 2)
+  billingFrequency String   @default("monthly") @map("billing_frequency") // monthly | annual | one_off
+  lineTotal        Decimal  @default(0) @map("line_total") @db.Decimal(12, 2)
+  sortOrder        Int      @default(1) @map("sort_order")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
+  @@map("contract_lines")
+}
+
+// ── Product catalogue (categories + products/services) ──────────────────────────
+model ProductCategory {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  products  Product[]
+
+  @@map("asset_categories")
+}
+
+model Product {
+  id               Int      @id @default(autoincrement())
+  categoryId       Int?     @map("category_id")
+  quickbooksItemId String?  @map("quickbooks_item_id")
+  code             String?
+  name             String
+  supplier         String?
+  description      String?
+  itemType         String   @default("service") @map("item_type") // product | service
+  billingFrequency String   @default("monthly") @map("billing_frequency") // monthly | annual | one_off
+  unitPrice        Decimal  @default(0) @map("unit_price") @db.Decimal(12, 2)
+  costPrice        Decimal  @default(0) @map("cost_price") @db.Decimal(12, 2)
+  vatRate          Decimal  @default(20) @map("vat_rate") @db.Decimal(6, 2)
+  sourceTag        String?  @map("source_tag")
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+
+  category ProductCategory? @relation(fields: [categoryId], references: [id])
+
+  @@index([categoryId])
+  @@index([isActive])
+  @@map("asset_products")
+}
+
+model Supplier {
+  id          Int      @id @default(autoincrement())
+  name        String
+  url         String?                          // website
+  contactName String?  @map("contact_name")
+  phone       String?
+  email       String?
+  accountRef  String?  @map("account_ref")     // our account number with this supplier
+  address     String?                          // free-text multi-line postal address
+  notes       String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("suppliers")
+}
+
+// ── Tasks ─────────────────────────────────────────────────────────────────────
+model Task {
+  id                Int       @id @default(autoincrement())
+  title             String
+  description       String?
+  assignedToUserId  Int?      @map("assigned_to_user_id")
+  assignmentScope   String    @default("user") @map("assignment_scope") // user | team | company
+  assignedToTeamId  Int?      @map("assigned_to_team_id")
+  createdByUserId   Int       @map("created_by_user_id")
+  priority          String    @default("medium") // low | medium | high
+  status            String    @default("open") // open | in_progress | done | cancelled
+  dueDate           DateTime? @map("due_date") @db.Date
+  dueTime           String?   @map("due_time")
+  deadline          DateTime? @db.Date
+  recurrence        String    @default("none") // none | daily | weekly | fortnightly | monthly
+  recurrenceEndDate DateTime? @map("recurrence_end_date") @db.Date
+  reminderSent      Boolean   @default(false) @map("reminder_sent")
+  completedAt       DateTime? @map("completed_at")
+  completedByUserId Int?      @map("completed_by_user_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at")
+  relatedTicketId   Int?      @map("related_ticket_id")
+  relatedCustomerId Int?      @map("related_customer_id")
+  relatedContactId  Int?      @map("related_contact_id")
+
+  @@index([assignedToUserId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("tasks")
+}
+
+// ── Communications (email thread attached to a quote / invoice / customer) ──────
+model Communication {
+  id            Int      @id @default(autoincrement())
+  entityType    String   @map("entity_type") // quote | invoice | customer
+  entityId      Int      @map("entity_id")
+  direction     String   @default("outbound") // inbound | outbound
+  channel       String   @default("email")
+  fromName      String?  @map("from_name")
+  fromEmail     String?  @map("from_email")
+  toEmail       String?  @map("to_email")
+  ccEmail       String?  @map("cc_email")
+  bccEmail      String?  @map("bcc_email")
+  subject       String?
+  body          String?
+  isUnread      Boolean  @default(false) @map("is_unread")
+  sentByUserId  Int?     @map("sent_by_user_id")
+  externalId    String?  @unique @map("external_id") // Graph message id (inbound dedupe)
+  deletedAt     DateTime? @map("deleted_at")          // soft-delete from mail inbox
+  attachments   String?                               // JSON array of { name, url }
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([isUnread])
+  @@map("communications")
+}
+
+// Every outbound email send, logged at the mailer so nothing is silently lost.
+model EmailLog {
+  id        Int      @id @default(autoincrement())
+  toEmail   String?  @map("to_email")
+  fromEmail String?  @map("from_email")
+  subject   String?
+  status    String   @default("sent") // sent | failed | not_sent (Graph off)
+  error     String?
+  body      String?
+  attachments String?                  // JSON array of attachment filenames
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("email_log")
+}
+
+// Non-email message log (WhatsApp, Teams) — inbound + outbound, mirrors email_log for the
+// Comms Log admin views. Email keeps its own email_log; this covers the other channels.
+model ChannelLog {
+  id         Int      @id @default(autoincrement())
+  channel    String   // whatsapp | teams
+  direction  String   // inbound | outbound
+  status     String   @default("received") // received | sent | failed | recorded
+  ticketId   Int?     @map("ticket_id")
+  contactId  Int?     @map("contact_id")
+  peer       String?  // the other party — wa number or teams user/email
+  peerName   String?  @map("peer_name")
+  preview    String?  // short text preview of the message body
+  externalId String?  @map("external_id") // provider message id
+  error      String?
+  userId     Int?     @map("user_id") // staff member who sent (outbound)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([channel, direction])
+  @@index([status])
+  @@index([createdAt])
+  @@index([ticketId])
+  @@map("channel_log")
+}
+
+// Blocked senders — inbound mail from these never creates/updates a ticket.
+// kind = 'email' (exact match) or 'domain' (matches anything @domain). Release = delete the row.
+model SpamSender {
+  id          Int      @id @default(autoincrement())
+  value       String   @unique // lower-cased email address or bare domain
+  kind        String   @default("email") // email | domain
+  reason      String?
+  createdById Int?     @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([kind])
+  @@map("spam_senders")
+}
+
+// Audit trail — who did what (deletes, restores, status changes, etc.).
+model ActivityLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int?     @map("user_id")
+  action     String   // created | updated | deleted | restored | emptied | status_changed
+  entityType String?  @map("entity_type")
+  entityId   Int?     @map("entity_id")
+  summary    String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("activity_log")
+}
+
+// Customer A-Z review items — a living log of concerns / projects / notes per customer.
+model CustomerReviewItem {
+  id              Int       @id @default(autoincrement())
+  customerId      Int       @map("customer_id")
+  section         String    // concern | service | future | current | note
+  body            String
+  status          String    @default("open") // open | done
+  dueDate         DateTime? @map("due_date") @db.Date
+  reminderSent    Boolean   @default(false) @map("reminder_sent")
+  createdByUserId Int?      @map("created_by_user_id")
+  completedAt     DateTime? @map("completed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([customerId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("customer_review_items")
+}
+
+// Per-user notifications shown in the top bar.
+model Notification {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @map("user_id")
+  type         String    @default("info") // info | escalation | reopened | quote | task
+  title        String
+  body         String?
+  link         String?
+  readAt       DateTime? @map("read_at")
+  clearedAt    DateTime? @map("cleared_at")     // cleared = gone for good
+  snoozedUntil DateTime? @map("snoozed_until")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([clearedAt])
+  @@map("notifications")
+}
+
+// ── Settings (key-value, grouped) — integration tokens, defaults, etc. ──────────
+model Setting {
+  id        Int      @id @default(autoincrement())
+  group     String
+  key       String
+  value     String?
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([group, key])
+  @@map("settings")
+}
+
+// ── Login attempts (security log) ──────────────────────────────────────────────
+model LoginAttempt {
+  id        Int      @id @default(autoincrement())
+  email     String
+  ip        String
+  success   Boolean
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([email])
+  @@index([createdAt])
+  @@map("login_attempts")
+}
+
+// ── WhatsApp softphone call history ──────────────────────────────────────────────
+// NB: also created at runtime by ensureCallTable(); declared here so `prisma db push`
+// doesn't drop it on deploy. @db.Timestamptz(6) matches the runtime CREATE TABLE exactly.
+model WaCall {
+  id           BigInt    @id @default(autoincrement())
+  callId       String?   @unique @map("call_id")
+  direction    String
+  peer         String
+  peerName     String?   @map("peer_name")
+  contactId    Int?      @map("contact_id")
+  customerId   Int?      @map("customer_id")
+  agentUserId  Int?      @map("agent_user_id")
+  status       String?
+  startedAt    DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  connectedAt  DateTime? @map("connected_at") @db.Timestamptz(6)
+  endedAt      DateTime? @map("ended_at") @db.Timestamptz(6)
+  durationSecs Int       @default(0) @map("duration_secs")
+
+  @@index([startedAt])
+  @@index([peer, startedAt])
+  @@map("wa_calls")
+}
+
+// ── Website live chat (declared here so db push preserves these runtime tables) ──
+model ChatSession {
+  id              BigInt    @id @default(autoincrement())
+  token           String    @unique
+  name            String?
+  email           String?
+  phone           String?
+  department      String?
+  status          String    @default("active")
+  origin          String?
+  assignedUserId  Int?      @map("assigned_user_id")
+  contactId       Int?      @map("contact_id")
+  customerId      Int?      @map("customer_id")
+  createdTicketId Int?      @map("created_ticket_id")
+  createdLeadId   Int?      @map("created_lead_id")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  lastVisitorAt   DateTime? @map("last_visitor_at") @db.Timestamptz(6)
+  lastAgentAt     DateTime? @map("last_agent_at") @db.Timestamptz(6)
+  infoPrompted    Boolean   @default(false) @map("info_prompted")
+  ip              String?
+  userAgent       String?   @map("user_agent")
+  browser         String?
+  os              String?
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)       // soft delete -> recycle bin
+  deletedByUserId Int?      @map("deleted_by_user_id")
+
+  messages ChatMessage[]
+
+  @@index([status, updatedAt])
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id        BigInt   @id @default(autoincrement())
+  sessionId BigInt   @map("session_id")
+  sender    String
+  body      String?
+  userId    Int?     @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, id])
+  @@map("chat_messages")
+}
+
+model ChatVisitor {
+  visitorId    String   @id @map("visitor_id")
+  page         String?
+  title        String?
+  referrer     String?
+  sessionToken String?  @map("session_token")
+  ip           String?
+  userAgent    String?  @map("user_agent")
+  browser      String?
+  os           String?
+  device       String?
+  lang         String?
+  screen       String?
+  firstSeen    DateTime @default(now()) @map("first_seen") @db.Timestamptz(6)
+  lastSeen     DateTime @default(now()) @map("last_seen") @db.Timestamptz(6)
+
+  @@index([lastSeen])
+  @@map("chat_visitors")
+}
+
+model WebView {
+  id        BigInt   @id @default(autoincrement())
+  visitorId String?  @map("visitor_id")
+  page      String?
+  title     String?
+  referrer  String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([createdAt])
+  @@map("web_views")
+}
+
+// ── N3twrx network/comms alerts (UniFi, Giacom, …) ───────────────────────────────
+model Alert {
+  id         BigInt    @id @default(autoincrement())
+  source     String
+  externalId String?   @map("external_id")
+  severity   String?   @default("warning")
+  title      String?
+  body       String?
+  url        String?
+  status     String?   @default("open")
+  ticketId   Int?      @map("ticket_id")
+  raw        Json?
+  startedAt  DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  resolvedAt DateTime? @map("resolved_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([source, externalId])
+  @@index([status, createdAt])
+  @@map("alerts")
+}
+
+// ── E-waste / IT recycling ──────────────────────────────────────────────────────
+// Collection batches of end-of-life IT kit (computers, laptops, mobiles, printers,
+// monitors, networking, peripherals — anything) audited with photos + condition, then
+// submitted as a PDF manifest to the e-waste recycling firm.
+model ERecyclingBatch {
+  id           Int       @id @default(autoincrement())
+  reference    String    @unique                              // EWASTE-2026-001
+  status       String    @default("open")                     // open | submitted
+  notes        String?
+  submittedTo  String?   @map("submitted_to")                 // e-waste firm email
+  submittedAt  DateTime? @map("submitted_at")
+  collectedAt  DateTime? @map("collected_at")
+  itemCount    Int       @default(0) @map("item_count")
+  createdBy    Int?      @map("created_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("erecycling_batches")
+}
+
+model ERecyclingItem {
+  id         Int      @id @default(autoincrement())
+  batchId    Int      @map("batch_id")
+  category   String                                            // Computer | Laptop | Mobile | Tablet | Printer | Monitor | Networking | Server | Peripheral | Other
+  make       String?
+  model      String?
+  serial     String?
+  assetTag   String?  @map("asset_tag")
+  condition  String?                                           // Working | Faulty | For Parts | Unknown
+  dataWiped  Boolean  @default(false) @map("data_wiped")
+  notes      String?
+  photos     String?  @db.Text                                 // JSON array of stored photo filenames
+  createdBy  Int?     @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([batchId])
+  @@map("erecycling_items")
+}
+
+// ── Marketing → Socials ─────────────────────────────────────────────────────────
+// These two tables were originally raw-SQL only (see lib/socials.ts), on the assumption that
+// `prisma db push` wouldn't touch them. It does: `db push --accept-data-loss` DROPS any table not
+// in this schema, which wiped social_posts on deploy. They are declared here so db push KEEPS them.
+// Native @db.Timestamptz(6) + named indexes match the live columns exactly, so adding these models
+// is a no-op against the existing tables (no destructive ALTER).
+model SocialPost {
+  id        BigInt    @id @default(autoincrement())
+  slug      String
+  title     String?
+  link      String?
+  network   String
+  body      String
+  kind      String?   @default("news")
+  active        Boolean?  @default(true)
+  imageUrl      String?   @map("image_url")
+  relevanceDate DateTime? @db.Date @map("relevance_date")
+  createdAt     DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([slug], map: "idx_social_posts_slug")
+  @@map("social_posts")
+}
+
+model SocialUpload {
+  id           BigInt    @id @default(autoincrement())
+  postId       BigInt?   @map("post_id")
+  slug         String?
+  network      String?
+  action       String?
+  status       String?
+  bufferPostId String?   @map("buffer_post_id")
+  dueAt        DateTime? @db.Timestamptz(6) @map("due_at")
+  message      String?
+  createdBy    String?   @map("created_by")
+  createdAt    DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([createdAt(sort: Desc)], map: "idx_social_uploads_created")
+  @@map("social_uploads")
+}
+
+// ── Monthly IT Operations & Security Snapshot ────────────────────────────────────
+// Raw-SQL managed by lib/it-report/generate.ts (ensureItReportTables). Declared here so
+// `prisma db push --accept-data-loss` KEEPS them instead of dropping them each deploy
+// (the same lesson as social_posts above). Types/nullability/indexes match the live DDL,
+// so adding these models is a no-op against the existing tables.
+model ItReportConfig {
+  id            Int       @id @default(autoincrement())
+  customerId    Int       @unique @map("customer_id")
+  recipients    String?   @default("")
+  primaryDomain String?   @default("") @map("primary_domain")
+  sdmNotes      String?   @default("") @map("sdm_notes")
+  manual        Json?
+  autoSend      Boolean?  @default(true) @map("auto_send")
+  isActive      Boolean?  @default(false) @map("is_active")
+  createdAt     DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt     DateTime? @default(now()) @db.Timestamptz(6) @map("updated_at")
+
+  @@map("it_report_configs")
+}
+
+model ItReportRun {
+  id          Int       @id @default(autoincrement())
+  customerId  Int       @map("customer_id")
+  periodStart DateTime  @db.Date @map("period_start")
+  periodEnd   DateTime  @db.Date @map("period_end")
+  periodLabel String?   @map("period_label")
+  sdmNotes    String?   @default("") @map("sdm_notes")
+  manual      Json?
+  subject     String?
+  html        String?
+  status      String?   @default("draft")
+  error       String?
+  createdAt   DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+  sentAt      DateTime? @db.Timestamptz(6) @map("sent_at")
+
+  @@index([customerId, periodStart(sort: Desc)], map: "idx_itrun_cust")
+  @@map("it_report_runs")
+}
+
+model ItReportNote {
+  id         Int       @id @default(autoincrement())
+  customerId Int       @map("customer_id")
+  body       String
+  author     String?   @default("")
+  category   String?   @default("observation")
+  createdAt  DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([customerId, createdAt(sort: Desc)], map: "idx_itnote_cust")
+  @@map("it_report_notes")
+}
+
+// Bookmarks — shared staff quick-links (sidebar dropdown). Raw-SQL managed in routes/tools.ts;
+// declared here so `prisma db push` keeps the table.
+model Bookmark {
+  id        Int       @id @default(autoincrement())
+  label     String
+  url       String
+  sort      Int?      @default(0)
+  createdAt DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@map("bookmarks")
+}
+
+// Reply templates — canned composer messages. Raw-SQL managed by lib/reply-templates.ts;
+// declared here so `prisma db push` keeps the table.
+model ReplyTemplate {
+  id        Int       @id @default(autoincrement())
+  name      String
+  bodyHtml  String    @default("") @map("body_html")
+  sort      Int?      @default(0)
+  isActive  Boolean?  @default(true) @map("is_active")
+  createdAt DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt DateTime? @default(now()) @db.Timestamptz(6) @map("updated_at")
+
+  @@map("reply_templates")
+}
+
+// ── LITS-DMARC — email authentication monitoring ─────────────────────────────────
+// Raw-SQL managed by lib/dmarc/store.ts (ensureDmarcTables). Declared here so
+// `prisma db push --accept-data-loss` KEEPS them instead of dropping them each deploy
+// (same lesson as social_posts / it_report_*). Keep in sync with the DDL in store.ts.
+model DmarcDomain {
+  id                Int       @id @default(autoincrement())
+  customerId        Int?      @map("customer_id")
+  domain            String    @unique
+  monitoringEnabled Boolean?  @default(true) @map("monitoring_enabled")
+  policy            String?   @default("")
+  targetPolicy      String?   @default("none") @map("target_policy")
+  score             Int?
+  lastCheck         Json?     @map("last_check")
+  lastCheckedAt     DateTime? @db.Timestamptz(6) @map("last_checked_at")
+  createdAt         DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt         DateTime? @default(now()) @db.Timestamptz(6) @map("updated_at")
+
+  @@map("dmarc_domains")
+}
+
+model DmarcReport {
+  id              Int       @id @default(autoincrement())
+  domainId        Int       @map("domain_id")
+  reportId        String    @map("report_id")
+  orgName         String?   @default("") @map("org_name")
+  orgEmail        String?   @default("") @map("org_email")
+  dateBegin       DateTime? @db.Timestamptz(6) @map("date_begin")
+  dateEnd         DateTime? @db.Timestamptz(6) @map("date_end")
+  policyPublished Json?     @map("policy_published")
+  recordCount     Int?      @default(0) @map("record_count")
+  messageCount    Int?      @default(0) @map("message_count")
+  receivedAt      DateTime? @default(now()) @db.Timestamptz(6) @map("received_at")
+
+  @@unique([domainId, orgName, reportId], map: "dmarc_reports_domain_id_org_name_report_id_key")
+  @@index([domainId, dateBegin(sort: Desc)], map: "idx_dmarc_reports_domain")
+  @@map("dmarc_reports")
+}
+
+model DmarcRecord {
+  id           Int       @id @default(autoincrement())
+  reportId     Int       @map("report_id")
+  domainId     Int       @map("domain_id")
+  dateBegin    DateTime? @db.Timestamptz(6) @map("date_begin")
+  sourceIp     String    @map("source_ip")
+  count        Int?      @default(1)
+  disposition  String?   @default("none")
+  dkimAligned  Boolean?  @default(false) @map("dkim_aligned")
+  spfAligned   Boolean?  @default(false) @map("spf_aligned")
+  dkimResult   String?   @default("") @map("dkim_result")
+  dkimSelector String?   @default("") @map("dkim_selector")
+  spfResult    String?   @default("") @map("spf_result")
+  headerFrom   String?   @default("") @map("header_from")
+  envelopeFrom String?   @default("") @map("envelope_from")
+  ptr          String?   @default("")
+  senderName   String?   @default("") @map("sender_name")
+  senderKnown  Boolean?  @default(false) @map("sender_known")
+  createdAt    DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([domainId, dateBegin(sort: Desc)], map: "idx_dmarc_records_domain")
+  @@map("dmarc_records")
+}

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+  <title><%= typeof title !== 'undefined' ? title + ' — ' : '' %>Lumen IT</title>
+  <link rel="icon" type="image/png" href="/static/lumen-crest.png">
+  <meta name="theme-color" content="#0ea5b7">
+  <link rel="stylesheet" href="/static/app.css">
+  <script>try { if (localStorage.getItem('portalNavCollapsed') === '1') document.documentElement.classList.add('nav-collapsed'); } catch (e) {}</script>
+  <style>
+    /* Customer-area extras layered on top of the Portal stylesheet */
+    .myc .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px; margin: 18px 0; }
+    .myc .stat { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: block; text-decoration: none; color: inherit; }
+    .myc .stat .n { font-size: 30px; font-weight: 700; color: var(--accent, #0ea5b7); line-height: 1; }
+    .myc .stat .l { font-size: 13px; color: #64748b; margin-top: 6px; }
+    .myc .empty { text-align: center; color: #64748b; padding: 30px 12px; }
+    .myc label { display: block; font-weight: 600; font-size: 14px; margin: 14px 0 6px; }
+    .myc input, .myc textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; font-size: 15px; font-family: inherit; }
+    .myc .btn.ghost { background: #fff; }
+    .myc h1 { font-size: 22px; margin: 0 0 4px; }
+    .myc h2 { font-size: 16px; margin: 0 0 12px; }
+    .sidebar-sub { font-size: 11px; color: #94a3b8; padding: 0 12px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .nav-collapsed .sidebar-sub { display: none; }
+  </style>
+</head>
+<body class="app">
+<%
+  var P = (typeof perms !== 'undefined' && perms) ? perms : {};
+  function ic(name){ return ({
+    home:  '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+    ticket:'<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/>',
+    invoice:'<rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
+    quote: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+    box:   '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
+    chart: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+    people:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    user:  '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+    shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+    grid:  '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>'
+  })[name] || ''; }
+  var items = [['home','/my','Home','home'], ['tickets','/my/tickets','Support','ticket']];
+  if (P.finance)   items.push(['invoices','/my/invoices','Invoices','invoice']);
+  if (P.finance)   items.push(['quotes','/my/quotes','Quotes','quote']);
+  if (P.services)  items.push(['services','/my/services','Services','box']);
+  if (P.insights)  items.push(['insights','/my/insights','Insights','chart']);
+  if (P.insights)  items.push(['oneboard','/my/oneboard','OneBoard','grid']);
+  if (P.itReports) items.push(['it-reports','/my/it-reports','IT Reports','shield']);
+  if (P.viewUsers) items.push(['users','/my/users','People','people']);
+  items.push(['profile','/my/profile','Profile','user']);
+%>
+<aside class="sidebar">
+  <div class="sidebar-top">
+    <a href="/my" class="sidebar-brand">
+      <span class="brand-text"><span class="brand-logo" style="font-size:26px;font-weight:800;letter-spacing:-.5px;line-height:1;">Portal</span></span>
+    </a>
+    <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle navigation" title="Toggle navigation">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+  </div>
+  <% if (typeof company !== 'undefined' && company) { %><div class="sidebar-sub"><%= company %></div><% } %>
+  <nav class="sidebar-nav">
+    <% items.forEach(function(it){ var isIns = it[0] === 'insights'; %>
+      <a href="<%= it[1] %>" class="nav-item <%= active === it[0] ? 'active' : '' %>" title="<%= it[2] %>">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><%- ic(it[3]) %></svg>
+        <% if (isIns) { %>
+          <span class="nav-label" style="font-weight:800;background:linear-gradient(90deg,#10b981,#2563eb);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;"><%= it[2] %></span>
+        <% } else { %>
+          <span class="nav-label"><%= it[2] %></span>
+        <% } %>
+      </a>
+    <% }); %>
+  </nav>
+  <div class="sidebar-foot">
+    <% if (typeof user !== 'undefined') { %>
+    <div class="nav-item nav-user" title="<%= user.displayName %>">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="nav-label"><%= user.displayName %></span>
+    </div>
+    <a href="/logout" class="nav-item" title="Sign out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      <span class="nav-label">Sign out</span>
+    </a>
+    <% } %>
+  </div>
+</aside>
+<main class="main">
+  <div class="myc">
