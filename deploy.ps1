@@ -1,4 +1,4 @@
-# deploy.ps1 — Deploy Lumen MSP Portal to Azure server
+﻿# deploy.ps1 — Deploy Lumen MSP Portal to Azure server
 # Builds locally then ships dist/ to server — server just runs node.
 
 $server     = "lits-admin@51.11.176.101"
@@ -19,14 +19,14 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "Build OK." -ForegroundColor Green
 
-# Step 1.5: Journey-builder regression suite — the core product claim ("the magic key to
+# Step 1.5: Journey-builder regression suite - the core product claim ("the magic key to
 # group calls"). A journey builder that miscounts calls must NEVER reach customers, so a
-# failing suite aborts the deploy. Fixtures live in src/scripts/test-journeys.ts — add one
+# failing suite aborts the deploy. Fixtures live in src/scripts/test-journeys.ts - add one
 # for every counting bug ever found.
 Write-Host "Testing journey builder..." -ForegroundColor Yellow
 node dist/scripts/test-journeys.js
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "Journey-builder tests FAILED — deploy aborted." -ForegroundColor Red
+    Write-Host "Journey-builder tests FAILED - deploy aborted." -ForegroundColor Red
     exit 1
 }
 Write-Host "Journey builder OK." -ForegroundColor Green
