@@ -21,6 +21,7 @@ model User {
   inFinanceGroup Boolean   @default(false) @map("finance_group") // gates invoices + the dashboard invoices card
   hiddenFromLookups Boolean @default(false) @map("hidden_from_lookups") // break-glass/login accounts: hide from engineer + assignee pickers
   lastLoginAt    DateTime? @map("last_login_at")
+  oneboardPrefs  Json?     @map("oneboard_prefs") // OneBoard: per-user saved site selection {"sites":[ids]}
   createdAt    DateTime  @default(now()) @map("created_at")
 
   customer     Customer? @relation(fields: [customerId], references: [id])

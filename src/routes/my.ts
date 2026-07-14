@@ -7,6 +7,7 @@ import { buildJourneys, formatRoute, type CallEventRow } from '../lib/insights-j
 import { generateFromTemplate } from '../lib/insights/report-generator';
 import { sendMail } from '../lib/mailer';
 import { aiPolishText } from '../lib/ai-compose';
+import { buildOneBoard } from '../lib/oneboard';
 
 // ── Customer Portal (/my) ──────────────────────────────────────────────────────────
 // A dedicated, reduced-access area for CUSTOMER-role users. Distinct from the staff /m app.
@@ -31,6 +32,9 @@ export async function ensureCustomerPortalColumn(): Promise<void> {
     .catch((e) => console.error('ensureCustomerPortalColumn failed:', e.message));
   await pool.query('ALTER TABLE customer_contacts ADD COLUMN IF NOT EXISTS portal_access_level text')
     .catch((e) => console.error('ensure portal_access_level failed:', e.message));
+  // OneBoard: each user's saved site selection ({"sites":[ids]}); also in schema.prisma.
+  await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS oneboard_prefs JSONB')
+    .catch((e) => console.error('ensure oneboard_prefs failed:', e.message));
 }
 
 const q1 = async (sql: string, params: any[] = [], fallback = 0): Promise<number> =>
@@ -520,6 +524,60 @@ router.get('/my/insights/report/:id', need('insights'), async (req: Request, res
     console.error('/my/insights/report failed:', e?.message || e);
     if (!res.headersSent) res.status(503).send('Insights is temporarily unavailable.');
   }
+});
+
+// ── OneBoard — "Dashboard for the whole company" ─────────────────────────────────
+// The customer's sites side by side, each panel scoped by ITS OWN site logic (never
+// contaminated — see lib/oneboard.ts). Site selection is per-user tick boxes saved to
+// users.oneboard_prefs; range = week selector or custom dates (capped at 92 days);
+// optional compare-with-previous-period deltas.
+router.get('/my/oneboard', need('insights'), async (req: Request, res: Response) => {
+  const u = req.session.user!; const c = cid(req);
+  const company = (await rows('SELECT name FROM customers WHERE id=$1', [c]))[0]?.name || '';
+  const isDate = (s: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+  const now = new Date(); now.setUTCHours(0, 0, 0, 0);
+  const thisMon = new Date(now); thisMon.setUTCDate(thisMon.getUTCDate() - ((thisMon.getUTCDay() + 6) % 7));
+  const lastMon = new Date(thisMon); lastMon.setUTCDate(lastMon.getUTCDate() - 7);
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  let from = isDate(req.query.from) ? String(req.query.from) : iso(lastMon);
+  let to = isDate(req.query.to) ? String(req.query.to) : iso(new Date(lastMon.getTime() + 6 * 86400000));
+  if (to < from) { const t = from; from = to; to = t; }
+  const span = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) + 1;
+  if (span > 92) to = iso(new Date(new Date(from).getTime() + 91 * 86400000));
+
+  // Site selection: explicit query > saved layout > all. Ids are re-validated against the
+  // customer's OWN sites inside buildOneBoard, so forged/stale ids are simply ignored.
+  let siteIds: number[] | null = null;
+  if (req.query.sites !== undefined) {
+    const qs = req.query.sites;
+    siteIds = (Array.isArray(qs) ? qs : [qs]).map((x) => parseInt(String(x), 10)).filter(Number.isInteger);
+  } else {
+    const prefs = (await rows('SELECT oneboard_prefs FROM users WHERE id=$1', [u.id]))[0]?.oneboard_prefs;
+    if (prefs && Array.isArray(prefs.sites)) siteIds = prefs.sites.map((n: any) => parseInt(String(n), 10)).filter(Number.isInteger);
+  }
+  const compare = req.query.cmp === '1';
+  const data = await buildOneBoard(c, { from, to, siteIds, compare });
+
+  // Recent complete weeks for the selector (Mon–Sun); mark the current pick when it matches.
+  const weeks: { mon: string; label: string }[] = [];
+  for (let i = 1; i <= 12; i++) {
+    const ms = new Date(thisMon); ms.setUTCDate(ms.getUTCDate() - i * 7);
+    const su = new Date(ms); su.setUTCDate(su.getUTCDate() + 6);
+    const fmt = (x: Date) => x.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    weeks.push({ mon: iso(ms), label: fmt(ms) + ' – ' + fmt(su) + ' ' + su.getUTCFullYear() });
+  }
+  const weekSel = (span === 7 && weeks.some((w) => w.mon === from)) ? from : '';
+  res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, from, to, compare, weeks, weekSel });
+});
+
+// Save this user's site tick boxes as their layout. Scoped to their own users row; the
+// ids are re-validated against their company's sites on every read.
+router.post('/my/oneboard/prefs', need('insights'), async (req: Request, res: Response) => {
+  const u = req.session.user!;
+  const raw = (req.body || {}).sites;
+  const ids = Array.isArray(raw) ? raw.map((n: any) => parseInt(String(n), 10)).filter(Number.isInteger).slice(0, 50) : [];
+  await pool.query('UPDATE users SET oneboard_prefs=$1::jsonb WHERE id=$2', [JSON.stringify({ sites: ids }), u.id]).catch(() => {});
+  res.json({ ok: true });
 });
 
 // ── IT Operations & Security Snapshots (customer view) ───────────────────────────
