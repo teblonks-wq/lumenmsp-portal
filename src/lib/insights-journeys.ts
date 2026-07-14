@@ -180,10 +180,46 @@ export function buildJourneys(rows: CallEventRow[], config: LogicConfig = {}): C
     }
   }
 
+  // SECOND-PASS MERGE (the Didcot lesson part 2, 2026-07-14): Tollring issues a NEW call_id per
+  // queue hop/bounce, so one physical call can arrive as several call_id groups — one caller
+  // ringing for three minutes showed up as SIX separate "missed" journeys (inflating a Didcot
+  // week by ~11% overall and missed calls by ~27%). Cluster the groups by caller number: groups
+  // from the same number whose time spans sit within the journey window of each other are ONE
+  // call. Withheld/anonymous/blank callers are never merged (different people would glue together).
+  const spanOf = (g: CallEventRow[]) => ({
+    start: Math.min(...g.map((r) => toTs(r.event_datetime))),
+    end:   Math.max(...g.map((r) => toTs(r.event_datetime) + (Number(r.wait_seconds) || 0) * 1000)),
+  });
+  const mergeKey = (g: CallEventRow[]): string | null => {
+    const n = String(g[0].number_normalised || g[0].number_raw || '').replace(/\s+/g, '');
+    return /^\+?\d{6,}$/.test(n) ? n : null;    // only real caller numbers merge
+  };
+  const soloGroups: CallEventRow[][] = [];
+  const byCaller = new Map<string, CallEventRow[][]>();
+  for (const g of journeyGroups) {
+    const k = mergeKey(g);
+    if (!k) { soloGroups.push(g); continue; }
+    if (!byCaller.has(k)) byCaller.set(k, []);
+    byCaller.get(k)!.push(g);
+  }
+  const mergedGroups: CallEventRow[][] = [...soloGroups];
+  for (const gs of byCaller.values()) {
+    gs.sort((a, b) => spanOf(a).start - spanOf(b).start);
+    let cur = gs[0];
+    let curEnd = spanOf(cur).end;
+    for (let i = 1; i < gs.length; i++) {
+      const s = spanOf(gs[i]);
+      if (s.start - curEnd <= WINDOW * 1000) { cur = cur.concat(gs[i]); curEnd = Math.max(curEnd, s.end); }
+      else { mergedGroups.push(cur); cur = gs[i]; curEnd = spanOf(cur).end; }
+    }
+    mergedGroups.push(cur);
+  }
+  for (const g of mergedGroups) g.sort((a, b) => toTs(a.event_datetime) - toTs(b.event_datetime));
+
   const businessHours = config.business_hours || { start: '08:00', end: '18:30' };
   const minWait = Number(config.min_wait_seconds) || 0;
 
-  const built = journeyGroups.map((group) => {
+  const built = mergedGroups.map((group) => {
     const first = group[0];
     const steps: JourneyStep[] = group.map((r) => ({ group: r.group_name, outcome: r.outcome, label: labelStep(r.group_name, config.call_flow) }));
     const answeredReal = steps.some((s) => s.outcome.toLowerCase() === 'answered');
