@@ -113,6 +113,11 @@ export async function ensureReportPoolTables(): Promise<void> {
         'UPDATE report_templates SET modules=$2::jsonb WHERE base_type=$1 AND is_system=true',
         [base, JSON.stringify(mods)]);
     }
+    // Site Performance RETIRED (Terry, 2026-07-14): Daily Group Performance + Weekly Call Stats
+    // are the bread-and-butter pair; everything cross-site is OneBoard's job (dashboard, not a
+    // report). Deactivated so it vanishes from run/schedule pickers; history still renders.
+    await db().query(
+      "UPDATE report_templates SET is_active=false WHERE base_type='site_performance' AND is_system=true");
 
     // Migrate existing schedules → site_reports (one row per report_config, matched to its system template).
     await db().query(`

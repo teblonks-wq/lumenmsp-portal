@@ -19,6 +19,18 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "Build OK." -ForegroundColor Green
 
+# Step 1.5: Journey-builder regression suite — the core product claim ("the magic key to
+# group calls"). A journey builder that miscounts calls must NEVER reach customers, so a
+# failing suite aborts the deploy. Fixtures live in src/scripts/test-journeys.ts — add one
+# for every counting bug ever found.
+Write-Host "Testing journey builder..." -ForegroundColor Yellow
+node dist/scripts/test-journeys.js
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Journey-builder tests FAILED — deploy aborted." -ForegroundColor Red
+    exit 1
+}
+Write-Host "Journey builder OK." -ForegroundColor Green
+
 # Step 2: Stage files (include dist/, exclude node_modules, .env and workspace material)
 Write-Host "Staging..." -ForegroundColor Yellow
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }

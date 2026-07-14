@@ -71,7 +71,7 @@ ${noticeMsg ? `<div class="alert alert-success">${noticeMsg}</div>` : ''}
         <select name="report_type" id="report-type-select" class="input" onchange="toggleStaffSection()">
           <option value="weekly_call_stats"      ${config?.report_type === 'weekly_call_stats'      ? 'selected' : ''}>Weekly Call Stats</option>
           <option value="group_call_performance" ${config?.report_type === 'group_call_performance' ? 'selected' : ''}>Daily Group Performance</option>
-          <option value="site_performance"       ${config?.report_type === 'site_performance'       ? 'selected' : ''}>Site Performance (date range)</option>
+          ${config?.report_type === 'site_performance' ? `<option value="site_performance" selected>Site Performance (retired — move to Daily/Weekly)</option>` : ''}
         </select>
       </div>
       <div class="form-group">
