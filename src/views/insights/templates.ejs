@@ -17,7 +17,7 @@
 <%- include('_layout', { title: 'Reports', user, csrfToken: (typeof csrfToken !== 'undefined' ? csrfToken : ''), body: `
   <div class="page-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
     <div><h1>Report Pool</h1><p style="color:#6b7280;margin:4px 0 0;">Reusable report templates — a name + a set of modules, available to every customer. The site's logic drives the numbers.</p></div>
-    <a class="btn-primary" href="/insights/templates/new" style="padding:8px 16px;">+ New template</a>
+    <span class="muted" style="font-size:12px;">Fixed catalogue — system reports are locked; new custom templates are retired (Explore replaces them).</span>
   </div>
   ${msg ? '<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:10px 14px;border-radius:8px;margin-bottom:14px;">' + esc(msg) + '</div>' : ''}
   ${err ? '<div style="background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;padding:10px 14px;border-radius:8px;margin-bottom:14px;">' + esc(err) + '</div>' : ''}

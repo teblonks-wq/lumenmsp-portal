@@ -889,8 +889,11 @@ router.get('/insights/templates', requireAuth, async (req: Request, res: Respons
   res.render('insights/templates', { user: req.session.user!, templates, modules: moduleList(), msg: req.query.msg || null, err: req.query.err || null });
 });
 
-router.get('/insights/templates/new', requireAuth, requireAdmin, (req: Request, res: Response) => {
-  res.render('insights/template-form', { user: req.session.user!, tpl: null, modules: moduleList(), isNew: true });
+// Custom-template CREATION retired (Terry, 2026-07-14): the locked system catalogue + the coming
+// Explore screen replace it. Existing custom templates keep working (edit/delete stay) until
+// they're migrated, but no new ones can be made — templates were the module-sprawl generator.
+router.get('/insights/templates/new', requireAuth, requireAdmin, (_req: Request, res: Response) => {
+  res.redirect('/insights/templates?err=' + encodeURIComponent('New templates are retired — the locked reports plus Explore (coming) cover it. Existing custom templates still work.'));
 });
 
 router.get('/insights/templates/:id/edit', requireAuth, requireAdmin, async (req: Request, res: Response) => {
@@ -902,15 +905,9 @@ router.get('/insights/templates/:id/edit', requireAuth, requireAdmin, async (req
   res.render('insights/template-form', { user: req.session.user!, tpl, modules: moduleList(), isNew: false });
 });
 
-router.post('/insights/templates', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  if (!insightsPool) { res.redirect('/insights/templates?err=Insights+DB+not+connected'); return; }
-  const name = String((req.body as any).name || '').trim();
-  if (!name) { res.redirect('/insights/templates?err=' + encodeURIComponent('Give the template a name.')); return; }
-  const mods = orderModules((req.body as any).modules);
-  try {
-    await insightsPool.query('INSERT INTO report_templates (name, base_type, modules, is_system, is_active) VALUES ($1,$2,$3::jsonb,false,true)', [name, 'custom', JSON.stringify(mods)]);
-    res.redirect('/insights/templates?msg=' + encodeURIComponent('Template created'));
-  } catch (e: any) { res.redirect('/insights/templates?err=' + encodeURIComponent((e.message || 'Create failed').slice(0, 100))); }
+router.post('/insights/templates', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  // Creation retired — see the GET /insights/templates/new comment.
+  res.redirect('/insights/templates?err=' + encodeURIComponent('New templates are retired — the locked reports plus Explore (coming) cover it.'));
 });
 
 router.post('/insights/templates/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
