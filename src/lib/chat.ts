@@ -85,6 +85,8 @@ export async function ensureChatTables(): Promise<void> {
     ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS user_agent TEXT;
     ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS browser TEXT;
     ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS os TEXT;
+    ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+    ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS deleted_by_user_id INTEGER;
   `);
 }
 
@@ -241,7 +243,7 @@ export async function listSessions(status = 'active'): Promise<any[]> {
             (SELECT body FROM chat_messages m WHERE m.session_id=s.id ORDER BY id DESC LIMIT 1) AS last_body,
             (SELECT COUNT(*) FROM chat_messages m WHERE m.session_id=s.id AND m.sender='visitor'
                AND m.created_at > COALESCE(s.last_agent_at, s.created_at))::int AS unread
-       FROM chat_sessions s WHERE s.status=$1 ORDER BY s.updated_at DESC LIMIT 100`, [status]
+       FROM chat_sessions s WHERE s.status=$1 AND s.deleted_at IS NULL ORDER BY s.updated_at DESC LIMIT 100`, [status]
   )).rows;
 }
 
@@ -250,6 +252,15 @@ export async function assignSession(id: number, userId: number): Promise<void> {
 }
 export async function closeSession(id: number): Promise<void> {
   await pool.query("UPDATE chat_sessions SET status='closed', updated_at=NOW() WHERE id=$1", [id]);
+}
+
+// Soft delete -> recycle bin ("Website chats" section). Also closes the chat so the visitor's
+// widget stops feeding it; restoring from the bin clears deleted_at (the chat stays closed).
+export async function deleteSession(id: number, userId: number): Promise<void> {
+  await pool.query(
+    "UPDATE chat_sessions SET status='closed', deleted_at=NOW(), deleted_by_user_id=$2, updated_at=NOW() WHERE id=$1",
+    [id, userId]
+  );
 }
 
 // When an engineer picks up a chat, auto-send the basic-info request UNDER THEIR NAME (reads as a
@@ -289,6 +300,6 @@ export async function transcript(sessionId: number): Promise<string> {
 
 export async function countWaiting(): Promise<number> {
   return (await pool.query(
-    "SELECT COUNT(*)::int n FROM chat_sessions WHERE status='active' AND assigned_user_id IS NULL"
+    "SELECT COUNT(*)::int n FROM chat_sessions WHERE status='active' AND assigned_user_id IS NULL AND deleted_at IS NULL"
   )).rows[0].n;
 }

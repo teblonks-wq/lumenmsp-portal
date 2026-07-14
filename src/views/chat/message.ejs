@@ -22,6 +22,7 @@
       <button class="btn btn-primary" id="newCaseBtn" onclick="newCase()">➕ Create case from this</button>
       <% } %>
       <button class="btn" onclick="openTag()"><%= m.ticket_id ? 'Re-tag / move' : 'Tag to existing case' %></button>
+      <% if (user.role==='admin') { %><button class="btn" style="color:#dc2626;" onclick="delMsg()">🗑 Delete</button><% } %>
     </div>
   </div>
   <div style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;background:#fafafa;">
@@ -82,6 +83,14 @@ function newCase(){
     .then(function(r){return r.json();})
     .then(function(j){ if(j.ok){ location.href='/tickets/'+j.ticketId; } else { alert(j.error||'Could not create the case.'); if(b){ b.disabled=false; b.textContent='➕ Create case from this'; } } })
     .catch(function(){ alert('Could not create the case.'); if(b){ b.disabled=false; b.textContent='➕ Create case from this'; } });
+}
+function delMsg(){
+  var warn = <%- m.ticket_id ? JSON.stringify("Delete this message? It also disappears from the case it's tagged to. It moves to the recycle bin.") : JSON.stringify("Delete this message? It moves to the recycle bin.") %>;
+  if(!confirm(warn)) return;
+  fetch('/chat/msg/'+MSG_ID+'/delete',{method:'POST',headers:{'x-csrf-token':csrf()}})
+    .then(function(r){return r.json();})
+    .then(function(j){ if(j.ok){ location.href='/chat/channel/<%= m.channel %>'; } else { alert(j.error||'Could not delete.'); } })
+    .catch(function(){ alert('Could not delete.'); });
 }
 function sendReply(){ var body=(document.getElementById('replyBody').value||'').trim(); if(!body) return; var b=document.getElementById('replySend'); b.disabled=true; b.textContent='Sending…';
   fetch('/chat/msg/'+MSG_ID+'/reply',{method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':csrf()},body:JSON.stringify({body:body})}).then(function(r){return r.json();}).then(function(j){ b.disabled=false; b.textContent='Send reply'; if(j.ok){ location.reload(); } else { alert(j.error||'Could not send.'); } }).catch(function(){ b.disabled=false; b.textContent='Send reply'; alert('Could not send.'); });

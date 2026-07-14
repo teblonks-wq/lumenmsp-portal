@@ -19,6 +19,14 @@ const SECTIONS: Record<string, Section> = {
   contracts:   { table: 'contracts',            label: 'Contracts',   title: 't.contract_number', sub: 't.title',          link: '/contracts/' },
   tickets:     { table: 'inbox_tickets',        label: 'Tickets',     title: 't.ticket_number',   sub: 't.subject',        link: '/tickets/' },
   credentials: { table: 'customer_credentials', label: 'Passwords',   title: 't.name',            sub: 'c.name',           join: 'LEFT JOIN customers c ON c.id = t.customer_id', link: '/customers/', linkId: 't.customer_id', hash: '#passwords' },
+  chats:       { table: 'chat_sessions',        label: 'Website chats', title: "COALESCE(NULLIF(t.name,''), NULLIF(t.email,''), 'Visitor')", sub: 't.department', link: '/chat/' },
+};
+
+// Snapshot-based sections (recycle_items) — deleted rows are stored as a copy and restored by
+// re-inserting them. Keyed by entity_type.
+const SNAPSHOT_SECTIONS: Record<string, string> = {
+  comms_line: 'Comms lines',
+  inbox_message: 'Chat messages (WhatsApp / Teams)',
 };
 
 router.get('/recycle-bin', requireAuth, async (req: Request, res: Response) => {
@@ -33,13 +41,14 @@ router.get('/recycle-bin', requireAuth, async (req: Request, res: Response) => {
     rows.forEach((r: any) => { r.href = s.link + r.link_id + (s.hash || ''); });
     sections.push({ key, label: s.label, link: s.link, rows });
   }
-  // Snapshot-based sections (e.g. recycled comms lines) — restored by re-inserting the row.
-  const rec = (await pool.query(
-    `SELECT ri.id, ri.label AS title, ri.sublabel AS sub, ri.deleted_at, u.display_name AS deleted_by
-       FROM recycle_items ri LEFT JOIN users u ON u.id = ri.deleted_by_user_id
-      WHERE ri.entity_type='comms_line' AND ri.restored_at IS NULL ORDER BY ri.deleted_at DESC LIMIT 100`
-  )).rows;
-  sections.push({ key: 'comms_line', label: 'Comms lines', link: '', rows: rec });
+  for (const key of Object.keys(SNAPSHOT_SECTIONS)) {
+    const rec = (await pool.query(
+      `SELECT ri.id, ri.label AS title, ri.sublabel AS sub, ri.deleted_at, u.display_name AS deleted_by
+         FROM recycle_items ri LEFT JOIN users u ON u.id = ri.deleted_by_user_id
+        WHERE ri.entity_type=$1 AND ri.restored_at IS NULL ORDER BY ri.deleted_at DESC LIMIT 100`, [key]
+    )).rows;
+    sections.push({ key, label: SNAPSHOT_SECTIONS[key], link: '', rows: rec });
+  }
   res.render('recycle-bin', { user: req.session.user!, sections, error: req.query.error || '' });
 });
 
@@ -47,9 +56,9 @@ router.post('/recycle-bin/:section/:id/restore', requireAuth, async (req: Reques
   const section = String(req.params.section);
   const id = parseInt(String(req.params.id), 10);
   // Snapshot-restored sections re-insert the row from its saved copy.
-  if (section === 'comms_line') {
+  if (SNAPSHOT_SECTIONS[section]) {
     await restoreRow(id);
-    await logActivity(req.session.user!.id, 'restored', section, id, `Restored comms line #${id}`);
+    await logActivity(req.session.user!.id, 'restored', section, id, `Restored ${SNAPSHOT_SECTIONS[section]} item #${id}`);
     res.redirect('/recycle-bin'); return;
   }
   const s = SECTIONS[section];
@@ -61,9 +70,9 @@ router.post('/recycle-bin/:section/:id/restore', requireAuth, async (req: Reques
 
 router.post('/recycle-bin/:section/empty', requireAuth, async (req: Request, res: Response) => {
   const section = String(req.params.section);
-  if (section === 'comms_line') {
-    const del = await pool.query("DELETE FROM recycle_items WHERE entity_type='comms_line' AND restored_at IS NULL");
-    await logActivity(req.session.user!.id, 'emptied', section, null, `Emptied Comms lines bin (${del.rowCount} removed)`);
+  if (SNAPSHOT_SECTIONS[section]) {
+    const del = await pool.query('DELETE FROM recycle_items WHERE entity_type=$1 AND restored_at IS NULL', [section]);
+    await logActivity(req.session.user!.id, 'emptied', section, null, `Emptied ${SNAPSHOT_SECTIONS[section]} bin (${del.rowCount} removed)`);
     res.redirect('/recycle-bin'); return;
   }
   const s = SECTIONS[section];

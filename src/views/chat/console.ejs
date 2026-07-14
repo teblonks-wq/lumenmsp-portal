@@ -55,7 +55,7 @@
             <td><span class="badge <%= s.department==='sales'?'badge-sent':'badge-primary' %>"><%= s.department || 'support' %></span></td>
             <td class="muted" style="font-size:13px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><%= s.last_body || '' %></td>
             <td class="muted" style="font-size:12px;white-space:nowrap;"><%= rel(s.updated_at) %></td>
-            <td style="text-align:right;"><a class="row-link" href="/chat/<%= s.id %>">open →</a></td>
+            <td style="text-align:right;white-space:nowrap;"><a class="row-link" href="/chat/<%= s.id %>">open →</a><% if (user.role==='admin') { %><form method="post" action="/chat/<%= s.id %>/delete" style="display:inline;margin:0 0 0 10px;" onclick="event.stopPropagation();" onsubmit="return confirm('Delete this chat and its messages? It moves to the recycle bin.');"><button class="btn" type="submit" style="padding:2px 8px;font-size:12px;color:#dc2626;">Delete</button></form><% } %></td>
           </tr>
         <% }); %>
       </tbody>

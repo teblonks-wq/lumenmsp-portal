@@ -1,12 +1,14 @@
 import { Router, Request, Response } from 'express';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
-import { listSessions, sessionById, getMessages, addMessage, assignSession, closeSession, transcript, liveVisitors, autoAskInfo } from '../lib/chat';
+import { listSessions, sessionById, getMessages, addMessage, assignSession, closeSession, deleteSession, transcript, liveVisitors, autoAskInfo } from '../lib/chat';
 import { nextTicketNumber } from './tickets';
 import { notifyAgents } from '../lib/callhub';
 import { sendWhatsAppText, sendWhatsAppTemplate, whatsappConfig } from '../lib/whatsapp';
 import { sendTeamsReply } from '../lib/teams';
 import { logChannel } from '../lib/commslog';
+import { logActivity } from '../lib/activity';
+import { recycleRow } from '../lib/recycle';
 import { setSetting } from '../lib/settings';
 import { WA_TEMPLATES, listMetaTemplates, pushTemplateToMeta, renderTemplateBody } from '../lib/wa-templates';
 import { aiClassifyTicketCategory, aiTicketCategoryEnabled } from '../lib/ai-compose';
@@ -84,6 +86,18 @@ router.post('/chat/:id/reply', requireAuth, async (req: Request, res: Response) 
 router.post('/chat/:id/close', requireAuth, async (req: Request, res: Response) => {
   await closeSession(parseInt(String(req.params.id), 10));
   res.redirect('/chat?msg=' + encodeURIComponent('Chat closed'));
+});
+
+// Delete a website chat (admin only) — soft delete into Admin → Recycle bin → Website chats.
+// Restore brings the whole conversation back; emptying the bin removes the session and its
+// messages for good (chat_messages cascade on the session row).
+router.post('/chat/:id/delete', requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const s = await sessionById(id);
+  if (!s) { res.redirect('/chat?err=Chat+not+found'); return; }
+  await deleteSession(id, req.session.user!.id);
+  await logActivity(req.session.user!.id, 'deleted', 'chat', id, `Deleted website chat #${id} (${s.name || s.email || 'visitor'})`).catch(() => {});
+  res.redirect('/chat?msg=' + encodeURIComponent('Chat deleted — it can be restored from the recycle bin'));
 });
 
 // Find the chat's customer/contact, creating a prospect customer + contact if needed.
@@ -258,6 +272,29 @@ router.post('/chat/msg/:id/tag', requireAuth, async (req: Request, res: Response
     `INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1,$2,'system_log',$3)`,
     [ticketId, req.session.user?.id || null, (m.channel || 'message') + ' message tagged to this case by ' + (req.session.user?.displayName || 'staff')]
   ).catch(() => {});
+  res.json({ ok: true });
+});
+
+// Delete a WhatsApp/Teams message (admin only) — snapshot-and-remove into the recycle bin
+// (Admin → Recycle bin → Chat messages). If it was tagged to a case it disappears from that
+// case's timeline too; restoring re-inserts it (tag included). A system note is left on the case.
+router.post('/chat/msg/:id/delete', requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const m = (await pool.query('SELECT id, channel, from_name, from_email, body_text, ticket_id FROM inbox_messages WHERE id=$1', [id])).rows[0];
+  if (!m) { res.json({ ok: false, error: 'Message not found' }); return; }
+  const chLabel = CHANNEL_LABELS[m.channel] || m.channel || 'message';
+  const ok = await recycleRow('inbox_messages', id, {
+    entityType: 'inbox_message',
+    label: (m.from_name || m.from_email || 'Message') + ' · ' + chLabel,
+    sublabel: (m.body_text || '').slice(0, 120),
+    userId: req.session.user!.id,
+  });
+  if (!ok) { res.json({ ok: false, error: 'Delete failed' }); return; }
+  if (m.ticket_id) {
+    await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1,$2,'system_log',$3)`,
+      [m.ticket_id, req.session.user?.id || null, chLabel + ' message deleted from this case by ' + (req.session.user?.displayName || 'staff')]).catch(() => {});
+  }
+  await logActivity(req.session.user!.id, 'deleted', 'inbox_message', id, `Deleted ${chLabel} message #${id} from ${m.from_name || m.from_email || 'unknown'}`).catch(() => {});
   res.json({ ok: true });
 });
 

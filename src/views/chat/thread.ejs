@@ -60,6 +60,9 @@
       <% if (s.status !== 'closed') { %>
       <form method="post" action="/chat/<%= s.id %>/close" style="margin:12px 0 0;" onsubmit="return confirm('Close this chat?');"><button class="btn" style="width:100%;" type="submit">End chat</button></form>
       <% } %>
+      <% if (user.role==='admin') { %>
+      <form method="post" action="/chat/<%= s.id %>/delete" style="margin:10px 0 0;" onsubmit="return confirm('Delete this chat and its messages? It moves to the recycle bin.');"><button class="btn" style="width:100%;color:#dc2626;" type="submit">🗑 Delete chat</button></form>
+      <% } %>
     </div>
   </div>
 </div>

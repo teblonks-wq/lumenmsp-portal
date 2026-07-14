@@ -1266,6 +1266,8 @@ model ChatSession {
   userAgent       String?   @map("user_agent")
   browser         String?
   os              String?
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)       // soft delete -> recycle bin
+  deletedByUserId Int?      @map("deleted_by_user_id")
 
   messages ChatMessage[]
 

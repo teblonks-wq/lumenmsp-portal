@@ -41,6 +41,7 @@
         <td style="text-align:right;white-space:nowrap;">
           <% if(m.ticket_id && m.message_direction!=='outbound'){ %><button class="btn btn-primary" style="padding:3px 10px;font-size:13px;" onclick="openReply(<%= m.id %>, '<%= esc((m.from_name||'').replace(/'/g,'')) %>')">Reply</button><% } %>
           <button class="btn" style="padding:3px 10px;font-size:13px;" onclick="openTag(<%= m.id %>, '<%= m.ticket_id ? esc((m.ticket_number||('#'+m.ticket_id))) : '' %>')"><%= m.ticket_id ? 'Re-tag' : 'Tag' %></button>
+          <% if (user.role==='admin') { %><button class="btn" style="padding:3px 10px;font-size:13px;color:#dc2626;" onclick="delMsg(<%= m.id %>, <%= m.ticket_id ? 'true' : 'false' %>)">Delete</button><% } %>
         </td>
       </tr>
       <% }); %>
@@ -123,6 +124,13 @@ function assign(ticketId){
   fetch('/chat/msg/'+tagMsgId+'/tag', { method:'POST', headers:{'Content-Type':'application/json','x-csrf-token':csrf()}, body:JSON.stringify({ ticketId: ticketId }) })
     .then(function(r){return r.json();}).then(function(j){ if(j.ok){ location.reload(); } else { alert(j.error||'Could not tag.'); } })
     .catch(function(){ alert('Could not tag.'); });
+}
+function delMsg(id, tagged){
+  var warn = tagged ? "Delete this message? It also disappears from the case it's tagged to. It moves to the recycle bin." : "Delete this message? It moves to the recycle bin.";
+  if(!confirm(warn)) return;
+  fetch('/chat/msg/'+id+'/delete', { method:'POST', headers:{'x-csrf-token':csrf()} })
+    .then(function(r){return r.json();}).then(function(j){ if(j.ok){ location.reload(); } else { alert(j.error||'Could not delete.'); } })
+    .catch(function(){ alert('Could not delete.'); });
 }
 function newCase(){
   if(!tagMsgId) return;
