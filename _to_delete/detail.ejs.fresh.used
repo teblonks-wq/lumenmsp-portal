@@ -1,0 +1,138 @@
+<%- include('../partials/header', { title: contact.full_name, user }) %>
+<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); } %>
+<% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
+<% function tel(p){ return (p||'').replace(/[^+0-9]/g,''); } %>
+
+<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/contacts">← Contacts</a></p>
+    <h1 style="margin:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <%= contact.full_name %>
+      <% if (contact.is_primary) { %><span class="badge badge-primary">Primary</span><% } %>
+      <% if (contact.is_third_party) { %><span class="badge badge-inactive">3rd party</span><% } %>
+      <% if (contact.archived) { %><span class="badge badge-inactive">Archived</span><% } %>
+    </h1>
+    <p class="muted" style="margin:4px 0 0;">
+      <% if (contact.job_title) { %><%= contact.job_title %> · <% } %>
+      <a class="row-link" href="/customers/<%= contact.customer_id %>"><%= contact.customer_name %></a>
+    </p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <button class="btn" type="button" onclick="var p=document.getElementById('ctEdit');p.style.display=p.style.display==='none'?'block':'none';">✎ Edit</button>
+  </div>
+</div>
+
+<% if (typeof msg !== 'undefined' && msg) { %><div class="alert alert-success" style="margin-bottom:14px;"><%= msg %></div><% } %>
+<% if (typeof err !== 'undefined' && err) { %><div class="alert alert-danger" style="margin-bottom:14px;"><%= err %></div><% } %>
+
+<div class="card" id="ctEdit" style="display:none;max-width:560px;margin-bottom:16px;">
+  <div class="card-header"><h2 style="margin:0;">Edit contact</h2></div>
+  <form method="post" action="/customers/<%= contact.customer_id %>/contacts/<%= contact.id %>">
+    <input type="hidden" name="return" value="/contacts/<%= contact.id %>">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div class="form-group" style="grid-column:1/-1;"><label>Full name *</label><input class="input" name="full_name" value="<%= contact.full_name %>" required style="width:100%;"></div>
+      <div class="form-group"><label>Job title</label><input class="input" name="job_title" value="<%= contact.job_title || '' %>" style="width:100%;"></div>
+      <div class="form-group"><label>Department</label><input class="input" name="department" value="<%= contact.department || '' %>" style="width:100%;"></div>
+      <div class="form-group"><label>Email</label><input class="input" name="email" value="<%= contact.email || '' %>" style="width:100%;"></div>
+      <div class="form-group"><label>Phone</label><input class="input" name="phone" value="<%= contact.phone || '' %>" style="width:100%;"></div>
+      <div class="form-group"><label>Mobile</label><input class="input" name="mobile_phone" value="<%= contact.mobile_phone || '' %>" style="width:100%;"></div>
+    </div>
+    <label style="display:flex;gap:6px;align-items:center;margin:4px 0 6px;"><input type="checkbox" name="is_third_party" <%= contact.is_third_party ? 'checked' : '' %>> Third party</label>
+    <label style="display:flex;gap:6px;align-items:center;margin-bottom:12px;"><input type="checkbox" name="protected" <%= contact.protected ? 'checked' : '' %>> Preserve this contact (directory sync won't change it)</label>
+    <button class="btn btn-primary" type="submit">Save</button>
+  </form>
+</div>
+
+<div class="card-grid" style="grid-template-columns:1fr 1fr;align-items:start;">
+  <div class="card">
+    <div class="card-header"><h2>Details</h2></div>
+    <table class="table" style="margin:0;"><tbody>
+      <tr><th style="width:38%;">Email</th><td><% if (contact.email) { %><a class="row-link" href="mailto:<%= contact.email %>"><%= contact.email %></a><% } else { %><span class="muted">—</span><% } %></td></tr>
+      <tr><th>Phone</th><td><% if (contact.phone) { %><a class="row-link" href="tel:<%= tel(contact.phone) %>">📞 <%= contact.phone %></a><% } else { %><span class="muted">—</span><% } %></td></tr>
+      <tr><th>Mobile</th><td><% if (contact.mobile_phone) { %><a class="row-link" href="tel:<%= tel(contact.mobile_phone) %>">📱 <%= contact.mobile_phone %></a><% } else { %><span class="muted">—</span><% } %></td></tr>
+      <tr><th>Job title</th><td><%= contact.job_title || '—' %></td></tr>
+      <tr><th>Department</th><td><%= contact.department || '—' %></td></tr>
+      <tr><th>Customer</th><td><a class="row-link" href="/customers/<%= contact.customer_id %>"><%= contact.customer_name %></a></td></tr>
+    </tbody></table>
+  </div>
+
+  <div>
+    <% var lvl = String(contact.portal_access_level || 'none').toLowerCase(); var on = !!lvl && lvl !== 'none'; %>
+    <div class="card" id="portal" style="margin-bottom:16px;">
+      <div class="card-header"><h2>Portal access</h2></div>
+      <% if (!contact.portal_enabled) { %>
+        <p class="muted" style="margin:0 0 12px;font-size:13px;">⚠ The customer-portal master switch is <strong>off</strong> for <%= contact.customer_name %> — access set here won't take effect until it's turned on under the company's <a class="row-link" href="/customers/<%= contact.customer_id %>#overview">Access</a> section.</p>
+      <% } %>
+      <form method="post" action="/contacts/<%= contact.id %>/portal-access">
+        <label style="display:flex;gap:8px;align-items:center;font-weight:600;margin-bottom:10px;">
+          <input type="checkbox" name="portal_on" value="1" <%= on ? 'checked' : '' %> onchange="document.getElementById('lvlSel').disabled=!this.checked;">
+          Allow portal sign-in
+        </label>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>Access level</label>
+          <select id="lvlSel" class="input" name="portal_access_level" <%= on ? '' : 'disabled' %> style="width:100%;">
+            <% [['tickets','Tickets — their own tickets only'],['tickets_insights','Own Support & Insights — their own tickets only + call insights'],['support_insights','Support & Insights — all company tickets + call insights (no financial)'],['finance','Finance — tickets + invoices'],['service','Service — tickets, services, insights, users'],['full','Full — everything']].forEach(function(o){ %>
+              <option value="<%= o[0] %>" <%= lvl===o[0]?'selected':'' %>><%= o[1] %></option>
+            <% }); %>
+          </select>
+        </div>
+        <button class="btn btn-primary" type="submit">Save access</button>
+      </form>
+      <form method="post" action="/contacts/<%= contact.id %>/portal-invite" style="margin-top:10px;padding-top:12px;border-top:1px solid var(--line);" onsubmit="return confirm('Email a portal invite to <%= contact.email || '' %>?');">
+        <button class="btn" type="submit" <%= (on && contact.email) ? '' : 'disabled' %>>✉ Send invite</button>
+        <p class="muted" style="font-size:12px;margin:6px 0 0;"><% if (!contact.email) { %>Add an email address to invite this contact.<% } else { %>Emails <strong><%= contact.email %></strong> the portal link + Microsoft sign-in steps.<% } %></p>
+      </form>
+    </div>
+
+    <div class="card" style="padding:0;margin-bottom:16px;">
+      <div class="card-header" style="padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;cursor:pointer;" onclick="if(event.target.id!=='tkSearch'){var b=document.getElementById('ctTickets');b.style.display=b.style.display==='none'?'block':'none';var c=document.getElementById('ctTkChev');if(c)c.textContent=b.style.display==='none'?'▸':'▾';}">
+        <h2 style="margin:0;"><span id="ctTkChev">▸</span> Tickets <span class="muted" style="font-weight:400;font-size:14px;">(<%= tickets.length %>)</span></h2>
+        <% if (tickets.length) { %><input id="tkSearch" class="input" type="search" placeholder="Search tickets…" style="min-width:200px;font-size:13px;padding:5px 9px;" onclick="event.stopPropagation();"><% } %>
+      </div>
+      <div id="ctTickets" style="display:none;">
+        <% if (!tickets.length) { %>
+          <div style="padding:0 20px 16px;" class="muted">No tickets for this contact.</div>
+        <% } else { %>
+          <div class="table-wrap"><table class="table" style="margin:0;">
+            <thead><tr><th>Ticket</th><th>Subject</th><th>Status</th><th>Created</th><th>Updated</th></tr></thead>
+            <tbody id="tkRows">
+              <% tickets.forEach(function(t){ %>
+                <tr class="tk-row" data-s="<%= ((t.ticket_number||'')+' '+(t.subject||'')+' '+(t.status||'')).toLowerCase().replace(/"/g,'') %>">
+                  <td><a class="row-link" href="/tickets/<%= t.id %>"><%= t.ticket_number %></a></td>
+                  <td><a class="row-link" href="/tickets/<%= t.id %>" style="color:inherit;"><%= t.subject %></a></td>
+                  <td><span class="badge <%= sbadge(t.status) %>"><%= cap(t.status) %></span></td>
+                  <td class="muted" style="white-space:nowrap;"><%= t.created_at ? new Date(t.created_at).toLocaleDateString('en-GB') : '—' %></td>
+                  <td class="muted" style="white-space:nowrap;"><%= t.updated_at ? new Date(t.updated_at).toLocaleDateString('en-GB') : '—' %></td>
+                </tr>
+              <% }); %>
+              <tr id="tkNoMatch" style="display:none;"><td colspan="5" class="muted" style="padding:12px;">No tickets match.</td></tr>
+            </tbody>
+          </table></div>
+        <% } %>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Devices</h2></div>
+      <p class="muted" style="margin:0;">Linked devices will appear here once the Atera device import is built.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var box = document.getElementById('tkSearch');
+  if (!box) return;
+  var rows = Array.prototype.slice.call(document.querySelectorAll('#tkRows .tk-row'));
+  var none = document.getElementById('tkNoMatch');
+  function expand(){ var b=document.getElementById('ctTickets'); if(b && b.style.display==='none'){ b.style.display='block'; var c=document.getElementById('ctTkChev'); if(c) c.textContent='▾'; } }
+  box.addEventListener('input', function(){
+    var q = box.value.trim().toLowerCase(); expand();
+    var shown = 0;
+    rows.forEach(function(r){ var hit = !q || (r.getAttribute('data-s')||'').indexOf(q) >= 0; r.style.display = hit ? '' : 'none'; if(hit) shown++; });
+    if (none) none.style.display = shown ? 'none' : '';
+  });
+})();
+</script>
+
+<%- include('../partials/footer') %>
