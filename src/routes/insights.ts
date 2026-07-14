@@ -422,16 +422,17 @@ router.get('/insights/report-config/new', requireAuth, requireAdmin, async (req:
 // Create report config.
 router.post('/insights/report-config', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   if (!insightsPool) { res.redirect('/insights?err=' + encodeURIComponent('Insights DB not connected')); return; }
-  const { site_id, config_label, report_type, reporting_period, send_day, send_time, logic_config, recipients } = req.body as Record<string, string>;
+  const { site_id, config_label, report_type, reporting_period, send_day, send_time, recipients } = req.body as Record<string, string>;
   if (!site_id || !config_label || !report_type) { res.redirect('/insights/report-config/new?error=Required+fields+missing'); return; }
-  let parsedLogic: any = null;
-  if (logic_config?.trim()) { try { parsedLogic = JSON.parse(logic_config); } catch { res.redirect('/insights/report-config/new?error=Invalid+JSON+in+logic+config'); return; } }
+  // Call logic lives on the SITE only (one logic per site, no duplication — Terry, 2026-07-14);
+  // report configs no longer carry their own copy. Existing rows keep theirs as a read-only
+  // fallback for sites not yet backfilled.
   try {
     const r = await insightsPool.query(
-      `INSERT INTO report_configs (site_id, config_label, report_type, reporting_period, send_day, send_time, logic_config, recipients)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      `INSERT INTO report_configs (site_id, config_label, report_type, reporting_period, send_day, send_time, recipients)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
       [parseInt(site_id, 10), config_label.trim(), report_type, reporting_period || 'weekly',
-       parseInt(send_day, 10) || 2, send_time || '09:00', parsedLogic ? JSON.stringify(parsedLogic) : null,
+       parseInt(send_day, 10) || 2, send_time || '09:00',
        parseRecipients(recipients).join(', ') || null]
     );
     res.redirect(`/insights/report-config/${r.rows[0].id}?msg=Report+config+created`);
@@ -455,16 +456,16 @@ router.get('/insights/report-config/:id/edit', requireAuth, requireAdmin, async 
 router.post('/insights/report-config/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   if (!insightsPool) { res.redirect('/insights?err=' + encodeURIComponent('Insights DB not connected')); return; }
   const id = parseInt(String(req.params.id), 10);
-  const { site_id, config_label, report_type, reporting_period, send_day, send_time, is_active, logic_config, recipients } = req.body as Record<string, string>;
-  let parsedLogic: any = null;
-  if (logic_config?.trim()) { try { parsedLogic = JSON.parse(logic_config); } catch { res.redirect(`/insights/report-config/${id}/edit?error=Invalid+JSON+in+logic+config`); return; } }
+  const { site_id, config_label, report_type, reporting_period, send_day, send_time, is_active, recipients } = req.body as Record<string, string>;
+  // logic_config is deliberately NOT written here any more — the site's logic drives reports, and
+  // the row's existing value stays untouched as the read-only fallback (see generateFromTemplate).
   try {
     await insightsPool.query(
       `UPDATE report_configs SET site_id=$1, config_label=$2, report_type=$3, reporting_period=$4,
-       send_day=$5, send_time=$6, is_active=$7, logic_config=$8, recipients=$9 WHERE id=$10`,
+       send_day=$5, send_time=$6, is_active=$7, recipients=$8 WHERE id=$9`,
       [parseInt(site_id, 10), config_label.trim(), report_type, reporting_period || 'weekly',
        parseInt(send_day, 10) || 2, send_time || '09:00', is_active !== 'false',
-       parsedLogic ? JSON.stringify(parsedLogic) : null, parseRecipients(recipients).join(', ') || null, id]
+       parseRecipients(recipients).join(', ') || null, id]
     );
     res.redirect(`/insights/report-config/${id}?msg=Config+updated`);
   } catch (e: any) { res.redirect(`/insights/report-config/${id}/edit?error=` + encodeURIComponent('Failed to update: ' + (e.message || '').slice(0, 80))); }
@@ -897,6 +898,7 @@ router.get('/insights/templates/:id/edit', requireAuth, requireAdmin, async (req
   const id = parseInt(String(req.params.id), 10);
   const tpl = (await insightsPool.query('SELECT * FROM report_templates WHERE id=$1', [id])).rows[0];
   if (!tpl) { res.status(404).render('error', { message: 'Template not found.' }); return; }
+  if (tpl.is_system) { res.redirect('/insights/templates?err=' + encodeURIComponent('System reports are locked — their modules are fixed in code.')); return; }
   res.render('insights/template-form', { user: req.session.user!, tpl, modules: moduleList(), isNew: false });
 });
 
@@ -914,6 +916,8 @@ router.post('/insights/templates', requireAuth, requireAdmin, async (req: Reques
 router.post('/insights/templates/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   if (!insightsPool) { res.redirect('/insights/templates?err=Insights+DB+not+connected'); return; }
   const id = parseInt(String(req.params.id), 10);
+  const sys = (await insightsPool.query('SELECT is_system FROM report_templates WHERE id=$1', [id])).rows[0];
+  if (sys?.is_system) { res.redirect('/insights/templates?err=' + encodeURIComponent('System reports are locked — their modules are fixed in code.')); return; }
   const name = String((req.body as any).name || '').trim();
   const mods = orderModules((req.body as any).modules);
   try {
@@ -946,20 +950,10 @@ router.post('/insights/run', requireAuth, async (req: Request, res: Response) =>
   const siteId = parseInt(String(b.site_id || ''), 10);
   const templateId = parseInt(String(b.template_id || ''), 10);
   const today = new Date().toISOString().slice(0, 10);
-  let from = new Date(b.date_from || today);
-  let to = new Date(b.date_to || b.date_from || today);
+  const from = new Date(b.date_from || today);
+  const to = new Date(b.date_to || b.date_from || today);
   if (!siteId || !templateId) { res.redirect('/insights/run?err=' + encodeURIComponent('Pick a site and a report.')); return; }
   if (isNaN(from.getTime()) || isNaN(to.getTime()) || to < from) { res.redirect('/insights/run?err=' + encodeURIComponent('Pick a valid date range.')); return; }
-  // Weekly call stats is ALWAYS one Mon–Sun week: snap to the Monday of the chosen week and clamp
-  // the end to +6 days. (Belt & braces with the form's week picker — previously date_to defaulted
-  // to today, so an ad-hoc weekly quietly reported from the chosen Monday right through today.)
-  const tplType = (await insightsPool.query('SELECT base_type FROM report_templates WHERE id=$1', [templateId]).catch(() => ({ rows: [] as any[] }))).rows[0];
-  if (tplType?.base_type === 'weekly_call_stats') {
-    from.setUTCHours(0, 0, 0, 0);
-    const dow = from.getUTCDay();
-    from.setUTCDate(from.getUTCDate() + (dow === 0 ? -6 : 1 - dow));
-    to = new Date(from); to.setUTCDate(to.getUTCDate() + 6);
-  }
   try {
     const { html } = await generateFromTemplate(templateId, siteId, from, to);
     res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline' data: blob: https:; img-src * data: blob:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; font-src 'self' data: https:");

@@ -192,8 +192,18 @@ export const MODULES: Record<string, ReportModule> = {
 // All weekly/rolling blocks are now ported into the registry above — nothing pending.
 export const PENDING_MODULES: string[] = [];
 
+// Retired from the picker (Terry's lock-down, 2026-07-14): renderers stay in the registry so any
+// old template that still references them keeps rendering, but they can't be added to templates.
+// hourly_volume/hourly_avg fold into the heatmaps; call_summary duplicates scorecard; sla,
+// voicemail and peak_concurrency are parked until a customer actually asks.
+export const RETIRED_MODULE_IDS = new Set([
+  'call_summary', 'sla', 'voicemail', 'hourly_volume', 'callers_by_day', 'hourly_avg', 'peak_concurrency',
+]);
+
 export function moduleList(): { id: string; name: string; group: string }[] {
-  return Object.values(MODULES).map((m) => ({ id: m.id, name: m.name, group: m.group }));
+  return Object.values(MODULES)
+    .filter((m) => !RETIRED_MODULE_IDS.has(m.id))
+    .map((m) => ({ id: m.id, name: m.name, group: m.group }));
 }
 
 // Compose a report from an ordered list of module ids. Unknown ids are skipped.

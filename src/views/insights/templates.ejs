@@ -3,10 +3,13 @@
   var rowsHtml = (templates || []).map(function(t){
     var mods = Array.isArray(t.modules) ? t.modules : [];
     var del = t.is_system ? '' : '<form method="post" action="/insights/templates/' + t.id + '/delete" style="display:inline;margin-left:6px;" onsubmit="return confirm(\'Delete this template?\');"><button class="btn-secondary" type="submit" style="font-size:12px;padding:4px 10px;">Delete</button></form>';
+    var act = t.is_system
+      ? '<span class="muted" style="font-size:12px;" title="System reports are locked — modules are fixed in code.">🔒 locked</span>'
+      : '<a class="btn-secondary" href="/insights/templates/' + t.id + '/edit" style="font-size:12px;padding:4px 10px;">Edit</a>' + del;
     return '<tr style="border-bottom:1px solid #e5e7eb;">'
       + '<td style="padding:10px 12px;"><strong>' + esc(t.name) + '</strong>' + (t.is_system ? ' <span style="font-size:10px;background:#eef2ff;color:#3730a3;padding:2px 7px;border-radius:20px;">system</span>' : '') + '</td>'
       + '<td style="padding:10px 12px;color:#6b7280;font-size:12px;">' + (mods.length ? esc(mods.join(', ')) : '—') + '</td>'
-      + '<td style="padding:10px 12px;text-align:right;white-space:nowrap;"><a class="btn-secondary" href="/insights/templates/' + t.id + '/edit" style="font-size:12px;padding:4px 10px;">Edit</a>' + del + '</td>'
+      + '<td style="padding:10px 12px;text-align:right;white-space:nowrap;">' + act + '</td>'
       + '</tr>';
   }).join('');
   if (!(templates || []).length) rowsHtml = '<tr><td colspan="3" style="padding:20px;color:#6b7280;">No templates yet — create one.</td></tr>';

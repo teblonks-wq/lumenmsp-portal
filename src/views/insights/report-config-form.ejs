@@ -97,19 +97,18 @@ ${noticeMsg ? `<div class="alert alert-success">${noticeMsg}</div>` : ''}
     </div>
   </div>
 
+  ${!_slm ? `
   <div class="card">
+    <div class="card-header"><h2>Call flow logic</h2></div>
+    <p class="muted" style="font-size:13px;margin:0;">Call logic lives on the <strong>site</strong> — one logic per site, no duplication. Reports read it from there; nothing is configured here any more.
+    ${config?.site_id ? `&nbsp;<a href="/insights/site/${config.site_id}/logic"><strong>Edit this site's call flow logic →</strong></a>` : '&nbsp;Pick a site and save first, then edit the logic from the site page.'}</p>
+  </div>` : ''}
+
+  <div class="card" style="${_slm ? '' : 'display:none'}">
     <div class="card-header">
       <h2>Call Flow Config</h2>
       <span class="muted" style="font-size:12px;">Built from imported data — load a customer to see available groups</span>
     </div>
-
-    ${!_slm ? `
-    <div class="alert alert-error" style="margin-bottom:14px;">
-      ⚠ <strong>Logic edited here does NOT drive reports.</strong> Since the one-logic-per-site change, the
-      <strong>SITE's</strong> call-flow logic is what the generator uses — this box is only a legacy fallback for
-      sites with no logic set. Edit the real thing at
-      <a href="/insights/site/${config?.site_id || ''}/logic"><strong>the site's Call flow logic</strong></a>.
-    </div>` : ''}
 
     <div id="no-data-msg" style="${knownGroups.length > 0 ? 'display:none' : ''}">
       <p class="muted" style="font-size:13px;margin-bottom:16px;">No call data synced yet for this customer. Save Tollring API credentials and run a sync first, then return here to configure the call flow.</p>

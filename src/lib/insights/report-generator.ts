@@ -96,15 +96,22 @@ export async function ensureReportPoolTables(): Promise<void> {
     await db().query('CREATE UNIQUE INDEX IF NOT EXISTS idx_site_reports_src ON site_reports (source_config_id) WHERE source_config_id IS NOT NULL');
 
     const seeds: [string, string, string[]][] = [
-      ['Weekly Call Stats', 'weekly_call_stats', ['scorecard', 'call_summary', 'daily_breakdown', 'hourly_missed', 'hourly_volume', 'call_flow', 'rolling_summary', 'callers_by_day', 'hourly_avg', 'heatmap', 'peak_concurrency', 'all_calls']],
-      ['Daily Group Performance', 'group_call_performance', ['scorecard', 'call_flow', 'staff', 'all_calls']],
-      ['Site Performance', 'site_performance', ['scorecard', 'daily_breakdown', 'call_flow', 'staff']],
+      ['Weekly Call Stats', 'weekly_call_stats', LOCKED_TEMPLATE_MODULES.weekly_call_stats],
+      ['Daily Group Performance', 'group_call_performance', LOCKED_TEMPLATE_MODULES.group_call_performance],
+      ['Site Performance', 'site_performance', LOCKED_TEMPLATE_MODULES.site_performance],
     ];
     for (const [name, base, mods] of seeds) {
       await db().query(
         `INSERT INTO report_templates (name, base_type, modules, is_system)
          VALUES ($1, $2, $3::jsonb, true) ON CONFLICT (lower(name)) DO NOTHING`,
         [name, base, JSON.stringify(mods)]);
+    }
+    // Realign existing system rows to the locked sets (idempotent, 3 rows) — covers rows seeded
+    // before the lock-down or hand-edited since.
+    for (const [base, mods] of Object.entries(LOCKED_TEMPLATE_MODULES)) {
+      await db().query(
+        'UPDATE report_templates SET modules=$2::jsonb WHERE base_type=$1 AND is_system=true',
+        [base, JSON.stringify(mods)]);
     }
 
     // Migrate existing schedules → site_reports (one row per report_config, matched to its system template).
@@ -240,6 +247,17 @@ export async function emailReport(configId: number, reportStart: Date, reportEnd
 // The legacy per-type renderers below the template lookup remain ONLY as a fallback for the
 // impossible case that a system template row is missing. (Decided with Terry 2026-07-08 after a
 // customer received a legacy-rendered email with UTC times: "one schedule, one portal, no confusion".)
+// Locked module sets for the SYSTEM reports (Terry's lock-down, 2026-07-14): fixed catalogue,
+// fixed modules — the Akixi/Tollring model. Enforced at render time (generateFromTemplate ignores
+// whatever a system row holds) AND realigned in the DB at startup, so a hand-edited row can't
+// drift. Weekly went 12 → 5; both heatmaps stay (customer favourites). Custom templates (is_system
+// = false) are unaffected.
+export const LOCKED_TEMPLATE_MODULES: Record<string, string[]> = {
+  weekly_call_stats:      ['scorecard', 'daily_breakdown', 'heatmap', 'hourly_missed', 'rolling_summary'],
+  group_call_performance: ['scorecard', 'call_flow', 'staff', 'outbound', 'missed_followup', 'all_calls'],
+  site_performance:       ['scorecard', 'daily_breakdown', 'call_flow', 'staff'],
+};
+
 async function systemTemplateId(baseType: string): Promise<number | null> {
   const r = await db().query(
     `SELECT id FROM report_templates WHERE base_type=$1 AND is_active=true ORDER BY is_system DESC, id LIMIT 1`,
@@ -266,7 +284,7 @@ export async function generateWeekly(configId: number, weekStart: Date, weekEnd?
   // Unified path: render via the template pipeline (falls through to legacy only if no template).
   const weeklyTpl = await systemTemplateId('weekly_call_stats');
   if (weeklyTpl) {
-    const { html } = await generateFromTemplate(weeklyTpl, cfg.site_id, weekStart, new Date(weekEnd.getTime() - 24 * 60 * 60 * 1000), logic);
+    const { html } = await generateFromTemplate(weeklyTpl, cfg.site_id, weekStart, new Date(weekEnd.getTime() - 24 * 60 * 60 * 1000));
     await saveReport(configId, weekStart, weekEnd, html);
     console.log(`✓ Weekly report generated (template pipeline): config ${configId} week ${weekStart.toISOString().slice(0, 10)}`);
     return { reportStart: weekStart, reportEnd: weekEnd };
@@ -348,7 +366,7 @@ export async function generateDaily(configId: number, reportDate: Date): Promise
   // Unified path: render via the template pipeline (falls through to legacy only if no template).
   const dailyTpl = await systemTemplateId('group_call_performance');
   if (dailyTpl) {
-    const { html } = await generateFromTemplate(dailyTpl, cfg.site_id, dayStart, dayStart, logic);
+    const { html } = await generateFromTemplate(dailyTpl, cfg.site_id, dayStart, dayStart);
     await saveReport(configId, dayStart, dayEnd, html);
     console.log(`Daily report generated (template pipeline): config ${configId} for ${reportDate.toISOString().slice(0, 10)}`);
     return { reportStart: dayStart, reportEnd: dayEnd };
@@ -431,32 +449,18 @@ async function getSiteAndCustomer(siteId: number) {
   return res.rows[0] || null;
 }
 
-export async function generateFromTemplate(templateId: number, siteId: number, from: Date, to: Date, fallbackLogic?: LogicConfig): Promise<{ html: string }> {
-  const tpl = (await db().query('SELECT name, base_type, modules FROM report_templates WHERE id=$1', [templateId])).rows[0];
+export async function generateFromTemplate(templateId: number, siteId: number, from: Date, to: Date): Promise<{ html: string }> {
+  const tpl = (await db().query('SELECT name, base_type, modules, is_system FROM report_templates WHERE id=$1', [templateId])).rows[0];
   if (!tpl) throw new Error('Report template not found.');
   const site = await getSiteAndCustomer(siteId);
   if (!site) throw new Error('Site not found.');
 
-  // Site logic is THE boundary: buildJourneys keeps only the configured groups, and the staff /
-  // outbound modules keep only the configured staff. With an empty logic every filter switches
-  // off and the report silently covers the WHOLE customer (all sites mixed together — the Didcot
-  // lesson, 2026-07-14). So: fall back to the report-config's logic when the site row hasn't been
-  // backfilled, and refuse to run boundary-less on a multi-site customer.
-  let logic = siteLogic(site);
-  if (!logic.source_of_truth_group?.length && !logic.staff_extensions?.length
-      && (fallbackLogic?.source_of_truth_group?.length || fallbackLogic?.staff_extensions?.length)) {
-    logic = { ...fallbackLogic };
-    if (site.site_business_hours) logic.business_hours = site.site_business_hours;
-  }
-  if (!logic.source_of_truth_group?.length && !logic.staff_extensions?.length) {
-    const nSites = Number((await db().query('SELECT COUNT(*)::int AS n FROM sites WHERE customer_id=$1', [site.customer_id])).rows[0]?.n || 0);
-    if (nSites > 1) {
-      throw new Error(`${site.site_label} has no call logic configured (no groups or staff). ${site.customer_name} has ${nSites} sites, so this report would mix every site's calls together. Set the site's groups and staff in its call logic, then re-run.`);
-    }
-  }
-  const modules: string[] = Array.isArray(tpl.modules)
-    ? tpl.modules
-    : (typeof tpl.modules === 'string' ? (JSON.parse(tpl.modules || '[]') as string[]) : []);
+  const logic = siteLogic(site);
+  const modules: string[] = (tpl.is_system && LOCKED_TEMPLATE_MODULES[tpl.base_type])
+    ? LOCKED_TEMPLATE_MODULES[tpl.base_type]
+    : (Array.isArray(tpl.modules)
+      ? tpl.modules
+      : (typeof tpl.modules === 'string' ? (JSON.parse(tpl.modules || '[]') as string[]) : []));
 
   const start = new Date(from); start.setUTCHours(0, 0, 0, 0);
   const end = new Date(to); end.setUTCHours(0, 0, 0, 0); end.setUTCDate(end.getUTCDate() + 1); // exclusive end
