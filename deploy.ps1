@@ -106,6 +106,11 @@ try {
         else { Write-Host "Committed locally but PUSH FAILED - run 'git push' when back online." -ForegroundColor Yellow }
     } else {
         Write-Host "Git: nothing new to commit." -ForegroundColor DarkGray
+        # Still push: work committed during the session (e.g. by Claude) is otherwise
+        # never pushed, because the push above only runs when this script commits.
+        git push 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { Write-Host "Git: pushed existing commits to GitHub." -ForegroundColor Green }
+        else { Write-Host "Git: push failed or nothing to push - run 'git push' manually if needed." -ForegroundColor Yellow }
     }
 } catch {
     Write-Host "Git step failed (the deploy itself is fine): $_" -ForegroundColor Yellow
