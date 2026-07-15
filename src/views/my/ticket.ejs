@@ -25,8 +25,6 @@
         <textarea id="myReplyBox" name="body" rows="4" maxlength="10000" required placeholder="Type your reply to the support team…" style="width:100%;"></textarea>
         <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button type="submit" class="btn btn-primary">Send reply</button>
-          <button type="button" id="myImprove" class="btn">✨ Improve with Claude</button>
-          <span id="myImproveStatus" class="muted" style="font-size:12px;"></span>
         </div>
       </form>
     </div>
@@ -86,24 +84,5 @@
   .meta-list dd { margin:0; font-weight:600; text-align:right; }
 </style>
 
-<script>
-(function(){
-  var box = document.getElementById('myReplyBox'), btn = document.getElementById('myImprove'), st = document.getElementById('myImproveStatus');
-  if (!box || !btn) return;
-  function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
-  btn.addEventListener('click', function(){
-    var t = (box.value || '').trim();
-    if (!t) { st.textContent = 'Type something first.'; st.style.color = '#b91c1c'; return; }
-    var o = btn.innerHTML; btn.disabled = true; btn.innerHTML = '✨ Improving…';
-    st.textContent = 'Claude is improving your text…'; st.style.color = '#64748b';
-    fetch('/my/ai/polish', { method:'POST', headers:{ 'Content-Type':'application/json', 'x-csrf-token': csrf() }, body: JSON.stringify({ text: t }) })
-      .then(function(r){ return r.json(); }).then(function(d){
-        if (d && d.ok && d.message) { box.value = d.message; st.textContent = 'Improved — review before sending.'; st.style.color = '#166534'; }
-        else { st.textContent = (d && d.error) || 'Improve failed.'; st.style.color = '#b91c1c'; }
-      }).catch(function(){ st.textContent = 'Improve failed — network error.'; st.style.color = '#b91c1c'; })
-      .finally(function(){ btn.disabled = false; btn.innerHTML = o; });
-  });
-})();
-</script>
 
 <%- include('footer', { active }) %>

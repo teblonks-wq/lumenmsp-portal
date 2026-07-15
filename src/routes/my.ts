@@ -6,7 +6,6 @@ import { getGroupsAndExtensions } from './insights';
 import { buildJourneys, formatRoute, type CallEventRow } from '../lib/insights-journeys';
 import { generateFromTemplate } from '../lib/insights/report-generator';
 import { sendMail } from '../lib/mailer';
-import { aiPolishText } from '../lib/ai-compose';
 import { buildOneBoard } from '../lib/oneboard';
 
 // ── Customer Portal (/my) ──────────────────────────────────────────────────────────
@@ -244,16 +243,6 @@ router.post('/my/tickets/:id/reply', async (req: Request, res: Response) => {
     await pool.query("UPDATE inbox_tickets SET status='open', updated_at=NOW() WHERE id=$1", [id]).catch(() => {});
   }
   res.redirect('/my/tickets/' + id);
-});
-
-// "Improve with Claude" for the customer's reply box — polish their draft into clear British English.
-router.post('/my/ai/polish', async (req: Request, res: Response) => {
-  try {
-    const message = await aiPolishText({ text: String((req.body || {}).text || ''), mode: 'polish' });
-    res.json({ ok: true, message });
-  } catch (e: any) {
-    res.status(400).json({ ok: false, error: e.message || 'Improve failed' });
-  }
 });
 
 // ── Profile (read-only, everyone) ───────────────────────────────────────────────────
