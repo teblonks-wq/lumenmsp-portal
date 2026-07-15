@@ -38,7 +38,8 @@
     people:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
     user:  '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
     shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
-    grid:  '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>'
+    grid:  '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
+    tv:    '<rect x="2" y="7" width="20" height="13" rx="2"/><polyline points="17 2 12 7 7 2"/>'
   })[name] || ''; }
   var items = [['home','/my','Home','home'], ['tickets','/my/tickets','Support','ticket']];
   if (P.finance)   items.push(['invoices','/my/invoices','Invoices','invoice']);
@@ -46,6 +47,7 @@
   if (P.services)  items.push(['services','/my/services','Services','box']);
   if (P.insights)  items.push(['insights','/my/insights','Insights','chart']);
   if (P.insights)  items.push(['oneboard','/my/oneboard','OneBoard','grid']);
+  if (P.insights)  items.push(['wallboard','/my/wallboard','Wallboard','tv']);
   if (P.itReports) items.push(['it-reports','/my/it-reports','IT Reports','shield']);
   if (P.viewUsers) items.push(['users','/my/users','People','people']);
   items.push(['profile','/my/profile','Profile','user']);

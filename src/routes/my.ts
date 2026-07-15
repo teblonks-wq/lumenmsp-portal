@@ -8,6 +8,7 @@ import { generateFromTemplate } from '../lib/insights/report-generator';
 import { sendMail } from '../lib/mailer';
 import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam } from '../lib/oneboard';
 import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
+import { buildWallboard, wallboardSites, WALLBOARD_MODULES, WALLBOARD_DEFAULT } from '../lib/wallboard';
 import { htmlToPdf } from '../lib/pdf';
 
 // ── Customer Portal (/my) ──────────────────────────────────────────────────────────
@@ -560,6 +561,42 @@ router.get('/my/oneboard.csv', need('insights'), async (req: Request, res: Respo
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${exportFilename(data.insName, r.from, r.to, 'csv')}"`);
   res.send(oneBoardCsv(data, r.from, r.to));
+});
+
+// ── Wallboard — live, visual, single-site board for a TV ───────────────────────────
+// Config page picks ONE site + modules; "Launch" opens the standalone TV page, which
+// polls /my/wallboard.json and updates in place. OneBoard itself never auto-refreshes.
+function wallboardModules(q: any): string[] {
+  const asked = String(q.modules || '').split(',').map((m) => m.trim()).filter(Boolean);
+  const legal = new Set(WALLBOARD_MODULES.map((m) => m.key));
+  const picked = asked.filter((m) => legal.has(m));
+  return picked.length ? picked : WALLBOARD_DEFAULT;
+}
+
+router.get('/my/wallboard', need('insights'), async (req: Request, res: Response) => {
+  const u = req.session.user!; const c = cid(req);
+  const company = (await rows('SELECT name FROM customers WHERE id=$1', [c]))[0]?.name || '';
+  const sites = await wallboardSites(c);
+  res.render('my/wallboard', {
+    active: 'wallboard', user: u, company, sites,
+    modules: WALLBOARD_MODULES, defaults: WALLBOARD_DEFAULT,
+  });
+});
+
+router.get('/my/wallboard/tv', need('insights'), async (req: Request, res: Response) => {
+  const c = cid(req);
+  const siteId = parseInt(String(req.query.site || ''), 10) || 0;
+  const refresh = Math.min(600, Math.max(30, parseInt(String(req.query.refresh || ''), 10) || 60));
+  const data = await buildWallboard(c, siteId);
+  res.render('my/wallboard-tv', { data, picked: wallboardModules(req.query), refresh, siteId, allModules: WALLBOARD_MODULES });
+});
+
+router.get('/my/wallboard.json', need('insights'), async (req: Request, res: Response) => {
+  const c = cid(req);
+  const siteId = parseInt(String(req.query.site || ''), 10) || 0;
+  const data = await buildWallboard(c, siteId);
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(data);
 });
 
 // Save this user's site tick boxes as their layout. Scoped to their own users row; the

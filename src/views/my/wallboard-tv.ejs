@@ -1,0 +1,135 @@
+<%
+// Standalone Wallboard TV page — no portal chrome, dark surface, big type.
+// LumenMSP dark-surface steps: ink #f8fafc, muted #94a3b8, good #4ade80,
+// bad #f87171, accent teal #2dd4bf on #0b1220.
+var mods = picked;
+function has(k){ return mods.indexOf(k) >= 0; }
+%><!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wallboard — <%= data.siteLabel || 'Site' %></title>
+<link rel="icon" type="image/png" href="/static/lumen-crest.png">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body { background: #0b1220; color: #f8fafc; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; padding: 2.2vh 2.2vw; display: flex; flex-direction: column; cursor: none; }
+  .top { display: flex; align-items: baseline; gap: 18px; margin-bottom: 2vh; }
+  .brand { font-size: clamp(15px, 1.6vw, 24px); font-weight: 800; background: linear-gradient(135deg, #10b981, #2563eb); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .site { font-size: clamp(18px, 2.2vw, 34px); font-weight: 700; }
+  .fresh { margin-left: auto; text-align: right; color: #94a3b8; font-size: clamp(11px, 1.1vw, 16px); line-height: 1.5; }
+  .clock { color: #f8fafc; font-weight: 700; font-size: clamp(16px, 1.8vw, 26px); font-variant-numeric: tabular-nums; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.6vh 1vw; flex: 1; align-content: start; }
+  .tile { background: #101a30; border: 1px solid #1e293b; border-radius: 14px; padding: 2.4vh 1.4vw; display: flex; flex-direction: column; justify-content: center; }
+  .tile .n { font-size: clamp(40px, 6.5vw, 120px); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .tile .l { color: #94a3b8; font-size: clamp(12px, 1.3vw, 20px); font-weight: 600; margin-top: 1vh; text-transform: uppercase; letter-spacing: .5px; }
+  .n.good { color: #4ade80; } .n.bad { color: #f87171; } .n.accent { color: #2dd4bf; }
+  .wide { grid-column: 1 / -1; }
+  .bars { display: flex; align-items: flex-end; gap: .6vw; height: 20vh; margin-top: 1.2vh; }
+  .bw { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; height: 100%; }
+  .bseg-a { background: #22c55e; border-radius: 3px 3px 0 0; }
+  .bseg-m { background: #ef4444; border-radius: 3px 3px 0 0; }
+  .bl { text-align: center; color: #94a3b8; font-size: clamp(9px, .9vw, 14px); margin-top: .6vh; }
+  .cb-list { display: flex; flex-direction: column; gap: .8vh; margin-top: 1vh; }
+  .cb { display: flex; gap: 1.2vw; align-items: baseline; font-size: clamp(16px, 1.9vw, 30px); font-variant-numeric: tabular-nums; }
+  .cb .t { color: #94a3b8; font-size: clamp(12px, 1.2vw, 18px); min-width: 5ch; }
+  .cb .num { font-weight: 700; }
+  .cb .w { color: #f87171; font-size: clamp(12px, 1.2vw, 18px); }
+  .empty-cb { color: #4ade80; font-size: clamp(16px, 1.8vw, 28px); font-weight: 700; margin-top: 1vh; }
+  .stale { color: #fbbf24 !important; }
+  #err { position: fixed; bottom: 1.5vh; left: 2.2vw; color: #fbbf24; font-size: clamp(11px, 1vw, 15px); display: none; }
+</style>
+</head>
+<body data-site="<%= siteId %>" data-refresh="<%= refresh %>">
+  <div class="top">
+    <span class="brand">Lumen&nbsp;IT</span>
+    <span class="site" id="siteLabel"><%= data.siteLabel || 'Wallboard' %></span>
+    <div class="fresh"><span class="clock" id="clock"></span><br><span id="fresh">—</span></div>
+  </div>
+
+  <div class="grid">
+    <% if (has('total')) { %><div class="tile"><div class="n" id="m-total">–</div><div class="l">Calls today</div></div><% } %>
+    <% if (has('answered')) { %><div class="tile"><div class="n good" id="m-answered">–</div><div class="l">Answered</div></div><% } %>
+    <% if (has('missed')) { %><div class="tile"><div class="n bad" id="m-missed">–</div><div class="l">Missed</div></div><% } %>
+    <% if (has('rate')) { %><div class="tile"><div class="n accent" id="m-rate">–</div><div class="l">Answer rate</div></div><% } %>
+    <% if (has('callbacks')) { %><div class="tile"><div class="n bad" id="m-callbacks">–</div><div class="l">Awaiting call-back</div></div><% } %>
+    <% if (has('lasthour')) { %><div class="tile"><div class="n" id="m-lasthour">–</div><div class="l">Last hour <span id="m-lasthour-miss" style="color:#f87171;"></span></div></div><% } %>
+    <% if (has('avgwait')) { %><div class="tile"><div class="n" id="m-avgwait">–</div><div class="l">Average wait</div></div><% } %>
+    <% if (has('longestwait')) { %><div class="tile"><div class="n" id="m-longestwait">–</div><div class="l">Longest wait</div></div><% } %>
+    <% if (has('callback_list')) { %>
+      <div class="tile wide"><div class="l" style="margin:0 0 .4vh;">Ring these back — oldest first</div><div class="cb-list" id="cbList"></div></div>
+    <% } %>
+    <% if (has('byhour')) { %>
+      <div class="tile wide"><div class="l" style="margin:0;">Today by hour — <span style="color:#22c55e;">answered</span> v <span style="color:#ef4444;">missed</span></div>
+        <div class="bars" id="hourBars"></div><div style="display:flex;" id="hourLbls"></div></div>
+    <% } %>
+  </div>
+  <div id="err">Couldn't refresh — will keep trying.</div>
+
+<script>
+(function(){
+  var site = document.body.getAttribute('data-site');
+  var every = parseInt(document.body.getAttribute('data-refresh'), 10) * 1000;
+
+  function set(id, v){ var el = document.getElementById(id); if (el) el.textContent = v; }
+
+  function paint(d){
+    if (!d || d.state !== 'ok') return;
+    set('siteLabel', d.siteLabel);
+    set('m-total', d.metrics.total);
+    set('m-answered', d.metrics.answered);
+    set('m-missed', d.metrics.missed);
+    set('m-rate', d.metrics.rate + '%');
+    set('m-callbacks', d.metrics.callbacks);
+    set('m-lasthour', d.metrics.lastHourTotal);
+    set('m-lasthour-miss', d.metrics.lastHourMissed ? '· ' + d.metrics.lastHourMissed + ' missed' : '');
+    set('m-avgwait', d.metrics.avgWait);
+    set('m-longestwait', d.metrics.longestWait);
+
+    var cb = document.getElementById('cbList');
+    if (cb) {
+      if (!d.callbackList.length) { cb.innerHTML = '<div class="empty-cb">All missed callers rung back &#10003;</div>'; }
+      else cb.innerHTML = d.callbackList.map(function(c){
+        return '<div class="cb"><span class="t">' + c.time + '</span><span class="num">' + c.number + '</span><span class="w">waited ' + c.waited + '</span></div>';
+      }).join('');
+    }
+
+    var bars = document.getElementById('hourBars'), lbls = document.getElementById('hourLbls');
+    if (bars && d.byHour && d.byHour.length) {
+      var max = 1; d.byHour.forEach(function(h){ max = Math.max(max, h.answered + h.missed); });
+      bars.innerHTML = d.byHour.map(function(h){
+        var ah = Math.round(h.answered / max * 100), mh = Math.round(h.missed / max * 100);
+        return '<div class="bw" title="' + h.hour + ':00">' +
+          (h.missed ? '<div class="bseg-m" style="height:' + mh + '%;"></div>' : '') +
+          (h.answered ? '<div class="bseg-a" style="height:' + ah + '%;"></div>' : '') + '</div>';
+      }).join('');
+      lbls.innerHTML = d.byHour.map(function(h){ return '<div class="bl" style="flex:1;">' + String(h.hour).padStart(2, '0') + '</div>'; }).join('');
+    }
+
+    var f = document.getElementById('fresh');
+    if (f) {
+      if (d.lastEventAt) {
+        var ageMin = Math.max(0, Math.round((Date.now() - new Date(d.lastEventAt).getTime()) / 60000));
+        f.textContent = 'Last call data ' + (ageMin < 1 ? 'just now' : ageMin + ' min ago');
+        f.className = ageMin > 90 ? 'stale' : '';
+      } else { f.textContent = 'No calls yet today'; f.className = ''; }
+    }
+  }
+
+  function tick(){
+    fetch('/my/wallboard.json?site=' + site, { credentials: 'same-origin' })
+      .then(function(r){ if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function(d){ document.getElementById('err').style.display = 'none'; paint(d); })
+      .catch(function(){ document.getElementById('err').style.display = 'block'; });
+  }
+  function clock(){
+    var el = document.getElementById('clock');
+    if (el) el.textContent = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' });
+  }
+  clock(); setInterval(clock, 15000);
+  tick(); setInterval(tick, every);
+})();
+</script>
+</body>
+</html>
