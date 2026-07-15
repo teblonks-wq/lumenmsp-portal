@@ -1,8 +1,8 @@
 /** Shared inline CSS for all generated report HTML files */
 export const REPORT_CSS = `
   :root {
-    --green: #4ade80; --teal: #06b6d4; --blue: #3b82f6;
-    --dark: #0f172a;  --navy: #1e293b; --accent: #06b6d4;
+    --green: #10b981; --teal: #0ea5b7; --blue: #2563eb;
+    --dark: #0f172a;  --navy: #1e293b; --accent: #0ea5b7;
     --text: #111827;  --muted: #6b7280; --line: #e5e7eb;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }

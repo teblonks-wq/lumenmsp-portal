@@ -427,7 +427,7 @@ function itDocument(title: string, inner: string): string {
 @media print{#report-toolbar{display:none !important;}}</style></head><body>
 <div id="report-toolbar">
   <span style="font-weight:700;font-size:15px;color:#111;flex:1;">Lumen IT Solutions — IT Snapshot</span>
-  <button onclick="window.print()" style="padding:6px 14px;background:#0090a0;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">Save as PDF</button>
+  <button onclick="window.print()" style="padding:6px 14px;background:#0ea5b7;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">Save as PDF</button>
 </div>
 <div class="report-wrap">${inner}</div>
 </body></html>`;
