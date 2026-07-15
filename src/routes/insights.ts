@@ -471,13 +471,15 @@ router.post('/insights/report-config/:id', requireAuth, requireAdmin, async (req
   } catch (e: any) { res.redirect(`/insights/report-config/${id}/edit?error=` + encodeURIComponent('Failed to update: ' + (e.message || '').slice(0, 80))); }
 });
 
-// Delete a report schedule outright — the config AND its pool-migration mirror (site_reports),
-// so nothing can ever fire it again. Generated report history is kept for reference.
+// Delete a report schedule outright — the config, its pool-migration mirror (site_reports) AND its
+// generated report history (generated_reports.config_id FK blocks the delete otherwise, and every
+// history view inner-joins report_configs so orphaned rows would be invisible anyway).
 router.post('/insights/report-config/:id/delete', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   if (!insightsPool) { res.redirect('/insights?err=' + encodeURIComponent('Insights DB not connected')); return; }
   const id = parseInt(String(req.params.id), 10);
   try {
     await insightsPool.query('DELETE FROM site_reports WHERE source_config_id=$1', [id]).catch(() => {});
+    await insightsPool.query('DELETE FROM generated_reports WHERE config_id=$1', [id]);
     await insightsPool.query('DELETE FROM report_configs WHERE id=$1', [id]);
     res.redirect('/insights?msg=' + encodeURIComponent('Report schedule deleted'));
   } catch (e: any) { res.redirect(`/insights/report-config/${id}?err=` + encodeURIComponent('Failed to delete: ' + (e.message || '').slice(0, 80))); }
