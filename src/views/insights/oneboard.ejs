@@ -1,0 +1,32 @@
+<%
+// Staff OneBoard — pick a customer and see EXACTLY what they see at /my/oneboard
+// (same shared partial, same data layer), plus the same PDF/CSV take-aways.
+function escp(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];}); }
+const custs = (typeof customers !== 'undefined' && customers) ? customers : [];
+const sel = (typeof customerId !== 'undefined' && customerId) ? customerId : 0;
+const picker = `
+<div class="page-header">
+  <h1>OneBoard</h1>
+  <p class="muted">The customer's whole-company dashboard — exactly what they see in their portal.</p>
+</div>
+<div class="card" style="margin-bottom:16px;">
+  <form method="get" action="/insights/oneboard" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin:0;">
+    <div>
+      <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin-bottom:4px;">Customer</label>
+      <select class="input" name="customer" onchange="this.form.submit()" style="min-width:280px;">
+        <option value="">Choose a customer&hellip;</option>
+        ${custs.map(function(c){ return '<option value="' + c.lumenmsp_id + '"' + (String(c.lumenmsp_id) === String(sel) ? ' selected' : '') + '>' + escp(c.name) + '</option>'; }).join('')}
+      </select>
+    </div>
+    <button class="btn btn-primary" type="submit">Open</button>
+  </form>
+</div>`;
+const board = sel ? include('../partials/oneboard-board', {
+  obAction: '/insights/oneboard',
+  obExportBase: '/insights/oneboard',
+  obShowSave: false,
+  obExtraHidden: '<input type="hidden" name="customer" value="' + sel + '">',
+  obExtraQs: '&customer=' + sel,
+}) : '';
+%>
+<%- include('_layout', { title: 'OneBoard', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: picker + board }) %>

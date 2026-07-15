@@ -92,6 +92,55 @@ function addDays(iso: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// ── Query parsing shared by the customer page (/my/oneboard), the staff page
+// (/insights/oneboard) and both export routes — one source for range rules
+// (default = last complete Mon–Sun week, 92-day cap, week/month selector lists).
+export interface OneBoardRange {
+  from: string; to: string; compare: boolean;
+  weeks: { mon: string; label: string }[];
+  months: { first: string; last: string; label: string }[];
+  weekSel: string; monthSel: string;
+}
+
+export function parseOneBoardRange(q: Record<string, any>): OneBoardRange {
+  const isDate = (s: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const now = new Date(); now.setUTCHours(0, 0, 0, 0);
+  const thisMon = new Date(now); thisMon.setUTCDate(thisMon.getUTCDate() - ((thisMon.getUTCDay() + 6) % 7));
+  const lastMon = new Date(thisMon); lastMon.setUTCDate(lastMon.getUTCDate() - 7);
+  let from = isDate(q.from) ? String(q.from) : iso(lastMon);
+  let to = isDate(q.to) ? String(q.to) : iso(new Date(lastMon.getTime() + 6 * 86400000));
+  if (to < from) { const t = from; from = to; to = t; }
+  const span = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) + 1;
+  if (span > 92) to = iso(new Date(new Date(from).getTime() + 91 * 86400000));
+
+  const weeks: { mon: string; label: string }[] = [];
+  for (let i = 1; i <= 12; i++) {
+    const ms = new Date(thisMon); ms.setUTCDate(ms.getUTCDate() - i * 7);
+    const su = new Date(ms); su.setUTCDate(su.getUTCDate() + 6);
+    const fmt = (x: Date) => x.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    weeks.push({ mon: iso(ms), label: fmt(ms) + ' – ' + fmt(su) + ' ' + su.getUTCFullYear() });
+  }
+  const months: { first: string; last: string; label: string }[] = [];
+  for (let i = 0; i < 12; i++) {
+    const ms = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const me = new Date(Date.UTC(ms.getUTCFullYear(), ms.getUTCMonth() + 1, 0));
+    months.push({ first: iso(ms), last: iso(me), label: ms.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) });
+  }
+  const spanNow = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) + 1;
+  const weekSel = (spanNow === 7 && weeks.some((w) => w.mon === from)) ? from : '';
+  const monthSel = months.find((m) => m.first === from && m.last === to)?.first || '';
+  return { from, to, compare: q.cmp === '1', weeks, months, weekSel, monthSel };
+}
+
+// Explicit ?sites= param → int list (possibly empty). Absent → null, so the caller
+// can fall back to saved prefs (customer) or all sites (staff).
+export function parseSiteIdsParam(q: Record<string, any>): number[] | null {
+  if (q.sites === undefined) return null;
+  const qs = q.sites;
+  return (Array.isArray(qs) ? qs : [qs]).map((x) => parseInt(String(x), 10)).filter(Number.isInteger);
+}
+
 export async function buildOneBoard(
   portalCustomerId: number,
   opts: { from: string; to: string; siteIds: number[] | null; compare: boolean }

@@ -6,7 +6,9 @@ import { getGroupsAndExtensions } from './insights';
 import { buildJourneys, formatRoute, type CallEventRow } from '../lib/insights-journeys';
 import { generateFromTemplate } from '../lib/insights/report-generator';
 import { sendMail } from '../lib/mailer';
-import { buildOneBoard } from '../lib/oneboard';
+import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam } from '../lib/oneboard';
+import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
+import { htmlToPdf } from '../lib/pdf';
 
 // ── Customer Portal (/my) ──────────────────────────────────────────────────────────
 // A dedicated, reduced-access area for CUSTOMER-role users. Distinct from the staff /m app.
@@ -520,53 +522,44 @@ router.get('/my/insights/report/:id', need('insights'), async (req: Request, res
 // contaminated — see lib/oneboard.ts). Site selection is per-user tick boxes saved to
 // users.oneboard_prefs; range = week / month selector or custom dates (capped at 92 days);
 // optional compare-with-previous-period deltas.
+// Site selection: explicit query > saved layout > all. Ids are re-validated against the
+// customer's OWN sites inside buildOneBoard, so forged/stale ids are simply ignored.
+async function oneboardSiteIds(req: Request): Promise<number[] | null> {
+  const explicit = parseSiteIdsParam(req.query as Record<string, any>);
+  if (explicit !== null) return explicit;
+  const u = req.session.user!;
+  const prefs = (await rows('SELECT oneboard_prefs FROM users WHERE id=$1', [u.id]))[0]?.oneboard_prefs;
+  if (prefs && Array.isArray(prefs.sites)) return prefs.sites.map((n: any) => parseInt(String(n), 10)).filter(Number.isInteger);
+  return null;
+}
+
 router.get('/my/oneboard', need('insights'), async (req: Request, res: Response) => {
   const u = req.session.user!; const c = cid(req);
   const company = (await rows('SELECT name FROM customers WHERE id=$1', [c]))[0]?.name || '';
-  const isDate = (s: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
-  const now = new Date(); now.setUTCHours(0, 0, 0, 0);
-  const thisMon = new Date(now); thisMon.setUTCDate(thisMon.getUTCDate() - ((thisMon.getUTCDay() + 6) % 7));
-  const lastMon = new Date(thisMon); lastMon.setUTCDate(lastMon.getUTCDate() - 7);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  let from = isDate(req.query.from) ? String(req.query.from) : iso(lastMon);
-  let to = isDate(req.query.to) ? String(req.query.to) : iso(new Date(lastMon.getTime() + 6 * 86400000));
-  if (to < from) { const t = from; from = to; to = t; }
-  const span = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) + 1;
-  if (span > 92) to = iso(new Date(new Date(from).getTime() + 91 * 86400000));
+  const r = parseOneBoardRange(req.query as Record<string, any>);
+  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare });
+  res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, ...r });
+});
 
-  // Site selection: explicit query > saved layout > all. Ids are re-validated against the
-  // customer's OWN sites inside buildOneBoard, so forged/stale ids are simply ignored.
-  let siteIds: number[] | null = null;
-  if (req.query.sites !== undefined) {
-    const qs = req.query.sites;
-    siteIds = (Array.isArray(qs) ? qs : [qs]).map((x) => parseInt(String(x), 10)).filter(Number.isInteger);
-  } else {
-    const prefs = (await rows('SELECT oneboard_prefs FROM users WHERE id=$1', [u.id]))[0]?.oneboard_prefs;
-    if (prefs && Array.isArray(prefs.sites)) siteIds = prefs.sites.map((n: any) => parseInt(String(n), 10)).filter(Number.isInteger);
-  }
-  const compare = req.query.cmp === '1';
-  const data = await buildOneBoard(c, { from, to, siteIds, compare });
+// Take-aways — the same view as a polished PDF, and the data behind it as CSV.
+router.get('/my/oneboard.pdf', need('insights'), async (req: Request, res: Response) => {
+  const c = cid(req);
+  const r = parseOneBoardRange(req.query as Record<string, any>);
+  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare });
+  const pdf = await htmlToPdf(oneBoardPdfHtml(data, { from: r.from, to: r.to, compare: r.compare }),
+    { format: 'A4', landscape: true, margin: { top: '10mm', right: '10mm', bottom: '12mm', left: '10mm' } });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${exportFilename(data.insName, r.from, r.to, 'pdf')}"`);
+  res.send(pdf);
+});
 
-  // Recent complete weeks for the selector (Mon–Sun); mark the current pick when it matches.
-  const weeks: { mon: string; label: string }[] = [];
-  for (let i = 1; i <= 12; i++) {
-    const ms = new Date(thisMon); ms.setUTCDate(ms.getUTCDate() - i * 7);
-    const su = new Date(ms); su.setUTCDate(su.getUTCDate() + 6);
-    const fmt = (x: Date) => x.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
-    weeks.push({ mon: iso(ms), label: fmt(ms) + ' – ' + fmt(su) + ' ' + su.getUTCFullYear() });
-  }
-  const weekSel = (span === 7 && weeks.some((w) => w.mon === from)) ? from : '';
-
-  // Recent calendar months for the selector; each option carries its own last day so the
-  // client syncs BOTH dates (same discipline as the week selector).
-  const months: { first: string; last: string; label: string }[] = [];
-  for (let i = 0; i < 12; i++) {
-    const ms = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-    const me = new Date(Date.UTC(ms.getUTCFullYear(), ms.getUTCMonth() + 1, 0));
-    months.push({ first: iso(ms), last: iso(me), label: ms.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) });
-  }
-  const monthSel = months.find((m) => m.first === from && m.last === to)?.first || '';
-  res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, from, to, compare, weeks, weekSel, months, monthSel });
+router.get('/my/oneboard.csv', need('insights'), async (req: Request, res: Response) => {
+  const c = cid(req);
+  const r = parseOneBoardRange(req.query as Record<string, any>);
+  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: false });
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${exportFilename(data.insName, r.from, r.to, 'csv')}"`);
+  res.send(oneBoardCsv(data, r.from, r.to));
 });
 
 // Save this user's site tick boxes as their layout. Scoped to their own users row; the

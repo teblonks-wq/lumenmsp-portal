@@ -6,12 +6,58 @@ import { buildJourneys, formatRoute, type CallEventRow } from '../lib/insights-j
 import { generateWeekly, generateDaily, generateSitePerformance, generateFromTemplate } from '../lib/insights/report-generator';
 import { moduleList } from '../lib/insights/reports/modules';
 import { clientFromCustomer } from '../lib/insights/tollring-client';
+import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam } from '../lib/oneboard';
+import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
+import { htmlToPdf } from '../lib/pdf';
 
 // Insights — reporting & call analytics, now a native section of the portal. Reads from the
 // separate lumenmsp_insights DB via insightsPool. Customer identity lives in the portal; Insights
 // rows reference it by lumenmsp_id (bridge already present on the Insights customers table).
 
 const router = Router();
+
+// ── Staff OneBoard — pick a customer, see exactly what they see at /my/oneboard ────
+// Same data layer (buildOneBoard keyed by the PORTAL customer id via lumenmsp_id) and
+// the same shared board partial, plus the same PDF/CSV take-aways.
+async function oneboardCustomerList(): Promise<{ id: number; name: string; lumenmsp_id: number }[]> {
+  if (!insightsPool) return [];
+  return (await insightsPool.query(
+    `SELECT id, name, lumenmsp_id FROM customers
+      WHERE is_active = true AND lumenmsp_id IS NOT NULL ORDER BY name`
+  )).rows;
+}
+
+router.get('/insights/oneboard', requireAuth, async (req: Request, res: Response) => {
+  const customers = await oneboardCustomerList();
+  const customerId = parseInt(String(req.query.customer || ''), 10) || 0;
+  const r = parseOneBoardRange(req.query as Record<string, any>);
+  const data = customerId
+    ? await buildOneBoard(customerId, { from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: r.compare })
+    : null;
+  res.render('insights/oneboard', { user: req.session.user, customers, customerId, ...(data || {}), ...r });
+});
+
+router.get('/insights/oneboard.pdf', requireAuth, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.query.customer || ''), 10) || 0;
+  if (!customerId) { res.status(400).send('customer required'); return; }
+  const r = parseOneBoardRange(req.query as Record<string, any>);
+  const data = await buildOneBoard(customerId, { from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: r.compare });
+  const pdf = await htmlToPdf(oneBoardPdfHtml(data, { from: r.from, to: r.to, compare: r.compare }),
+    { format: 'A4', landscape: true, margin: { top: '10mm', right: '10mm', bottom: '12mm', left: '10mm' } });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${exportFilename(data.insName, r.from, r.to, 'pdf')}"`);
+  res.send(pdf);
+});
+
+router.get('/insights/oneboard.csv', requireAuth, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.query.customer || ''), 10) || 0;
+  if (!customerId) { res.status(400).send('customer required'); return; }
+  const r = parseOneBoardRange(req.query as Record<string, any>);
+  const data = await buildOneBoard(customerId, { from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: false });
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${exportFilename(data.insName, r.from, r.to, 'csv')}"`);
+  res.send(oneBoardCsv(data, r.from, r.to));
+});
 
 router.get('/insights', requireAuth, async (req: Request, res: Response) => {
   const user = req.session.user!;
