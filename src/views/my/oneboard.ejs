@@ -5,6 +5,11 @@
   var HEAT_STEPS = ['#f8fafc','#d7eef3','#a5dbe6','#5cb8ca','#1f8fa6','#0e6377'];
   function heatBg(n){ if(!maxHeat || !n) return HEAT_STEPS[0]; var i = Math.min(5, Math.max(1, Math.ceil(n / maxHeat * 5))); return HEAT_STEPS[i]; }
   function heatInk(n){ if(!maxHeat || !n) return '#94a3b8'; return (Math.ceil(n / maxHeat * 5) >= 4) ? '#ffffff' : '#0f172a'; }
+  // Second sequential single-hue scale (light -> deep indigo) for the ALL-calls heatmap,
+  // so it can never be mistaken for the missed-calls teal at a glance.
+  var HEAT_ALL = ['#f8fafc','#e0e7ff','#c7d2fe','#818cf8','#4f46e5','#312e81'];
+  function heatAllBg(n){ if(!maxHeatAll || !n) return HEAT_ALL[0]; var i = Math.min(5, Math.max(1, Math.ceil(n / maxHeatAll * 5))); return HEAT_ALL[i]; }
+  function heatAllInk(n){ if(!maxHeatAll || !n) return '#94a3b8'; return (Math.ceil(n / maxHeatAll * 5) >= 4) ? '#ffffff' : '#0f172a'; }
   function delta(cur, prev, invert){
     if (prev == null) return '';
     var d = cur - prev;
@@ -35,6 +40,13 @@
       <select class="input" id="obWeek" onchange="obSyncWeek()" style="min-width:180px;">
         <option value="">Custom range…</option>
         <% weeks.forEach(function(w){ %><option value="<%= w.mon %>" <%= w.mon===weekSel ? 'selected' : '' %>><%= w.label %></option><% }); %>
+      </select>
+    </div>
+    <div>
+      <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin-bottom:4px;">Month</label>
+      <select class="input" id="obMonth" onchange="obSyncMonth()" style="min-width:160px;">
+        <option value="">Custom range…</option>
+        <% months.forEach(function(m){ %><option value="<%= m.first %>" data-last="<%= m.last %>" <%= m.first===monthSel ? 'selected' : '' %>><%= m.label %></option><% }); %>
       </select>
     </div>
     <div><label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin-bottom:4px;">From</label><input class="input" type="date" name="from" id="obFrom" value="<%= from %>"></div>
@@ -131,6 +143,28 @@
   </div>
 </div>
 
+<!-- Compiled heatmap: ALL incoming calls per hour per branch -->
+<div class="card" style="padding:0;margin-top:16px;">
+  <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">All incoming calls by hour</h2>
+    <span class="muted" style="font-size:12px;">Each cell = every incoming call in that hour across the selected dates (business hours, local time)</span></div>
+  <div class="table-wrap"><table class="table" style="margin:0;">
+    <thead><tr><th style="min-width:110px;"></th><% hours.forEach(function(h){ %><th class="muted" style="text-align:center;font-size:11px;"><%= ('0'+h).slice(-2) %>:00</th><% }); %></tr></thead>
+    <tbody>
+      <% included.forEach(function(s){ %>
+      <tr>
+        <td style="font-weight:600;font-size:13px;white-space:nowrap;"><%= esc(s.label) %></td>
+        <% hours.forEach(function(h){ var n = s.totalByHour[h] || 0; %>
+          <td title="<%= esc(s.label) %> · <%= ('0'+h).slice(-2) %>:00 — <%= n %> calls" style="text-align:center;background:<%= heatAllBg(n) %>;color:<%= heatAllInk(n) %>;font-size:12px;font-weight:600;min-width:34px;"><%= n || '' %></td>
+        <% }); %>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <div style="display:flex;align-items:center;gap:6px;padding:10px 18px;font-size:11px;color:#64748b;">
+    Fewer <% ['#f8fafc','#e0e7ff','#c7d2fe','#818cf8','#4f46e5','#312e81'].forEach(function(c){ %><span style="width:18px;height:10px;background:<%= c %>;border:1px solid #e2e8f0;border-radius:2px;display:inline-block;"></span><% }); %> More calls
+  </div>
+</div>
+
 <% } %>
 <% } %>
 
@@ -138,10 +172,19 @@
 function obSyncWeek(){
   var w = document.getElementById('obWeek');
   if (!w || !w.value) return;
+  var m = document.getElementById('obMonth'); if (m) m.value = '';
   var f = document.getElementById('obFrom'), t = document.getElementById('obTo');
   f.value = w.value;                                  // Monday
   var d = new Date(w.value + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 6);
   t.value = d.toISOString().slice(0, 10);             // Sunday — BOTH dates, always
+}
+function obSyncMonth(){
+  var m = document.getElementById('obMonth');
+  if (!m || !m.value) return;
+  var w = document.getElementById('obWeek'); if (w) w.value = '';
+  var opt = m.options[m.selectedIndex];
+  document.getElementById('obFrom').value = m.value;                       // 1st of month
+  document.getElementById('obTo').value = opt.getAttribute('data-last');   // last day — BOTH dates, always
 }
 function obSaveLayout(){
   var ids = Array.prototype.slice.call(document.querySelectorAll('.ob-site:checked')).map(function(c){ return parseInt(c.value, 10); });

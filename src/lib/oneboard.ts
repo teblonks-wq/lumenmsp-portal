@@ -18,6 +18,7 @@ export interface OneBoardSite {
   prev:    { total: number; answered: number; missed: number; rate: number } | null; // compare period
   daily: { day: string; label: string; total: number; answered: number; missed: number }[];
   missedByHour: number[];           // indexed by hour-of-day (Europe/London)
+  totalByHour: number[];            // ALL incoming calls per hour (Kim's all-calls heatmap)
 }
 
 export interface OneBoardData {
@@ -26,6 +27,7 @@ export interface OneBoardData {
   sites: OneBoardSite[];
   hours: number[];                  // heatmap columns
   maxHeat: number;                  // max missed-per-hour cell across included sites
+  maxHeatAll: number;               // max all-calls-per-hour cell across included sites
 }
 
 export const ONEBOARD_HOURS = Array.from({ length: 13 }, (_, i) => i + 7); // 07:00–19:00
@@ -94,7 +96,7 @@ export async function buildOneBoard(
   portalCustomerId: number,
   opts: { from: string; to: string; siteIds: number[] | null; compare: boolean }
 ): Promise<OneBoardData> {
-  const empty: OneBoardData = { state: 'down', insName: '', sites: [], hours: ONEBOARD_HOURS, maxHeat: 0 };
+  const empty: OneBoardData = { state: 'down', insName: '', sites: [], hours: ONEBOARD_HOURS, maxHeat: 0, maxHeatAll: 0 };
   if (!insightsPool) return empty;
   try {
     const ins = (await insightsPool.query(
@@ -120,12 +122,13 @@ export async function buildOneBoard(
     const days = dayList(opts.from, opts.to);
     const sites: OneBoardSite[] = [];
     let maxHeat = 0;
+    let maxHeatAll = 0;
 
     for (const s of siteRows) {
       const included = wanted.has(Number(s.id));
       const logic = siteLogicOf(s);
       if (!logic || !included) {
-        sites.push({ id: Number(s.id), label: s.site_label, configured: !!logic, included, metrics: null, prev: null, daily: [], missedByHour: [] });
+        sites.push({ id: Number(s.id), label: s.site_label, configured: !!logic, included, metrics: null, prev: null, daily: [], missedByHour: [], totalByHour: [] });
         continue;
       }
       const journeys = buildJourneys(rows, logic);
@@ -133,15 +136,17 @@ export async function buildOneBoard(
 
       const byDay = new Map<string, { total: number; answered: number; missed: number }>();
       const heat: number[] = Array(24).fill(0);
+      const heatAll: number[] = Array(24).fill(0);
       for (const j of journeys) {
         const p = ldn(j.datetime);
         if (!byDay.has(p.day)) byDay.set(p.day, { total: 0, answered: 0, missed: 0 });
         const b = byDay.get(p.day)!;
         b.total++;
+        heatAll[p.hour]++;
         if (j.status === 'Answered') b.answered++;
         else { b.missed++; heat[p.hour]++; }
       }
-      for (const h of ONEBOARD_HOURS) maxHeat = Math.max(maxHeat, heat[h]);
+      for (const h of ONEBOARD_HOURS) { maxHeat = Math.max(maxHeat, heat[h]); maxHeatAll = Math.max(maxHeatAll, heatAll[h]); }
 
       sites.push({
         id: Number(s.id), label: s.site_label, configured: true, included: true,
@@ -149,9 +154,10 @@ export async function buildOneBoard(
         prev: opts.compare ? metricsOf(prevJourneys) : null,
         daily: days.map((d) => ({ ...d, ...(byDay.get(d.day) || { total: 0, answered: 0, missed: 0 }) })),
         missedByHour: heat,
+        totalByHour: heatAll,
       });
     }
-    return { state: 'ok', insName: ins.name, sites, hours: ONEBOARD_HOURS, maxHeat };
+    return { state: 'ok', insName: ins.name, sites, hours: ONEBOARD_HOURS, maxHeat, maxHeatAll };
   } catch (e: any) {
     console.error('[oneboard] build failed:', e?.message || e);
     return empty;

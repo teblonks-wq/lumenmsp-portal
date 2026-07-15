@@ -529,7 +529,7 @@ router.get('/my/insights/report/:id', need('insights'), async (req: Request, res
 // ── OneBoard — "Dashboard for the whole company" ─────────────────────────────────
 // The customer's sites side by side, each panel scoped by ITS OWN site logic (never
 // contaminated — see lib/oneboard.ts). Site selection is per-user tick boxes saved to
-// users.oneboard_prefs; range = week selector or custom dates (capped at 92 days);
+// users.oneboard_prefs; range = week / month selector or custom dates (capped at 92 days);
 // optional compare-with-previous-period deltas.
 router.get('/my/oneboard', need('insights'), async (req: Request, res: Response) => {
   const u = req.session.user!; const c = cid(req);
@@ -567,7 +567,17 @@ router.get('/my/oneboard', need('insights'), async (req: Request, res: Response)
     weeks.push({ mon: iso(ms), label: fmt(ms) + ' – ' + fmt(su) + ' ' + su.getUTCFullYear() });
   }
   const weekSel = (span === 7 && weeks.some((w) => w.mon === from)) ? from : '';
-  res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, from, to, compare, weeks, weekSel });
+
+  // Recent calendar months for the selector; each option carries its own last day so the
+  // client syncs BOTH dates (same discipline as the week selector).
+  const months: { first: string; last: string; label: string }[] = [];
+  for (let i = 0; i < 12; i++) {
+    const ms = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    const me = new Date(Date.UTC(ms.getUTCFullYear(), ms.getUTCMonth() + 1, 0));
+    months.push({ first: iso(ms), last: iso(me), label: ms.toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) });
+  }
+  const monthSel = months.find((m) => m.first === from && m.last === to)?.first || '';
+  res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, from, to, compare, weeks, weekSel, months, monthSel });
 });
 
 // Save this user's site tick boxes as their layout. Scoped to their own users row; the
