@@ -28,6 +28,7 @@ export interface OneBoardData {
   hours: number[];                  // heatmap columns
   maxHeat: number;                  // max missed-per-hour cell across included sites
   maxHeatAll: number;               // max all-calls-per-hour cell across included sites
+  compareNote: string | null;       // set when compare was requested but history can't support it
 }
 
 export const ONEBOARD_HOURS = Array.from({ length: 13 }, (_, i) => i + 7); // 07:00–19:00
@@ -156,7 +157,7 @@ export async function buildOneBoard(
   portalCustomerId: number,
   opts: { from: string; to: string; siteIds: number[] | null; compare: boolean; allowedSiteIds?: number[] | null }
 ): Promise<OneBoardData> {
-  const empty: OneBoardData = { state: 'down', insName: '', sites: [], hours: ONEBOARD_HOURS, maxHeat: 0, maxHeatAll: 0 };
+  const empty: OneBoardData = { state: 'down', insName: '', sites: [], hours: ONEBOARD_HOURS, maxHeat: 0, maxHeatAll: 0, compareNote: null };
   if (!insightsPool) return empty;
   try {
     const ins = (await insightsPool.query(
@@ -180,7 +181,26 @@ export async function buildOneBoard(
     const rows = await fetchRows(ins.id, opts.from, toEx);
     const spanDays = Math.round((new Date(opts.to).getTime() - new Date(opts.from).getTime()) / 86400000) + 1;
     const prevFrom = addDays(opts.from, -spanDays);
-    const prevRows = opts.compare ? await fetchRows(ins.id, prevFrom, opts.from) : [];
+
+    // Compare guard (universal): a previous-period window that starts before this customer's
+    // call history begins UNDERCOUNTS, which reads as fake growth on every scorecard at once
+    // (the Larkmead lesson, 2026-07-15). If history can't cover the whole window, say so
+    // instead of showing misleading deltas.
+    let compare = opts.compare;
+    let compareNote: string | null = null;
+    if (compare) {
+      const floorRow = (await insightsPool.query(
+        `SELECT MIN(event_datetime)::date AS floor FROM call_events
+          WHERE customer_id = $1
+            AND (source_file ILIKE 'ContactGroupDetail%' OR source_file = 'tollring-sync')`, [ins.id]
+      )).rows[0];
+      const floor = floorRow?.floor ? String(floorRow.floor).slice(0, 10) : null;
+      if (floor && prevFrom < floor) {
+        compare = false;
+        compareNote = `Comparison unavailable: the previous period would start ${prevFrom}, but call history only begins ${floor}.`;
+      }
+    }
+    const prevRows = compare ? await fetchRows(ins.id, prevFrom, opts.from) : [];
 
     const days = dayList(opts.from, opts.to);
     const sites: OneBoardSite[] = [];
@@ -195,7 +215,7 @@ export async function buildOneBoard(
         continue;
       }
       const journeys = buildJourneys(rows, logic);
-      const prevJourneys = opts.compare ? buildJourneys(prevRows, logic) : [];
+      const prevJourneys = compare ? buildJourneys(prevRows, logic) : [];
 
       const byDay = new Map<string, { total: number; answered: number; missed: number }>();
       const heat: number[] = Array(24).fill(0);
@@ -214,13 +234,13 @@ export async function buildOneBoard(
       sites.push({
         id: Number(s.id), label: s.site_label, configured: true, included: true,
         metrics: metricsOf(journeys),
-        prev: opts.compare ? metricsOf(prevJourneys) : null,
+        prev: compare ? metricsOf(prevJourneys) : null,
         daily: days.map((d) => ({ ...d, ...(byDay.get(d.day) || { total: 0, answered: 0, missed: 0 }) })),
         missedByHour: heat,
         totalByHour: heatAll,
       });
     }
-    return { state: 'ok', insName: ins.name, sites, hours: ONEBOARD_HOURS, maxHeat, maxHeatAll };
+    return { state: 'ok', insName: ins.name, sites, hours: ONEBOARD_HOURS, maxHeat, maxHeatAll, compareNote };
   } catch (e: any) {
     console.error('[oneboard] build failed:', e?.message || e);
     return empty;

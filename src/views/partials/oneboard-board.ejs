@@ -79,6 +79,10 @@
   </form>
 </div>
 
+<% if (typeof compareNote !== 'undefined' && compareNote) { %>
+  <div class="card" style="margin-bottom:16px;border-left:3px solid #d97706;"><p class="muted" style="margin:0;font-size:13px;">&#9888; <%= compareNote %></p></div>
+<% } %>
+
 <% if (!included.length) { %>
   <div class="card"><p class="muted" style="margin:0;">No sites selected<%= sites.some(function(s){return !s.configured;}) ? ' — sites marked ⚠ need their call logic set up by Lumen IT before they can appear' : '' %>. Tick a site above and press Update.</p></div>
 <% } else { %>
