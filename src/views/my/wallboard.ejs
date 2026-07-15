@@ -31,9 +31,15 @@
         <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin-bottom:4px;">Refresh every</label>
         <select class="input" id="wbRefresh"><option value="30">30 seconds</option><option value="60" selected>60 seconds</option><option value="120">2 minutes</option><option value="300">5 minutes</option></select>
       </div>
+      <div>
+        <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin-bottom:4px;">Run for</label>
+        <select class="input" id="wbHours">
+          <% [1,2,3,4,6,8,10,12].forEach(function(h){ %><option value="<%= h %>" <%= h===8 ? 'selected' : '' %>><%= h %> hour<%= h>1?'s':'' %></option><% }); %>
+        </select>
+      </div>
       <button class="btn btn-primary" type="submit" style="font-size:15px;">Launch Wallboard</button>
     </div>
-    <p class="muted" style="font-size:12px;margin:12px 0 0;">Opens in a new tab — press F11 on the TV browser for full screen. Numbers refresh in place; the page never reloads. Data is as fresh as the last call-analytics sync.</p>
+    <p class="muted" style="font-size:12px;margin:12px 0 0;">Opens in a new tab — press F11 on the TV browser for full screen. Numbers refresh in place; the page never reloads, and the board keeps your sign-in alive while it runs. When the run-for timer ends the board stops and asks to be restarted.</p>
   </form>
 </div>
 
@@ -44,7 +50,8 @@ function wbLaunch(e){
   var mods = Array.prototype.slice.call(document.querySelectorAll('.wb-mod:checked')).map(function(c){ return c.value; }).join(',');
   var ref = document.getElementById('wbRefresh').value;
   if (!site) return false;
-  window.open('/my/wallboard/tv?site=' + site + '&modules=' + encodeURIComponent(mods) + '&refresh=' + ref, '_blank');
+  var hrs = document.getElementById('wbHours').value;
+  window.open('/my/wallboard/tv?site=' + site + '&modules=' + encodeURIComponent(mods) + '&refresh=' + ref + '&hours=' + hrs, '_blank');
   return false;
 }
 </script>

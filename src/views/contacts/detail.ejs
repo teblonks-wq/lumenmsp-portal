@@ -76,6 +76,33 @@
             <% }); %>
           </select>
         </div>
+        <%
+          var curSites = Array.isArray(contact.insights_sites) ? contact.insights_sites.map(Number) : [];
+          var restricted = curSites.length > 0;
+          var insSites = (typeof insightsSites !== 'undefined' && insightsSites) ? insightsSites : [];
+        %>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>Insights sites <span class="muted" style="font-weight:400;">(OneBoard, Wallboard &amp; call insights)</span></label>
+          <% if (!insSites.length) { %>
+            <p class="muted" style="font-size:12px;margin:4px 0 0;">This company isn't linked to call analytics — the site layer doesn't apply.</p>
+          <% } else { %>
+            <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:6px 0 4px;">
+              <input type="radio" name="insights_scope" value="all" <%= restricted ? '' : 'checked' %> onchange="document.querySelectorAll('.ins-site').forEach(function(c){c.disabled=true;});"> All sites
+            </label>
+            <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:0 0 6px;">
+              <input type="radio" name="insights_scope" value="sites" <%= restricted ? 'checked' : '' %> onchange="document.querySelectorAll('.ins-site').forEach(function(c){c.disabled=false;});"> Only these sites:
+            </label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-left:24px;">
+              <% insSites.forEach(function(st){ %>
+                <label style="display:inline-flex;gap:6px;align-items:center;font-weight:400;border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:13px;">
+                  <input type="checkbox" class="ins-site" name="insights_sites" value="<%= st.id %>" <%= curSites.indexOf(Number(st.id)) >= 0 ? 'checked' : '' %> <%= restricted ? '' : 'disabled' %> style="width:auto;min-width:auto;">
+                  <%= st.label %>
+                </label>
+              <% }); %>
+            </div>
+            <p class="muted" style="font-size:12px;margin:6px 0 0;">"Only these sites" with none ticked saves as all sites.</p>
+          <% } %>
+        </div>
         <button class="btn btn-primary" type="submit">Save access</button>
       </form>
       <form method="post" action="/contacts/<%= contact.id %>/portal-invite" style="margin-top:10px;padding-top:12px;border-top:1px solid var(--line);" onsubmit="return confirm('Email a portal invite to <%= contact.email || '' %>?');">

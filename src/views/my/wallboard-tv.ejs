@@ -41,7 +41,7 @@ function has(k){ return mods.indexOf(k) >= 0; }
   #err { position: fixed; bottom: 1.5vh; left: 2.2vw; color: #fbbf24; font-size: clamp(11px, 1vw, 15px); display: none; }
 </style>
 </head>
-<body data-site="<%= siteId %>" data-refresh="<%= refresh %>">
+<body data-site="<%= siteId %>" data-refresh="<%= refresh %>" data-hours="<%= hours %>">
   <div class="top">
     <span class="brand">Lumen&nbsp;IT</span>
     <span class="site" id="siteLabel"><%= data.siteLabel || 'Wallboard' %></span>
@@ -66,6 +66,10 @@ function has(k){ return mods.indexOf(k) >= 0; }
     <% } %>
   </div>
   <div id="err">Couldn't refresh — will keep trying.</div>
+  <div id="ended" onclick="location.reload()" style="display:none;position:fixed;inset:0;background:rgba(11,18,32,.94);z-index:10;cursor:pointer;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
+    <div style="font-size:clamp(26px,3.2vw,50px);font-weight:800;">Wallboard finished</div>
+    <div style="color:#94a3b8;font-size:clamp(14px,1.5vw,24px);margin-top:1.5vh;">It ran for its set time (<%= hours %> hour<%= hours>1?'s':'' %>). Click anywhere to start it again.</div>
+  </div>
 
 <script>
 (function(){
@@ -127,8 +131,18 @@ function has(k){ return mods.indexOf(k) >= 0; }
     var el = document.getElementById('clock');
     if (el) el.textContent = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' });
   }
-  clock(); setInterval(clock, 15000);
-  tick(); setInterval(tick, every);
+  clock(); var clockT = setInterval(clock, 15000);
+  tick(); var tickT = setInterval(tick, every);
+
+  // Run-for timer (1–12h): stop polling and show the finished overlay. While running,
+  // every poll refreshes the login server-side, so the board can't be logged out mid-run.
+  var hoursMs = parseInt(document.body.getAttribute('data-hours'), 10) * 3600000;
+  setTimeout(function(){
+    clearInterval(tickT); clearInterval(clockT);
+    var o = document.getElementById('ended');
+    o.style.display = 'flex';
+    document.body.style.cursor = 'default';
+  }, hoursMs);
 })();
 </script>
 </body>

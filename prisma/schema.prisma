@@ -251,6 +251,7 @@ model Contact {
   isThirdParty   Boolean  @default(false) @map("is_third_party") // 3rd party (covered by the customer's support agreement)
   protected      Boolean  @default(false)  // manually curated — directory sync must never update or archive this contact
   portalAccessLevel String? @map("portal_access_level") // customer-portal access: none|tickets|finance|service|full (null = none)
+  insightsSites  Json?    @map("insights_sites") // site layer: insights site ids this contact may see in OneBoard/Wallboard/Insights (null = all)
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
 

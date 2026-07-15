@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth';
-import { pool } from '../db/pool';
+import { pool, insightsPool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { sendWelcomeEmail } from '../lib/emails';
 
@@ -101,8 +101,18 @@ router.get('/contacts/:id', requireAuth, async (req: Request, res: Response) => 
      WHERE contact_id = $1 AND deleted_at IS NULL AND is_spam = false
      ORDER BY (status NOT IN ('resolved','closed')) DESC, created_at DESC LIMIT 200`, [id]
   )).rows;
+  // Insights sites for the per-contact site layer picker (empty = customer not linked to Insights).
+  let insightsSites: { id: number; label: string }[] = [];
+  try {
+    if (insightsPool) {
+      const insRow = (await insightsPool.query(
+        'SELECT id FROM customers WHERE lumenmsp_id=$1 AND is_active=true LIMIT 1', [r.rows[0].customer_id])).rows[0];
+      if (insRow) insightsSites = (await insightsPool.query(
+        'SELECT id, site_label AS label FROM sites WHERE customer_id=$1 ORDER BY site_label', [insRow.id])).rows;
+    }
+  } catch { /* insights DB optional here */ }
   res.render('contacts/detail', {
-    user, contact: r.rows[0], tickets,
+    user, contact: r.rows[0], tickets, insightsSites,
     msg: req.query.msg || null, err: req.query.err || null,
   });
 });
@@ -117,8 +127,17 @@ router.post('/contacts/:id/portal-access', requireAuth, async (req: Request, res
   let level = String(req.body.portal_access_level || 'none').toLowerCase();
   if (!ACCESS_LEVELS.includes(level)) level = 'none';
   if (!req.body.portal_on) level = 'none';           // the "Allow portal sign-in" tick is the master gate
-  await pool.query('UPDATE customer_contacts SET portal_access_level = $1 WHERE id = $2', [level, id]).catch(() => {});
-  await logActivity(req.session.user!.id, 'updated', 'customer_contacts', id, `Portal access set to ${level}`).catch(() => {});
+  // Site layer: 'all' (or an empty selection) stores NULL = every site; otherwise a JSON
+  // array of insights site ids. Enforced in /my (OneBoard, Wallboard, Insights tools).
+  let sitesJson: string | null = null;
+  if (String(req.body.insights_scope || 'all') === 'sites') {
+    const raw = req.body.insights_sites;
+    const ids = (Array.isArray(raw) ? raw : raw ? [raw] : [])
+      .map((x: any) => parseInt(String(x), 10)).filter(Number.isInteger).slice(0, 50);
+    if (ids.length) sitesJson = JSON.stringify(ids);
+  }
+  await pool.query('UPDATE customer_contacts SET portal_access_level = $1, insights_sites = $2::jsonb WHERE id = $3', [level, sitesJson, id]).catch(() => {});
+  await logActivity(req.session.user!.id, 'updated', 'customer_contacts', id, `Portal access set to ${level}${sitesJson ? ' (sites ' + sitesJson + ')' : ' (all sites)'}`).catch(() => {});
   res.redirect('/contacts/' + id + '?msg=' + encodeURIComponent('Portal access updated.') + '#portal');
 });
 

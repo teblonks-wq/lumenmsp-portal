@@ -43,6 +43,17 @@ function ldn(iso: string): { day: string; hour: number } {
   return { day: `${g('year')}-${g('month')}-${g('day')}`, hour: parseInt(g('hour'), 10) || 0 };
 }
 
+// Logic configs for a set of this customer's sites — used by /my/insights to apply the
+// per-contact site layer to the Call Tracker and reverse-lookup tools.
+export async function siteLogicsByIds(insCustomerId: number, ids: number[]): Promise<LogicConfig[]> {
+  if (!insightsPool || !ids.length) return [];
+  const r = await insightsPool.query(
+    'SELECT business_hours, logic_config FROM sites WHERE customer_id=$1 AND id = ANY($2::int[])',
+    [insCustomerId, ids]
+  );
+  return r.rows.map((row: any) => siteLogicOf(row)).filter(Boolean) as LogicConfig[];
+}
+
 function siteLogicOf(row: any): LogicConfig | null {
   const logic: LogicConfig = row.logic_config || {};
   if (!logic.source_of_truth_group?.length && !logic.staff_extensions?.length) return null; // unconfigured
@@ -143,7 +154,7 @@ export function parseSiteIdsParam(q: Record<string, any>): number[] | null {
 
 export async function buildOneBoard(
   portalCustomerId: number,
-  opts: { from: string; to: string; siteIds: number[] | null; compare: boolean }
+  opts: { from: string; to: string; siteIds: number[] | null; compare: boolean; allowedSiteIds?: number[] | null }
 ): Promise<OneBoardData> {
   const empty: OneBoardData = { state: 'down', insName: '', sites: [], hours: ONEBOARD_HOURS, maxHeat: 0, maxHeatAll: 0 };
   if (!insightsPool) return empty;
@@ -153,9 +164,12 @@ export async function buildOneBoard(
     )).rows[0];
     if (!ins) return { ...empty, state: 'unlinked' };
 
-    const siteRows = (await insightsPool.query(
+    let siteRows = (await insightsPool.query(
       'SELECT id, site_label, business_hours, logic_config FROM sites WHERE customer_id=$1 ORDER BY site_label', [ins.id]
     )).rows;
+    // Site layer: a contact restricted to specific sites never sees the others AT ALL —
+    // not even as unticked chips (the board behaves as if they don't exist).
+    if (opts.allowedSiteIds?.length) siteRows = siteRows.filter((s: any) => opts.allowedSiteIds!.includes(Number(s.id)));
     if (!siteRows.length) return { ...empty, state: 'ok', insName: ins.name };
 
     // Site selection is validated against THIS customer's own sites — a forged id is ignored.

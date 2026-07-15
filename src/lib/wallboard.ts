@@ -53,22 +53,23 @@ const numOf = (n?: string | null) => String(n || '').replace(/\s+/g, '');
 
 // The customer's sites (via the lumenmsp bridge) for the picker — configured flag
 // so the UI can grey out sites whose call logic isn't set up yet.
-export async function wallboardSites(portalCustomerId: number): Promise<{ id: number; label: string; configured: boolean }[]> {
+export async function wallboardSites(portalCustomerId: number, allowedSiteIds?: number[] | null): Promise<{ id: number; label: string; configured: boolean }[]> {
   if (!insightsPool) return [];
   const ins = (await insightsPool.query(
     'SELECT id FROM customers WHERE lumenmsp_id=$1 AND is_active=true LIMIT 1', [portalCustomerId]
   )).rows[0];
   if (!ins) return [];
-  const rows = (await insightsPool.query(
+  let rows = (await insightsPool.query(
     'SELECT id, site_label, logic_config FROM sites WHERE customer_id=$1 ORDER BY site_label', [ins.id]
   )).rows;
+  if (allowedSiteIds?.length) rows = rows.filter((s: any) => allowedSiteIds.includes(Number(s.id)));
   return rows.map((s: any) => ({
     id: Number(s.id), label: s.site_label,
     configured: Boolean(s.logic_config && (s.logic_config.source_of_truth_group?.length || s.logic_config.staff_extensions?.length)),
   }));
 }
 
-export async function buildWallboard(portalCustomerId: number, siteId: number): Promise<WallboardData> {
+export async function buildWallboard(portalCustomerId: number, siteId: number, allowedSiteIds?: number[] | null): Promise<WallboardData> {
   const now = new Date();
   const empty: WallboardData = {
     state: 'down', insName: '', siteId, siteLabel: '', updatedAt: now.toISOString(), lastEventAt: null,
@@ -87,6 +88,10 @@ export async function buildWallboard(portalCustomerId: number, siteId: number): 
       'SELECT id, site_label, business_hours, logic_config FROM sites WHERE id=$1 AND customer_id=$2 LIMIT 1', [siteId, ins.id]
     )).rows[0];
     if (!site) return { ...empty, state: 'nosite', insName: ins.name };
+    // Site layer: a contact restricted to specific sites cannot board any other site.
+    if (allowedSiteIds?.length && !allowedSiteIds.includes(Number(site.id))) {
+      return { ...empty, state: 'nosite', insName: ins.name };
+    }
     const logic: LogicConfig = site.logic_config || {};
     if (!logic.source_of_truth_group?.length && !logic.staff_extensions?.length) {
       return { ...empty, state: 'nosite', insName: ins.name, siteLabel: site.site_label };

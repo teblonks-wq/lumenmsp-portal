@@ -6,7 +6,7 @@ import { getGroupsAndExtensions } from './insights';
 import { buildJourneys, formatRoute, type CallEventRow } from '../lib/insights-journeys';
 import { generateFromTemplate } from '../lib/insights/report-generator';
 import { sendMail } from '../lib/mailer';
-import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam } from '../lib/oneboard';
+import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam, siteLogicsByIds } from '../lib/oneboard';
 import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
 import { buildWallboard, wallboardSites, WALLBOARD_MODULES, WALLBOARD_DEFAULT } from '../lib/wallboard';
 import { htmlToPdf } from '../lib/pdf';
@@ -34,6 +34,8 @@ export async function ensureCustomerPortalColumn(): Promise<void> {
     .catch((e) => console.error('ensureCustomerPortalColumn failed:', e.message));
   await pool.query('ALTER TABLE customer_contacts ADD COLUMN IF NOT EXISTS portal_access_level text')
     .catch((e) => console.error('ensure portal_access_level failed:', e.message));
+  await pool.query('ALTER TABLE customer_contacts ADD COLUMN IF NOT EXISTS insights_sites JSONB')
+    .catch((e) => console.error('ensure insights_sites failed:', e.message));
   // OneBoard: each user's saved site selection ({"sites":[ids]}); also in schema.prisma.
   await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS oneboard_prefs JSONB')
     .catch((e) => console.error('ensure oneboard_prefs failed:', e.message));
@@ -62,7 +64,7 @@ async function attachPerms(req: Request, res: Response, next: NextFunction): Pro
   const u = req.session.user!;
   const c = Number(u.customerId);
   const contact = (await rows(
-    'SELECT id, portal_access_level FROM customer_contacts WHERE customer_id=$1 AND email IS NOT NULL AND lower(email)=lower($2) LIMIT 1',
+    'SELECT id, portal_access_level, insights_sites FROM customer_contacts WHERE customer_id=$1 AND email IS NOT NULL AND lower(email)=lower($2) LIMIT 1',
     [c, u.email]))[0];
   const cust = (await rows(
     'SELECT principal_contact_id, billing_contact_id, service_contact_id, portal_enabled FROM customers WHERE id=$1', [c]))[0] || {};
@@ -107,6 +109,11 @@ async function attachPerms(req: Request, res: Response, next: NextFunction): Pro
     viewUsers:  isPrincipal || isService,            // view (not manage) company users
     insights:   isPrincipal || isService || isSupportInsights || isTicketsInsights, // call insights / number lookup (their own data only)
     itReports:  isPrincipal || isService,            // monthly IT Operations & Security Snapshots
+    // Site layer: which insights SITES this contact may see (null = all of their company's
+    // sites). Applied to OneBoard, Wallboard and every /my/insights surface below.
+    insightsSites: (Array.isArray(contact?.insights_sites) && contact.insights_sites.length)
+      ? contact.insights_sites.map((n: any) => parseInt(String(n), 10)).filter(Number.isInteger)
+      : null,
   };
   (req as any).perms = p;
   res.locals.perms = p;
@@ -329,6 +336,7 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
       'SELECT id, name FROM customers WHERE lumenmsp_id=$1 AND is_active=true LIMIT 1', [c])).rows[0];
     if (!ins) { res.render('my/insights', { ...base, state: 'unlinked' }); return; }
     base.insName = ins.name;
+    const allowed = (perms(req) as any).insightsSites as number[] | null;   // site layer (null = all)
 
     // Home tab — Call Tracker: look up a number across the customer's cached calls (last 28 days).
     if (tab === 'home' && q.length >= 3) {
@@ -342,7 +350,15 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
             AND event_datetime >= $4 AND event_datetime <= $5
           ORDER BY event_datetime ASC LIMIT 5000`,
         [ins.id, norm, '%' + norm + '%', from + ' 00:00:00', to + ' 23:59:59'])).rows as CallEventRow[];
-      const journeys = buildJourneys(rows2, { business_hours_only: false }).reverse().map((j) => ({ ...j, route: formatRoute(j) }));
+      let trackerJourneys = buildJourneys(rows2, { business_hours_only: false });
+      // Site layer: keep only journeys that match one of the contact's allowed sites' logic.
+      if (allowed?.length) {
+        const logics = await siteLogicsByIds(ins.id, allowed);
+        const keep = new Set<string>();
+        for (const lg of logics) for (const j of buildJourneys(rows2, { ...lg, business_hours_only: false })) keep.add(j.datetime + '|' + j.number);
+        trackerJourneys = trackerJourneys.filter((j) => keep.has(j.datetime + '|' + j.number));
+      }
+      const journeys = trackerJourneys.reverse().map((j) => ({ ...j, route: formatRoute(j) }));
       const total = journeys.length;
       const answered = journeys.filter((j) => j.status === 'Answered').length;
       const missed = journeys.filter((j) => j.status === 'Missed' || j.status === 'Abandoned').length;
@@ -359,8 +375,18 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
     // customer role by requireAuth. Same anti-IDOR posture as the rest of /my.
     if (tab === 'reverse') {
       base.extensions = (await getGroupsAndExtensions(ins.id)).extensions;
+      // Site layer: only the allowed sites' configured staff extensions are offered or usable.
+      const normX = (x: any) => String(x || '').replace(/@.*$/, '').trim().toLowerCase();
+      let staffAllowed: Set<string> | null = null;
+      if (allowed?.length) {
+        staffAllowed = new Set((await siteLogicsByIds(ins.id, allowed)).flatMap((l) => l.staff_extensions || []).map(normX));
+        base.extensions = base.extensions.filter((e: any) => staffAllowed!.has(normX(e)));
+      }
       const ext = String(req.query.ext || '').trim().slice(0, 80);
       base.ext = ext;
+      if (ext && staffAllowed && !staffAllowed.has(normX(ext))) {
+        base.err = 'That extension is not available on your account.'; base.ext = ''; res.render('my/insights', base); return;
+      }
       const today2 = new Date().toISOString().slice(0, 10);
       const weekAgo = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
       base.fromDate = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || '')) ? String(req.query.from) : weekAgo;
@@ -419,14 +445,17 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
         'SELECT id, name FROM report_templates WHERE is_active = true ORDER BY is_system DESC, lower(name)')).rows;
       base.sites = (await insightsPool.query(
         'SELECT id, site_label FROM sites WHERE customer_id = $1 ORDER BY site_label', [ins.id])).rows;
+      if (allowed?.length) base.sites = base.sites.filter((st: any) => allowed.includes(Number(st.id)));
+      const repFilter = allowed?.length ? ' AND s.id = ANY($2::int[])' : '';
+      const repParams: any[] = allowed?.length ? [ins.id, allowed] : [ins.id];
       base.reports = (await insightsPool.query(
         `SELECT gr.id, gr.report_start, gr.report_end, gr.generated_at, gr.created_at,
                 rc.config_label, rc.report_type, s.site_label
            FROM generated_reports gr
            JOIN report_configs rc ON rc.id = gr.config_id
            JOIN sites s ON s.id = rc.site_id
-          WHERE s.customer_id = $1 AND gr.html IS NOT NULL AND gr.status::text IN ('generated','sent')
-          ORDER BY gr.generated_at DESC NULLS LAST, gr.created_at DESC LIMIT 60`, [ins.id])).rows;
+          WHERE s.customer_id = $1 AND gr.html IS NOT NULL AND gr.status::text IN ('generated','sent')${repFilter}
+          ORDER BY gr.generated_at DESC NULLS LAST, gr.created_at DESC LIMIT 60`, repParams)).rows;
       // Email suggestions = every address on this customer's contacts (portal DB, by portal customer id).
       base.emails = (await rows(
         "SELECT DISTINCT email FROM customer_contacts WHERE customer_id=$1 AND email IS NOT NULL AND email <> '' ORDER BY email", [c]
@@ -456,6 +485,8 @@ router.post('/my/insights/run', need('insights'), async (req: Request, res: Resp
       `SELECT 1 FROM sites s JOIN customers c ON c.id = s.customer_id
         WHERE s.id = $1 AND c.lumenmsp_id = $2 AND c.is_active = true LIMIT 1`, [siteId, c])).rows[0];
     if (!ok) { res.redirect('/my/insights?tab=reports&err=' + encodeURIComponent('Site not found.')); return; }
+    const allowedRun = (perms(req) as any).insightsSites as number[] | null;   // site layer
+    if (allowedRun?.length && !allowedRun.includes(siteId)) { res.redirect('/my/insights?tab=reports&err=' + encodeURIComponent('Site not found.')); return; }
     const { html } = await generateFromTemplate(templateId, siteId, from, to);
     res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline' data: blob: https:; img-src * data: blob:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; font-src 'self' data: https:");
     res.send(html);
@@ -476,13 +507,16 @@ router.post('/my/insights/report/:id/email', need('insights'), async (req: Reque
     res.redirect('/my/insights?tab=reports&err=' + encodeURIComponent('Enter a valid email address.')); return;
   }
   try {
+    const allowedEm = (perms(req) as any).insightsSites as number[] | null;   // site layer
+    const emFilter = allowedEm?.length ? ' AND s.id = ANY($3::int[])' : '';
+    const emParams: any[] = allowedEm?.length ? [id, c, allowedEm] : [id, c];
     const r = (await insightsPool.query(
       `SELECT gr.html, gr.report_start, gr.report_end, rc.config_label
          FROM generated_reports gr
          JOIN report_configs rc ON rc.id = gr.config_id
          JOIN sites s ON s.id = rc.site_id
          JOIN customers c ON c.id = s.customer_id
-        WHERE gr.id = $1 AND c.lumenmsp_id = $2 AND c.is_active = true LIMIT 1`, [id, c])).rows[0];
+        WHERE gr.id = $1 AND c.lumenmsp_id = $2 AND c.is_active = true${emFilter} LIMIT 1`, emParams)).rows[0];
     if (!r || !r.html) { res.redirect('/my/insights?tab=reports&err=' + encodeURIComponent('Report not found.')); return; }
     const fmt = (x: any) => x ? new Date(x).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
     const period = r.report_start ? ` — ${fmt(r.report_start)}${r.report_end ? ' to ' + fmt(r.report_end) : ''}` : '';
@@ -502,13 +536,16 @@ router.get('/my/insights/report/:id', need('insights'), async (req: Request, res
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id)) { res.status(404).render('error', { message: 'Report not found.' }); return; }
   try {
+    const allowedVw = (perms(req) as any).insightsSites as number[] | null;   // site layer
+    const vwFilter = allowedVw?.length ? ' AND s.id = ANY($3::int[])' : '';
+    const vwParams: any[] = allowedVw?.length ? [id, c, allowedVw] : [id, c];
     const row = (await insightsPool.query(
       `SELECT gr.html
          FROM generated_reports gr
          JOIN report_configs rc ON rc.id = gr.config_id
          JOIN sites s ON s.id = rc.site_id
          JOIN customers c ON c.id = s.customer_id
-        WHERE gr.id = $1 AND c.lumenmsp_id = $2 AND c.is_active = true LIMIT 1`, [id, c])).rows[0];
+        WHERE gr.id = $1 AND c.lumenmsp_id = $2 AND c.is_active = true${vwFilter} LIMIT 1`, vwParams)).rows[0];
     if (!row || !row.html) { res.status(404).render('error', { message: 'Report not found.' }); return; }
     res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline' data: blob: https:; img-src * data: blob:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; font-src 'self' data: https:");
     res.send(row.html);
@@ -538,7 +575,7 @@ router.get('/my/oneboard', need('insights'), async (req: Request, res: Response)
   const u = req.session.user!; const c = cid(req);
   const company = (await rows('SELECT name FROM customers WHERE id=$1', [c]))[0]?.name || '';
   const r = parseOneBoardRange(req.query as Record<string, any>);
-  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare });
+  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare, allowedSiteIds: (perms(req) as any).insightsSites });
   res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, ...r });
 });
 
@@ -546,7 +583,7 @@ router.get('/my/oneboard', need('insights'), async (req: Request, res: Response)
 router.get('/my/oneboard.pdf', need('insights'), async (req: Request, res: Response) => {
   const c = cid(req);
   const r = parseOneBoardRange(req.query as Record<string, any>);
-  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare });
+  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare, allowedSiteIds: (perms(req) as any).insightsSites });
   const pdf = await htmlToPdf(oneBoardPdfHtml(data, { from: r.from, to: r.to, compare: r.compare }),
     { format: 'A4', landscape: true, margin: { top: '10mm', right: '10mm', bottom: '12mm', left: '10mm' } });
   res.setHeader('Content-Type', 'application/pdf');
@@ -557,7 +594,7 @@ router.get('/my/oneboard.pdf', need('insights'), async (req: Request, res: Respo
 router.get('/my/oneboard.csv', need('insights'), async (req: Request, res: Response) => {
   const c = cid(req);
   const r = parseOneBoardRange(req.query as Record<string, any>);
-  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: false });
+  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: false, allowedSiteIds: (perms(req) as any).insightsSites });
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${exportFilename(data.insName, r.from, r.to, 'csv')}"`);
   res.send(oneBoardCsv(data, r.from, r.to));
@@ -576,7 +613,7 @@ function wallboardModules(q: any): string[] {
 router.get('/my/wallboard', need('insights'), async (req: Request, res: Response) => {
   const u = req.session.user!; const c = cid(req);
   const company = (await rows('SELECT name FROM customers WHERE id=$1', [c]))[0]?.name || '';
-  const sites = await wallboardSites(c);
+  const sites = await wallboardSites(c, (perms(req) as any).insightsSites);
   res.render('my/wallboard', {
     active: 'wallboard', user: u, company, sites,
     modules: WALLBOARD_MODULES, defaults: WALLBOARD_DEFAULT,
@@ -587,14 +624,20 @@ router.get('/my/wallboard/tv', need('insights'), async (req: Request, res: Respo
   const c = cid(req);
   const siteId = parseInt(String(req.query.site || ''), 10) || 0;
   const refresh = Math.min(600, Math.max(30, parseInt(String(req.query.refresh || ''), 10) || 60));
-  const data = await buildWallboard(c, siteId);
-  res.render('my/wallboard-tv', { data, picked: wallboardModules(req.query), refresh, siteId, allModules: WALLBOARD_MODULES });
+  // Run-for timer: 1–12 hours ONLY (12h = the session cookie's ceiling, so a full run
+  // can never outlive its login). The TV page stops polling when the timer ends.
+  const hours = Math.min(12, Math.max(1, parseInt(String(req.query.hours || ''), 10) || 8));
+  const data = await buildWallboard(c, siteId, (perms(req) as any).insightsSites);
+  res.render('my/wallboard-tv', { data, picked: wallboardModules(req.query), refresh, hours, siteId, allModules: WALLBOARD_MODULES });
 });
 
 router.get('/my/wallboard.json', need('insights'), async (req: Request, res: Response) => {
   const c = cid(req);
   const siteId = parseInt(String(req.query.site || ''), 10) || 0;
-  const data = await buildWallboard(c, siteId);
+  // Each poll marks the session, which makes express-session re-save it and re-issue the
+  // cookie with a fresh 12h expiry — the TV stays logged in for as long as the board runs.
+  (req.session as any).wallboardPingAt = Date.now();
+  const data = await buildWallboard(c, siteId, (perms(req) as any).insightsSites);
   res.setHeader('Cache-Control', 'no-store');
   res.json(data);
 });
