@@ -75,6 +75,38 @@ export function stripDeadCids(html: string): string {
     '<span style="display:inline-block;padding:2px 8px;border:1px dashed #cbd5e1;border-radius:6px;color:#94a3b8;font-size:11px;">image unavailable</span>');
 }
 
+// ── Staff-forwarded email → requester = the ORIGINAL sender ─────────────────────
+// When one of OUR OWN addresses forwards a customer's email into the helpdesk, the
+// case requester should be the customer, not the staff member. "Our own" domains
+// derive from config, extendable via OWN_FORWARD_DOMAINS (comma-separated) — never
+// per-customer. The original sender is parsed from the forwarded "From:" header.
+const OWN_DOMAINS = new Set(
+  [config.GRAPH_SYNC_MAILBOX, config.FROM_EMAIL,
+   ...String(process.env.OWN_FORWARD_DOMAINS || 'lumensolutions.co.uk,lumenmsp.co.uk').split(',')]
+    .map((v) => String(v || '').trim().toLowerCase().replace(/^.*@/, ''))
+    .filter(Boolean)
+);
+
+export function extractForwardedSender(m: { from?: string; subject?: string; bodyHtml?: string; bodyText?: string }): { email: string; name: string } | null {
+  const fromDomain = String(m.from || '').toLowerCase().replace(/^.*@/, '');
+  if (!fromDomain || !OWN_DOMAINS.has(fromDomain)) return null;
+  const subj = String(m.subject || '');
+  const body = (m.bodyHtml ? htmlToText(m.bodyHtml) : '') || String(m.bodyText || '');
+  const looksForwarded = /^\s*(fwd?|fw)\s*:/i.test(subj)
+    || /-{2,}\s*(Forwarded message|Original Message)\s*-{2,}/i.test(body)
+    || /(^|\n)\s*From:\s*\S/i.test(body);
+  if (!looksForwarded) return null;
+  // First "From:" line in the body = the original sender of the forwarded email.
+  const mm = /(^|\n)\s*From:\s*(.+?)\s*[<\[]([^>\]\s]+@[^>\]\s]+)[>\]]/i.exec(body)
+    || /(^|\n)\s*From:\s*([^\n<]*?)([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/i.exec(body);
+  if (!mm) return null;
+  const email = mm[3].trim().toLowerCase().replace(/^mailto:/, '');
+  const origDomain = email.replace(/^.*@/, '');
+  if (!origDomain || OWN_DOMAINS.has(origDomain)) return null;   // forwarding our own mail — leave as-is
+  const name = (mm[2] || '').replace(/["'|]/g, '').trim().slice(0, 120);
+  return { email, name };
+}
+
 // Builds the display HTML for an inbound message: sanitized new content, with the
 // quoted thread + echoed signature collapsed behind a toggle, inline cid: images
 // rewritten to stored URLs, and downloadable attachments returned separately.
@@ -322,10 +354,13 @@ export async function syncInbox(): Promise<{ fetched: number; inserted: number }
           processed = true;
           continue;
         }
-        const matched = await matchEntity(m.from);
+        // Staff-forwarded email? Match customer + requester on the ORIGINAL sender.
+        const fwd = extractForwardedSender(m);
+        const requesterEmail = fwd ? fwd.email : m.from;
+        const matched = await matchEntity(requesterEmail);
         const custId = matched.type === 'customer' ? matched.id : null;
-        const contact = m.from
-          ? await pool.query('SELECT id FROM customer_contacts WHERE email IS NOT NULL AND lower(email)=lower($1) LIMIT 1', [m.from])
+        const contact = requesterEmail
+          ? await pool.query('SELECT id FROM customer_contacts WHERE email IS NOT NULL AND lower(email)=lower($1) LIMIT 1', [requesterEmail])
           : { rows: [] as any[] };
         const contactId = contact.rows.length ? contact.rows[0].id : null;
         const inb = await buildInbound(config.GRAPH_SYNC_MAILBOX, m);
@@ -350,7 +385,9 @@ export async function syncInbox(): Promise<{ fetched: number; inserted: number }
           [tid, config.GRAPH_SYNC_MAILBOX, m.fromName || null, m.from || null, (m.toRecipients || []).join(', ') || null, (m.ccRecipients || []).join(', ') || null, subject || null, inb.text || null, inb.ticketHtml, inb.attachments.length > 0, m.receivedDateTime, m.id]
         );
         await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1, NULL, 'system_log', $2)`,
-          [tid, autoReply ? 'Created from an auto-reply / out-of-office email (no acknowledgement sent)' : 'Created from email (' + (m.from || 'unknown sender') + ')']);
+          [tid, autoReply ? 'Created from an auto-reply / out-of-office email (no acknowledgement sent)'
+            : fwd ? 'Created from email forwarded by ' + (m.from || 'staff') + ' — requester set to original sender ' + fwd.email + (fwd.name ? ' (' + fwd.name + ')' : '')
+            : 'Created from email (' + (m.from || 'unknown sender') + ')']);
         inserted++;
 
         // An out-of-office / auto-reply is still visible on the board, but we never ACK it
