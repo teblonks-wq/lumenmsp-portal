@@ -328,7 +328,10 @@ export async function syncInbox(): Promise<{ fetched: number; inserted: number }
         const t = await pool.query(
           `INSERT INTO inbox_tickets (ticket_number, source, customer_id, contact_id, status, department, category, subject, description, activity_status, stage, updated_at)
            VALUES ($1,'email',$2,$3,'new','support',$4,$5,$6,'unread','awaiting_triage', NOW()) RETURNING id`,
-          [tn, custId, contactId, aiCat, subject || '(no subject)', stripEmailFooter(inb.text || '')]
+          // Description = the email SUBJECT (escaped — the case page renders description as HTML).
+          // The body is the message itself and shows on the case thread as normal.
+          [tn, custId, contactId, aiCat, subject || '(no subject)',
+           String(subject || '(no subject)').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string))]
         );
         const tid = t.rows[0].id;
         await pool.query(

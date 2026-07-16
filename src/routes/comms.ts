@@ -6,6 +6,8 @@ import { sendMail } from '../lib/mailer';
 import { nextTicketNumber } from './tickets';
 import { cleanHtml, stripEmailFooter } from '../lib/sanitize';
 import { attachmentUpload, processAttachments } from '../lib/attachments';
+import { quoteEmailHtml } from '../lib/emails';
+import crypto from 'crypto';
 
 const router = Router();
 const ENTITIES: Record<string, string> = { quote: '/quotes/', invoice: '/invoices/', customer: '/customers/' };
@@ -37,17 +39,49 @@ router.post('/comms', requireAuth, attachmentUpload.array('attachments', 5), asy
   const back = (ENTITIES[entityType] || '/') + (entityId || '');
   const { stored, graph } = processAttachments((req as any).files || []);
 
-  if (!ENTITIES[entityType] || !entityId || (htmlIsEmpty(html) && !stored.length)) { res.redirect(back); return; }
+  // "Send quote" tick — the composer email BECOMES the quote email (branded, accept link,
+  // status -> Sent). One composer, one email; the old separate Send Quote box is retired.
+  const sendQuote = entityType === 'quote' && String(req.body.send_quote || '') === '1';
+
+  if (!ENTITIES[entityType] || !entityId || (htmlIsEmpty(html) && !stored.length && !sendQuote)) { res.redirect(back); return; }
+
+  let mailSubject = subject || 'Message from Lumen IT Solutions';
+  let mailHtml = html;
+  let logHtml = html;
+
+  if (sendQuote) {
+    const token = crypto.randomBytes(24).toString('hex');
+    await pool.query(
+      `UPDATE quotes SET status='sent', issue_date=COALESCE(issue_date, CURRENT_DATE),
+         accept_token=COALESCE(accept_token, $1), sent_to=COALESCE($2, sent_to) WHERE id=$3`,
+      [token, to || null, entityId]
+    );
+    const q = (await pool.query('SELECT quote_number, title, accept_token, total, valid_until, customer_id FROM quotes WHERE id=$1', [entityId])).rows[0];
+    if (q) {
+      let contactName = '';
+      if (q.customer_id && to) {
+        const ct = await pool.query('SELECT full_name FROM customer_contacts WHERE customer_id=$1 AND lower(email)=lower($2) LIMIT 1', [q.customer_id, to]);
+        contactName = ct.rows[0]?.full_name || '';
+      }
+      const link = config.APP_URL + '/q/' + q.accept_token;
+      const total = '£' + (Number(q.total) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const validUntil = q.valid_until ? new Date(q.valid_until).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
+      mailSubject = subject || `Quotation ${q.quote_number} from Lumen IT Solutions`;
+      mailHtml = quoteEmailHtml({ contactName, quoteNumber: q.quote_number, title: q.title, total, validUntil, messageHtml: htmlIsEmpty(html) ? '' : html, link });
+      logHtml = (htmlIsEmpty(html) ? '' : html) +
+        `<p style="font-size:12px;color:#6b7280;margin-top:8px;">Sent as the quote email — accept link included · quote marked Sent.</p>`;
+    }
+  }
 
   const sendFrom = config.GRAPH_SEND_FROM || config.FROM_EMAIL;
   await pool.query(
     `INSERT INTO communications (entity_type, entity_id, direction, from_name, from_email, to_email, cc_email, bcc_email, subject, body, is_unread, sent_by_user_id, attachments)
      VALUES ($1,$2,'outbound',$3,$4,$5,$6,$7,$8,$9,false,$10,$11)`,
-    [entityType, entityId, config.FROM_NAME, sendFrom, to || null, cc || null, bcc || null, subject || null, html, user.id, stored.length ? JSON.stringify(stored) : null]
+    [entityType, entityId, config.FROM_NAME, sendFrom, to || null, cc || null, bcc || null, mailSubject, logHtml, user.id, stored.length ? JSON.stringify(stored) : null]
   );
   if (to || cc || bcc) {
     try {
-      await sendMail({ to, cc: cc || undefined, bcc: bcc || undefined, from: sendFrom, subject: subject || 'Message from Lumen IT Solutions', html, signatureName: user.displayName, attachments: graph });
+      await sendMail({ to, cc: cc || undefined, bcc: bcc || undefined, from: sendFrom, subject: mailSubject, html: mailHtml, signatureName: user.displayName, attachments: graph });
     } catch (e) { console.error('Comms email failed (mail not configured?):', e); }
   }
   res.redirect(back + '#comms');
@@ -109,7 +143,9 @@ router.post('/comms/:id/to-ticket', requireAuth, async (req: Request, res: Respo
   const t = await pool.query(
     `INSERT INTO inbox_tickets (ticket_number, source, customer_id, assigned_user_id, assigned_at, status, department, category, subject, description, activity_status, stage, updated_at)
      VALUES ($1,'email',$2,$3,NOW(),'new','support','incident',$4,$5,'read','awaiting_triage', NOW()) RETURNING id`,
-    [tn, customerId, user.id, msg.subject || 'Email enquiry', stripEmailFooter(bodyText)]
+    // Description = the email SUBJECT (same rule as emailed-in cases); the body shows on the thread.
+    [tn, customerId, user.id, msg.subject || 'Email enquiry',
+     String(msg.subject || 'Email enquiry').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string))]
   );
   const ticketId = t.rows[0].id;
   // Put the original email into the conversation feed as the first activity.

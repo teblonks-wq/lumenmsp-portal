@@ -91,27 +91,7 @@
   </div>
 </div>
 
-<div class="card-grid" style="grid-template-columns:2fr 1fr;align-items:start;">
-  <div class="card">
-    <div class="card-header"><h2>Send quote</h2></div>
-    <p class="muted" style="margin:0 0 16px;">Sends a branded email with the quote link, and sets status to <strong>Sent</strong>.</p>
-    <form method="post" action="/quotes/<%= quote.id %>/send">
-      <div class="form-group" style="margin-bottom:12px;">
-        <label>Recipient email</label>
-        <% if (contacts.length) { %>
-        <select class="input" name="send_to" style="width:100%;">
-          <% contacts.forEach(function(ct){ %><option value="<%= ct.email %>" <%= quote.sent_to===ct.email ? 'selected' : '' %>><%= ct.full_name %> &lt;<%= ct.email %>&gt;<%= ct.is_primary ? ' ★' : '' %></option><% }); %>
-          <option value="">— other —</option>
-        </select>
-        <% } else { %>
-        <input class="input" type="email" name="send_to" value="<%= quote.sent_to || '' %>" placeholder="customer@example.com" style="width:100%;">
-        <% } %>
-      </div>
-      <div class="form-group" style="margin-bottom:14px;"><label>Message (optional — appears at top of email)</label><textarea class="input" name="message" rows="4" style="width:100%;" placeholder="Hi, please find your quote attached…"></textarea></div>
-      <button class="btn btn-primary" type="submit">Send quote by email</button>
-    </form>
-  </div>
-
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));align-items:start;">
   <div class="card">
     <div class="card-header"><h2>Activity</h2></div>
     <div style="margin-bottom:14px;"><div style="font-weight:600;">Created</div><div class="muted" style="font-size:13px;"><%= quote.created_by_name || '—' %> · <%= dt(quote.created_at) %></div></div>
@@ -129,6 +109,6 @@
 </div>
 <% } %>
 
-<%- include('../partials/comms', { entityType: 'quote', entityId: quote.id, comms: comms, toEmail: commsTo, commsSubject: quote.quote_number + ' — ' + quote.title }) %>
+<%- include('../partials/comms', { entityType: 'quote', entityId: quote.id, comms: comms, toEmail: commsTo, toContacts: contacts, commsSubject: quote.quote_number + ' — ' + quote.title, sendQuote: true, quoteStatus: quote.status }) %>
 
 <%- include('../partials/footer') %>

@@ -26,11 +26,13 @@ export async function sendWelcomeEmail(toEmail: string, toName: string, fromName
 // table and a clear call-to-action button. Renders cleanly even with images off.
 export function quoteEmailHtml(opts: {
   contactName?: string; quoteNumber: string; title: string;
-  total?: string; validUntil?: string; message?: string; link: string;
+  total?: string; validUntil?: string; message?: string; messageHtml?: string; link: string;
 }): string {
   const first = (opts.contactName || '').trim().split(/\s+/)[0] || 'there';
   const esc = (s: string) => (s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as Record<string, string>)[c]);
-  const note = opts.message ? `<p style="margin:0 0 16px;">${esc(opts.message).replace(/\n/g, '<br>')}</p>` : '';
+  // messageHtml = already-sanitised rich HTML (the composer path); message = plain text.
+  const note = opts.messageHtml ? `<div style="margin:0 0 16px;">${opts.messageHtml}</div>`
+    : opts.message ? `<p style="margin:0 0 16px;">${esc(opts.message).replace(/\n/g, '<br>')}</p>` : '';
   const rows: [string, string][] = [['Quotation', opts.quoteNumber], ['Subject', opts.title]];
   if (opts.total) rows.push(['Total (inc. VAT)', opts.total]);
   if (opts.validUntil) rows.push(['Valid until', opts.validUntil]);

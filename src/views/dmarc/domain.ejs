@@ -157,6 +157,7 @@
               <pre style="margin:0;padding:8px;background:#ecfeff;border-radius:8px;overflow:auto;font-size:14px;"><%= dom.domain %>  TXT  "<%= check.suggestedSpf %>"</pre>
               <span class="copy-btns">
                 <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="@">Copy host</button>
+                <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= dom.domain %>" title="Fully-qualified host — some DNS platforms require the domain included">Copy host + domain</button>
                 <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= check.suggestedSpf %>">Copy value</button>
               </span>
             </div>
@@ -200,6 +201,7 @@
                 <pre style="margin:0;padding:8px;background:#ecfeff;border-radius:8px;overflow:auto;font-size:14px;">_dmarc.<%= dom.domain %>  TXT  "<%= check.suggestedDmarc %>"</pre>
                 <span class="copy-btns">
                   <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="_dmarc">Copy host</button>
+                  <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="_dmarc.<%= dom.domain %>" title="Fully-qualified host — some DNS platforms require the domain included">Copy host + domain</button>
                   <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= check.suggestedDmarc %>">Copy value</button>
                 </span>
               </div>
@@ -225,6 +227,7 @@
               <pre style="margin:0;padding:8px;background:#ecfeff;border-radius:8px;overflow:auto;font-size:14px;">_dmarc.<%= dom.domain %>  TXT  "<%= check.suggestedDmarc %>"</pre>
               <span class="copy-btns">
                 <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="_dmarc">Copy host</button>
+                <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="_dmarc.<%= dom.domain %>" title="Fully-qualified host — some DNS platforms require the domain included">Copy host + domain</button>
                 <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= check.suggestedDmarc %>">Copy value</button>
               </span>
             </div>
@@ -244,6 +247,7 @@
               <pre style="margin:6px 0 0;padding:8px;background:#ecfeff;border-radius:8px;overflow:auto;font-size:14px;"><%= p.host %>  <%= p.expected %></pre>
               <span class="copy-btns">
                 <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= relHost %>">Copy host</button>
+                <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= p.host %>" title="Fully-qualified host — some DNS platforms require the domain included">Copy host + domain</button>
                 <button type="button" class="copy-btn" onclick="copyRec(this)" data-rec="<%= recVal %>">Copy value</button>
               </span>
             </div>

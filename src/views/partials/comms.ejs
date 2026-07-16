@@ -58,7 +58,14 @@
     <div class="form-group" style="margin-bottom:12px;"><label>Attachments <span class="muted">(up to 5, 10MB each)</span></label>
       <input class="input" type="file" name="attachments" multiple>
     </div>
-    <button class="btn btn-primary" type="submit">Send email</button>
+    <% if (typeof sendQuote !== 'undefined' && sendQuote) { var sqTicked = (typeof quoteStatus === 'undefined') || quoteStatus === 'draft'; %>
+    <label style="display:flex;gap:9px;align-items:flex-start;margin-bottom:12px;padding:10px 12px;border:1px solid #a5dbe6;background:#ecfeff;border-radius:8px;cursor:pointer;">
+      <input type="checkbox" name="send_quote" value="1" <%= sqTicked ? 'checked' : '' %> style="width:auto;min-width:auto;margin-top:3px;"
+             onchange="var b=document.getElementById('commsSendBtn<%= entityId %>'); if(b) b.textContent = this.checked ? 'Send quote' : 'Send email';">
+      <span style="font-size:13px;"><strong>Send as the quote email</strong> — branded email with the summary and accept link; marks the quote as <strong>Sent</strong>. Your message above appears at the top.</span>
+    </label>
+    <% } %>
+    <button class="btn btn-primary" type="submit" id="commsSendBtn<%= entityId %>"><%= (typeof sendQuote !== 'undefined' && sendQuote && ((typeof quoteStatus === 'undefined') || quoteStatus === 'draft')) ? 'Send quote' : 'Send email' %></button>
   </form>
   </details>
 </div>
