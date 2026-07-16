@@ -57,7 +57,7 @@ function splitReply(rawHtml: string): { visible: string; quoted: string } {
   return { visible, quoted: rawHtml.slice(cut) };
 }
 
-function rewriteCids(html: string, saved: SavedInboundAttachment[]): string {
+export function rewriteCids(html: string, saved: SavedInboundAttachment[]): string {
   let out = html;
   for (const a of saved) {
     if (a.isInline && a.contentId) {
@@ -68,6 +68,13 @@ function rewriteCids(html: string, saved: SavedInboundAttachment[]): string {
   return out;
 }
 
+// Any cid: image we couldn't resolve becomes a tidy placeholder instead of the
+// browser's broken-image icon (e.g. the original email has gone from the mailbox).
+export function stripDeadCids(html: string): string {
+  return html.replace(/<img\b[^>]*src=["']?cid:[^>]*>/gi,
+    '<span style="display:inline-block;padding:2px 8px;border:1px dashed #cbd5e1;border-radius:6px;color:#94a3b8;font-size:11px;">image unavailable</span>');
+}
+
 // Builds the display HTML for an inbound message: sanitized new content, with the
 // quoted thread + echoed signature collapsed behind a toggle, inline cid: images
 // rewritten to stored URLs, and downloadable attachments returned separately.
@@ -75,7 +82,10 @@ async function buildInbound(mailbox: string, m: GraphMessage): Promise<{
   ticketHtml: string; commsHtml: string; text: string; attachments: SavedInboundAttachment[];
 }> {
   let saved: SavedInboundAttachment[] = [];
-  if (m.hasAttachments) {
+  // Graph gotcha: hasAttachments is FALSE when a message's ONLY attachments are inline
+  // images — so also fetch whenever the body references cid:, or the pictures 404.
+  const referencesCid = /src=["']?cid:/i.test(m.bodyHtml || '');
+  if (m.hasAttachments || referencesCid) {
     try { saved = saveGraphAttachments(await graphListAttachments(mailbox, m.id)); }
     catch (e) { console.error('[mailsync] attachment fetch failed:', (e as Error).message); }
   }
@@ -84,8 +94,8 @@ async function buildInbound(mailbox: string, m: GraphMessage): Promise<{
     : '<div style="white-space:pre-wrap;">' + escHtml(m.bodyText || '') + '</div>';
 
   const { visible, quoted } = splitReply(rawHtml);
-  const body = rewriteCids(cleanInboundEmail(visible), saved);
-  const quotedHtml = quoted ? rewriteCids(cleanInboundEmail(quoted), saved) : '';
+  const body = stripDeadCids(rewriteCids(cleanInboundEmail(visible), saved));
+  const quotedHtml = quoted ? stripDeadCids(rewriteCids(cleanInboundEmail(quoted), saved)) : '';
 
   const files = saved.filter((a) => !a.isInline);
   const filesHtml = files.length
