@@ -10,6 +10,7 @@ import { notify } from '../lib/notifications';
 import { sendTeamsNotice, sendTeamsReply } from '../lib/teams';
 import { teamsGraphConnected, sendTeamsChatMessage } from '../lib/teamsgraph';
 import { syncInbox } from '../lib/mailsync';
+import { aiAskText } from '../lib/ai-compose';
 import { blockSender, emailDomain } from '../lib/spam';
 import { sendWhatsAppText, htmlToPlain, normaliseWaNumber } from '../lib/whatsapp';
 import { logChannel } from '../lib/commslog';
@@ -1126,6 +1127,113 @@ router.get('/tickets/nav/awaiting-count', requireAuth, async (_req: Request, res
     const n = (await pool.query("SELECT COUNT(*)::int n FROM inbox_tickets WHERE status='awaiting_engineer' AND deleted_at IS NULL AND COALESCE(is_spam,false)=false")).rows[0].n;
     res.json({ n });
   } catch { res.json({ n: 0 }); }
+});
+
+
+// ── "Ask Claude" on a ticket ─────────────────────────────────────────────────────
+// Natural-language questions over the ENTIRE ticket — every message (including text
+// that's visually hidden in the email HTML: quoted history, collapsed footers), every
+// note, the subject and description. Answers cite the block they came from so the UI
+// can jump straight to it, and every Q&A is stored per ticket so nobody asks twice.
+
+(async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ticket_ai_queries (
+      id         SERIAL PRIMARY KEY,
+      ticket_id  INTEGER NOT NULL,
+      user_id    INTEGER,
+      question   TEXT NOT NULL,
+      answer     JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`).catch((e) => console.error('ensure ticket_ai_queries failed:', e.message));
+  await pool.query('CREATE INDEX IF NOT EXISTS ticket_ai_queries_ticket_idx ON ticket_ai_queries (ticket_id)')
+    .catch(() => { /* index best-effort */ });
+})();
+
+// HTML → text that KEEPS hidden content: styles/scripts go, every text node stays —
+// including display:none blocks and quoted history that the rendered view collapses.
+function askPlainText(html: string): string {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<(br|\/p|\/div|\/tr|\/li|\/h[1-6])[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&#39;|&apos;/gi, "'").replace(/&quot;/gi, '"')
+    .replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+router.get('/tickets/:id/ask', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const rows = (await pool.query(
+    `SELECT q.id, q.question, q.answer, q.created_at, u.display_name AS asked_by
+       FROM ticket_ai_queries q LEFT JOIN users u ON u.id = q.user_id
+      WHERE q.ticket_id = $1 ORDER BY q.created_at DESC LIMIT 50`, [id])).rows;
+  res.json({ ok: true, queries: rows });
+});
+
+router.post('/tickets/:id/ask', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  const question = String((req.body || {}).question || '').trim().slice(0, 500);
+  if (!Number.isInteger(id) || !question) { res.status(400).json({ ok: false, error: 'Ask a question first.' }); return; }
+  try {
+    const t = (await pool.query(
+      `SELECT it.subject, it.description, it.ticket_number, c.name AS customer_name
+         FROM inbox_tickets it LEFT JOIN customers c ON c.id = it.customer_id
+        WHERE it.id = $1 LIMIT 1`, [id])).rows[0];
+    if (!t) { res.status(404).json({ ok: false, error: 'Ticket not found.' }); return; }
+
+    const msgs = (await pool.query(
+      `SELECT id, message_direction, from_name, from_email, received_at, created_at, body_html, body_text
+         FROM inbox_messages WHERE ticket_id = $1 ORDER BY COALESCE(received_at, created_at) ASC`, [id])).rows;
+    const notes = (await pool.query(
+      `SELECT n.id, n.note_type, n.body, n.created_at, u.display_name AS author
+         FROM inbox_notes n LEFT JOIN users u ON u.id = n.user_id
+        WHERE n.ticket_id = $1 ORDER BY n.created_at ASC`, [id])).rows;
+
+    const blocks: string[] = [];
+    blocks.push(`[CASE] ${t.ticket_number} — ${t.subject || ''}` +
+      (t.customer_name ? ` | Customer: ${t.customer_name}` : '') +
+      (t.description ? `\nDescription: ${askPlainText(t.description)}` : ''));
+    for (const m of msgs) {
+      const who = m.message_direction === 'outbound' ? 'Lumen (sent)' : (m.from_name || m.from_email || 'customer');
+      const when = new Date(m.received_at || m.created_at).toISOString().slice(0, 16).replace('T', ' ');
+      const text = askPlainText(m.body_html || '') || String(m.body_text || '');
+      blocks.push(`[M${m.id}] ${who} · ${when}\n${text.slice(0, 12000)}`);
+    }
+    for (const n of notes) {
+      const when = new Date(n.created_at).toISOString().slice(0, 16).replace('T', ' ');
+      blocks.push(`[N${n.id}] ${n.note_type} by ${n.author || 'system'} · ${when}\n${askPlainText(n.body).slice(0, 8000)}`);
+    }
+    let corpus = blocks.join('\n\n---\n\n');
+    if (corpus.length > 160000) corpus = corpus.slice(0, 80000) + '\n\n[... middle of a very long ticket omitted ...]\n\n' + corpus.slice(-80000);
+
+    const system = [
+      'You answer questions about ONE support ticket using ONLY the ticket content provided.',
+      'The content is a series of blocks. Each starts with a reference: [M123] is a message, [N45] is an internal note, [CASE] is the case header.',
+      'Rules:',
+      '- Answer concisely and factually. If the answer is not in the ticket, say exactly that — NEVER guess or invent.',
+      '- The blocks include text hidden in the original emails (quoted history, footers) — treat it all as searchable content.',
+      '- Reply with STRICT JSON only — no markdown fences, no commentary:',
+      '  {"answer":"...","findings":[{"ref":"M123","quote":"exact verbatim snippet (max 140 chars) supporting the answer"}]}',
+      '- 1 to 4 findings, most relevant first. Quotes must be copied verbatim from the blocks. Use ref "CASE" for the header.',
+    ].join('\n');
+
+    const raw = await aiAskText(system, `QUESTION: ${question}\n\nTICKET CONTENT:\n\n${corpus}`, 700);
+    let parsed: any;
+    try { parsed = JSON.parse(raw.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim()); }
+    catch { parsed = { answer: raw.trim(), findings: [] }; }
+    const answer = { answer: String(parsed.answer || '').slice(0, 4000),
+      findings: Array.isArray(parsed.findings) ? parsed.findings.slice(0, 4).map((f: any) => ({ ref: String(f.ref || ''), quote: String(f.quote || '').slice(0, 200) })) : [] };
+
+    const ins = (await pool.query(
+      'INSERT INTO ticket_ai_queries (ticket_id, user_id, question, answer) VALUES ($1,$2,$3,$4::jsonb) RETURNING id, created_at',
+      [id, user.id, question, JSON.stringify(answer)])).rows[0];
+    res.json({ ok: true, id: ins.id, question, answer, created_at: ins.created_at, asked_by: user.displayName });
+  } catch (e: any) {
+    console.error('[ask-claude] failed:', e?.message || e);
+    res.status(400).json({ ok: false, error: e.message || 'Ask failed.' });
+  }
 });
 
 export default router;

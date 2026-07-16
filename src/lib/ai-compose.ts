@@ -254,6 +254,15 @@ export interface StudioImage { media_type: string; data: string; } // base64 (no
 
 // Shared Anthropic Messages call + friendly error mapping, used by every compose helper here.
 // Optional images are sent as vision blocks before the text so Claude can see them.
+// Generic "ask Claude a question about some text" helper (Ask-Claude-on-a-ticket etc.).
+// Returns the raw model text; callers own the parsing.
+export async function aiAskText(system: string, text: string, maxTokens = 700): Promise<string> {
+  const key = await resolveKey();
+  if (!key) throw new Error('Claude is not configured - add your API key in Settings -> Integrations (or ANTHROPIC_API_KEY in the server .env).');
+  const model = ((await getSetting('anthropic', 'model')) || '').trim() || DEFAULT_MODEL;
+  return callClaude(key, model, system, text, maxTokens);
+}
+
 async function callClaude(key: string, model: string, system: string, userText: string, maxTokens: number, images?: StudioImage[]): Promise<string> {
   const content: any = (images && images.length)
     ? [

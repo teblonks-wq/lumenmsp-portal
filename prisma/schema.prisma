@@ -263,6 +263,19 @@ model Contact {
   @@map("customer_contacts")
 }
 
+// "Ask Claude" on a ticket — saved questions & answers so the team never asks twice.
+model TicketAiQuery {
+  id        Int      @id @default(autoincrement())
+  ticketId  Int      @map("ticket_id")
+  userId    Int?     @map("user_id")
+  question  String
+  answer    Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([ticketId])
+  @@map("ticket_ai_queries")
+}
+
 // ── Customer sites ─────────────────────────────────────────────────────────────
 model Site {
   id           Int      @id @default(autoincrement())

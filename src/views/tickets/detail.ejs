@@ -54,6 +54,7 @@
     <% } %>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <button class="btn" type="button" onclick="askOpen()" style="color:#0e6377;border-color:#a5dbe6;" title="Ask Claude anything about this case — it reads every message, note and hidden email text">&#10024; Ask Claude</button>
     <form method="post" action="/tickets/<%= ticket.id %>/convert-to-lead" onsubmit="return confirm('Transfer this ticket to sales as a draft lead?');" style="margin:0;"><button class="btn" type="submit">→ Draft Lead</button></form>
     <form method="post" action="/tickets/<%= ticket.id %>/convert-to-quote" onsubmit="return confirm('Create a draft quote from this ticket?');" style="margin:0;"><button class="btn" type="submit">→ Draft Quote</button></form>
     <button class="btn" type="button" onclick="var p=document.getElementById('escalatePanel');p.style.display=p.style.display==='none'?'block':'none';">Escalate</button>
@@ -336,7 +337,7 @@
       <% if (timeline.length===0) { %><div class="empty-state">No messages or notes yet.</div><% } %>
       <% timeline.forEach(function(e){ %>
         <% if (e.kind==='note' && e.noteType==='system_log') { %>
-          <div class="muted" style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--line);"><%= e.body %> · <%= dt(e.at) %></div>
+          <div class="muted" id="tl-n-<%= e.id %>" style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--line);"><%= e.body %> · <%= dt(e.at) %></div>
         <% } else {
              var bg = '#fff', label = '', bd = 'var(--line)';
              if (e.kind==='message') { if (e.direction==='outbound'){bg='#eff6ff';label='Sent';} else {label='From '+e.author;} }
@@ -345,7 +346,7 @@
              else if (e.noteType==='bot') { bg='#f8fafc'; label='Bot'; }
              else { bg='#fefce8'; bd='#fde68a'; label='Internal note · '+e.author; }
         %>
-          <div style="border:1px solid <%= bd %>;background:<%= bg %>;border-radius:10px;padding:14px 16px;margin:12px 0;">
+          <div id="tl-<%= e.kind==='message' ? 'm' : 'n' %>-<%= e.id %>" style="border:1px solid <%= bd %>;background:<%= bg %>;border-radius:10px;padding:14px 16px;margin:12px 0;">
             <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:8px;font-size:12px;align-items:center;">
               <span><strong><%= label %></strong><% if (e.channel==='teams' || e.channel==='whatsapp') { %><span style="font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;<%= e.channel==='teams' ? 'background:#eef2ff;color:#4338ca;' : 'background:#f0fdf4;color:#15803d;' %>"><%= e.channel==='teams' ? '👥 Teams' : '🟢 WhatsApp' %></span><% } %></span>
               <span class="muted" style="display:flex;gap:8px;align-items:center;">
@@ -739,6 +740,107 @@ function chooseReq(id){ document.getElementById('reqContactId').value=id; docume
     }, 250);
   });
   document.getElementById('reqModal').addEventListener('click', function(e){ if(e.target===this) closeReqModal(); });
+})();
+</script>
+
+
+<!-- Ask Claude lightbox -->
+<div id="askOverlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:1000;" onclick="if(event.target===this)askClose()">
+  <div style="max-width:700px;margin:5vh auto;background:#fff;border-radius:14px;box-shadow:0 24px 60px rgba(2,6,23,.35);max-height:88vh;display:flex;flex-direction:column;">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line);">
+      <h2 style="margin:0;font-size:17px;">&#10024; Ask Claude about this case</h2>
+      <button class="btn" type="button" onclick="askClose()" style="padding:2px 10px;">&#10005;</button>
+    </div>
+    <div style="padding:16px 20px;overflow:auto;">
+      <form onsubmit="return askGo()" style="display:flex;gap:8px;margin-bottom:14px;">
+        <input class="input" id="askQ" placeholder="e.g. What was the name of the user who reported this? What company was mentioned?" style="flex:1;" autocomplete="off">
+        <button class="btn btn-primary" type="submit" id="askBtn">Ask</button>
+      </form>
+      <div id="askOut"></div>
+      <div id="askHistWrap" style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:10px;">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin-bottom:6px;">Previously asked on this case</div>
+        <div id="askHist"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var TID = <%= ticket.id %>;
+  function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
+  function el(tag, css, text){ var e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; }
+
+  window.askOpen = function(){
+    document.getElementById('askOverlay').style.display = 'block';
+    document.getElementById('askQ').focus();
+    fetch('/tickets/' + TID + '/ask').then(function(r){ return r.json(); }).then(function(d){
+      if (!d.ok) return;
+      var wrap = document.getElementById('askHistWrap'), list = document.getElementById('askHist');
+      list.innerHTML = '';
+      if (!d.queries.length) { wrap.style.display = 'none'; return; }
+      wrap.style.display = 'block';
+      d.queries.forEach(function(q){
+        var row = el('div', 'padding:7px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px;');
+        var top = el('div', 'font-weight:600;', q.question);
+        var meta = el('div', 'font-size:11px;color:#94a3b8;margin-top:2px;', (q.asked_by || 'someone') + ' · ' + new Date(q.created_at).toLocaleString('en-GB'));
+        row.appendChild(top); row.appendChild(meta);
+        row.onclick = function(){ renderAnswer(q.question, q.answer || { answer: '(no answer stored)', findings: [] }); window.scrollTo(0,0); };
+        list.appendChild(row);
+      });
+    }).catch(function(){});
+  };
+  window.askClose = function(){ document.getElementById('askOverlay').style.display = 'none'; };
+
+  function jumpTo(ref){
+    var m = /^([MN])(\d+)$/.exec(String(ref || '').trim());
+    var id = m ? ('tl-' + m[1].toLowerCase() + '-' + m[2]) : null;
+    var target = id ? document.getElementById(id) : null;
+    askClose();
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    var prev = target.style.boxShadow;
+    target.style.boxShadow = '0 0 0 3px #0ea5b7';
+    setTimeout(function(){ target.style.boxShadow = prev; }, 2600);
+  }
+
+  function renderAnswer(question, a){
+    var out = document.getElementById('askOut');
+    out.innerHTML = '';
+    var qEl = el('div', 'font-size:12px;color:#64748b;margin-bottom:6px;'); qEl.textContent = 'Q: ' + question;
+    var ans = el('div', 'font-size:14px;line-height:1.6;background:#ecfeff;border:1px solid #a5dbe6;border-radius:10px;padding:12px 14px;', a.answer || '');
+    out.appendChild(qEl); out.appendChild(ans);
+    if (a.findings && a.findings.length) {
+      var lbl = el('div', 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin:10px 0 6px;', 'Found in — click to jump there');
+      out.appendChild(lbl);
+      a.findings.forEach(function(f){
+        var ok = /^[MN]\d+$/.test(String(f.ref || '').trim());
+        var chip = el('div', 'padding:7px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;font-size:13px;' + (ok ? 'cursor:pointer;' : 'opacity:.7;'));
+        var refEl = el('span', 'font-weight:700;color:#0e6377;margin-right:8px;', ok ? '\u2192 ' + f.ref : f.ref || 'CASE');
+        var quote = el('span', 'color:#334155;', '\u201C' + (f.quote || '') + '\u201D');
+        chip.appendChild(refEl); chip.appendChild(quote);
+        if (ok) chip.onclick = function(){ jumpTo(f.ref); };
+        out.appendChild(chip);
+      });
+    }
+  }
+
+  window.askGo = function(){
+    var q = document.getElementById('askQ').value.trim();
+    if (!q) return false;
+    var btn = document.getElementById('askBtn');
+    btn.disabled = true; btn.textContent = 'Thinking\u2026';
+    document.getElementById('askOut').innerHTML = '<div class="muted" style="font-size:13px;">Claude is reading the whole case\u2026</div>';
+    fetch('/tickets/' + TID + '/ask', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() }, body: JSON.stringify({ question: q }) })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d.ok) { renderAnswer(d.question, d.answer); document.getElementById('askQ').value = ''; askOpen(); }
+        else document.getElementById('askOut').innerHTML = '<div style="color:#dc2626;font-size:13px;">' + (d.error || 'Ask failed.') + '</div>';
+      })
+      .catch(function(){ document.getElementById('askOut').innerHTML = '<div style="color:#dc2626;font-size:13px;">Network error \u2014 try again.</div>'; })
+      .finally(function(){ btn.disabled = false; btn.textContent = 'Ask'; });
+    return false;
+  };
 })();
 </script>
 
