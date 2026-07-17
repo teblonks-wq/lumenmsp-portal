@@ -156,9 +156,14 @@ router.get('/m/customers/:id', async (req: Request, res: Response) => {
   // Password vault on mobile: same gate as desktop (support/admin); metadata only here —
   // secrets are fetched per-entry through the existing logged /credentials/:id/secret route.
   const canVault = await hasVaultAccess(req.session.user!);
-  const credentials = canVault ? await rows(
-    `SELECT id, name, login_url, username, category, (secret_encrypted IS NOT NULL) AS has_secret
-       FROM customer_credentials WHERE customer_id=$1 AND deleted_at IS NULL ORDER BY name`, [id]) : [];
+  let credentials: any[] = [];
+  if (canVault) {
+    try {
+      credentials = (await pool.query(
+        `SELECT id, name, login_url, username, category, (secret_encrypted IS NOT NULL) AS has_secret
+           FROM customer_credentials WHERE customer_id=$1 AND deleted_at IS NULL ORDER BY name`, [id])).rows;
+    } catch (e: any) { console.error('[mobile] vault list failed:', e.message); }
+  }
   res.render('mobile/customer', { user: req.session.user!, active: 'customers', c, contacts, tickets, addr, canVault, credentials });
 });
 
