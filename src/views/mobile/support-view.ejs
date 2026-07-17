@@ -12,6 +12,11 @@
   .rich h1,.rich h2,.rich h3,.rich h4{font-size:16px;margin:8px 0 4px;font-weight:600;}
 </style>
 <% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : ''; } %>
+<% function tel(p){ var n=String(p||'').replace(/[^0-9+]/g,''); if(n.indexOf('+44')===0)n='0'+n.slice(3); else if(n.indexOf('0044')===0)n='0'+n.slice(4); return 'tel:' + (n ? '141'+n : ''); } %>
+<% var req_ = (typeof requester !== 'undefined' && requester) ? requester : null;
+   var dialNum = req_ ? (req_.mobile_phone || req_.phone) : null;
+   if (!dialNum && t.customer_phone) dialNum = t.customer_phone;
+   var dialWho = req_ && (req_.mobile_phone || req_.phone) ? (req_.full_name || 'requester') : (t.customer_name || 'customer'); %>
 <div class="m-wrap">
   <% if (notice) { %><div class="m-alert ok"><%= notice %></div><% } %>
 
@@ -26,6 +31,7 @@
   </div>
 
   <div class="actions">
+    <% if (dialNum) { %><a class="act-btn act-call" style="flex:1;" href="<%= tel(dialNum) %>" title="Calls with your number withheld"><i class="ti ti-phone ic"></i><span class="l">Call <%= dialWho %></span></a><% } %>
     <form method="post" action="/m/support/<%= t.id %>/status" style="flex:1;"><input type="hidden" name="status" value="pending"><button class="act-btn" style="width:100%;background:#475569;" type="submit"><i class="ti ti-clock ic"></i><span class="l">Pending</span></button></form>
     <form method="post" action="/m/support/<%= t.id %>/status" style="flex:1;" onsubmit="return confirm('Mark this case resolved?');"><input type="hidden" name="status" value="resolved"><button class="act-btn act-call" style="width:100%;" type="submit"><i class="ti ti-check ic"></i><span class="l">Resolve</span></button></form>
   </div>

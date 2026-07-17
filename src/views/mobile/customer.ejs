@@ -21,6 +21,29 @@
     <% }); %>
   </div>
 
+  <% if (typeof canVault !== 'undefined' && canVault) { %>
+  <div class="m-label">Passwords</div>
+  <div class="sheet">
+    <% if (!(credentials||[]).length) { %><div class="row"><div class="main s">No passwords saved for this customer.</div></div><% } %>
+    <% (credentials||[]).forEach(function(cr){ %>
+    <div class="row">
+      <div class="main">
+        <div class="t"><%= cr.name %><% if (cr.category) { %> <span class="pill"><%= cr.category %></span><% } %></div>
+        <div class="s">
+          <% if (cr.username) { %><span style="user-select:all;"><%= cr.username %></span><% } %>
+          <span id="sec-<%= cr.id %>" style="font-family:ui-monospace,monospace;"></span>
+        </div>
+        <% if (cr.login_url) { %><div class="s"><a href="<%= cr.login_url %>" target="_blank" rel="noopener" style="color:#2563eb;"><%= cr.login_url.replace(/^https?:\/\//,'').slice(0,40) %></a></div><% } %>
+      </div>
+      <% if (cr.has_secret) { %>
+      <button class="call" type="button" onclick="mvReveal(<%= cr.id %>, this)" aria-label="Show password"><i class="ti ti-eye"></i></button>
+      <button class="call" type="button" style="color:#475569;" onclick="mvCopy(<%= cr.id %>, this)" aria-label="Copy password"><i class="ti ti-copy"></i></button>
+      <% } %>
+    </div>
+    <% }); %>
+  </div>
+  <% } %>
+
   <div class="m-label">Open cases</div>
   <div class="sheet">
     <% if (!(tickets||[]).length) { %><div class="row"><div class="main s">No open cases.</div></div><% } %>
@@ -29,4 +52,26 @@
     <% }); %>
   </div>
 </div>
+<script>
+// Vault: secrets come from the existing logged /credentials/:id/secret endpoint —
+// reveal shows for 20s then hides; copy never shows it on screen.
+function mvReveal(id, btn){
+  var el = document.getElementById('sec-' + id);
+  if (el.textContent) { el.textContent = ''; return; }
+  fetch('/credentials/' + id + '/secret').then(function(r){ return r.json(); }).then(function(d){
+    if (d.secret == null) { alert(d.error || 'Could not load password.'); return; }
+    el.textContent = ' · ' + d.secret;
+    setTimeout(function(){ el.textContent = ''; }, 20000);
+  }).catch(function(){ alert('Could not load password.'); });
+}
+function mvCopy(id, btn){
+  fetch('/credentials/' + id + '/secret?action=copy').then(function(r){ return r.json(); }).then(function(d){
+    if (d.secret == null) { alert(d.error || 'Could not load password.'); return; }
+    navigator.clipboard.writeText(d.secret).then(function(){
+      var i = btn.querySelector('i'); i.className = 'ti ti-check';
+      setTimeout(function(){ i.className = 'ti ti-copy'; }, 1600);
+    });
+  }).catch(function(){ alert('Could not copy password.'); });
+}
+</script>
 <%- include('footer', { active }) %>

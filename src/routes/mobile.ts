@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import fs from 'fs';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, hasVaultAccess } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { PURCHASE_DOCS_DIR } from '../lib/purchase-inbox';
@@ -38,12 +38,32 @@ function stripHtml(h: string): string {
 function escapeHtml(s: string): string {
   return String(s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as any)[c]);
 }
+// Make UK phone numbers tappable (tel: with the 141 CLI-withhold prefix, matching the
+// rest of /m). Works on rendered HTML: only text outside tags and outside existing links.
+function linkifyPhones(html: string): string {
+  let aDepth = 0;
+  return String(html || '').split(/(<[^>]+>)/).map((part) => {
+    if (part.startsWith('<')) {
+      if (/^<a[\s>]/i.test(part)) aDepth++;
+      else if (/^<\/a>/i.test(part)) aDepth = Math.max(0, aDepth - 1);
+      return part;
+    }
+    if (aDepth > 0) return part;
+    return part.replace(/(\+44\s?\d(?:[\s-]?\d){8,9}|\b0(?:[\s-]?\d){9,10})(?!\d)/g, (m2) => {
+      const digits = m2.replace(/[^0-9+]/g, '');
+      const n = digits.startsWith('+44') ? '0' + digits.slice(3) : digits;
+      if (!/^0\d{9,10}$/.test(n)) return m2;
+      return '<a href="tel:141' + n + '">' + m2 + '</a>';
+    });
+  }).join('');
+}
+
 // Rich, sanitized HTML for a feed item — keeps the email's formatting (like the web feed). Falls
 // back to escaped plain text (with line breaks) for plain WhatsApp/Teams messages and notes.
 function richBody(html: string | null, text: string | null): string {
-  if (html && /<[a-z][\s\S]*>/i.test(html)) return cleanInboundEmail(html);
+  if (html && /<[a-z][\s\S]*>/i.test(html)) return linkifyPhones(cleanInboundEmail(html));
   const t = text || stripHtml(html || '');
-  return t ? '<p>' + escapeHtml(t).replace(/\n/g, '<br>') + '</p>' : '';
+  return t ? linkifyPhones('<p>' + escapeHtml(t).replace(/\n/g, '<br>') + '</p>') : '';
 }
 
 // ── Home ─────────────────────────────────────────────────────────────────────────
@@ -133,7 +153,13 @@ router.get('/m/customers/:id', async (req: Request, res: Response) => {
   const contacts = await rows('SELECT id, full_name, job_title, phone, mobile_phone, email, is_primary FROM customer_contacts WHERE customer_id=$1 ORDER BY is_primary DESC, full_name', [id]);
   const tickets = await rows("SELECT id, ticket_number, subject, status FROM inbox_tickets WHERE customer_id=$1 AND deleted_at IS NULL AND status NOT IN ('resolved','closed') ORDER BY updated_at DESC LIMIT 10", [id]);
   const addr = [c.address_line_1, c.address_line_2, c.city, c.county, c.postcode].filter(Boolean).join(', ');
-  res.render('mobile/customer', { user: req.session.user!, active: 'customers', c, contacts, tickets, addr });
+  // Password vault on mobile: same gate as desktop (support/admin); metadata only here —
+  // secrets are fetched per-entry through the existing logged /credentials/:id/secret route.
+  const canVault = await hasVaultAccess(req.session.user!);
+  const credentials = canVault ? await rows(
+    `SELECT id, name, login_url, username, category, (secret_encrypted IS NOT NULL) AS has_secret
+       FROM customer_credentials WHERE customer_id=$1 AND deleted_at IS NULL ORDER BY name`, [id]) : [];
+  res.render('mobile/customer', { user: req.session.user!, active: 'customers', c, contacts, tickets, addr, canVault, credentials });
 });
 
 // ── Contacts ──────────────────────────────────────────────────────────────────────
@@ -165,15 +191,19 @@ router.get('/m/support', async (req: Request, res: Response) => {
 
 router.get('/m/support/:id', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
-  const t = (await rows('SELECT t.*, c.name AS customer_name, c.id AS customer_id FROM inbox_tickets t LEFT JOIN customers c ON c.id=t.customer_id WHERE t.id=$1', [id]))[0];
+  const t = (await rows('SELECT t.*, c.name AS customer_name, c.id AS customer_id, c.phone AS customer_phone FROM inbox_tickets t LEFT JOIN customers c ON c.id=t.customer_id WHERE t.id=$1', [id]))[0];
   if (!t) { res.status(404).render('mobile/notfound', { user: req.session.user!, active: 'support', what: 'Case' }); return; }
+  // Requester for the Call button — their direct/mobile number beats the switchboard.
+  const requester = t.contact_id
+    ? (await rows('SELECT full_name, phone, mobile_phone FROM customer_contacts WHERE id=$1', [t.contact_id]))[0] || null
+    : null;
   if (t.description) t.description = richBody(t.description, t.description);   // render the brief richly too
   const msgs = (await rows("SELECT from_name, body_text, body_html, message_direction AS dir, received_at AS at, 'msg' AS kind FROM inbox_messages WHERE ticket_id=$1", [id]))
     .map((m: any) => ({ who: m.from_name || (m.dir === 'outbound' ? 'Us' : 'Customer'), body: m.body_text || stripHtml(m.body_html), html: richBody(m.body_html, m.body_text), at: m.at, kind: 'msg', dir: m.dir }));
   const notes = (await rows("SELECT u.display_name AS who, n.body, n.created_at AS at, 'note' AS kind FROM inbox_notes n LEFT JOIN users u ON u.id=n.user_id WHERE n.ticket_id=$1 AND n.note_type<>'system_log'", [id]))
     .map((n: any) => ({ who: n.who || 'Note', body: n.body, html: richBody(n.body, n.body), at: n.at, kind: 'note', dir: '' }));
   const timeline = msgs.concat(notes).filter((x: any) => x.body).sort((a: any, b: any) => new Date(a.at).getTime() - new Date(b.at).getTime());
-  res.render('mobile/support-view', { user: req.session.user!, active: 'support', t, timeline, notice: req.query.msg || null });
+  res.render('mobile/support-view', { user: req.session.user!, active: 'support', t, timeline, requester, notice: req.query.msg || null });
 });
 
 router.post('/m/support/:id/note', async (req: Request, res: Response) => {
