@@ -1,0 +1,54 @@
+<%- include('../partials/header', { title: 'Mass Mailer', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">← Marketing</a></p>
+    <h1 style="margin:0;">✉️ Mass Mailer</h1>
+    <p class="muted" style="margin:4px 0 0;">Bulk email to customer contacts on their company's <strong>default domain</strong>. Every send is logged; unsubscribes are honoured automatically.</p>
+  </div>
+  <a class="btn btn-primary" href="/marketing/mass-mailer/new">+ New campaign</a>
+</div>
+
+<% if (notice) { %><div class="card" style="border-left:4px solid #10b981;margin-bottom:16px;padding:12px 16px;"><%= notice %></div><% } %>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Campaign</th>
+          <th>Subject</th>
+          <th>Status</th>
+          <th style="text-align:center;">Recipients</th>
+          <th style="text-align:center;">Sent</th>
+          <th style="text-align:center;">Failed</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (!campaigns.length) { %>
+          <tr><td colspan="7"><div class="empty-state">No campaigns yet — create your first one.</div></td></tr>
+        <% } %>
+        <% campaigns.forEach(function (c) { %>
+          <tr>
+            <td><a class="row-link" href="/marketing/mass-mailer/<%= c.id %>"><%= c.name %></a></td>
+            <td class="muted"><%= c.subject %></td>
+            <td>
+              <% if (c.status === 'sent') { %><span class="badge badge-sent">Sent</span>
+              <% } else if (c.status === 'sending') { %><span class="badge badge-primary">Sending…</span>
+              <% } else if (c.status === 'paused') { %><span class="badge" style="background:#fef3c7;color:#92400e;">Paused</span>
+              <% } else if (c.status === 'failed') { %><span class="badge" style="background:#fee2e2;color:#991b1b;">Failed</span>
+              <% } else { %><span class="badge badge-inactive">Draft</span><% } %>
+            </td>
+            <td style="text-align:center;"><%= c.total %></td>
+            <td style="text-align:center;"><%= c.sent %></td>
+            <td style="text-align:center;"><%= c.failed ? c.failed : '—' %></td>
+            <td class="muted"><%= new Date(c.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

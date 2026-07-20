@@ -1,0 +1,140 @@
+<%- include('../partials/header', { title: campaign.name, user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing/mass-mailer">← Mass Mailer</a></p>
+    <h1 style="margin:0;"><%= campaign.name %></h1>
+    <p class="muted" style="margin:4px 0 0;">Subject: <strong><%= campaign.subject %></strong></p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+    <span id="mmStatusBadge"></span>
+    <% if (campaign.status === 'draft') { %>
+      <a class="btn" href="/marketing/mass-mailer/<%= campaign.id %>/edit">Edit</a>
+    <% } %>
+    <button class="btn" onclick="sendTestMail(this)">Send me a test</button>
+    <button class="btn btn-primary" id="mmGo" onclick="startSend()" style="display:none;">Start sending</button>
+    <button class="btn" id="mmPause" onclick="pauseSend()" style="display:none;">Pause</button>
+    <button class="btn" id="mmRetry" onclick="retryFailedSends()" style="display:none;">Retry failed</button>
+    <form method="post" action="/marketing/mass-mailer/<%= campaign.id %>/delete" style="display:inline;" onsubmit="return confirm('Delete this campaign? (Already-sent emails are unaffected.)');">
+      <button class="btn" type="submit" style="color:#dc2626;">Delete</button>
+    </form>
+  </div>
+</div>
+
+<% if (notice) { %><div class="card" style="border-left:4px solid #10b981;margin-bottom:16px;padding:12px 16px;"><%= notice %></div><% } %>
+<div class="card" id="mmActionMsg" style="display:none;border-left:4px solid #2563eb;margin-bottom:16px;padding:12px 16px;"></div>
+
+<div style="display:grid;grid-template-columns:minmax(380px,1fr) minmax(380px,1fr);gap:16px;align-items:start;">
+
+  <div class="card" style="padding:20px 22px;">
+    <h2 style="margin:0 0 10px;font-size:16px;">Message preview</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 12px;">Merge fields show as placeholders here and are filled in per recipient. An unsubscribe footer is appended automatically.</p>
+    <div style="border:1px solid #e5e7eb;border-radius:8px;padding:18px 20px;background:#fff;font-size:14px;line-height:1.6;overflow:auto;max-height:480px;">
+      <%- campaign.body_html %>
+      <p style="margin:28px 0 0;padding-top:14px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:12px;">You're receiving this because you're a contact of Lumen IT Solutions. <span style="text-decoration:underline;">Unsubscribe</span> from these updates.</p>
+    </div>
+  </div>
+
+  <div class="card" style="padding:20px 22px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <h2 style="margin:0;font-size:16px;">Recipients (<%= recipients.length %>)</h2>
+      <span class="muted" id="mmProgressText" style="font-size:13px;"></span>
+    </div>
+    <div style="background:#e5e7eb;border-radius:6px;height:8px;margin:12px 0;overflow:hidden;">
+      <div id="mmProgressBar" style="background:linear-gradient(90deg,#0ea5b7,#10b981);height:100%;width:0%;transition:width .4s;"></div>
+    </div>
+    <div style="max-height:460px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;">
+      <table class="table" style="font-size:13px;">
+        <thead><tr><th>Contact</th><th>Company</th><th>Status</th></tr></thead>
+        <tbody>
+          <% recipients.forEach(function (r) { %>
+            <tr>
+              <td><%= r.full_name %><br><span class="muted"><%= r.email %></span></td>
+              <td class="muted"><%= r.customer_name %></td>
+              <td id="rec-<%= r.id %>"><span class="badge badge-inactive">pending</span></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  var CID = <%= campaign.id %>;
+  var polling = null;
+
+  function badge(status, error) {
+    if (status === 'sent')   return '<span class="badge badge-sent">sent</span>';
+    if (status === 'failed') return '<span class="badge" style="background:#fee2e2;color:#991b1b;" title="' + String(error || '').replace(/"/g, '&quot;') + '">failed</span>';
+    if (status === 'skipped')return '<span class="badge" style="background:#fef3c7;color:#92400e;">skipped</span>';
+    return '<span class="badge badge-inactive">pending</span>';
+  }
+
+  function campaignBadge(status) {
+    if (status === 'sent')    return '<span class="badge badge-sent">Sent</span>';
+    if (status === 'sending') return '<span class="badge badge-primary">Sending…</span>';
+    if (status === 'paused')  return '<span class="badge" style="background:#fef3c7;color:#92400e;">Paused</span>';
+    if (status === 'failed')  return '<span class="badge" style="background:#fee2e2;color:#991b1b;">Failed</span>';
+    return '<span class="badge badge-inactive">Draft</span>';
+  }
+
+  function refresh() {
+    fetch('/marketing/mass-mailer/' + CID + '/status.json')
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j.ok) return;
+        j.recipients.forEach(function(r){
+          var cell = document.getElementById('rec-' + r.id);
+          if (cell) cell.innerHTML = badge(r.status, r.error);
+        });
+        var total = j.recipients.length || 1;
+        var done = (j.counts.sent || 0) + (j.counts.failed || 0) + (j.counts.skipped || 0);
+        document.getElementById('mmProgressBar').style.width = Math.round(done / total * 100) + '%';
+        document.getElementById('mmProgressText').textContent =
+          (j.counts.sent || 0) + ' sent' + (j.counts.failed ? ', ' + j.counts.failed + ' failed' : '') + (j.counts.skipped ? ', ' + j.counts.skipped + ' skipped' : '') + ' of ' + total;
+        document.getElementById('mmStatusBadge').innerHTML = campaignBadge(j.status);
+        document.getElementById('mmGo').style.display    = (j.status === 'draft' || j.status === 'paused') ? '' : 'none';
+        document.getElementById('mmPause').style.display = j.status === 'sending' ? '' : 'none';
+        document.getElementById('mmRetry').style.display = (j.counts.failed && j.status !== 'sending') ? '' : 'none';
+        if (j.status === 'sending' && !polling) polling = setInterval(refresh, 3000);
+        if (j.status !== 'sending' && polling) { clearInterval(polling); polling = null; }
+      }).catch(function(){});
+  }
+
+  function note(msg, isError) {
+    var el = document.getElementById('mmActionMsg');
+    el.style.display = ''; el.textContent = msg;
+    el.style.borderLeftColor = isError ? '#dc2626' : '#2563eb';
+  }
+
+  function sendTestMail(btn) {
+    btn.disabled = true;
+    fetch('/marketing/mass-mailer/' + CID + '/test', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ btn.disabled = false; note(j.ok ? 'Test sent to ' + j.to + ' — check your inbox before starting the real send.' : (j.error || 'Test failed'), !j.ok); })
+      .catch(function(){ btn.disabled = false; note('Test failed', true); });
+  }
+
+  function startSend() {
+    if (!confirm('Start sending to all pending recipients? Emails go out one every 2 seconds and this cannot be unsent.')) return;
+    fetch('/marketing/mass-mailer/' + CID + '/send', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ if (j.ok) { note('Sending started.'); refresh(); } else note(j.error || 'Could not start', true); });
+  }
+
+  function pauseSend() {
+    fetch('/marketing/mass-mailer/' + CID + '/pause', { method: 'POST' })
+      .then(function(){ note('Paused — resume any time with Start sending.'); refresh(); });
+  }
+
+  function retryFailedSends() {
+    fetch('/marketing/mass-mailer/' + CID + '/retry-failed', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ note(j.ok ? 'Retrying ' + j.retried + ' failed recipient(s).' : (j.error || 'Retry failed'), !j.ok); refresh(); });
+  }
+
+  refresh();
+</script>
+
+<%- include('../partials/footer') %>

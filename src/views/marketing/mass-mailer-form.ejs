@@ -1,0 +1,137 @@
+<%- include('../partials/header', { title: campaign ? 'Edit campaign' : 'New campaign', user }) %>
+
+<link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing/mass-mailer">← Mass Mailer</a></p>
+  <h1 style="margin:0;"><%= campaign ? 'Edit campaign' : 'New campaign' %></h1>
+  <p class="muted" style="margin:4px 0 0;">Recipients are contacts whose email is on their customer's <strong>default domain</strong>. An unsubscribe link is added to every email automatically.</p>
+</div>
+
+<div style="display:grid;grid-template-columns:minmax(420px,1.2fr) minmax(360px,1fr);gap:16px;align-items:start;">
+
+  <div class="card" style="padding:20px 22px;">
+    <div style="display:grid;gap:12px;">
+      <div>
+        <label class="muted" style="display:block;font-size:13px;margin-bottom:4px;">Campaign name (internal)</label>
+        <input class="input" id="mmName" style="width:100%;" placeholder="e.g. July service update" value="<%= campaign ? campaign.name : '' %>">
+      </div>
+      <div>
+        <label class="muted" style="display:block;font-size:13px;margin-bottom:4px;">Subject</label>
+        <input class="input" id="mmSubject" style="width:100%;" placeholder="Email subject line" value="<%= campaign ? campaign.subject : '' %>">
+      </div>
+      <div>
+        <label class="muted" style="display:block;font-size:13px;margin-bottom:4px;">Message</label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
+          <button type="button" class="btn" style="font-size:12px;padding:3px 10px;" onclick="insertMerge('{{firstName}}')">+ First name</button>
+          <button type="button" class="btn" style="font-size:12px;padding:3px 10px;" onclick="insertMerge('{{fullName}}')">+ Full name</button>
+          <button type="button" class="btn" style="font-size:12px;padding:3px 10px;" onclick="insertMerge('{{company}}')">+ Company</button>
+        </div>
+        <div id="mmEditor" style="background:#fff;min-height:260px;"></div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" id="mmSave" onclick="saveCampaign()"><%= campaign ? 'Save changes' : 'Create campaign' %></button>
+        <span class="muted" id="mmMsg" style="font-size:13px;"></span>
+      </div>
+      <p class="muted" style="font-size:12px;margin:0;">Creating a campaign does <strong>not</strong> send anything — you'll get a review page with a test-send button first.</p>
+    </div>
+  </div>
+
+  <div class="card" style="padding:20px 22px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+      <h2 style="margin:0;font-size:16px;">Recipients <span class="muted" id="mmCount" style="font-weight:normal;"></span></h2>
+      <label class="muted" style="font-size:13px;display:flex;align-items:center;gap:6px;">
+        <select class="input" id="mmStatusFilter" onchange="loadAudience()" style="padding:4px 8px;">
+          <option value="active">Active customers</option>
+          <option value="all">Active + lead customers</option>
+        </select>
+      </label>
+    </div>
+    <p class="muted" style="font-size:12px;margin:8px 0 10px;">Untick anyone who shouldn't get this one. Contacts who unsubscribed are shown greyed and are never emailed. Customers with no default domain aren't listed — use <a class="row-link" href="/customers/data-missing">Data missing</a> to fill those in.</p>
+    <div id="mmAudience" style="max-height:520px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;">
+      <div class="empty-state">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
+<script>
+  var CAMPAIGN_ID = <%- campaign ? campaign.id : 'null' %>;
+  var quill = new Quill('#mmEditor', {
+    theme: 'snow',
+    modules: { toolbar: [['bold','italic','underline'],[{header:[2,3,false]}],[{list:'ordered'},{list:'bullet'}],['link'],['clean']] },
+    placeholder: 'Hi {{firstName}},\n\nWrite your update here…'
+  });
+  <% if (campaign) { %>quill.root.innerHTML = <%- JSON.stringify(campaign.body_html || '') %>;<% } %>
+
+  function insertMerge(token) {
+    var range = quill.getSelection(true);
+    quill.insertText(range ? range.index : quill.getLength(), token, 'user');
+  }
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  function loadAudience() {
+    var box = document.getElementById('mmAudience');
+    box.innerHTML = '<div class="empty-state">Loading…</div>';
+    fetch('/marketing/mass-mailer/audience.json?status=' + document.getElementById('mmStatusFilter').value)
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (!j.ok) { box.innerHTML = '<div class="empty-state">' + esc(j.error) + '</div>'; return; }
+        if (!j.recipients.length) { box.innerHTML = '<div class="empty-state">No matching contacts. Check customers have a default domain set.</div>'; updateCount(); return; }
+        var html = '', lastCustomer = null;
+        j.recipients.forEach(function(r){
+          if (r.customer_name !== lastCustomer) {
+            lastCustomer = r.customer_name;
+            html += '<div style="background:#f8fafc;padding:6px 12px;font-weight:600;font-size:13px;border-top:1px solid #e5e7eb;">' + esc(r.customer_name) + '</div>';
+          }
+          if (r.opted_out) {
+            html += '<label style="display:flex;gap:8px;align-items:center;padding:5px 12px;font-size:13px;color:#9ca3af;">'
+                 + '<input type="checkbox" disabled> <span style="text-decoration:line-through;">' + esc(r.full_name) + ' — ' + esc(r.email) + '</span> <span class="badge badge-inactive" style="margin-left:auto;">unsubscribed</span></label>';
+          } else {
+            html += '<label style="display:flex;gap:8px;align-items:center;padding:5px 12px;font-size:13px;cursor:pointer;">'
+                 + '<input type="checkbox" class="mm-rec" checked value="' + esc(r.email) + '" onchange="updateCount()">'
+                 + '<span>' + esc(r.full_name) + (r.is_primary ? ' ★' : '') + ' <span class="muted">— ' + esc(r.email) + (r.job_title ? ' · ' + esc(r.job_title) : '') + '</span></span></label>';
+          }
+        });
+        box.innerHTML = html;
+        updateCount();
+      })
+      .catch(function(){ box.innerHTML = '<div class="empty-state">Could not load recipients.</div>'; });
+  }
+
+  function updateCount() {
+    var boxes = document.querySelectorAll('.mm-rec');
+    var on = document.querySelectorAll('.mm-rec:checked').length;
+    document.getElementById('mmCount').textContent = '(' + on + ' of ' + boxes.length + ' selected)';
+  }
+
+  function saveCampaign() {
+    var excluded = [];
+    document.querySelectorAll('.mm-rec:not(:checked)').forEach(function(cb){ excluded.push(cb.value); });
+    var body = {
+      name: document.getElementById('mmName').value,
+      subject: document.getElementById('mmSubject').value,
+      bodyHtml: quill.root.innerHTML,
+      statusFilter: document.getElementById('mmStatusFilter').value,
+      excludeEmails: excluded.join(','),
+    };
+    var msg = document.getElementById('mmMsg');
+    msg.textContent = 'Saving…';
+    var url = CAMPAIGN_ID ? '/marketing/mass-mailer/' + CAMPAIGN_ID + '/update' : '/marketing/mass-mailer';
+    fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (j.ok) { window.location = '/marketing/mass-mailer/' + j.id + '?msg=' + encodeURIComponent('Campaign saved — review below, send a test, then start sending.'); }
+        else { msg.textContent = j.error || 'Save failed'; msg.style.color = '#dc2626'; }
+      })
+      .catch(function(){ msg.textContent = 'Save failed'; msg.style.color = '#dc2626'; });
+  }
+
+  <% if (campaign && campaign.audience && campaign.audience.statusFilter === 'all') { %>
+  document.getElementById('mmStatusFilter').value = 'all';
+  <% } %>
+  loadAudience();
+</script>
+
+<%- include('../partials/footer') %>

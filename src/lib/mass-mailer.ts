@@ -1,0 +1,260 @@
+import crypto from 'crypto';
+import { pool } from '../db/pool';
+import { config } from '../config';
+import { sendMail } from './mailer';
+
+// ── Mass Mailer (Marketing → Mass Mailer) ──────────────────────────────────────
+// Bulk email to customer contacts whose address is on their customer's DEFAULT
+// (primary) domain — i.e. cc.email's domain === customers.domain. That rule keeps
+// campaigns to "real" company mailboxes and away from personal/3rd-party addresses.
+//
+// Design notes:
+//  • The recipient list is SNAPSHOTTED into mail_campaign_recipients when the
+//    campaign is created, so the campaign page always shows exactly who gets it.
+//  • Sending is a throttled background loop (one process-wide runner per campaign)
+//    via the shared Graph mailer — every send also lands in email_log as usual.
+//  • Opt-out is re-checked at send time, so an unsubscribe that happens after the
+//    snapshot still suppresses the send (status 'skipped').
+//  • Tables/columns are Prisma-schema-managed (schema.prisma) — deploy's
+//    `prisma db push` creates them. Nothing here creates tables.
+
+export interface AudienceRow {
+  contact_id: number;
+  customer_id: number;
+  customer_name: string;
+  customer_status: string;
+  full_name: string;
+  email: string;
+  job_title: string | null;
+  is_primary: boolean;
+  opted_out: boolean;
+}
+
+// Contacts on their customer's default domain. status filter: 'active' | 'all'.
+// Includes opted-out contacts (flagged) so the compose page can SHOW who is
+// suppressed; they are excluded from the snapshot and re-checked at send time.
+export async function audience(statusFilter: 'active' | 'all'): Promise<AudienceRow[]> {
+  const where = statusFilter === 'active' ? "AND c.status = 'active'" : "AND c.status <> 'inactive'";
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (lower(cc.email))
+            cc.id AS contact_id, c.id AS customer_id, c.name AS customer_name, c.status AS customer_status,
+            cc.full_name, lower(cc.email) AS email, cc.job_title, cc.is_primary,
+            COALESCE(cc.marketing_opt_out, false) AS opted_out
+     FROM customer_contacts cc
+     JOIN customers c ON c.id = cc.customer_id
+     WHERE cc.email IS NOT NULL AND cc.email <> ''
+       AND cc.archived = false
+       AND c.deleted_at IS NULL AND c.is_placeholder = false
+       AND c.domain IS NOT NULL AND c.domain <> ''
+       AND lower(split_part(cc.email, '@', 2)) = lower(c.domain)
+       ${where}
+     ORDER BY lower(cc.email), cc.is_primary DESC, cc.id ASC`,
+    []
+  );
+  // Order for display: by customer name, primary contact first.
+  rows.sort((a: AudienceRow, b: AudienceRow) =>
+    a.customer_name.localeCompare(b.customer_name) || Number(b.is_primary) - Number(a.is_primary) || a.full_name.localeCompare(b.full_name));
+  return rows;
+}
+
+export interface CampaignInput {
+  name: string;
+  subject: string;
+  bodyHtml: string;
+  statusFilter: 'active' | 'all';
+  excludeEmails: string[];   // unticked in the compose UI
+  createdBy: number;
+}
+
+// Create a draft campaign + snapshot its recipient list.
+export async function createCampaign(input: CampaignInput): Promise<number> {
+  const list = (await audience(input.statusFilter)).filter(
+    (r) => !r.opted_out && !input.excludeEmails.includes(r.email)
+  );
+  if (!list.length) throw new Error('No recipients match — check customers have a default domain set and contacts use it.');
+  const c = await pool.query(
+    `INSERT INTO mail_campaigns (name, subject, body_html, status, audience, created_by)
+     VALUES ($1,$2,$3,'draft',$4,$5) RETURNING id`,
+    [input.name, input.subject, input.bodyHtml,
+     JSON.stringify({ statusFilter: input.statusFilter, excluded: input.excludeEmails.length }), input.createdBy]
+  );
+  const campaignId: number = c.rows[0].id;
+  for (const r of list) {
+    await pool.query(
+      `INSERT INTO mail_campaign_recipients (campaign_id, contact_id, customer_id, email, full_name, customer_name)
+       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (campaign_id, email) DO NOTHING`,
+      [campaignId, r.contact_id, r.customer_id, r.email, r.full_name, r.customer_name]
+    );
+  }
+  return campaignId;
+}
+
+// Update a DRAFT's content and rebuild its recipient snapshot.
+export async function updateDraft(campaignId: number, input: CampaignInput): Promise<void> {
+  const cur = await pool.query('SELECT status FROM mail_campaigns WHERE id=$1', [campaignId]);
+  if (!cur.rows.length) throw new Error('Campaign not found');
+  if (cur.rows[0].status !== 'draft') throw new Error('Only drafts can be edited.');
+  await pool.query(
+    `UPDATE mail_campaigns SET name=$1, subject=$2, body_html=$3,
+       audience=$4, updated_at=now() WHERE id=$5`,
+    [input.name, input.subject, input.bodyHtml,
+     JSON.stringify({ statusFilter: input.statusFilter, excluded: input.excludeEmails.length }), campaignId]
+  );
+  await pool.query('DELETE FROM mail_campaign_recipients WHERE campaign_id=$1', [campaignId]);
+  const list = (await audience(input.statusFilter)).filter(
+    (r) => !r.opted_out && !input.excludeEmails.includes(r.email)
+  );
+  for (const r of list) {
+    await pool.query(
+      `INSERT INTO mail_campaign_recipients (campaign_id, contact_id, customer_id, email, full_name, customer_name)
+       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (campaign_id, email) DO NOTHING`,
+      [campaignId, r.contact_id, r.customer_id, r.email, r.full_name, r.customer_name]
+    );
+  }
+}
+
+// ── Merge fields ───────────────────────────────────────────────────────────────
+// {{firstName}} {{fullName}} {{company}} — resolved per recipient at send time.
+export function mergeFields(html: string, r: { full_name?: string | null; customer_name?: string | null }): string {
+  const full = (r.full_name || '').trim();
+  const first = full.split(/\s+/)[0] || 'there';
+  return html
+    .replace(/\{\{\s*firstName\s*\}\}/gi, first)
+    .replace(/\{\{\s*fullName\s*\}\}/gi, full || 'there')
+    .replace(/\{\{\s*company\s*\}\}/gi, (r.customer_name || '').trim() || 'your company');
+}
+
+// ── Unsubscribe ────────────────────────────────────────────────────────────────
+// One token per contact, minted on first use; the public /unsubscribe/:token page
+// sets marketing_opt_out. Footer link is appended to every campaign email.
+async function unsubTokenFor(contactId: number): Promise<string> {
+  const cur = await pool.query('SELECT unsub_token FROM customer_contacts WHERE id=$1', [contactId]);
+  if (cur.rows.length && cur.rows[0].unsub_token) return cur.rows[0].unsub_token;
+  const token = crypto.randomBytes(24).toString('hex');
+  await pool.query('UPDATE customer_contacts SET unsub_token=$1 WHERE id=$2', [token, contactId]);
+  return token;
+}
+
+function unsubFooter(url: string): string {
+  return `<p style="margin:28px 0 0;padding-top:14px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:12px;line-height:1.5;">
+    You're receiving this because you're a contact of Lumen IT Solutions.
+    <a href="${url}" style="color:#9ca3af;">Unsubscribe</a> from these updates.</p>`;
+}
+
+export async function contactForUnsubToken(token: string): Promise<{ id: number; email: string | null; full_name: string; opted_out: boolean } | null> {
+  const { rows } = await pool.query(
+    'SELECT id, email, full_name, COALESCE(marketing_opt_out,false) AS opted_out FROM customer_contacts WHERE unsub_token=$1',
+    [token]
+  );
+  return rows[0] || null;
+}
+
+export async function optOutByToken(token: string): Promise<boolean> {
+  const r = await pool.query(
+    'UPDATE customer_contacts SET marketing_opt_out=true, marketing_opt_out_at=now() WHERE unsub_token=$1 RETURNING id',
+    [token]
+  );
+  return r.rows.length > 0;
+}
+
+// ── Sending ────────────────────────────────────────────────────────────────────
+const SEND_INTERVAL_MS = 2000;  // gentle on Graph and on recipient spam filters
+const running = new Set<number>();
+
+export async function sendTest(campaignId: number, toEmail: string, toName: string): Promise<void> {
+  const c = await pool.query('SELECT * FROM mail_campaigns WHERE id=$1', [campaignId]);
+  if (!c.rows.length) throw new Error('Campaign not found');
+  const camp = c.rows[0];
+  const html = mergeFields(camp.body_html, { full_name: toName, customer_name: 'Example Company Ltd' })
+    + unsubFooter(config.APP_URL + '/unsubscribe/test');
+  await sendMail({ to: toEmail, subject: '[TEST] ' + camp.subject, html, from: camp.from_email || undefined });
+}
+
+// Kick off (or resume) the background send loop for a campaign.
+export async function startSending(campaignId: number): Promise<void> {
+  const c = await pool.query('SELECT status FROM mail_campaigns WHERE id=$1', [campaignId]);
+  if (!c.rows.length) throw new Error('Campaign not found');
+  if (!['draft', 'paused', 'sending'].includes(c.rows[0].status)) throw new Error('Campaign already ' + c.rows[0].status + '.');
+  await pool.query(
+    "UPDATE mail_campaigns SET status='sending', started_at=COALESCE(started_at, now()), updated_at=now() WHERE id=$1",
+    [campaignId]
+  );
+  runLoop(campaignId); // fire-and-forget
+}
+
+export async function pauseSending(campaignId: number): Promise<void> {
+  await pool.query("UPDATE mail_campaigns SET status='paused', updated_at=now() WHERE id=$1 AND status='sending'", [campaignId]);
+}
+
+function runLoop(campaignId: number): void {
+  if (running.has(campaignId)) return;   // one runner per campaign per process
+  running.add(campaignId);
+  (async () => {
+    try {
+      for (;;) {
+        // Stop if paused/deleted since the last send.
+        const st = await pool.query('SELECT status, subject, body_html, from_email FROM mail_campaigns WHERE id=$1', [campaignId]);
+        if (!st.rows.length || st.rows[0].status !== 'sending') return;
+        const camp = st.rows[0];
+
+        const next = await pool.query(
+          `SELECT id, contact_id, email, full_name, customer_name FROM mail_campaign_recipients
+           WHERE campaign_id=$1 AND status='pending' ORDER BY id ASC LIMIT 1`,
+          [campaignId]
+        );
+        if (!next.rows.length) {
+          await pool.query("UPDATE mail_campaigns SET status='sent', finished_at=now(), updated_at=now() WHERE id=$1", [campaignId]);
+          console.log(`[mass-mailer] campaign ${campaignId} finished`);
+          return;
+        }
+        const r = next.rows[0];
+
+        // Re-check opt-out at send time (may have unsubscribed after the snapshot).
+        if (r.contact_id) {
+          const oo = await pool.query('SELECT COALESCE(marketing_opt_out,false) AS o FROM customer_contacts WHERE id=$1', [r.contact_id]);
+          if (oo.rows.length && oo.rows[0].o) {
+            await pool.query("UPDATE mail_campaign_recipients SET status='skipped', error='opted out' WHERE id=$1", [r.id]);
+            continue;
+          }
+        }
+
+        try {
+          const token = r.contact_id ? await unsubTokenFor(r.contact_id) : 'unknown';
+          const html = mergeFields(camp.body_html, r) + unsubFooter(config.APP_URL + '/unsubscribe/' + token);
+          await sendMail({ to: r.email, subject: camp.subject, html, from: camp.from_email || undefined });
+          await pool.query("UPDATE mail_campaign_recipients SET status='sent', sent_at=now(), error=NULL WHERE id=$1", [r.id]);
+        } catch (e: any) {
+          await pool.query("UPDATE mail_campaign_recipients SET status='failed', error=$2 WHERE id=$1", [r.id, String(e.message || e).slice(0, 500)]);
+        }
+        await new Promise((res) => setTimeout(res, SEND_INTERVAL_MS));
+      }
+    } catch (e: any) {
+      console.error(`[mass-mailer] campaign ${campaignId} loop crashed:`, e.message);
+    } finally {
+      running.delete(campaignId);
+    }
+  })();
+}
+
+// Retry every failed recipient of a campaign (puts them back to pending and resumes).
+export async function retryFailed(campaignId: number): Promise<number> {
+  const r = await pool.query(
+    "UPDATE mail_campaign_recipients SET status='pending', error=NULL WHERE campaign_id=$1 AND status='failed' RETURNING id",
+    [campaignId]
+  );
+  if (r.rows.length) await startSending(campaignId);
+  return r.rows.length;
+}
+
+// Resume any campaign left mid-send by a restart (deploys restart PM2).
+export function resumeMassMailer(): void {
+  setTimeout(async () => {
+    try {
+      const { rows } = await pool.query("SELECT id FROM mail_campaigns WHERE status='sending'");
+      for (const row of rows) {
+        console.log(`[mass-mailer] resuming campaign ${row.id} after restart`);
+        runLoop(row.id);
+      }
+    } catch { /* tables may not exist until first `prisma db push` */ }
+  }, 15000); // give the app a settle window after boot
+}

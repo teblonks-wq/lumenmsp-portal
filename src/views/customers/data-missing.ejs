@@ -1,0 +1,166 @@
+<%- include('../partials/header', { title: 'Data missing', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/customers">← Customers</a></p>
+    <h1 style="margin:0;">⚠️ Data missing</h1>
+    <p class="muted" style="margin:4px 0 0;">Fill gaps in customer records without opening each one. The <strong>default domain</strong> also drives Mass Mailer — only contacts on it get campaign emails.</p>
+  </div>
+  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+    <label class="muted" style="font-size:13px;display:flex;gap:6px;align-items:center;cursor:pointer;">
+      <input type="checkbox" id="dmShowAll" onchange="applyFilter()"> Show complete customers too
+    </label>
+    <label class="muted" style="font-size:13px;display:flex;gap:6px;align-items:center;cursor:pointer;">
+      <input type="checkbox" id="dmActiveOnly" checked onchange="applyFilter()"> Active only
+    </label>
+    <button class="btn btn-primary" id="dmSaveAll" onclick="saveAllChanged()" disabled>Save all changes</button>
+  </div>
+</div>
+
+<style>
+  .dm-table td{padding:6px 8px;vertical-align:middle;}
+  .dm-table input.input, .dm-table select.input{width:100%;min-width:90px;padding:5px 8px;font-size:13px;}
+  .dm-table select.input{min-width:130px;}
+  .dm-missing{background:#fef2f2;border-color:#fca5a5 !important;}
+  tr.dm-changed{background:#fffbeb;}
+  .dm-flag{display:inline-block;width:9px;height:9px;border-radius:50%;background:#ef4444;margin-right:5px;}
+  .dm-ok{background:#10b981;}
+</style>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap" style="overflow:auto;">
+    <table class="table dm-table" id="dmTable" style="min-width:1300px;">
+      <thead>
+        <tr>
+          <th>Customer</th>
+          <th>Status</th>
+          <th>Default domain</th>
+          <th>Phone</th>
+          <th>Address</th>
+          <th>City</th>
+          <th>County</th>
+          <th>Postcode</th>
+          <th>Principal</th>
+          <th>Billing</th>
+          <th>Service</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% customers.forEach(function (c) {
+             var contacts = c.contacts || [];
+             var missing = {
+               domain: !c.domain, phone: !c.phone,
+               address: !(c.address_line_1 && c.city && c.postcode),
+               contacts: !(c.principal_contact_id && c.billing_contact_id && c.service_contact_id),
+             };
+             var anyMissing = missing.domain || missing.phone || missing.address || missing.contacts;
+        %>
+        <tr data-id="<%= c.id %>" data-status="<%= c.status %>" data-missing="<%= anyMissing ? 1 : 0 %>">
+          <td style="white-space:nowrap;">
+            <span class="dm-flag <%= anyMissing ? '' : 'dm-ok' %>"></span>
+            <a class="row-link" href="/customers/<%= c.id %>" target="_blank"><%= c.name %></a>
+            <div class="muted" style="font-size:11px;margin-left:14px;"><%= c.account_number || '' %></div>
+          </td>
+          <td>
+            <% if (c.status === 'active') { %><span class="badge badge-sent">Active</span>
+            <% } else if (c.status === 'lead') { %><span class="badge badge-primary">Lead</span>
+            <% } else { %><span class="badge badge-inactive">Inactive</span><% } %>
+          </td>
+          <td><input class="input dm-f <%= missing.domain ? 'dm-missing' : '' %>" name="domain" value="<%= c.domain || '' %>" placeholder="example.co.uk"></td>
+          <td><input class="input dm-f <%= missing.phone ? 'dm-missing' : '' %>" name="phone" value="<%= c.phone || '' %>" placeholder="01235 …" style="min-width:110px;"></td>
+          <td><input class="input dm-f <%= !c.address_line_1 ? 'dm-missing' : '' %>" name="address_line_1" value="<%= c.address_line_1 || '' %>" placeholder="Address line 1" style="min-width:150px;"></td>
+          <td><input class="input dm-f <%= !c.city ? 'dm-missing' : '' %>" name="city" value="<%= c.city || '' %>"></td>
+          <td><input class="input dm-f" name="county" value="<%= c.county || '' %>"></td>
+          <td><input class="input dm-f <%= !c.postcode ? 'dm-missing' : '' %>" name="postcode" value="<%= c.postcode || '' %>" style="min-width:80px;"></td>
+          <% ['principal_contact_id', 'billing_contact_id', 'service_contact_id'].forEach(function (role) { %>
+            <td>
+              <select class="input dm-f <%= !c[role] ? 'dm-missing' : '' %>" name="<%= role %>">
+                <option value="">—</option>
+                <% contacts.forEach(function (ct) { %>
+                  <option value="<%= ct.id %>" <%= c[role] === ct.id ? 'selected' : '' %>><%= ct.full_name %></option>
+                <% }); %>
+              </select>
+            </td>
+          <% }); %>
+          <td style="white-space:nowrap;">
+            <button class="btn dm-save" style="font-size:12px;padding:4px 10px;" onclick="saveRow(this.closest('tr'))">Save</button>
+            <span class="dm-state muted" style="font-size:12px;"></span>
+          </td>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="muted" id="dmSummary" style="margin-top:10px;font-size:13px;"></p>
+
+<script>
+  function rows(){ return Array.prototype.slice.call(document.querySelectorAll('#dmTable tbody tr')); }
+
+  function applyFilter() {
+    var showAll = document.getElementById('dmShowAll').checked;
+    var activeOnly = document.getElementById('dmActiveOnly').checked;
+    var shown = 0, gaps = 0;
+    rows().forEach(function (tr) {
+      var vis = (showAll || tr.getAttribute('data-missing') === '1')
+             && (!activeOnly || tr.getAttribute('data-status') === 'active');
+      tr.style.display = vis ? '' : 'none';
+      if (vis) { shown++; if (tr.getAttribute('data-missing') === '1') gaps++; }
+    });
+    document.getElementById('dmSummary').textContent = shown + ' customer(s) shown · ' + gaps + ' with gaps';
+  }
+
+  // Mark rows changed on any edit so Save all knows what to send.
+  document.addEventListener('input', function (e) {
+    var tr = e.target.closest && e.target.closest('#dmTable tbody tr');
+    if (tr) { tr.classList.add('dm-changed'); document.getElementById('dmSaveAll').disabled = false; }
+  });
+
+  function rowData(tr) {
+    var d = {};
+    tr.querySelectorAll('.dm-f').forEach(function (f) { d[f.name] = f.value; });
+    return d;
+  }
+
+  function saveRow(tr) {
+    var state = tr.querySelector('.dm-state');
+    state.textContent = 'Saving…'; state.style.color = '';
+    return fetch('/customers/data-missing/' + tr.getAttribute('data-id'), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rowData(tr)),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j.ok) {
+          state.textContent = '✓ saved'; state.style.color = '#10b981';
+          tr.classList.remove('dm-changed');
+          // Re-evaluate missing highlights in place.
+          var missing = false;
+          tr.querySelectorAll('.dm-f').forEach(function (f) {
+            var required = ['domain','phone','address_line_1','city','postcode','principal_contact_id','billing_contact_id','service_contact_id'].indexOf(f.name) >= 0;
+            var empty = required && !f.value;
+            f.classList.toggle('dm-missing', empty);
+            if (empty) missing = true;
+          });
+          tr.setAttribute('data-missing', missing ? '1' : '0');
+          tr.querySelector('.dm-flag').classList.toggle('dm-ok', !missing);
+        } else { state.textContent = j.error || 'failed'; state.style.color = '#dc2626'; }
+        return j.ok;
+      })
+      .catch(function () { state.textContent = 'failed'; state.style.color = '#dc2626'; return false; });
+  }
+
+  function saveAllChanged() {
+    var changed = rows().filter(function (tr) { return tr.classList.contains('dm-changed'); });
+    var btn = document.getElementById('dmSaveAll');
+    btn.disabled = true;
+    (function next(i) {
+      if (i >= changed.length) { applyFilter(); return; }
+      saveRow(changed[i]).then(function () { next(i + 1); });
+    })(0);
+  }
+
+  applyFilter();
+</script>
+
+<%- include('../partials/footer') %>
