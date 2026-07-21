@@ -7,6 +7,7 @@ import { getSetting, setSetting } from '../lib/settings';
 import { pricedServiceLines, setSalePrice } from '../lib/service-pricing';
 import { unallocatedClis, unaccountedClis, suppressedClis, currentCommsPeriod, prevCommsPeriod, commsPeriods, commsRateCard, COMMS_CATS, commsCategory, ONEOFF_RE, COMPONENT_RE, HANDSET_RE, cliType, classifyCall, getCallMarkups, CALL_TYPES, commsCallCharge, advanceCommsPeriod, rollForwardCommsPeriod } from '../lib/comms-billing';
 import { recycleRow } from '../lib/recycle';
+import { QuickBooks } from '../lib/quickbooks';
 import { generateCommsBillRun, finaliseCommsBillRun, generateItCloudBillRun } from '../lib/recurring-billing';
 import { detectPackage } from '../lib/packages';
 import { itCloudAccount, itCloudMissingBillingContact } from '../lib/it-cloud-billing';
@@ -769,6 +770,69 @@ router.post('/bureau/itcloud/complete', async (req: Request, res: Response) => {
     const tail = r.issues.length ? ` ⚠ ${r.issues.length} issue(s): ${r.issues.slice(0, 4).join(' · ')}${r.issues.length > 4 ? '…' : ''}` : '';
     res.redirect('/bureau/itcloud?' + (r.issues.length ? 'err' : 'msg') + '=' + encodeURIComponent(`Run ${period} completed — ${r.numbered} numbered & issued, ${r.sent} emailed/QB/DD.${tail}`));
   } catch (e: any) { res.redirect('/bureau/itcloud?err=' + encodeURIComponent('Complete failed: ' + (e.message || 'error'))); }
+});
+
+// ONE-CLICK fix for the cockpit audit flags — action the problem from the row, not a trek to
+// the Products page. For the period's staged Giacom lines (one invoice, or all):
+//  1) any line whose Giacom code has NO product-list entry → create it (source_tag='giacom',
+//     code from sync_ref, name + billed price from the line, cost from the live Giacom feed);
+//  2) any matched product still missing its QuickBooks item → create + link the QB Service item
+//     (skipped gracefully when QB isn't connected).
+// The audit re-runs on redirect, so the flags clear — anything left genuinely needs a human
+// (e.g. a line with no Giacom code at all).
+router.post('/bureau/itcloud/fix-flags', async (req: Request, res: Response) => {
+  const period = String(req.body.period || '').trim() || (await itCloudPeriod());
+  const onlyInv = req.body.invoice_id ? parseInt(String(req.body.invoice_id), 10) : null;
+  const lines = (await pool.query(
+    `SELECT split_part(COALESCE(ii.sync_ref,''),'|',1) AS code,
+            MIN(ii.description) AS description, MAX(ii.unit_price)::numeric AS unit_price,
+            MIN(ap.id) AS ap_id
+       FROM invoices i
+       JOIN invoice_items ii ON ii.invoice_id=i.id AND ii.source='giacom'
+       LEFT JOIN asset_products ap ON ap.source_tag='giacom' AND ap.is_active=true
+              AND lower(ap.code)=lower(split_part(COALESCE(ii.sync_ref,''),'|',1))
+      WHERE i.invoice_scheme='IC' AND COALESCE(i.staged,false)=true AND i.deleted_at IS NULL
+        AND i.billing_period=$1 ${onlyInv ? 'AND i.id=$2' : ''}
+      GROUP BY 1`, onlyInv ? [period, onlyInv] : [period]
+  )).rows;
+  let created = 0, noCode = 0; const seen = new Set<string>();
+  for (const l of lines) {
+    const code = String(l.code || '').trim();
+    if (!code) { noCode++; continue; }
+    if (l.ap_id != null || seen.has(code.toLowerCase())) continue;
+    seen.add(code.toLowerCase());
+    const cost = Number((await pool.query(
+      "SELECT MAX(unit_cost)::numeric AS c FROM service_items WHERE source='giacom' AND lower(product_id)=lower($1)", [code]
+    )).rows[0]?.c) || 0;
+    await pool.query(
+      `INSERT INTO asset_products (name, code, item_type, billing_frequency, unit_price, cost_price, supplier, source_tag, vat_rate, is_active)
+       VALUES ($1,$2,'service','monthly',$3,$4,'Giacom','giacom',20,true)`,
+      [String(l.description || code).trim(), code, Number(l.unit_price) || 0, cost]
+    );
+    created++;
+  }
+  // QB items for anything giacom-tagged still unmapped (covers the rows just created too).
+  let qbLinked = 0; const qbFailed: string[] = [];
+  try {
+    const qb = await QuickBooks.load();
+    if (qb.isConnected()) {
+      const accounts = await qb.getIncomeAccounts();
+      if (accounts.length) {
+        const missing = (await pool.query(
+          "SELECT id, name FROM asset_products WHERE source_tag='giacom' AND is_active=true AND quickbooks_item_id IS NULL AND name IS NOT NULL AND name<>'' ORDER BY name"
+        )).rows;
+        for (const p of missing) {
+          try { const qbId = await qb.createItem(p.name, accounts[0].Id); await pool.query('UPDATE asset_products SET quickbooks_item_id=$1 WHERE id=$2', [qbId, p.id]); qbLinked++; }
+          catch (e: any) { qbFailed.push(p.name + ' (' + (e.message || 'error').slice(0, 50) + ')'); }
+        }
+      }
+    }
+  } catch { /* QB optional — product-list creation alone already clears the hard block */ }
+  await logActivity(req.session.user!.id, 'updated', 'customers', 0, `IT&Cloud fix-flags ${period}${onlyInv ? ' (invoice ' + onlyInv + ')' : ''}: ${created} product(s) added, ${qbLinked} QB item(s) linked`);
+  const bits = [`${created} product(s) added to the list`, `${qbLinked} QuickBooks item(s) created/linked`];
+  if (noCode) bits.push(`${noCode} line(s) have no Giacom code — need a manual look`);
+  if (qbFailed.length) bits.push(`QB failed for ${qbFailed.length}: ${qbFailed.slice(0, 3).join(', ')}${qbFailed.length > 3 ? '…' : ''}`);
+  res.redirect('/bureau/itcloud?' + ((noCode || qbFailed.length) ? 'err' : 'msg') + '=' + encodeURIComponent('Fix flags — ' + bits.join(' · ')));
 });
 
 // IT & Cloud live invoice preview — read-only, recomputed every view. Shows exactly what the

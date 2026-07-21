@@ -83,6 +83,13 @@
             <% if (r.audit && r.audit.notInDb.length) { %><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;" title="On the invoice: <%= r.audit.notInDb.join('; ') %>">⛔ <%= r.audit.notInDb.length %> line(s) not in DB/QB</span><% } %>
             <% if (r.audit && r.audit.noQbItem.length) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;" title="<%= r.audit.noQbItem.join('; ') %>">⚠ <%= r.audit.noQbItem.length %> no QB item</span><% } %>
             <% if (r.unpriced) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;"><%= r.unpriced %> unpriced</span><% } %>
+            <% if (r.audit && (r.audit.notInDb.length || r.audit.noQbItem.length)) { %>
+              <form method="post" action="/bureau/itcloud/fix-flags" style="display:inline;margin:0;" onsubmit="return confirm('Fix the flags for <%= (r.name||'').replace(/'/g,'') %>? Adds the missing services to the product list (name + billed price + Giacom cost) and creates/links their QuickBooks items.');">
+                <input type="hidden" name="period" value="<%= period || '' %>">
+                <input type="hidden" name="invoice_id" value="<%= r.periodInvoiceId %>">
+                <button class="btn" type="submit" style="font-size:11px;padding:2px 8px;background:#0e7490;border-color:#0e7490;color:#fff;" title="One click: create the missing product-list entries and QuickBooks items for this customer's flagged lines">⚡ Fix flags</button>
+              </form>
+            <% } %>
           </td>
           <td style="text-align:right;white-space:nowrap;">
             <% if (r.templateId) { %>
@@ -113,7 +120,12 @@
   <% if (typeof audit !== 'undefined' && audit && audit.length) { %>
     <div class="alert alert-danger" style="margin:14px 20px;">
       <strong>⛔ <%= audit.length %> invoice(s) have services not matched to the product list / QuickBooks.</strong>
-      These lines won't map to a QB item or reporting category. Add the products to the <a href="/products">product list</a> (with a QB item) and re-sync, or tick <em>complete anyway</em> below to post them under the default Giacom item.
+      These lines won't map to a QB item or reporting category.
+      <form method="post" action="/bureau/itcloud/fix-flags" style="display:inline;margin:0 4px;" onsubmit="return confirm('Fix ALL flags for <%= period %>? Adds every missing service to the product list (name + billed price + Giacom cost) and creates/links QuickBooks items for anything unmapped.');">
+        <input type="hidden" name="period" value="<%= period || '' %>">
+        <button class="btn" type="submit" style="font-size:12px;padding:4px 12px;background:#0e7490;border-color:#0e7490;color:#fff;">⚡ Fix all flags</button>
+      </form>
+      or add them by hand on the <a href="/products">product list</a>, or tick <em>complete anyway</em> below to post them under the default Giacom item.
       <ul style="margin:8px 0 0;padding-left:18px;font-size:13px;">
         <% audit.slice(0,12).forEach(function(a){ %>
           <li><strong><%= a.name %></strong> — <% if (a.notInDb.length) { %><%= a.notInDb.length %> not in product list<% } %><% if (a.notInDb.length && a.noQbItem.length) { %>, <% } %><% if (a.noQbItem.length) { %><%= a.noQbItem.length %> no QB item<% } %></li>
