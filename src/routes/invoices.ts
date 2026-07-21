@@ -423,7 +423,7 @@ router.post('/invoices/:id', requireAuth, async (req: Request, res: Response, ne
   // Non-numeric segment (e.g. /invoices/batch-complete) belongs to another route — fall through.
   if (Number.isNaN(id)) { next(); return; }
   // Issued / emailed / QB-submitted invoices are locked — never silently rewrite a real invoice.
-  const lk = await pool.query('SELECT status, emailed_at, quickbooks_invoice_id FROM invoices WHERE id=$1 AND deleted_at IS NULL', [id]);
+  const lk = await pool.query('SELECT status, emailed_at, quickbooks_invoice_id, invoice_scheme FROM invoices WHERE id=$1 AND deleted_at IS NULL', [id]);
   if (lk.rows.length && invoiceLocked(lk.rows[0])) { res.redirect('/invoices/' + id + '?err=' + encodeURIComponent(LOCK_MSG)); return; }
   const user = req.session.user!;
   const b = req.body;
@@ -446,7 +446,10 @@ router.post('/invoices/:id', requireAuth, async (req: Request, res: Response, ne
        WHERE id=$10 AND deleted_at IS NULL`,
       [
         custId, (b.title || '').trim(),
-        SCHEMES.includes(b.invoice_scheme) ? b.invoice_scheme : 'IT',
+        // Preserve the CURRENT scheme when the form doesn't post one — the hardcoded 'IT'
+        // fallback silently rebranded staged IC drafts on every edit (July 2026: TLC + Choose
+        // Leads vanished from the IT&Cloud cockpit after hand-edits).
+        SCHEMES.includes(b.invoice_scheme) ? b.invoice_scheme : (lk.rows[0]?.invoice_scheme || 'IT'),
         nz(b.payment_method) || 'upfront', nz(b.issue_date), nz(b.due_date), nz(b.currency_code) || 'GBP',
         nz(b.notes), nz(b.terms), id, contractType,
         on(b.is_recurring), on(b.recurring_active), parseInt(b.send_day, 10) || 23, parseInt(b.due_day, 10) || 1,
