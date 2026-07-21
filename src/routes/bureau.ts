@@ -5,7 +5,7 @@ import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { getSetting, setSetting } from '../lib/settings';
 import { pricedServiceLines, setSalePrice } from '../lib/service-pricing';
-import { unallocatedClis, unaccountedClis, suppressedClis, currentCommsPeriod, commsPeriods, commsRateCard, COMMS_CATS, commsCategory, ONEOFF_RE, COMPONENT_RE, HANDSET_RE, cliType, classifyCall, getCallMarkups, CALL_TYPES, commsCallCharge, advanceCommsPeriod, rollForwardCommsPeriod } from '../lib/comms-billing';
+import { unallocatedClis, unaccountedClis, suppressedClis, currentCommsPeriod, prevCommsPeriod, commsPeriods, commsRateCard, COMMS_CATS, commsCategory, ONEOFF_RE, COMPONENT_RE, HANDSET_RE, cliType, classifyCall, getCallMarkups, CALL_TYPES, commsCallCharge, advanceCommsPeriod, rollForwardCommsPeriod } from '../lib/comms-billing';
 import { recycleRow } from '../lib/recycle';
 import { generateCommsBillRun, finaliseCommsBillRun, generateItCloudBillRun } from '../lib/recurring-billing';
 import { detectPackage } from '../lib/packages';
@@ -527,6 +527,23 @@ router.get('/bureau/bill-run', async (req: Request, res: Response) => {
   }
   const grand = { cost: 0, sale: 0, profit: 0 };
   review.forEach((r) => { grand.cost += r.totals.cost; grand.sale += r.totals.sale; grand.profit += r.totals.profit; });
+  // Last month's bills per customer, from the PREVIOUS period's CS INVOICES (durable — works
+  // even for months whose feed lines are gone). Powers the "compare to last month" tick on the
+  // review stage: per-category billed £ + up/down % under every column.
+  const prevPeriod = period ? prevCommsPeriod(period) : null;
+  const lastMonth: Record<string, { name: string; byCat: Record<string, number>; total: number }> = {};
+  if (prevPeriod) {
+    (await pool.query(
+      `SELECT i.customer_id AS cid, c.name, COALESCE(ii.invoice_category,'additional') AS cat, SUM(ii.line_total)::numeric AS sale
+         FROM invoices i JOIN invoice_items ii ON ii.invoice_id=i.id JOIN customers c ON c.id=i.customer_id
+        WHERE i.invoice_scheme='CS' AND i.billing_period=$1 AND i.deleted_at IS NULL
+        GROUP BY 1,2,3`, [prevPeriod]
+    )).rows.forEach((r: any) => {
+      const m = lastMonth[r.cid] || (lastMonth[r.cid] = { name: r.name, byCat: {}, total: 0 });
+      m.byCat[r.cat] = (m.byCat[r.cat] || 0) + (Number(r.sale) || 0);
+      m.total += Number(r.sale) || 0;
+    });
+  }
   // The period's produced invoices — for a CLOSED period this is the record (the snapshot
   // import wipes past service lines, so the live review above may be empty for old months).
   const periodInvoices = period ? (await pool.query(
@@ -545,7 +562,7 @@ router.get('/bureau/bill-run', async (req: Request, res: Response) => {
     } catch { /* column lands with the deploy migration */ }
   }
   res.render('bureau-bill-run', {
-    user: req.session.user!, period, current, periods, readOnly, periodInvoices, projected, cats: COMMS_CATS, allPkgs,
+    user: req.session.user!, period, current, periods, readOnly, periodInvoices, projected, prevPeriod, lastMonth, cats: COMMS_CATS, allPkgs,
     clis, suppressed, unaccounted, uncosted, customers: (await pool.query("SELECT id, name FROM customers WHERE deleted_at IS NULL ORDER BY name")).rows,
     review, grand, notice: req.query.msg || null, error: req.query.err || null,
   });

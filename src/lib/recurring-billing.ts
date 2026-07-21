@@ -380,7 +380,7 @@ export async function finaliseCommsBillRun(period: string, userId: number | null
     // unbilled, newer than the floor, up to the month before the service period). Selection
     // by flag means a skipped/rolled month can never orphan or double-bill calls.
     try {
-      const floor = String((await getSetting('comms', 'calls_billed_floor')) || '2026-06');
+      const floor = String((await getSetting('comms', 'calls_billed_floor')) || '2026-05');
       await pool.query(
         `UPDATE call_records SET billed_at=NOW()
           WHERE customer_id=$1 AND billed_at IS NULL AND billing_period > $2 AND billing_period <= $3`,

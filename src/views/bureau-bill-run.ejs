@@ -222,7 +222,26 @@
 
 <!-- STAGE 3 — Review invoices (the only panel rendered when viewing a closed period read-only) -->
 <div class="br-panel<%= ro ? ' active' : '' %>" data-step="3">
-  <% var pinvs = (typeof periodInvoices !== 'undefined' && periodInvoices) ? periodInvoices : []; %>
+  <% var pinvs = (typeof periodInvoices !== 'undefined' && periodInvoices) ? periodInvoices : [];
+     var LM = (typeof lastMonth !== 'undefined' && lastMonth) ? lastMonth : {};
+     var prevP = (typeof prevPeriod !== 'undefined') ? prevPeriod : null;
+     var hasLM = Object.keys(LM).length > 0;
+     var grandLast = 0; Object.keys(LM).forEach(function(k){ grandLast += (LM[k].total || 0); });
+     // Last-month figure + up/down %, hidden until the compare tick. Green up = billing more.
+     function cmpHtml(cur, last){
+       cur = Number(cur) || 0; last = Number(last) || 0;
+       if (!last && !cur) return '';
+       var inner;
+       if (!last) inner = '<span style="color:#2563eb;font-weight:600;">new</span>';
+       else {
+         var pct = (cur - last) / last * 100;
+         if (Math.abs(pct) < 0.05) inner = money(last) + ' <span style="color:#94a3b8;font-weight:600;">=</span>';
+         else if (pct > 0) inner = money(last) + ' <span style="color:#166534;font-weight:600;">▲ +' + pct.toFixed(1) + '%</span>';
+         else inner = money(last) + ' <span style="color:#b91c1c;font-weight:600;">▼ ' + pct.toFixed(1) + '%</span>';
+       }
+       return '<div class="cmp" style="display:none;font-size:11px;color:#64748b;white-space:nowrap;">' + inner + '</div>';
+     }
+  %>
   <% if (ro) { %>
   <div class="card" style="padding:0;margin-bottom:14px;">
     <div class="card-header" style="padding:18px 22px 0;"><h2>Invoices produced for <%= period %> <span class="muted">(<%= pinvs.length %>)</span></h2></div>
@@ -247,11 +266,16 @@
   </div>
   <% } %>
   <% if (!ro || nCust) { %>
-  <div class="card" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px;">
+  <div class="card" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-start;">
     <div><div class="muted" style="font-size:12px;">Customers</div><div style="font-size:20px;font-weight:800;"><%= nCust %></div></div>
-    <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:800;"><%= money(grand.sale) %></div></div>
+    <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:800;"><%= money(grand.sale) %></div><%- cmpHtml(grand.sale, grandLast) %></div>
     <div><div class="muted" style="font-size:12px;">Cost</div><div style="font-size:20px;font-weight:800;color:#64748b;"><%= money(grand.cost) %></div></div>
     <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(grand.profit) %></div></div>
+    <% if (hasLM) { %>
+    <label style="margin-left:auto;display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap;">
+      <input type="checkbox" id="cmpLast"> Compare to last month <span class="muted">(<%= prevP %> — as billed)</span>
+    </label>
+    <% } %>
   </div>
   <div class="card" style="padding:0;">
     <div class="card-header" style="padding:18px 22px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2>Draft bills by category</h2>
@@ -260,14 +284,25 @@
       <thead><tr><th>Customer</th><% cats.forEach(function(cat){ %><th style="text-align:right;"><%= cat.label.replace(' Services','').replace(' Charges','') %></th><% }); %><th style="text-align:right;">Total</th><th data-nosort></th></tr></thead>
       <tbody>
         <% if (!nCust) { %><tr><td colspan="<%= cats.length+3 %>"><div class="empty-state">No comms customers for this period.</div></td></tr><% } %>
-        <% (review||[]).forEach(function(r){ %>
+        <% (review||[]).forEach(function(r){ var lm = LM[r.id] || null; %>
           <tr>
             <td><strong><%= r.name %></strong> <% if (r.hasUnpriced) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;">unpriced lines</span><% } %></td>
-            <% cats.forEach(function(cat){ var b=r.byCategory[cat.key]; %><td style="text-align:right;<%= b.sale?'':'color:#cbd5e1;' %>"><%= b.sale? money(b.sale) : '—' %></td><% }); %>
-            <td style="text-align:right;font-weight:700;"><%= money(r.totals.sale) %></td>
+            <% cats.forEach(function(cat){ var b=r.byCategory[cat.key]; var lv = lm ? (lm.byCat[cat.key] || 0) : 0; %><td style="text-align:right;<%= b.sale?'':'color:#cbd5e1;' %>"><%= b.sale? money(b.sale) : '—' %><%- cmpHtml(b.sale, lv) %></td><% }); %>
+            <td style="text-align:right;font-weight:700;"><%= money(r.totals.sale) %><%- cmpHtml(r.totals.sale, lm ? lm.total : 0) %></td>
             <td style="text-align:right;white-space:nowrap;"><a class="row-link" href="/bureau/comms/<%= r.id %>/preview<%= period ? ('?period=' + period) : '' %>" target="_blank" style="font-size:12px;">Preview</a> · <a class="row-link" href="/customers/<%= r.id %>#comms" style="font-size:12px;">View</a></td>
           </tr>
         <% }); %>
+        <% if (hasLM) { Object.keys(LM).forEach(function(cid){
+             var seen = (review||[]).some(function(r){ return String(r.id) === String(cid); });
+             if (seen) return; %>
+          <!-- Billed last month, nothing this month — surfaced so a vanished customer is a decision, not an accident. -->
+          <tr class="cmp" style="display:none;background:#fff7ed;">
+            <td><strong><%= LM[cid].name || ('#' + cid) %></strong> <span class="badge" style="font-size:10px;background:#ffedd5;color:#9a3412;">billed <%= prevP %>, nothing this month</span> <a class="row-link" href="/customers/<%= cid %>#comms" style="font-size:12px;">View</a></td>
+            <% cats.forEach(function(cat){ var lv = LM[cid].byCat[cat.key] || 0; %><td style="text-align:right;color:#94a3b8;font-size:12px;"><%= lv ? money(lv) : '—' %></td><% }); %>
+            <td style="text-align:right;color:#b91c1c;font-weight:700;">▼ <%= money(LM[cid].total) %></td>
+            <td></td>
+          </tr>
+        <% }); } %>
       </tbody>
     </table></div>
   </div>
@@ -390,6 +425,14 @@
     });
     apply();
   })();
+  // Stage 3: "compare to last month" tick — reveals last-billed £ + up/down % under every cell,
+  // plus rows for customers billed last month with nothing this month.
+  var cmp = document.getElementById('cmpLast');
+  if (cmp) cmp.addEventListener('change', function(){
+    document.querySelectorAll('.cmp').forEach(function(e){
+      e.style.display = cmp.checked ? (e.tagName === 'TR' ? 'table-row' : '') : 'none';
+    });
+  });
   // Generic search for other cards (e.g. Stage 3 review) — Stage 2 handled above.
   document.querySelectorAll('.card-filter').forEach(function(inp){
     if(inp.closest('.br-panel[data-step="2"]')) return;

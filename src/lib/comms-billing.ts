@@ -531,11 +531,13 @@ export async function commsCallCharge(customerId: number, period?: string): Prom
   // not yet on a sent invoice bills on the next run (window: newer than the floor, no later than
   // P-1). A skipped or rolled month can therefore never orphan a month of calls; they simply
   // ride the next invoice. comms/calls_billed_floor fences off history billed before the flag
-  // existed (default 2026-06 = June's calls, sent with the July 2026 run on the old logic).
+  // existed. Default 2026-05 = May's calls, billed by June's run on the old logic; June's calls
+  // bill with the July run (flagged at its finalise). If July was finalised on the OLD code
+  // (calls unflagged), bump the setting to 2026-06 before the August run to avoid a double-bill.
   const sp = period || (await currentCommsPeriod());
   if (!sp) return { cost: 0, sell: 0, calls: 0, period: null };
   const per = prevCommsPeriod(sp);
-  const floor = String((await getSetting('comms', 'calls_billed_floor')) || '2026-06');
+  const floor = String((await getSetting('comms', 'calls_billed_floor')) || '2026-05');
   const cm = await getCallMarkups(customerId);
   const crs = (await pool.query(
     `SELECT description, dialled, cli, source, cost FROM call_records
