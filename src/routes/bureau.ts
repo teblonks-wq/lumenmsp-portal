@@ -689,7 +689,27 @@ router.get('/bureau/itcloud', async (req: Request, res: Response) => {
     grand.net += pinv ? Number(pinv.subtotal) || 0 : 0;
     grand.billed += pinv ? Number(pinv.total) || 0 : 0;
   }
-  res.render('bureau-itcloud', { user: req.session.user!, period, rows, grand, audit: auditRows, notice: req.query.msg || null, error: req.query.err || null });
+  // Last month's IC bills (previous period's invoices, templates excluded) — powers the
+  // "compare to last month" tick: IT vs Cloud split, net, gross, and customer count.
+  const icPrevPeriod = period ? prevCommsPeriod(period) : null;
+  const icLastMonth: Record<string, { name: string; it: number; cloud: number; net: number; billed: number }> = {};
+  if (icPrevPeriod) {
+    (await pool.query(
+      `SELECT i.id, i.customer_id AS cid, c.name, i.subtotal, i.total,
+              COALESCE(SUM(ii.line_total) FILTER (WHERE ii.source='giacom'),0) AS cloud,
+              COALESCE(SUM(ii.line_total) FILTER (WHERE ii.source IS DISTINCT FROM 'giacom'),0) AS it
+         FROM invoices i JOIN customers c ON c.id=i.customer_id
+         LEFT JOIN invoice_items ii ON ii.invoice_id=i.id
+        WHERE i.invoice_scheme='IC' AND i.billing_period=$1 AND i.deleted_at IS NULL
+          AND COALESCE(i.is_recurring,false)=false
+        GROUP BY i.id, c.name`, [icPrevPeriod]
+    )).rows.forEach((r: any) => {
+      const m = icLastMonth[r.cid] || (icLastMonth[r.cid] = { name: r.name, it: 0, cloud: 0, net: 0, billed: 0 });
+      m.it += Number(r.it) || 0; m.cloud += Number(r.cloud) || 0;
+      m.net += Number(r.subtotal) || 0; m.billed += Number(r.total) || 0;
+    });
+  }
+  res.render('bureau-itcloud', { user: req.session.user!, period, rows, grand, audit: auditRows, prevPeriod: icPrevPeriod, lastMonth: icLastMonth, notice: req.query.msg || null, error: req.query.err || null });
 });
 
 // Generate the IT & Cloud drafts for the current period (review in Invoices, then Complete & send).

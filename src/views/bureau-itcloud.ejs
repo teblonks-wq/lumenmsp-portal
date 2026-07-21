@@ -1,5 +1,35 @@
 <%- include('partials/header', { title: 'IT & Cloud Bill Run', user }) %>
-<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); } %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+   var LM = (typeof lastMonth !== 'undefined' && lastMonth) ? lastMonth : {};
+   var prevP = (typeof prevPeriod !== 'undefined') ? prevPeriod : null;
+   var hasLM = Object.keys(LM).length > 0;
+   var gl = { it: 0, cloud: 0, net: 0, billed: 0, custs: Object.keys(LM).length };
+   Object.keys(LM).forEach(function(k){ gl.it += LM[k].it||0; gl.cloud += LM[k].cloud||0; gl.net += LM[k].net||0; gl.billed += LM[k].billed||0; });
+   // Last-month figure + up/down %, hidden until the compare tick. Green up = billing more.
+   function cmpHtml(cur, last){
+     cur = Number(cur) || 0; last = Number(last) || 0;
+     if (!last && !cur) return '';
+     var inner;
+     if (!last) inner = '<span style="color:#2563eb;font-weight:600;">new</span>';
+     else {
+       var pct = (cur - last) / last * 100;
+       if (Math.abs(pct) < 0.05) inner = money(last) + ' <span style="color:#94a3b8;font-weight:600;">=</span>';
+       else if (pct > 0) inner = money(last) + ' <span style="color:#166534;font-weight:600;">▲ +' + pct.toFixed(1) + '%</span>';
+       else inner = money(last) + ' <span style="color:#b91c1c;font-weight:600;">▼ ' + pct.toFixed(1) + '%</span>';
+     }
+     return '<div class="cmp" style="display:none;font-size:11px;color:#64748b;white-space:nowrap;">' + inner + '</div>';
+   }
+   // Same idea for plain counts (customers): last month's count + up/down difference.
+   function cmpCount(cur, last){
+     cur = Number(cur) || 0; last = Number(last) || 0;
+     if (!last && !cur) return '';
+     var d = cur - last;
+     var inner = last + (d === 0 ? ' <span style="color:#94a3b8;font-weight:600;">=</span>'
+       : d > 0 ? ' <span style="color:#166534;font-weight:600;">▲ +' + d + '</span>'
+       : ' <span style="color:#b91c1c;font-weight:600;">▼ ' + d + '</span>');
+     return '<div class="cmp" style="display:none;font-size:11px;color:#64748b;white-space:nowrap;">' + inner + '</div>';
+   }
+%>
 
 <div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">← Back Office</a></p>
   <h1>IT &amp; Cloud Bill Run <% if (period){ %><span class="muted" style="font-weight:400;">· <%= period %></span><% } %></h1></div>
@@ -7,14 +37,20 @@
 <% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
 <% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
 
-<div class="card" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
-  <div><div class="muted" style="font-size:12px;">Customers</div><div style="font-size:20px;font-weight:800;"><%= rows.length %></div></div>
-  <div><div class="muted" style="font-size:12px;">IT &amp; base (ex VAT)</div><div style="font-size:20px;font-weight:800;"><%= money(grand.it) %></div></div>
-  <div><div class="muted" style="font-size:12px;">Cloud / M365 (ex VAT)</div><div style="font-size:20px;font-weight:800;"><%= money(grand.cloud) %></div></div>
-  <div><div class="muted" style="font-size:12px;">Invoiced (ex VAT)</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(grand.net) %></div></div>
+<div class="card" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-start;">
+  <% var nBilledNow = rows.filter(function(r){ return r.periodInvoiceId; }).length; %>
+  <div><div class="muted" style="font-size:12px;">Customers</div><div style="font-size:20px;font-weight:800;"><%= rows.length %> <span class="muted" style="font-size:12px;font-weight:400;"><%= nBilledNow %> built</span></div><%- cmpCount(nBilledNow, gl.custs) %></div>
+  <div><div class="muted" style="font-size:12px;">IT &amp; base (ex VAT)</div><div style="font-size:20px;font-weight:800;"><%= money(grand.it) %></div><%- cmpHtml(grand.it, gl.it) %></div>
+  <div><div class="muted" style="font-size:12px;">Cloud / M365 (ex VAT)</div><div style="font-size:20px;font-weight:800;"><%= money(grand.cloud) %></div><%- cmpHtml(grand.cloud, gl.cloud) %></div>
+  <div><div class="muted" style="font-size:12px;">Invoiced (ex VAT)</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(grand.net) %></div><%- cmpHtml(grand.net, gl.net) %></div>
   <div><div class="muted" style="font-size:12px;">Giacom cost (ex VAT)</div><div style="font-size:20px;font-weight:800;color:#64748b;"><%= money(grand.cost) %></div></div>
   <div><div class="muted" style="font-size:12px;">Margin (ex VAT)</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(grand.net - grand.cost) %></div></div>
-  <div><div class="muted" style="font-size:12px;">Gross (inc VAT)</div><div style="font-size:16px;font-weight:700;color:#94a3b8;"><%= money(grand.billed) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Gross (inc VAT)</div><div style="font-size:16px;font-weight:700;color:#94a3b8;"><%= money(grand.billed) %></div><%- cmpHtml(grand.billed, gl.billed) %></div>
+  <% if (hasLM) { %>
+  <label style="margin-left:auto;display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap;">
+    <input type="checkbox" id="cmpLast"> Compare to last month <span class="muted">(<%= prevP %> — as billed)</span>
+  </label>
+  <% } %>
 </div>
 
 <div class="card" style="padding:0;">
@@ -25,12 +61,12 @@
     <thead><tr><th>Customer</th><th style="text-align:right;">IT Services<br><span class="muted" style="font-weight:400;font-size:10px;">ex VAT</span></th><th style="text-align:right;">Cloud / M365<br><span class="muted" style="font-weight:400;font-size:10px;">ex VAT</span></th><th style="text-align:right;">Bill<br><span class="muted" style="font-weight:400;font-size:10px;">ex VAT</span></th><th>Sync status</th><th>Flags</th><th></th></tr></thead>
     <tbody>
       <% if (!rows.length) { %><tr><td colspan="7"><div class="empty-state">No IT&Cloud templates, contracts or Giacom cloud services yet.</div></td></tr><% } %>
-      <% rows.forEach(function(r){ %>
+      <% rows.forEach(function(r){ var lm = LM[r.id] || null; %>
         <tr>
           <td><a class="row-link" href="/customers/<%= r.id %>#cloud"><strong><%= r.name %></strong></a></td>
-          <td style="text-align:right;<%= r.it?'':'color:#cbd5e1;' %>"><%= r.it ? money(r.it) : '—' %></td>
-          <td style="text-align:right;<%= r.cloud?'':'color:#cbd5e1;' %>"><%= r.cloud ? money(r.cloud) : '—' %></td>
-          <td style="text-align:right;font-weight:700;<%= (r.net==null)?'color:#cbd5e1;':'' %>"><%= r.net==null ? '—' : money(r.net) %><% if (r.billed!=null) { %><br><span class="muted" style="font-size:10px;font-weight:400;"><%= money(r.billed) %> inc</span><% } %><% if (r.predictedBilled!=null && Math.abs(r.predictedBilled - r.billed) > 0.005) { %><br><span style="font-size:10px;font-weight:600;color:#0e7490;" title="Predicted next run — recurring only (drops this period's one-offs &amp; part-month catch-ups)">↻ next ~<%= money(r.predictedBilled) %></span><% } %></td>
+          <td style="text-align:right;<%= r.it?'':'color:#cbd5e1;' %>"><%= r.it ? money(r.it) : '—' %><%- cmpHtml(r.it, lm ? lm.it : 0) %></td>
+          <td style="text-align:right;<%= r.cloud?'':'color:#cbd5e1;' %>"><%= r.cloud ? money(r.cloud) : '—' %><%- cmpHtml(r.cloud, lm ? lm.cloud : 0) %></td>
+          <td style="text-align:right;font-weight:700;<%= (r.net==null)?'color:#cbd5e1;':'' %>"><%= r.net==null ? '—' : money(r.net) %><% if (r.billed!=null) { %><br><span class="muted" style="font-size:10px;font-weight:400;"><%= money(r.billed) %> inc</span><% } %><% if (r.predictedBilled!=null && Math.abs(r.predictedBilled - r.billed) > 0.005) { %><br><span style="font-size:10px;font-weight:600;color:#0e7490;" title="Predicted next run — recurring only (drops this period's one-offs &amp; part-month catch-ups)">↻ next ~<%= money(r.predictedBilled) %></span><% } %><%- cmpHtml(r.net, lm ? lm.net : 0) %></td>
           <td style="font-size:12px;">
             <% if (!r.templateId) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;">no template</span>
             <% } else if (!r.periodInvoiceId) { %><span class="badge badge-inactive" style="font-size:10px;">template ✓ · not synced</span>
@@ -60,6 +96,18 @@
           </td>
         </tr>
       <% }); %>
+      <% if (hasLM) { Object.keys(LM).forEach(function(cid){
+           var seen = rows.some(function(r){ return String(r.id) === String(cid); });
+           if (seen) return; %>
+        <!-- Billed last month, not even a candidate this month — a vanished customer should be a decision. -->
+        <tr class="cmp" style="display:none;background:#fff7ed;">
+          <td><strong><%= LM[cid].name || ('#' + cid) %></strong> <span class="badge" style="font-size:10px;background:#ffedd5;color:#9a3412;">billed <%= prevP %>, absent this month</span> <a class="row-link" href="/customers/<%= cid %>#cloud" style="font-size:12px;">View</a></td>
+          <td style="text-align:right;color:#94a3b8;font-size:12px;"><%= LM[cid].it ? money(LM[cid].it) : '—' %></td>
+          <td style="text-align:right;color:#94a3b8;font-size:12px;"><%= LM[cid].cloud ? money(LM[cid].cloud) : '—' %></td>
+          <td style="text-align:right;color:#b91c1c;font-weight:700;">▼ <%= money(LM[cid].net) %></td>
+          <td></td><td></td><td></td>
+        </tr>
+      <% }); } %>
     </tbody>
   </table></div>
   <% if (typeof audit !== 'undefined' && audit && audit.length) { %>
@@ -99,5 +147,16 @@
     </form>
   </div>
 </div>
+
+<script>(function(){
+  // "Compare to last month" tick — reveals last-billed £ / count + up/down under every figure,
+  // plus rows for customers billed last month who are absent this month.
+  var cmp = document.getElementById('cmpLast');
+  if (cmp) cmp.addEventListener('change', function(){
+    document.querySelectorAll('.cmp').forEach(function(e){
+      e.style.display = cmp.checked ? (e.tagName === 'TR' ? 'table-row' : '') : 'none';
+    });
+  });
+})();</script>
 
 <%- include('partials/footer') %>
