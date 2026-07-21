@@ -335,6 +335,14 @@ export async function finaliseCommsBillRun(period: string, userId: number | null
         const body = invoiceEmailHtml({ contactName: name, invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate, directDebit: !!inv.gocardless_mandate_id });
         await sendMail({ to, subject: `Invoice ${inv.invoice_number} from Lumen IT Solutions`, html: body, signatureName: 'Accounts Department', attachments: [{ filename: inv.invoice_number + '.pdf', contentType: 'application/pdf', base64: pdf.toString('base64') }] });
         await pool.query("UPDATE invoices SET emailed_at=NOW(), status=CASE WHEN status='draft' THEN 'issued' ELSE status END WHERE id=$1", [inv.id]);
+        // Record the send in communications too — the invoice list's "emailed" envelope (and
+        // the emailed=yes/no filter) read from THERE, not from emailed_at. Mirrors the manual
+        // per-invoice send so bulk-sent and hand-sent invoices look identical.
+        await pool.query(
+          `INSERT INTO communications (entity_type, entity_id, direction, from_name, from_email, to_email, subject, body, sent_by_user_id)
+           VALUES ('invoice',$1,'outbound',$2,$3,$4,$5,$6,$7)`,
+          [inv.id, config.FROM_NAME, config.FROM_EMAIL, to, 'Invoice ' + inv.invoice_number, 'Invoice ' + inv.invoice_number + ' sent to finance contact (bill run).', userId]
+        );
         emailed++;
       }
     } catch (e) { issues.push(`${inv.customer_name}: email failed — ${(e as Error).message}`); }

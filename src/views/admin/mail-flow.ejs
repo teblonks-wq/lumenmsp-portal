@@ -1,5 +1,15 @@
 <%- include('../partials/header', { title: 'Mail flow', user }) %>
-<% function badge(s){ return s==='sent'?'badge-sent':(s==='failed'?'badge-failed':'badge-inactive'); } %>
+<% function badge(s){ return s==='sent'?'badge-sent':(s==='failed'?'badge-failed':'badge-inactive'); }
+   // email_log/mail timestamps are stored as UTC wall-clock in a timezone-naive column, so a raw
+   // toLocaleString shows them an hour behind during BST. Re-read the components as UTC, then
+   // render in Europe/London — correct in summer and winter, whatever TZ the process runs in.
+   function lts(v, dateOnly){
+     if (!v) return '—';
+     var d = new Date(v);
+     var u = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()));
+     return dateOnly ? u.toLocaleDateString('en-GB', { timeZone: 'Europe/London' }) : u.toLocaleString('en-GB', { timeZone: 'Europe/London' });
+   }
+%>
 
 <div class="page-header">
   <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
@@ -39,7 +49,7 @@
             <td><span class="badge <%= s.kind==='domain'?'badge-failed':'badge-inactive' %>"><%= s.kind %></span></td>
             <td class="muted" style="font-size:12px;"><%= s.reason || '—' %></td>
             <td class="muted" style="font-size:12px;"><%= s.created_by_name || '—' %></td>
-            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= new Date(s.created_at).toLocaleDateString('en-GB') %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= lts(s.created_at, true) %></td>
             <td style="text-align:right;"><form method="post" action="/admin/mail-flow/spam/<%= s.id %>/release" style="margin:0;"><button class="btn" type="submit">Release</button></form></td>
           </tr>
         <% }); %>
@@ -59,7 +69,7 @@
       <tbody>
         <% suppressed.forEach(function(s){ %>
           <tr>
-            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= s.received_at ? new Date(s.received_at).toLocaleString('en-GB') : '—' %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= lts(s.received_at) %></td>
             <td style="font-size:13px;overflow-wrap:anywhere;"><%= s.from_name || '' %><% if (s.from_email) { %><br><span class="muted" style="font-size:12px;"><%= s.from_email %></span><% } %></td>
             <td style="font-size:13px;overflow-wrap:anywhere;"><%= s.subject || '(no subject)' %></td>
             <td class="muted" style="font-size:12px;"><%= s.suppression_reason || '—' %></td>
@@ -79,7 +89,7 @@
         <% if (items.length===0) { %><tr><td colspan="5"><div class="empty-state">No emails logged yet.</div></td></tr><% } %>
         <% items.forEach(function(m){ %>
           <tr>
-            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= new Date(m.created_at).toLocaleString('en-GB') %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= lts(m.created_at) %></td>
             <td><%= m.to_email || '—' %></td>
             <td><a class="row-link" href="/admin/mail-flow/<%= m.id %>"><%= m.subject || '(no subject)' %></a></td>
             <td><span class="badge <%= badge(m.status) %>"><%= m.status %></span></td>
