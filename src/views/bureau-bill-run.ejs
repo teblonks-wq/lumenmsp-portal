@@ -23,7 +23,7 @@
 
 <div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">← Back Office</a></p>
   <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-    <h1 style="margin:0;">Comms Bill Run <% if (period){ %><span class="muted" style="font-weight:400;">· period <%= period %></span><% } %><% if (ro){ %> <span class="badge" style="font-size:11px;background:#e2e8f0;color:#475569;vertical-align:middle;">closed — read only</span><% } %></h1>
+    <h1 style="margin:0;">Comms Bill Run <% if (period){ %><span class="muted" style="font-weight:400;">· period <%= period %></span><% } %><% if (ro){ %> <span class="badge" style="font-size:11px;background:#e2e8f0;color:#475569;vertical-align:middle;">closed — read only</span><% } %><% if ((typeof projected !== 'undefined') && projected && !ro){ %> <span class="badge" style="font-size:11px;background:#fef3c7;color:#92400e;vertical-align:middle;" title="Billing from the register (rolled forward from the last actual month). The Giacom file for this month replaces these lines when it lands; differences appear on the true-up report.">projected — awaiting Giacom actuals</span><% } %></h1>
     <% if (plist.length > 1 || ro) { %>
     <form method="get" action="/bureau/bill-run" style="margin:0;">
       <select class="input" name="period" onchange="this.form.submit()" title="View another period (closed months are read-only)" style="width:auto;font-size:13px;padding:5px 8px;">
@@ -31,6 +31,7 @@
       </select>
     </form>
     <% } %>
+    <a class="row-link" href="/bureau/bill-run/true-up" style="font-size:12px;" title="Month-to-month changes: invoiced vs actuals once the Giacom file lands">True-up report</a>
   </div>
 </div>
 

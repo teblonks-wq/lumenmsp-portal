@@ -77,6 +77,72 @@ export async function commsPeriods(): Promise<string[]> {
   return list.filter((p) => /^\d{4}-\d{2}$/.test(p));
 }
 
+// Last calendar day of a YYYY-MM period, as YYYY-MM-DD.
+function lastDayOf(period: string): string {
+  const [y, m] = period.split('-').map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+}
+
+// ── Advance billing: roll the register forward ──────────────────────────────────
+// We bill customers for services IN ADVANCE, but Giacom invoices in ARREARS (a month's file
+// lands ~the 1st of the next month) — so the month being billed never has supplier data yet.
+// The bill therefore comes from the REGISTER (the latest known month's lines), not the import:
+// clone the newest ACTUAL month's full recurring lines into `target` as PROJECTED lines.
+// When the supplier file for that month eventually lands, the per-period import replaces the
+// projection with actuals and the true-up report surfaces every difference.
+// Manual lines roll forward too (still is_manual, so imports never touch them) — a hand-added
+// recurring service keeps billing month after month instead of silently stopping.
+export async function rollForwardCommsPeriod(target: string): Promise<{ from: string | null; cloned: number }> {
+  if (!/^\d{4}-\d{2}$/.test(target)) return { from: null, cloned: 0 };
+  // Never clone into a month that already has recurring lines (actuals or an earlier projection).
+  const has = await pool.query(
+    "SELECT 1 FROM service_items WHERE source='comms' AND billing_period=$1 AND is_prorata=false AND is_one_off=false LIMIT 1", [target]
+  );
+  if (has.rows.length) return { from: null, cloned: 0 };
+  const src = (await pool.query(
+    `SELECT MAX(billing_period) AS p FROM service_items
+      WHERE source='comms' AND is_prorata=false AND is_one_off=false
+        AND COALESCE(is_projected,false)=false AND billing_period < $1`, [target]
+  )).rows[0]?.p as string | null;
+  if (!src) return { from: null, cloned: 0 };
+  const ins = await pool.query(
+    `INSERT INTO service_items (source, customer_id, external_customer_id, external_customer_name, product_id, product_reference,
+        description, quantity, unit_cost, total_cost, location, billing_from, billing_to, billing_period,
+        is_prorata, is_one_off, is_manual, is_projected, vat_status, synced_at)
+     SELECT source, customer_id, external_customer_id, external_customer_name, product_id, product_reference,
+        description, quantity, unit_cost, total_cost, location, $2::date, $3::date, $1,
+        false, false, is_manual, true, vat_status, NOW()
+       FROM service_items
+      WHERE source='comms' AND billing_period=$4 AND is_prorata=false AND is_one_off=false`,
+    [target, target + '-01', lastDayOf(target), src]
+  );
+  return { from: src, cloned: ins.rowCount || 0 };
+}
+
+// After actuals land for `fromPeriod`, re-project any LATER months that are purely projected
+// and not yet invoiced, so the next run always bills from the newest known state.
+export async function refreshCommsProjections(fromPeriod: string): Promise<string[]> {
+  const later = (await pool.query(
+    `SELECT DISTINCT billing_period AS p FROM service_items
+      WHERE source='comms' AND billing_period > $1 AND is_prorata=false AND is_one_off=false
+        AND COALESCE(is_projected,false)=true ORDER BY 1`, [fromPeriod]
+  )).rows.map((r: any) => String(r.p));
+  const refreshed: string[] = [];
+  for (const p of later) {
+    // Untouchable once the month has actual lines or has been invoiced.
+    const actual = await pool.query(
+      "SELECT 1 FROM service_items WHERE source='comms' AND billing_period=$1 AND is_prorata=false AND is_one_off=false AND COALESCE(is_projected,false)=false LIMIT 1", [p]);
+    if (actual.rows.length) continue;
+    const inv = await pool.query(
+      "SELECT 1 FROM invoices WHERE invoice_scheme='CS' AND billing_period=$1 AND deleted_at IS NULL LIMIT 1", [p]);
+    if (inv.rows.length) continue;
+    await pool.query("DELETE FROM service_items WHERE source='comms' AND billing_period=$1 AND COALESCE(is_projected,false)=true", [p]);
+    const r = await rollForwardCommsPeriod(p);
+    if (r.cloned) refreshed.push(p);
+  }
+  return refreshed;
+}
+
 // Is this CLI a phone number or a broadband/connectivity circuit ref?
 export function cliType(cli: string | null): 'voice' | 'circuit' {
   const s = String(cli || '').replace(/\s+/g, '');
@@ -460,15 +526,21 @@ export async function getCallMarkups(customerId?: number): Promise<CallMarkups> 
 // Call-charge total for a customer + period (per-type markup, chargeable calls only). Single
 // source of truth so the bill run, review screen, invoice preview and customer panel all agree.
 export async function commsCallCharge(customerId: number, period?: string): Promise<{ cost: number; sell: number; calls: number; period: string | null }> {
-  // Business rule: each comms bill = services for month P + CALLS FROM P-1 (arrears). So the call
-  // period is the month BEFORE the service period. Bills exactly that month's calls (never history).
+  // Business rule: each comms bill = services for month P (ADVANCE) + calls up to P-1 (ARREARS).
+  // LOCKDOWN (2026-07): selection is by the billed_at flag, NOT period arithmetic — every call
+  // not yet on a sent invoice bills on the next run (window: newer than the floor, no later than
+  // P-1). A skipped or rolled month can therefore never orphan a month of calls; they simply
+  // ride the next invoice. comms/calls_billed_floor fences off history billed before the flag
+  // existed (default 2026-06 = June's calls, sent with the July 2026 run on the old logic).
   const sp = period || (await currentCommsPeriod());
   if (!sp) return { cost: 0, sell: 0, calls: 0, period: null };
   const per = prevCommsPeriod(sp);
+  const floor = String((await getSetting('comms', 'calls_billed_floor')) || '2026-06');
   const cm = await getCallMarkups(customerId);
   const crs = (await pool.query(
-    'SELECT description, dialled, cli, source, cost FROM call_records WHERE customer_id=$1 AND billing_period=$2',
-    [customerId, per]
+    `SELECT description, dialled, cli, source, cost FROM call_records
+      WHERE customer_id=$1 AND billed_at IS NULL AND billing_period > $2 AND billing_period <= $3`,
+    [customerId, floor, per]
   )).rows;
   let cost = 0, sell = 0, calls = 0;
   for (const cr of crs) {

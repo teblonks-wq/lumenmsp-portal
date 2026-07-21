@@ -1,0 +1,68 @@
+<%- include('partials/header', { title: 'Bill Run True-up', user }) %>
+<% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); } %>
+
+<div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau/bill-run">← Comms Bill Run</a></p>
+  <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+    <h1 style="margin:0;">Bill Run True-up <% if (period){ %><span class="muted" style="font-weight:400;">· <%= period %></span><% } %></h1>
+    <% if ((periods||[]).length > 1) { %>
+    <form method="get" action="/bureau/bill-run/true-up" style="margin:0;">
+      <select class="input" name="period" onchange="this.form.submit()" style="width:auto;font-size:13px;padding:5px 8px;">
+        <% periods.forEach(function(p){ %><option value="<%= p %>" <%= p===period?'selected':'' %>><%= p %></option><% }); %>
+      </select>
+    </form>
+    <% } %>
+  </div>
+</div>
+
+<p class="muted" style="max-width:860px;font-size:13px;">We bill services <strong>in advance</strong>; Giacom's file for the month lands <strong>after</strong> the invoices went out. This report compares what each invoice billed (recurring lines only) against the actuals now in the register: <strong>added</strong> services → charge on the next run, <strong>removed</strong> → credit, <strong>changed</strong> → adjust. One-offs, part-month prorata and call charges are excluded — they bill once and legitimately drop off.</p>
+
+<% if (!period) { %>
+  <div class="card"><div class="empty-state">No billed month has actuals yet — nothing to true up.</div></div>
+<% } else if (projectedOnly) { %>
+  <div class="alert" style="max-width:860px;background:#fef3c7;border:1px solid #fcd34d;color:#92400e;">The register for <strong><%= period %></strong> is still <strong>projected</strong> (Giacom's file hasn't landed) — the comparison below is against the projection, so differences only appear once the actuals import.</div>
+<% } %>
+
+<% if (period) { %>
+<div class="card" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px;">
+  <div><div class="muted" style="font-size:12px;">Customers with differences</div><div style="font-size:20px;font-weight:800;"><%= rows.length %></div></div>
+  <div><div class="muted" style="font-size:12px;">Invoiced (recurring)</div><div style="font-size:20px;font-weight:800;"><%= money(totInvoiced) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Actual (register now)</div><div style="font-size:20px;font-weight:800;"><%= money(totActual) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Net delta</div><div style="font-size:20px;font-weight:800;color:<%= (totActual-totInvoiced)>=0?'#166534':'#b91c1c' %>;"><%= money(totActual-totInvoiced) %></div></div>
+</div>
+
+<% if (!rows.length) { %>
+  <div class="card"><div class="empty-state">No differences — every invoice matches the actuals. 🎉</div></div>
+<% } %>
+
+<% rows.forEach(function(r){ %>
+<div class="card" style="padding:0;margin-bottom:14px;">
+  <div class="card-header" style="padding:16px 22px 10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+    <h2 style="margin:0;"><%= r.name %>
+      <% if (r.invoiceNumber) { %><a class="row-link" href="/invoices/<%= r.invoiceId %>" target="_blank" style="font-size:12px;font-weight:400;"><%= r.invoiceNumber %></a>
+      <% } else { %><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;">no invoice this month</span><% } %>
+    </h2>
+    <div style="font-size:13px;"><span class="muted">invoiced</span> <strong><%= money(r.invoicedTotal) %></strong> → <span class="muted">actual</span> <strong><%= money(r.actualTotal) %></strong>
+      <span style="font-weight:700;color:<%= r.delta>=0?'#166534':'#b91c1c' %>;">(<%= r.delta>=0?'+':'' %><%= money(r.delta) %>)</span></div>
+  </div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th style="width:110px;">Change</th><th>Service line</th><th style="text-align:right;">Invoiced</th><th style="text-align:right;">Actual</th></tr></thead>
+    <tbody>
+      <% r.added.forEach(function(l){ %>
+        <tr><td><span class="badge badge-sent" style="font-size:10px;">ADDED</span></td><td class="muted" style="font-size:12px;"><%= l.desc %></td><td style="text-align:right;color:#cbd5e1;">—</td><td style="text-align:right;"><%= l.sale==null ? 'unpriced' : money(l.sale) %></td></tr>
+      <% }); %>
+      <% r.removed.forEach(function(i){ %>
+        <tr><td><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;">REMOVED</span></td><td class="muted" style="font-size:12px;"><%= i.description %></td><td style="text-align:right;"><%= money(i.line_total) %></td><td style="text-align:right;color:#cbd5e1;">—</td></tr>
+      <% }); %>
+      <% r.changed.forEach(function(c){ %>
+        <tr><td><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;">CHANGED</span></td><td class="muted" style="font-size:12px;"><%= c.desc %> <span style="font-size:11px;">(qty <%= c.invQty %> → <%= c.nowQty %>)</span></td><td style="text-align:right;"><%= money(c.invoiced) %></td><td style="text-align:right;"><%= money(c.now) %></td></tr>
+      <% }); %>
+      <% if (!r.added.length && !r.removed.length && !r.changed.length) { %>
+        <tr><td colspan="4"><div class="empty-state" style="padding:12px;">Lines match — this customer had no invoice this month.</div></td></tr>
+      <% } %>
+    </tbody>
+  </table></div>
+</div>
+<% }); %>
+<% } %>
+
+<%- include('partials/footer') %>

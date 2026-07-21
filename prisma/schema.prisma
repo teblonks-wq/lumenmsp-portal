@@ -600,6 +600,7 @@ model ServiceItem {
   isProrata            Boolean   @default(false) @map("is_prorata") // true = part-period (mid-month start/end), not a full recurring month
   location             String?   // customer-set label for a circuit/CLI (e.g. broadband site/office)
   isManual             Boolean   @default(false) @map("is_manual") // added by hand (not from Giacom) — survives the import wipe
+  isProjected          Boolean   @default(false) @map("is_projected") // rolled forward from the last actual month (advance billing) — replaced when the supplier file lands
   isOneOff             Boolean   @default(false) @map("is_one_off") // install/cease/connection fee — bill once
   billedAt             DateTime? @map("billed_at") // when a one-off was billed; once set it drops off the rate card
   invoiceCategory      String?   @map("invoice_category") // internet|voice|mobile|additional|oneoff|call (override; else classified from description)
@@ -662,11 +663,13 @@ model CallRecord {
   description   String?
   cost          Decimal   @default(0) @db.Decimal(12, 4) // what the carrier charges us
   billingPeriod String?   @map("billing_period")          // YYYY-MM
+  billedAt      DateTime? @map("billed_at") // stamped when the call went out on a sent invoice — billing selects by THIS flag, never period arithmetic
   createdAt     DateTime  @default(now()) @map("created_at")
 
   @@index([customerId])
   @@index([cli])
   @@index([billingPeriod])
+  @@index([billedAt])
   @@map("call_records")
 }
 

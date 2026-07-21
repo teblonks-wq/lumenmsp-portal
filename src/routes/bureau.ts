@@ -5,7 +5,7 @@ import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { getSetting, setSetting } from '../lib/settings';
 import { pricedServiceLines, setSalePrice } from '../lib/service-pricing';
-import { unallocatedClis, unaccountedClis, suppressedClis, currentCommsPeriod, commsPeriods, commsRateCard, COMMS_CATS, commsCategory, ONEOFF_RE, COMPONENT_RE, HANDSET_RE, cliType, classifyCall, getCallMarkups, CALL_TYPES, commsCallCharge, advanceCommsPeriod } from '../lib/comms-billing';
+import { unallocatedClis, unaccountedClis, suppressedClis, currentCommsPeriod, commsPeriods, commsRateCard, COMMS_CATS, commsCategory, ONEOFF_RE, COMPONENT_RE, HANDSET_RE, cliType, classifyCall, getCallMarkups, CALL_TYPES, commsCallCharge, advanceCommsPeriod, rollForwardCommsPeriod } from '../lib/comms-billing';
 import { recycleRow } from '../lib/recycle';
 import { generateCommsBillRun, finaliseCommsBillRun, generateItCloudBillRun } from '../lib/recurring-billing';
 import { detectPackage } from '../lib/packages';
@@ -535,8 +535,17 @@ router.get('/bureau/bill-run', async (req: Request, res: Response) => {
       WHERE i.invoice_scheme='CS' AND i.billing_period=$1 AND i.deleted_at IS NULL
       ORDER BY c.name`, [period]
   )).rows : [];
+  // Is this month billing from PROJECTED lines (rolled forward, awaiting the supplier file)?
+  let projected = false;
+  if (period) {
+    try {
+      projected = ((await pool.query(
+        "SELECT 1 FROM service_items WHERE source='comms' AND billing_period=$1 AND COALESCE(is_projected,false)=true LIMIT 1", [period]
+      )).rows.length > 0);
+    } catch { /* column lands with the deploy migration */ }
+  }
   res.render('bureau-bill-run', {
-    user: req.session.user!, period, current, periods, readOnly, periodInvoices, cats: COMMS_CATS, allPkgs,
+    user: req.session.user!, period, current, periods, readOnly, periodInvoices, projected, cats: COMMS_CATS, allPkgs,
     clis, suppressed, unaccounted, uncosted, customers: (await pool.query("SELECT id, name FROM customers WHERE deleted_at IS NULL ORDER BY name")).rows,
     review, grand, notice: req.query.msg || null, error: req.query.err || null,
   });
@@ -1099,7 +1108,11 @@ router.post('/bureau/bill-run/finalise', async (req: Request, res: Response) => 
   }
   await setSetting('comms', 'billrun_done_' + period, new Date().toISOString()); // stops the 4-hourly reminders
   const advanced = await advanceCommsPeriod(); // closing the period rolls the current period forward
-  const summary = `Completed ${period}: ${r.emailed} emailed, ${r.qbPushed} → QuickBooks, ${r.collected} DD collected, ${r.invited} DD invite(s).${advanced ? ' Period rolled forward to ' + advanced + '.' : ''}`;
+  // ADVANCE BILLING — the moment a month closes, project the next one from the register so it
+  // is billable immediately (the supplier file for it won't exist until after we've billed it).
+  let rolled = 0;
+  if (advanced) { try { rolled = (await rollForwardCommsPeriod(advanced)).cloned; } catch (e) { console.error('[bill-run] roll-forward failed:', (e as Error).message); } }
+  const summary = `Completed ${period}: ${r.emailed} emailed, ${r.qbPushed} → QuickBooks, ${r.collected} DD collected, ${r.invited} DD invite(s).${advanced ? ' Period rolled forward to ' + advanced + (rolled ? ` (${rolled} service line(s) projected — actuals will correct them when the Giacom file lands).` : '.') : ''}`;
   const tail = r.issues.length ? ' ⚠ ' + r.issues.length + ' issue(s): ' + r.issues.slice(0, 4).join('; ') + (r.issues.length > 4 ? '…' : '') : '';
   res.redirect('/bureau/bill-run?' + (r.issues.length ? 'err' : 'msg') + '=' + encodeURIComponent(summary + tail));
 });
@@ -1115,6 +1128,74 @@ router.post('/bureau/bill-run/set-period', async (req: Request, res: Response) =
   await pool.query('DELETE FROM settings WHERE "group"=$1 AND key=$2', ['comms', 'billrun_done_' + target]);
   await logActivity(req.session.user!.id, 'updated', 'settings', 0, `Comms open period set to ${target}${before && before !== target ? ' (was ' + before + ')' : ''}`);
   res.redirect('/bureau/bill-run?msg=' + encodeURIComponent(`Open period set to ${target}${before && before !== target ? ' (was ' + before + ')' : ''}.`));
+});
+
+// True-up report — month-to-month changes made visible. When a month's supplier file lands
+// AFTER that month was billed (advance billing), this compares the register's actuals against
+// the RECURRING lines on each customer's sent invoice: added services (charge next run),
+// removed (credit), and price/qty changes. One-offs, prorata and calls are excluded — they
+// legitimately differ (billed once, then drop). Report-only: adjustments stay a human decision.
+router.get('/bureau/bill-run/true-up', async (req: Request, res: Response) => {
+  const q = String(req.query.period || '').trim();
+  let period: string | null = /^\d{4}-\d{2}$/.test(q) ? q : null;
+  if (!period) {
+    // Default: newest billed month whose ACTUAL (non-projected) lines have landed.
+    period = (await pool.query(
+      `SELECT MAX(i.billing_period) AS p FROM invoices i
+        WHERE i.invoice_scheme='CS' AND i.deleted_at IS NULL
+          AND EXISTS (SELECT 1 FROM service_items s
+                       WHERE s.source='comms' AND s.billing_period=i.billing_period
+                         AND s.is_prorata=false AND s.is_one_off=false AND COALESCE(s.is_projected,false)=false)`
+    )).rows[0]?.p || null;
+  }
+  const rows: any[] = [];
+  let totInvoiced = 0, totActual = 0, projectedOnly = false;
+  if (period) {
+    projectedOnly = ((await pool.query(
+      `SELECT 1 FROM service_items WHERE source='comms' AND billing_period=$1 AND is_prorata=false AND is_one_off=false
+        AND COALESCE(is_projected,false)=false LIMIT 1`, [period])).rows.length === 0);
+    const invCusts = (await pool.query(
+      `SELECT i.id AS invoice_id, i.invoice_number, i.customer_id, c.name
+         FROM invoices i JOIN customers c ON c.id=i.customer_id
+        WHERE i.invoice_scheme='CS' AND i.billing_period=$1 AND i.deleted_at IS NULL ORDER BY c.name`, [period])).rows;
+    const svcCusts = (await pool.query(
+      `SELECT DISTINCT si.customer_id AS id, c.name FROM service_items si JOIN customers c ON c.id=si.customer_id
+        WHERE si.source='comms' AND si.customer_id IS NOT NULL AND si.billing_period=$1
+          AND si.is_prorata=false AND si.is_one_off=false`, [period])).rows;
+    const byCust = new Map<number, any>();
+    invCusts.forEach((r: any) => byCust.set(r.customer_id, { id: r.customer_id, name: r.name, invoiceId: r.invoice_id, invoiceNumber: r.invoice_number }));
+    svcCusts.forEach((r: any) => { if (!byCust.has(r.id)) byCust.set(r.id, { id: r.id, name: r.name, invoiceId: null, invoiceNumber: null }); });
+    for (const cu of Array.from(byCust.values()).sort((a, b) => String(a.name).localeCompare(String(b.name)))) {
+      const items = cu.invoiceId ? (await pool.query(
+        `SELECT description, quantity, line_total FROM invoice_items
+          WHERE invoice_id=$1 AND source='comms' AND COALESCE(invoice_category,'') <> 'oneoff'
+            AND description NOT LIKE '%(part month)%'`, [cu.invoiceId])).rows : [];
+      const rc = await commsRateCard(cu.id, period);
+      const nowLines = rc.lines.map((l) => ({ desc: l.label + (l.ref ? ' (' + l.ref + ')' : '') + (l.location ? ' — ' + l.location : ''), qty: l.qty || 1, sale: l.sale }));
+      const invMap = new Map<string, any>(); items.forEach((i: any) => invMap.set(String(i.description), i));
+      const nowMap = new Map<string, any>(); nowLines.forEach((l) => nowMap.set(l.desc, l));
+      const added = nowLines.filter((l) => !invMap.has(l.desc));
+      const removed = items.filter((i: any) => !nowMap.has(String(i.description)));
+      const changed: any[] = [];
+      for (const l of nowLines) {
+        const i = invMap.get(l.desc); if (!i) continue;
+        const invTot = Number(i.line_total) || 0; const nowTot = Number(l.sale) || 0;
+        if (Math.abs(invTot - nowTot) > 0.005 || Number(i.quantity) !== Number(l.qty)) {
+          changed.push({ desc: l.desc, invoiced: invTot, now: nowTot, invQty: Number(i.quantity), nowQty: l.qty });
+        }
+      }
+      const invoicedTotal = items.reduce((s: number, i: any) => s + (Number(i.line_total) || 0), 0);
+      const actualTotal = nowLines.reduce((s, l) => s + (Number(l.sale) || 0), 0);
+      totInvoiced += invoicedTotal; totActual += actualTotal;
+      if (added.length || removed.length || changed.length || !cu.invoiceId) {
+        rows.push({ ...cu, added, removed, changed, invoicedTotal, actualTotal, delta: actualTotal - invoicedTotal });
+      }
+    }
+  }
+  res.render('bureau-billrun-trueup', {
+    user: req.session.user!, period, rows, totInvoiced, totActual, projectedOnly,
+    periods: await commsPeriods(),
+  });
 });
 
 // CSV export of all mapped service lines for offline pricing (with a New Sale Price box).

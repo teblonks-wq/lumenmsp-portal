@@ -8,7 +8,7 @@ import { invoiceEmailHtml } from './emails';
 import { logActivity } from './activity';
 import { notify } from './notifications';
 import { getSetting } from './settings';
-import { currentCommsPeriod, unallocatedClis, commsRateCard, ONEOFF_RE, commsCallCharge } from './comms-billing';
+import { currentCommsPeriod, prevCommsPeriod, unallocatedClis, commsRateCard, ONEOFF_RE, commsCallCharge } from './comms-billing';
 import { itCloudAccount } from './it-cloud-billing';
 import { clearItCloudUpfronts } from './it-cloud-deltas';
 import { pricedServiceLines } from './service-pricing';
@@ -375,6 +375,18 @@ export async function finaliseCommsBillRun(period: string, userId: number | null
         }
       } catch (e) { issues.push(`${inv.customer_name}: GoCardless failed — ${(e as Error).message}`); }
     }
+
+    // 4) LOCKDOWN — stamp the calls this invoice covered (same window the draft billed:
+    // unbilled, newer than the floor, up to the month before the service period). Selection
+    // by flag means a skipped/rolled month can never orphan or double-bill calls.
+    try {
+      const floor = String((await getSetting('comms', 'calls_billed_floor')) || '2026-06');
+      await pool.query(
+        `UPDATE call_records SET billed_at=NOW()
+          WHERE customer_id=$1 AND billed_at IS NULL AND billing_period > $2 AND billing_period <= $3`,
+        [inv.customer_id, floor, prevCommsPeriod(period)]
+      );
+    } catch (e) { issues.push(`${inv.customer_name}: call billed-stamp failed — ${(e as Error).message}`); }
   }
   if (userId) await logActivity(userId, 'updated', 'invoices', 0, `Comms bill run ${period} finalised: ${emailed} emailed, ${qbPushed} → QB, ${collected} DD collected, ${invited} DD invite(s)`);
   return { count: invs.length, emailed, qbPushed, collected, invited, issues };

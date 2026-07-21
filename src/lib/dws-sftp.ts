@@ -6,6 +6,7 @@ import { config } from '../config';
 import { pool } from '../db/pool';
 import { ingestCallCsv } from './calls-ingest';
 import { applyAllCustomerRanges } from './comms-billing';
+import { importGiacomServicesCsv, looksLikeServicesCsv } from './giacom-comms-import';
 
 // DWS / Giacom bill-run ingest over SFTP.
 // Strategy: LEAVE files on the server (never delete) and TRACK what we've ingested
@@ -90,6 +91,15 @@ export async function fetchDwsBillRuns(remoteDir: string = config.DWS_REMOTE_DIR
               const ing = await ingestCallCsv(buf, f.name);
               if (ing) { rows = ing.inserted; status = 'calls_ingested'; console.log(`[dws] ingested ${ing.inserted} calls (${ing.matched} matched) from ${f.name}`); }
             } catch (e) { console.error('[dws] call ingest failed for', f.name, (e as Error).message); }
+            // If it's a SERVICES file, import it straight into the register (per-period replace,
+            // never clobbers other months) — a new month's bill data lands hands-off at 05:30.
+            if (status !== 'calls_ingested' && /_Services\.csv$/i.test(f.name) && looksLikeServicesCsv(buf)) {
+              try {
+                const imp = await importGiacomServicesCsv(buf);
+                rows = imp.inserted; status = 'services_imported';
+                console.log(`[dws] imported ${imp.inserted} service lines (${imp.matched} matched) from ${f.name} — period(s) ${imp.periods.join(', ')}${imp.refreshedProjections.length ? '; re-projected ' + imp.refreshedProjections.join(', ') : ''}`);
+              } catch (e) { console.error('[dws] services import failed for', f.name, (e as Error).message); }
+            }
           } catch {
             columns = (buf.toString('utf8').split(/\r?\n/)[0] || '').slice(0, 500);
           }
