@@ -527,8 +527,16 @@ router.get('/bureau/bill-run', async (req: Request, res: Response) => {
   }
   const grand = { cost: 0, sale: 0, profit: 0 };
   review.forEach((r) => { grand.cost += r.totals.cost; grand.sale += r.totals.sale; grand.profit += r.totals.profit; });
+  // The period's produced invoices — for a CLOSED period this is the record (the snapshot
+  // import wipes past service lines, so the live review above may be empty for old months).
+  const periodInvoices = period ? (await pool.query(
+    `SELECT i.id, i.invoice_number, i.title, i.total, i.status, i.payment_status, i.emailed_at, i.due_date, c.name AS customer
+       FROM invoices i JOIN customers c ON c.id=i.customer_id
+      WHERE i.invoice_scheme='CS' AND i.billing_period=$1 AND i.deleted_at IS NULL
+      ORDER BY c.name`, [period]
+  )).rows : [];
   res.render('bureau-bill-run', {
-    user: req.session.user!, period, current, periods, readOnly, cats: COMMS_CATS, allPkgs,
+    user: req.session.user!, period, current, periods, readOnly, periodInvoices, cats: COMMS_CATS, allPkgs,
     clis, suppressed, unaccounted, uncosted, customers: (await pool.query("SELECT id, name FROM customers WHERE deleted_at IS NULL ORDER BY name")).rows,
     review, grand, notice: req.query.msg || null, error: req.query.err || null,
   });

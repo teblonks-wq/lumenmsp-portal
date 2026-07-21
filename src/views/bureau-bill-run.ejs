@@ -221,6 +221,31 @@
 
 <!-- STAGE 3 — Review invoices (the only panel rendered when viewing a closed period read-only) -->
 <div class="br-panel<%= ro ? ' active' : '' %>" data-step="3">
+  <% var pinvs = (typeof periodInvoices !== 'undefined' && periodInvoices) ? periodInvoices : []; %>
+  <% if (ro) { %>
+  <div class="card" style="padding:0;margin-bottom:14px;">
+    <div class="card-header" style="padding:18px 22px 0;"><h2>Invoices produced for <%= period %> <span class="muted">(<%= pinvs.length %>)</span></h2></div>
+    <p class="muted" style="padding:0 22px;font-size:13px;margin:6px 0 0;">This is the record of the closed month. <% if (!nCust) { %>The live service lines for <%= period %> are no longer held (each Giacom import replaces the previous month's feed), so the invoices below are the source of truth for what was billed.<% } %></p>
+    <div class="table-wrap"><table class="table sortable">
+      <thead><tr><th>Invoice</th><th>Customer</th><th>Title</th><th style="text-align:right;">Total</th><th>Status</th><th>Emailed</th><th>Due</th></tr></thead>
+      <tbody>
+        <% if (!pinvs.length) { %><tr><td colspan="7"><div class="empty-state">No invoices were produced for <%= period %>.</div></td></tr><% } %>
+        <% pinvs.forEach(function(iv){ %>
+        <tr>
+          <td><a class="row-link" href="/invoices/<%= iv.id %>" target="_blank"><strong><%= iv.invoice_number %></strong></a></td>
+          <td><%= iv.customer %></td>
+          <td class="muted" style="font-size:12px;"><%= iv.title || '—' %></td>
+          <td style="text-align:right;font-weight:700;"><%= money(iv.total) %></td>
+          <td><span class="badge <%= iv.status==='draft' ? 'badge-inactive' : 'badge-sent' %>" style="font-size:10px;"><%= iv.status %></span> <span class="muted" style="font-size:11px;"><%= iv.payment_status || '' %></span></td>
+          <td class="muted" style="font-size:12px;"><%= iv.emailed_at ? new Date(iv.emailed_at).toLocaleDateString('en-GB') : '—' %></td>
+          <td class="muted" style="font-size:12px;"><%= iv.due_date ? new Date(iv.due_date).toLocaleDateString('en-GB') : '—' %></td>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </div>
+  <% } %>
+  <% if (!ro || nCust) { %>
   <div class="card" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px;">
     <div><div class="muted" style="font-size:12px;">Customers</div><div style="font-size:20px;font-weight:800;"><%= nCust %></div></div>
     <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:800;"><%= money(grand.sale) %></div></div>
@@ -245,6 +270,7 @@
       </tbody>
     </table></div>
   </div>
+  <% } %>
   <% if (!ro) { %><div class="br-nav"><button class="btn br-back" type="button">← Back</button><button class="btn btn-primary br-next" type="button">Next: complete →</button></div><% } %>
 </div>
 

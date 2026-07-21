@@ -58,17 +58,23 @@ export async function advanceCommsPeriod(): Promise<string | null> {
   return next;
 }
 
-// Every comms period present in the feed (recurring lines), newest first. Drives the bill-run
-// period picker: closed months stay viewable read-only, and the open period is always included
-// even before its feed lands (e.g. just after a close rolls the period forward).
+// Every comms period we know about, newest first. NOTE the services import is a FULL SNAPSHOT —
+// each month's feed DELETEs the previous month's recurring rows — so service_items only ever
+// holds the latest period. Closed months survive in the INVOICES produced for them (the durable
+// record), so the picker unions both. The open period is always included even before its feed
+// lands (e.g. just after a close rolls the period forward).
 export async function commsPeriods(): Promise<string[]> {
   const r = await pool.query(
-    "SELECT DISTINCT billing_period AS p FROM service_items WHERE source='comms' AND is_prorata=false AND billing_period IS NOT NULL ORDER BY 1 DESC"
+    `SELECT DISTINCT p FROM (
+       SELECT billing_period AS p FROM service_items WHERE source='comms' AND is_prorata=false AND billing_period IS NOT NULL
+       UNION
+       SELECT billing_period FROM invoices WHERE invoice_scheme='CS' AND billing_period IS NOT NULL AND deleted_at IS NULL
+     ) x ORDER BY p DESC`
   );
   const list: string[] = r.rows.map((x: any) => String(x.p));
   const cur = await currentCommsPeriod();
   if (cur && !list.includes(cur)) list.unshift(cur);
-  return list;
+  return list.filter((p) => /^\d{4}-\d{2}$/.test(p));
 }
 
 // Is this CLI a phone number or a broadband/connectivity circuit ref?
