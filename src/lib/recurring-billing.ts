@@ -253,15 +253,17 @@ export async function generateCommsBillRun(period: string, userId: number | null
     const rc = await commsRateCard(c.id, period);
     const billable = [...rc.lines, ...rc.oneOffs, ...rc.prorata].filter((l) => l.sale !== null && Number(l.sale) !== 0);
     if (!billable.length) { skipped++; continue; }
-    const number = await nextInvoiceNumber('CS');
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+      // STAGED like IT & Cloud (2026-07): no invoice number until "Complete & send" — drafts
+      // live in the bill run (stage 4), hidden from the Invoices list. Nothing exists as a
+      // real invoice until the deliberate send step numbers it.
       const ins = await client.query(
         `INSERT INTO invoices (customer_id, invoice_number, invoice_scheme, billing_period, title, status, payment_status,
-           issue_date, due_date, currency_code, subtotal, tax_total, total, created_by)
-         VALUES ($1,$2,'CS',$3,$4,'draft','unpaid',$5,$5,'GBP',0,0,0,$6) RETURNING id`,
-        [c.id, number, period, 'Comms Services — ' + period, due, userId]
+           issue_date, due_date, currency_code, subtotal, tax_total, total, created_by, staged)
+         VALUES ($1,NULL,'CS',$2,$3,'draft','unpaid',$4,$4,'GBP',0,0,0,$5,true) RETURNING id`,
+        [c.id, period, 'Comms Services — ' + period, due, userId]
       );
       const invId = ins.rows[0].id; let sort = 1;
       for (const l of billable) {
@@ -322,6 +324,21 @@ export async function finaliseCommsBillRun(period: string, userId: number | null
   let emailed = 0, qbPushed = 0, collected = 0, invited = 0; const issues: string[] = [];
 
   for (const inv of invs) {
+    // Allocate the real CS number at SEND time (staged drafts carry none) — retry the rare
+    // collision; un-staging makes the invoice exist in the Invoices list from here on.
+    if (!inv.invoice_number) {
+      let numbered = false;
+      for (let attempt = 0; attempt < 5 && !numbered; attempt++) {
+        const number = await nextInvoiceNumber('CS');
+        try {
+          await pool.query('UPDATE invoices SET invoice_number=$1, staged=false, updated_at=NOW() WHERE id=$2', [number, inv.id]);
+          inv.invoice_number = number; numbered = true;
+        } catch (e: any) { if (e && e.code === '23505') continue; throw e; }
+      }
+      if (!numbered) { issues.push(`${inv.customer_name}: could not allocate an invoice number — not sent`); continue; }
+    } else {
+      await pool.query("UPDATE invoices SET staged=false WHERE id=$1 AND COALESCE(staged,false)=true", [inv.id]);
+    }
     const to = inv.billing_email || ''; // finance/billing contact ONLY — no general-email fallback
     const name = inv.billing_name || inv.customer_name || 'there';
     // 1) Email + PDF — never email a bare invoice; if the PDF fails, skip the email for this one.

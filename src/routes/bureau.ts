@@ -1187,7 +1187,7 @@ router.post('/bureau/bill-run/complete', async (req: Request, res: Response) => 
   }
   const result = await generateCommsBillRun(period, req.session.user!.id);
   res.redirect('/bureau/bill-run?msg=' + encodeURIComponent(
-    `Bill run for ${period}: ${result.created} draft invoice(s) produced, ${result.skipped} skipped. Review them, then press Complete & send to email, push to QuickBooks and collect/invite Direct Debit.`
+    `Bill run for ${period}: ${result.created} draft invoice(s) staged, ${result.skipped} skipped. Review them in stage 4 (they stay out of the Invoices list, no numbers yet), then press Complete & send to number, email, push to QuickBooks and collect/invite Direct Debit.`
   ));
 });
 

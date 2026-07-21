@@ -323,6 +323,26 @@
       <div><div class="muted" style="font-size:12px;">Still to price</div><div style="font-size:22px;font-weight:800;color:<%= nUncosted?'#b45309':'inherit' %>;"><%= nUncosted %></div></div>
     </div>
     <% if (nClis || nUncosted) { %><div class="alert alert-danger" style="margin:0 0 14px;">There are still <%= nClis %> CLI(s) to allocate and <%= nUncosted %> service(s) to price. Clear these first so nothing is missed off the bills.</div><% } %>
+    <% if (pinvs.length) { %>
+    <div class="card" style="padding:0;margin:0 0 16px;border:1px solid var(--border,#e5e7eb);">
+      <div class="card-header" style="padding:14px 18px 0;"><h3 style="margin:0;">Drafts for <%= period %> <span class="muted">(<%= pinvs.length %>)</span></h3></div>
+      <p class="muted" style="padding:0 18px;font-size:12px;margin:4px 0 0;">Staged — no invoice numbers yet, hidden from the Invoices list. "2 · Complete &amp; send" numbers them and makes them real.</p>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Customer</th><th>Title</th><th style="text-align:right;">Total</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+        <% pinvs.forEach(function(iv){ %>
+          <tr>
+            <td><strong><%= iv.customer %></strong></td>
+            <td class="muted" style="font-size:12px;"><%= iv.title || '—' %></td>
+            <td style="text-align:right;font-weight:700;"><%= money(iv.total) %></td>
+            <td><span class="badge <%= iv.invoice_number ? 'badge-sent' : 'badge-inactive' %>" style="font-size:10px;"><%= iv.invoice_number || 'staged draft' %></span></td>
+            <td style="text-align:right;white-space:nowrap;"><a class="row-link" href="/invoices/<%= iv.id %>" style="font-size:12px;">Open</a> · <a class="row-link" href="/invoices/<%= iv.id %>/pdf" target="_blank" style="font-size:12px;">PDF</a></td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+    </div>
+    <% } %>
     <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
       <form method="post" action="/bureau/bill-run/complete" onsubmit="return confirm('Produce <%= nCust %> draft invoices for <%= period %>? (Review before sending.)');">
         <input type="hidden" name="period" value="<%= period || '' %>">

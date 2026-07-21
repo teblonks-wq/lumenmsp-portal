@@ -168,7 +168,35 @@ export async function generateItCloudFromTemplate(templateId: number, period: st
   const ex = (await pool.query(
     "SELECT id, invoice_number FROM invoices WHERE recurring_parent_id=$1 AND billing_period=$2 AND deleted_at IS NULL LIMIT 1", [templateId, period]
   )).rows[0];
-  if (ex) { await syncItCloudInvoice(ex.id); return { invoiceId: ex.id, number: ex.invoice_number, resynced: true }; }
+  if (ex) {
+    // TOP-UP (2026-07): base lines added to the TEMPLATE after this period's draft was built
+    // must still arrive — July 2026 lost TLC's Managed IT Support (£256) and Wickstead's IT
+    // Guardian this way. Carry over any non-one-off base line (manual/contract, or locked
+    // Giacom override) whose description isn't on the draft yet. Existing draft lines are
+    // never modified or removed — sync only ever tops the draft up to the template's base.
+    try {
+      const missing = (await pool.query(
+        `SELECT t.* FROM invoice_items t
+          WHERE t.invoice_id=$1 AND (t.source<>'giacom' OR t.sync_locked=true) AND COALESCE(t.is_one_off,false)=false
+            AND NOT EXISTS (SELECT 1 FROM invoice_items d WHERE d.invoice_id=$2
+                              AND lower(trim(d.description)) = lower(trim(t.description)))`,
+        [templateId, ex.id]
+      )).rows;
+      if (missing.length) {
+        let sort = Number((await pool.query('SELECT COALESCE(MAX(sort_order),0) AS m FROM invoice_items WHERE invoice_id=$1', [ex.id])).rows[0].m) + 1;
+        for (const b of missing) {
+          await pool.query(
+            `INSERT INTO invoice_items (invoice_id, product_id, source, invoice_category, sort_order, description, quantity, unit_price, tax_rate, line_total, sync_ref, sync_locked)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            [ex.id, b.product_id, b.source || 'manual', b.invoice_category, sort++, b.description, b.quantity, b.unit_price, b.tax_rate, b.line_total, b.sync_ref || null, b.sync_locked || false]
+          );
+        }
+        console.log(`[itcloud] sync topped up invoice ${ex.id} with ${missing.length} template base line(s)`);
+      }
+    } catch (e) { console.error('[itcloud] template top-up failed:', (e as Error).message); }
+    await syncItCloudInvoice(ex.id);
+    return { invoiceId: ex.id, number: ex.invoice_number, resynced: true };
+  }
 
   const due = nextDueDate(new Date(), tpl.due_day || 1);
   // STAGED: no invoice number is allocated until the run is Completed — the draft lives in Bureau,
