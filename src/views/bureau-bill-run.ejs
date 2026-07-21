@@ -1,6 +1,9 @@
 <%- include('partials/header', { title: 'Comms Bill Run', user }) %>
 <% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
    var nClis = (clis||[]).length, nUncosted = (uncosted||[]).length, nCust = (review||[]).length;
+   var ro = (typeof readOnly !== 'undefined') && !!readOnly;
+   var cur = (typeof current !== 'undefined') ? current : period;
+   var plist = (typeof periods !== 'undefined' && periods && periods.length) ? periods : (period ? [period] : []);
 %>
 <style>
   .br-steps{display:flex;gap:0;margin:0 0 22px;flex-wrap:wrap;}
@@ -19,11 +22,23 @@
 </style>
 
 <div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">← Back Office</a></p>
-  <h1>Comms Bill Run <% if (period){ %><span class="muted" style="font-weight:400;">· period <%= period %></span><% } %></h1></div>
+  <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+    <h1 style="margin:0;">Comms Bill Run <% if (period){ %><span class="muted" style="font-weight:400;">· period <%= period %></span><% } %><% if (ro){ %> <span class="badge" style="font-size:11px;background:#e2e8f0;color:#475569;vertical-align:middle;">closed — read only</span><% } %></h1>
+    <% if (plist.length > 1 || ro) { %>
+    <form method="get" action="/bureau/bill-run" style="margin:0;">
+      <select class="input" name="period" onchange="this.form.submit()" title="View another period (closed months are read-only)" style="width:auto;font-size:13px;padding:5px 8px;">
+        <% plist.forEach(function(p){ %><option value="<%= p %>" <%= p===period?'selected':'' %>><%= p %><%= p===cur?' — open':' — closed' %></option><% }); %>
+      </select>
+    </form>
+    <% } %>
+  </div>
+</div>
 
 <% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
 <% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+<% if (ro) { %><div class="alert" style="max-width:900px;background:#f1f5f9;border:1px solid #cbd5e1;color:#334155;">Viewing closed period <strong><%= period %></strong> — read only. Nothing here can be changed or re-sent. <a class="row-link" href="/bureau/bill-run">← Back to the open period<%= cur ? ' (' + cur + ')' : '' %></a></div><% } %>
 
+<% if (!ro) { %>
 <div class="br-steps">
   <div class="br-step active" data-step="1"><span class="br-n">1</span><span class="br-t">Allocate CLIs</span><span class="br-sub"><%= nClis %> to allocate</span></div>
   <div class="br-step" data-step="2"><span class="br-n">2</span><span class="br-t">Cost services</span><span class="br-sub"><%= nUncosted %> to review</span></div>
@@ -202,9 +217,10 @@
   </div>
   <div class="br-nav"><button class="btn br-back" type="button">← Back</button><button class="btn btn-primary br-next" type="button">Next: review invoices →</button></div>
 </div>
+<% } %>
 
-<!-- STAGE 3 — Review invoices -->
-<div class="br-panel" data-step="3">
+<!-- STAGE 3 — Review invoices (the only panel rendered when viewing a closed period read-only) -->
+<div class="br-panel<%= ro ? ' active' : '' %>" data-step="3">
   <div class="card" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px;">
     <div><div class="muted" style="font-size:12px;">Customers</div><div style="font-size:20px;font-weight:800;"><%= nCust %></div></div>
     <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:800;"><%= money(grand.sale) %></div></div>
@@ -229,9 +245,10 @@
       </tbody>
     </table></div>
   </div>
-  <div class="br-nav"><button class="btn br-back" type="button">← Back</button><button class="btn btn-primary br-next" type="button">Next: complete →</button></div>
+  <% if (!ro) { %><div class="br-nav"><button class="btn br-back" type="button">← Back</button><button class="btn btn-primary br-next" type="button">Next: complete →</button></div><% } %>
 </div>
 
+<% if (!ro) { %>
 <!-- STAGE 4 — Complete -->
 <div class="br-panel" data-step="4">
   <div class="card">
@@ -259,6 +276,23 @@
   </div>
   <div class="br-nav"><button class="btn br-back" type="button">← Back</button><span></span></div>
 </div>
+<% } %>
+
+<!-- Admin: correct the open period (e.g. roll back after an accidental close). Deliberately
+     tucked away — this rewrites which month the whole cockpit bills. -->
+<details style="margin-top:26px;max-width:900px;">
+  <summary style="cursor:pointer;font-size:12px;color:var(--muted,#94a3b8);">Admin — set the open period</summary>
+  <div class="card" style="margin-top:8px;padding:14px 18px;">
+    <p class="muted" style="font-size:13px;margin:0 0 10px;">The open period only moves forward when a month is completed. If it was rolled by mistake, set it back here — this also re-arms the bill-run reminders for the reopened month. It does <strong>not</strong> touch invoices, emails or payments.</p>
+    <form method="post" action="/bureau/bill-run/set-period" onsubmit="return confirm('Set the OPEN billing period to ' + this.period.value + '? The whole bill run will bill that month.');" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0;">
+      <label class="muted" style="font-size:13px;">Open period:</label>
+      <select class="input" name="period" style="width:auto;font-size:13px;padding:5px 8px;">
+        <% plist.forEach(function(p){ %><option value="<%= p %>" <%= p===cur?'selected':'' %>><%= p %><%= p===cur?' (current)':'' %></option><% }); %>
+      </select>
+      <button class="btn" type="submit" style="font-size:12px;padding:5px 12px;">Set open period</button>
+    </form>
+  </div>
+</details>
 
 <script>(function(){
   var steps=[].slice.call(document.querySelectorAll('.br-step'));

@@ -5,7 +5,7 @@ import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { getSetting, setSetting } from '../lib/settings';
 import { pricedServiceLines, setSalePrice } from '../lib/service-pricing';
-import { unallocatedClis, unaccountedClis, suppressedClis, currentCommsPeriod, commsRateCard, COMMS_CATS, commsCategory, ONEOFF_RE, COMPONENT_RE, HANDSET_RE, cliType, classifyCall, getCallMarkups, CALL_TYPES, commsCallCharge, advanceCommsPeriod } from '../lib/comms-billing';
+import { unallocatedClis, unaccountedClis, suppressedClis, currentCommsPeriod, commsPeriods, commsRateCard, COMMS_CATS, commsCategory, ONEOFF_RE, COMPONENT_RE, HANDSET_RE, cliType, classifyCall, getCallMarkups, CALL_TYPES, commsCallCharge, advanceCommsPeriod } from '../lib/comms-billing';
 import { recycleRow } from '../lib/recycle';
 import { generateCommsBillRun, finaliseCommsBillRun, generateItCloudBillRun } from '../lib/recurring-billing';
 import { detectPackage } from '../lib/packages';
@@ -383,16 +383,23 @@ router.get('/bureau/pricing', async (req: Request, res: Response) => {
 
 // ── Comms Bill Run — the staged monthly cockpit (start the 20th). One screen, four stages:
 // 1 Allocate CLIs · 2 Cost services · 3 Review invoices (by category) · 4 Complete (close period).
+// ?period=YYYY-MM views a CLOSED period READ-ONLY: the review numbers render for that month but
+// every action (allocate / price / complete) is hidden and the POST routes refuse it anyway.
 router.get('/bureau/bill-run', async (req: Request, res: Response) => {
-  const period = await currentCommsPeriod();
-  // Stage 1 — CLIs discovered by import with no customer yet.
-  const clis = await unallocatedClis();
+  const current = await currentCommsPeriod();
+  const periods = await commsPeriods();
+  const reqPeriod = String(req.query.period || '').trim();
+  const period = /^\d{4}-\d{2}$/.test(reqPeriod) ? reqPeriod : current;
+  const readOnly = !!(period && current && period !== current);
+  // Stage 1 — CLIs discovered by import with no customer yet. (Open period only — a closed
+  // month is history; its allocation/pricing work is done and must not be re-editable.)
+  const clis = readOnly ? [] : await unallocatedClis();
   // PROTECTION — CLIs that fall through the unallocated net: deleted owner, or live in call
   // records with no billed line. Surfaced so every CLI is accounted for before completing.
   let unaccounted: any[] = [];
-  try { unaccounted = await unaccountedClis(); } catch { /* call_records/service_items not ready */ }
+  if (!readOnly) { try { unaccounted = await unaccountedClis(); } catch { /* call_records/service_items not ready */ } }
   // Suppressed CLIs (dead assets) — shown in a collapsed list with a Restore button.
-  const suppSet = await suppressedClis();
+  const suppSet = readOnly ? new Set<string>() : await suppressedClis();
   let suppressed: any[] = [];
   if (suppSet.size) {
     suppressed = (await pool.query(
@@ -414,7 +421,7 @@ router.get('/bureau/bill-run', async (req: Request, res: Response) => {
   const pkgOverride = new Map<string, number>();
   (await pool.query('SELECT package_id, customer_id, sale_price FROM package_prices')).rows
     .forEach((r: any) => pkgOverride.set(r.customer_id + ':' + r.package_id, Number(r.sale_price)));
-  const cliRows = period ? (await pool.query(
+  const cliRows = (period && !readOnly) ? (await pool.query(
     `SELECT si.customer_id AS cid, c.name AS customer, si.product_reference AS cli,
             array_agg(DISTINCT si.description) AS descs,
             COALESCE(SUM(si.total_cost) FILTER (WHERE si.description !~* 'voice recording|call recording'),0)::numeric AS cost,
@@ -478,7 +485,7 @@ router.get('/bureau/bill-run', async (req: Request, res: Response) => {
   }
   // Call Recording is a SEPARATE billable add-on that lives on the seat's CLI, so it needs its own
   // priceable row here. One row per customer that has recording users (priced via the 'REC' key).
-  if (period) {
+  if (period && !readOnly) {
     const recStd = Number(await getSetting('comms', 'call_recording_price')) || 3.0;
     const recOv = new Map<number, number>();
     (await pool.query("SELECT customer_id, sale_price FROM service_pricing WHERE source='comms' AND product_reference='REC'")).rows
@@ -521,7 +528,7 @@ router.get('/bureau/bill-run', async (req: Request, res: Response) => {
   const grand = { cost: 0, sale: 0, profit: 0 };
   review.forEach((r) => { grand.cost += r.totals.cost; grand.sale += r.totals.sale; grand.profit += r.totals.profit; });
   res.render('bureau-bill-run', {
-    user: req.session.user!, period, cats: COMMS_CATS, allPkgs,
+    user: req.session.user!, period, current, periods, readOnly, cats: COMMS_CATS, allPkgs,
     clis, suppressed, unaccounted, uncosted, customers: (await pool.query("SELECT id, name FROM customers WHERE deleted_at IS NULL ORDER BY name")).rows,
     review, grand, notice: req.query.msg || null, error: req.query.err || null,
   });
@@ -1047,6 +1054,9 @@ router.post('/bureau/cli/confirm-package', async (req: Request, res: Response) =
 router.post('/bureau/bill-run/complete', async (req: Request, res: Response) => {
   const period = String(req.body.period || '').trim();
   if (!period) { res.redirect('/bureau/bill-run?err=' + encodeURIComponent('No period to run.')); return; }
+  // PROTECTION — only the OPEN period can be run; a closed month viewed read-only stays read-only.
+  const open = await currentCommsPeriod();
+  if (period !== open) { res.redirect('/bureau/bill-run?err=' + encodeURIComponent(`${period} is not the open period (${open || 'none'}) — closed periods are read-only.`)); return; }
   // PROTECTION — hard block: every CLI must be accounted for (reassigned or suppressed) before
   // the run can complete, so a deleted-owner / live-but-unbilled CLI can't silently slip through.
   const blocked = await unaccountedClis();
@@ -1069,12 +1079,34 @@ router.post('/bureau/bill-run/complete', async (req: Request, res: Response) => 
 router.post('/bureau/bill-run/finalise', async (req: Request, res: Response) => {
   const period = String(req.body.period || '').trim();
   if (!period) { res.redirect('/bureau/bill-run?err=' + encodeURIComponent('No period to complete.')); return; }
+  // PROTECTION — only the OPEN period can be completed (a stale/read-only form can't close a month).
+  const open = await currentCommsPeriod();
+  if (period !== open) { res.redirect('/bureau/bill-run?err=' + encodeURIComponent(`${period} is not the open period (${open || 'none'}) — closed periods are read-only.`)); return; }
   const r = await finaliseCommsBillRun(period, req.session.user!.id);
+  // PROTECTION — a mis-click with NO drafts must not close the month (this happened 2026-07:
+  // Complete & send with 0 drafts rolled the period to 2026-08). Nothing sent → nothing closes.
+  if (!r.count) {
+    res.redirect('/bureau/bill-run?err=' + encodeURIComponent(`No draft invoices exist for ${period} — nothing was sent and the period has NOT been closed. Press "1 · Run month" to produce the drafts first.`));
+    return;
+  }
   await setSetting('comms', 'billrun_done_' + period, new Date().toISOString()); // stops the 4-hourly reminders
   const advanced = await advanceCommsPeriod(); // closing the period rolls the current period forward
   const summary = `Completed ${period}: ${r.emailed} emailed, ${r.qbPushed} → QuickBooks, ${r.collected} DD collected, ${r.invited} DD invite(s).${advanced ? ' Period rolled forward to ' + advanced + '.' : ''}`;
   const tail = r.issues.length ? ' ⚠ ' + r.issues.length + ' issue(s): ' + r.issues.slice(0, 4).join('; ') + (r.issues.length > 4 ? '…' : '') : '';
   res.redirect('/bureau/bill-run?' + (r.issues.length ? 'err' : 'msg') + '=' + encodeURIComponent(summary + tail));
+});
+
+// Admin correction: set the OPEN comms period directly — e.g. roll back after an accidental
+// close moved it forward. Clears the target period's billrun_done marker (so the reminders and
+// a genuine re-close work again) and logs the change. /bureau is already admin-only.
+router.post('/bureau/bill-run/set-period', async (req: Request, res: Response) => {
+  const target = String(req.body.period || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(target)) { res.redirect('/bureau/bill-run?err=' + encodeURIComponent('Period must be YYYY-MM.')); return; }
+  const before = await currentCommsPeriod();
+  await setSetting('comms', 'current_period', target);
+  await pool.query('DELETE FROM settings WHERE "group"=$1 AND key=$2', ['comms', 'billrun_done_' + target]);
+  await logActivity(req.session.user!.id, 'updated', 'settings', 0, `Comms open period set to ${target}${before && before !== target ? ' (was ' + before + ')' : ''}`);
+  res.redirect('/bureau/bill-run?msg=' + encodeURIComponent(`Open period set to ${target}${before && before !== target ? ' (was ' + before + ')' : ''}.`));
 });
 
 // CSV export of all mapped service lines for offline pricing (with a New Sale Price box).

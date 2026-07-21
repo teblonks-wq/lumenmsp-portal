@@ -58,6 +58,19 @@ export async function advanceCommsPeriod(): Promise<string | null> {
   return next;
 }
 
+// Every comms period present in the feed (recurring lines), newest first. Drives the bill-run
+// period picker: closed months stay viewable read-only, and the open period is always included
+// even before its feed lands (e.g. just after a close rolls the period forward).
+export async function commsPeriods(): Promise<string[]> {
+  const r = await pool.query(
+    "SELECT DISTINCT billing_period AS p FROM service_items WHERE source='comms' AND is_prorata=false AND billing_period IS NOT NULL ORDER BY 1 DESC"
+  );
+  const list: string[] = r.rows.map((x: any) => String(x.p));
+  const cur = await currentCommsPeriod();
+  if (cur && !list.includes(cur)) list.unshift(cur);
+  return list;
+}
+
 // Is this CLI a phone number or a broadband/connectivity circuit ref?
 export function cliType(cli: string | null): 'voice' | 'circuit' {
   const s = String(cli || '').replace(/\s+/g, '');
