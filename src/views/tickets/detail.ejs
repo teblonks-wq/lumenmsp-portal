@@ -229,8 +229,9 @@
         <div class="form-group" style="margin-bottom:10px;"><label>Attachments <span class="muted">(up to 5, 10MB each)</span></label><input class="input" type="file" name="attachments" multiple></div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
           <span class="muted" style="font-size:12px;font-weight:600;">Send via:</span>
-          <label class="chan-pill chan-email"><input type="radio" name="channel" value="email" <%= (typeof lastChannel==='undefined'||lastChannel==='email')?'checked':'' %>> ✉ Email</label>
-          <label class="chan-pill chan-teams"><input type="radio" name="channel" value="teams" <%= (typeof lastChannel!=='undefined'&&lastChannel==='teams')?'checked':'' %>> 👥 Teams</label>
+          <% var teamsOk = (typeof teamsSendOk !== 'undefined' && teamsSendOk); %>
+          <label class="chan-pill chan-email"><input type="radio" name="channel" value="email" <%= (typeof lastChannel==='undefined'||lastChannel==='email'||(lastChannel==='teams'&&!teamsOk))?'checked':'' %>> ✉ Email</label>
+          <label class="chan-pill chan-teams" <% if (!teamsOk) { %>style="opacity:.35;pointer-events:none;" title="Teams sending unavailable — no connected Teams chat on this case"<% } %>><input type="radio" name="channel" value="teams" <%= !teamsOk ? 'disabled' : ((typeof lastChannel!=='undefined'&&lastChannel==='teams')?'checked':'') %>> 👥 Teams</label>
           <label class="chan-pill chan-wa"><input type="radio" name="channel" value="whatsapp" <%= (typeof lastChannel!=='undefined'&&lastChannel==='whatsapp')?'checked':'' %>> 🟢 WhatsApp</label>
           <span class="muted chan-note" id="chanNote" style="font-size:11px;"></span>
         </div>
@@ -564,7 +565,7 @@
       if (nt && nt.value === 'private_note') { note.textContent = '· internal note — nothing is sent to the customer'; return; }
       var sel = document.querySelector('input[name=channel]:checked');
       var v = sel ? sel.value : 'email';
-      note.textContent = v === 'teams' ? '· logged on the case (Teams sending not connected yet)'
+      note.textContent = v === 'teams' ? '· sends into the customer\'s Teams chat'
         : v === 'whatsapp' ? '· sends via WhatsApp (free-form replies work within 24h of their last message)' : '';
     }
     document.querySelectorAll('input[name=channel], input[name=note_type]').forEach(function (r) { r.addEventListener('change', upd); });

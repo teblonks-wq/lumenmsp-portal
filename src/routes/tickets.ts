@@ -7,7 +7,7 @@ import { cleanHtml } from '../lib/sanitize';
 import { attachmentUpload, processAttachments } from '../lib/attachments';
 import { logActivity } from '../lib/activity';
 import { notify } from '../lib/notifications';
-import { sendTeamsNotice, sendTeamsReply } from '../lib/teams';
+import { sendTeamsNotice } from '../lib/teams'; // sendTeamsReply (relay) disabled pending Power Automate fix
 import { teamsGraphConnected, sendTeamsChatMessage } from '../lib/teamsgraph';
 import { syncInbox } from '../lib/mailsync';
 import { aiAskText } from '../lib/ai-compose';
@@ -95,7 +95,19 @@ async function sendTeamsBest(conv: string | null, text: string, email: string | 
   let chatId = '';
   if (conv) { try { const o = JSON.parse(conv); chatId = o.chatId || o.id || ''; } catch { /* not JSON */ } }
   if (chatId && await teamsGraphConnected()) return await sendTeamsChatMessage(chatId, text);
-  return await sendTeamsReply(conv, text, email);
+  // Power Automate relay DISABLED pending a fix: the 21 Jul 2026 audit showed every relay send
+  // since 18 Jun failed (HTTP 502 NoResponse from the flow) — 16/16, nothing ever delivered.
+  // Fail fast with a clear reason instead of waiting out the flow timeout. When the flow is
+  // fixed and a test send verified, restore: return await sendTeamsReply(conv, text, email);
+  return { ok: false, error: 'Teams sending is unavailable on this case (no connected Teams chat; the Power Automate relay is disabled pending a fix). Reply by email instead.' };
+}
+
+// Can a Teams send actually work for this ticket right now? (Graph path only — the relay is
+// disabled above.) Used to grey out the Teams pill in the composer.
+async function teamsSendPossible(conv: string | null): Promise<boolean> {
+  let chatId = '';
+  if (conv) { try { const o = JSON.parse(conv); chatId = o.chatId || o.id || ''; } catch { /* not JSON */ } }
+  return !!chatId && await teamsGraphConnected();
 }
 
 // Plain-text status message for the non-email channels (WhatsApp/Teams).
@@ -129,15 +141,27 @@ async function notifyTicketStatus(ticketId: number, status: string, agentName: s
     const text = statusMsgText(status, name, tn, agentName);
     if (!num) { await logChannel({ channel: 'whatsapp', direction: 'outbound', status: 'failed', ticketId, preview: text, error: 'No WhatsApp number on case' }); return; }
     const r = await sendWhatsAppText(num, text);
-    await recordNote('whatsapp', text);
+    if (r.ok) await recordNote('whatsapp', text);
     await logChannel({ channel: 'whatsapp', direction: 'outbound', status: r.ok ? 'sent' : 'failed', ticketId, peer: num, peerName: name, preview: text, externalId: r.id || null, error: r.ok ? null : r.error });
+    // WhatsApp refused (e.g. outside the 24h window) → fall back to the status email.
+    if (!r.ok) {
+      const rcpt = await ticketRecipient(ticketId);
+      if (rcpt) { try { await sendTicketStatusEmail(status, rcpt.email, rcpt.name, rcpt.ticketNumber, agentName, rcpt.subject); } catch (e) { console.error('WhatsApp status fallback email failed:', e); } }
+    }
     return;
   }
   if (t.source === 'teams') {
     const text = statusMsgText(status, name, tn, agentName);
     const r = await sendTeamsBest(t.teams_conversation || null, text, t.email || null);
-    await recordNote('teams', text);
+    // Only record the message on the case if it actually went out — recording failed sends
+    // made cases show updates the customer never received (audit 21 Jul 2026).
+    if (r.ok) await recordNote('teams', text);
     await logChannel({ channel: 'teams', direction: 'outbound', status: r.ok ? 'sent' : 'failed', ticketId, peer: t.email || null, peerName: name, preview: text, error: r.ok ? null : r.error });
+    // Teams down → make sure the customer still hears: fall back to the status email.
+    if (!r.ok) {
+      const rcpt = await ticketRecipient(ticketId);
+      if (rcpt) { try { await sendTicketStatusEmail(status, rcpt.email, rcpt.name, rcpt.ticketNumber, agentName, rcpt.subject); } catch (e) { console.error('Teams status fallback email failed:', e); } }
+    }
     return;
   }
   // Email-origin (or manual) cases → status email as before.
@@ -386,11 +410,13 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
   const waNum = waInb ? String(waInb.from_email || '').replace(/[^\d]/g, '') : '';
   const waName = requesterName || r.rows[0].contact_name || '';
   const waWindowOpen = !!(waInb && (Date.now() - new Date(waInb.at).getTime()) < 24 * 60 * 60 * 1000);
+  // Whether a Teams send can actually work on this case (drives the composer's Teams pill).
+  const teamsSendOk = await teamsSendPossible(r.rows[0].teams_conversation || null);
   const aiCatOn = await aiTicketCategoryEnabled();
   await ensureReplyTemplates().catch(() => {});
   const replyTemplates = await listReplyTemplates().catch(() => [] as any[]);
 
-  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, aiCatOn, replyTemplates, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
+  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, aiCatOn, replyTemplates, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
 });
 
 // ── Update fields ────────────────────────────────────────────────────────────────

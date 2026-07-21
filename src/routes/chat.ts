@@ -5,7 +5,7 @@ import { listSessions, sessionById, getMessages, addMessage, assignSession, clos
 import { nextTicketNumber } from './tickets';
 import { notifyAgents } from '../lib/callhub';
 import { sendWhatsAppText, sendWhatsAppTemplate, whatsappConfig } from '../lib/whatsapp';
-import { sendTeamsReply } from '../lib/teams';
+import { teamsGraphConnected, sendTeamsChatMessage } from '../lib/teamsgraph';
 import { logChannel } from '../lib/commslog';
 import { logActivity } from '../lib/activity';
 import { recycleRow } from '../lib/recycle';
@@ -349,7 +349,16 @@ router.post('/chat/msg/:id/reply', requireAuth, async (req: Request, res: Respon
     return;
   }
   if (m.channel === 'teams') {
-    const r = await sendTeamsReply(null, body, m.from_email || null);
+    // Graph (delegated as sp@) into the case's stored Teams chat. The Power Automate relay is
+    // DISABLED pending a fix — every relay send since 18 Jun failed with HTTP 502 (audit
+    // 21 Jul 2026). Restore sendTeamsReply here only after the flow is fixed and test-verified.
+    const tk = (await pool.query('SELECT teams_conversation FROM inbox_tickets WHERE id=$1', [m.ticket_id])).rows[0];
+    let chatId = '';
+    if (tk?.teams_conversation) { try { const o = JSON.parse(tk.teams_conversation); chatId = o.chatId || o.id || ''; } catch { /* not JSON */ } }
+    if (!chatId || !(await teamsGraphConnected())) {
+      res.json({ ok: false, error: 'Teams sending is unavailable for this chat — no connected Teams conversation on the case. Reply by email instead.' }); return;
+    }
+    const r = await sendTeamsChatMessage(chatId, body);
     if (!r.ok) { res.json({ ok: false, error: r.error || 'Teams send failed' }); return; }
     await pool.query(
       `INSERT INTO inbox_messages (ticket_id, mailbox, message_direction, channel, from_name, from_email, body_text, body_html, received_at, processing_status)
