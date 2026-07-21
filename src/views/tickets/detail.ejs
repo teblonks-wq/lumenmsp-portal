@@ -263,6 +263,13 @@
         function chan(){ var r=document.querySelector('input[name="channel"]:checked'); return r?r.value:'email'; }
         function noteType(){ var r=document.querySelector('input[name="note_type"]:checked'); return r?r.value:'public_reply'; }
         function refresh(){
+          // Internal notes never send anywhere — grey out the channel row so it's clear the
+          // "Send via" choice doesn't apply (the server ignores it for internal notes too).
+          var internal = noteType()==='private_note';
+          document.querySelectorAll('.chan-pill').forEach(function(p){
+            p.style.opacity = internal ? '0.35' : '';
+            p.style.pointerEvents = internal ? 'none' : '';
+          });
           // Lock a WhatsApp public reply outside the 24h window, OR while no support category is set.
           var waLocked = (chan()==='whatsapp' && noteType()==='public_reply' && !WA_OPEN);
           var catMissing = (CAT_ON && !HAS_CAT);
@@ -553,12 +560,14 @@
     var note = document.getElementById('chanNote');
     if (!note) return;
     function upd() {
+      var nt = document.querySelector('input[name=note_type]:checked');
+      if (nt && nt.value === 'private_note') { note.textContent = '· internal note — nothing is sent to the customer'; return; }
       var sel = document.querySelector('input[name=channel]:checked');
       var v = sel ? sel.value : 'email';
       note.textContent = v === 'teams' ? '· logged on the case (Teams sending not connected yet)'
         : v === 'whatsapp' ? '· sends via WhatsApp (free-form replies work within 24h of their last message)' : '';
     }
-    document.querySelectorAll('input[name=channel]').forEach(function (r) { r.addEventListener('change', upd); });
+    document.querySelectorAll('input[name=channel], input[name=note_type]').forEach(function (r) { r.addEventListener('change', upd); });
     upd();
   })();
 

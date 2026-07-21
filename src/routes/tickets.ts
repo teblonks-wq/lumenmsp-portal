@@ -587,9 +587,16 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
     const bcc = String(req.body.bcc || '').trim() || undefined;
     // Channel the reply travels on.
     const channel = ['email', 'teams', 'whatsapp'].includes(req.body.channel) ? req.body.channel : 'email';
+    // ONLY public replies and side convos ever leave the building. An internal note must
+    // NEVER touch a customer channel, whatever the "Send via" radio happens to be set to —
+    // the channel selection simply doesn't apply to it. (Bug 2026-07-21: an internal note
+    // with WhatsApp selected went out as a WhatsApp message to the customer.)
+    const sendsExternally = noteType === 'public_reply' || noteType === 'side_convo';
     // Persist CC/BCC for the case if the engineer ticked "remember" (email replies only — the
-    // box reflects current state, so unticking on an email reply clears it).
-    if (channel === 'email') {
+    // box reflects current state, so unticking on an email reply clears it). Internal notes
+    // never touch the persisted recipients: their checkbox is hidden, so without this gate an
+    // internal note posted with Email selected would silently wipe the remembered CC/BCC.
+    if (sendsExternally && channel === 'email') {
       const persist = req.body.persist_recipients === '1' || req.body.persist_recipients === 'on';
       if (persist) await pool.query('UPDATE inbox_tickets SET persistent_cc=$1, persistent_bcc=$2 WHERE id=$3', [cc || null, bcc || null, id]);
       else await pool.query('UPDATE inbox_tickets SET persistent_cc=NULL, persistent_bcc=NULL WHERE id=$1', [id]);
@@ -601,11 +608,12 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
     // WhatsApp's 24h window closed, or the channel isn't connected — we stop here, write
     // NOTHING to the case, and show the engineer a friendly banner so they can retry or
     // reply another way. (Email keeps its own try/catch in the branches below.)
+    // Gated on sendsExternally: an internal note never sends, whatever channel is selected.
     const plainForSend = htmlToPlain(body);
     let waNumberSent: string | null = null;
     let waIdSent: string | null = null;
     let teamsPeerSent: string | null = null;
-    if (channel === 'whatsapp') {
+    if (sendsExternally && channel === 'whatsapp') {
       const looksLikeNumber = (s: string) => !!s && !s.includes('@') && normaliseWaNumber(s).length >= 10;
       let num = '';
       if (looksLikeNumber(toAddr)) num = toAddr;
@@ -626,7 +634,7 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
         res.redirect('/tickets/' + id + '?err=' + encodeURIComponent(friendly)); return;
       }
       waNumberSent = num; waIdSent = r.id || null;
-    } else if (channel === 'teams') {
+    } else if (sendsExternally && channel === 'teams') {
       const row = (await pool.query('SELECT t.teams_conversation, cc.email FROM inbox_tickets t LEFT JOIN customer_contacts cc ON cc.id=t.contact_id WHERE t.id=$1', [id])).rows[0];
       const r = await sendTeamsBest(row?.teams_conversation || null, plainForSend, row?.email || null);
       if (!r.ok) {
