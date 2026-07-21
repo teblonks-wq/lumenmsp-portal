@@ -312,8 +312,16 @@
     <p class="muted" style="font-size:13px;margin:0 0 10px;">The open period only moves forward when a month is completed. If it was rolled by mistake, set it back here — this also re-arms the bill-run reminders for the reopened month. It does <strong>not</strong> touch invoices, emails or payments.</p>
     <form method="post" action="/bureau/bill-run/set-period" onsubmit="return confirm('Set the OPEN billing period to ' + this.period.value + '? The whole bill run will bill that month.');" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0;">
       <label class="muted" style="font-size:13px;">Open period:</label>
+      <%
+        // Rollback target may have NO data yet (an accidental close is exactly that case),
+        // so offer the months adjacent to the current period too, not just known months.
+        var spOpts = plist.slice();
+        function shiftM(p, d){ var t = new Date(Date.UTC(+p.slice(0,4), (+p.slice(5,7)) - 1 + d, 1)); return t.getUTCFullYear() + '-' + ('0' + (t.getUTCMonth() + 1)).slice(-2); }
+        if (cur) { [shiftM(cur,-1), shiftM(cur,1)].forEach(function(x){ if (spOpts.indexOf(x) < 0) spOpts.push(x); }); }
+        spOpts.sort(); spOpts.reverse();
+      %>
       <select class="input" name="period" style="width:auto;font-size:13px;padding:5px 8px;">
-        <% plist.forEach(function(p){ %><option value="<%= p %>" <%= p===cur?'selected':'' %>><%= p %><%= p===cur?' (current)':'' %></option><% }); %>
+        <% spOpts.forEach(function(p){ %><option value="<%= p %>" <%= p===cur?'selected':'' %>><%= p %><%= p===cur?' (current)':'' %></option><% }); %>
       </select>
       <button class="btn" type="submit" style="font-size:12px;padding:5px 12px;">Set open period</button>
     </form>
