@@ -1,7 +1,7 @@
-# deploy-views.ps1 — HOT deploy for UI tweaks (views + static only).
+﻿# deploy-views.ps1 - HOT deploy for UI tweaks (views + static only).
 # Ships src/views and static/ to the server. NO build, NO prisma, NO restart.
 # Because view cache is off and static is served from disk, changes go live on the next
-# request — nobody gets logged out. Use this for .ejs / CSS / client-JS / image tweaks.
+# request - nobody gets logged out. Use this for .ejs / CSS / client-JS / image tweaks.
 # For TypeScript / logic / schema changes, use the full deploy.ps1 instead.
 
 $server     = "lits-admin@51.11.176.101"
@@ -9,7 +9,7 @@ $localPath  = "D:\LITS\LumenMSP Portal"
 $remotePath = "/srv/apps/lumenmsp-portal"
 $staging    = "C:\Temp\portal-views"
 
-Write-Host "=== Lumen MSP Portal — HOT view/static deploy (no restart) ===" -ForegroundColor Cyan
+Write-Host "=== Lumen MSP Portal - HOT view/static deploy (no restart) ===" -ForegroundColor Cyan
 
 # Stage just the two hot folders, mirroring their paths under the app root.
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
@@ -36,7 +36,7 @@ for ($i = 1; $i -le 3; $i++) {
 }
 if (-not $ok) { Write-Host "SCP failed after 3 attempts!" -ForegroundColor Red; exit 1 }
 
-# Overlay onto the live app — no npm, no prisma, no pm2. Live on the next request.
+# Overlay onto the live app - no npm, no prisma, no pm2. Live on the next request.
 Write-Host "Applying (no restart)..." -ForegroundColor Yellow
 ssh @sshOpts $server "tar --warning=no-unknown-keyword -xzf /tmp/portal-views.tar.gz -C $remotePath && rm -f /tmp/portal-views.tar.gz"
 
@@ -44,11 +44,11 @@ Remove-Item $staging -Recurse -Force
 Remove-Item $tar -Force
 
 Write-Host ""
-Write-Host "Hot view/static deploy complete — no restart, no logouts." -ForegroundColor Green
+Write-Host "Hot view/static deploy complete - no restart, no logouts." -ForegroundColor Green
 Write-Host "Live at: https://portal.lumenmsp.co.uk"
 
 # Record this hot deploy in git (same idea as deploy.ps1's Step 6, but scoped to the
-# folders this script actually ships — src/views and static — so un-deployed code
+# folders this script actually ships - src/views and static - so un-deployed code
 # changes are NOT swept into a "deployed" commit). Non-fatal: a git hiccup never
 # undoes a completed deploy.
 try {
