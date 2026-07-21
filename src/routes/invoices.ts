@@ -91,10 +91,15 @@ router.get('/invoices', requireAuth, async (req: Request, res: Response) => {
   const emailed = ((req.query.emailed as string) || '').trim();// '' | yes | no  (emailed to the customer)
   const period = resolvePeriod(((req.query.period as string) || '').trim(), req.query.from as string, req.query.to as string);
 
+  const recurring = ((req.query.recurring as string) || '').trim(); // '' hide templates | 'yes' templates only
   const where: string[] = ['i.deleted_at IS NULL'];
-  // Staged IT&Cloud drafts live in Bureau (no number until Completed) — keep them out of the main
-  // Invoices list. They appear here once the run is Completed (numbered + issued).
+  // Staged drafts (comms + IT&Cloud) live in Bureau (no number until Completed) — keep them out
+  // of the main Invoices list. They appear here once the run is Completed (numbered + issued).
   where.push("COALESCE(i.staged,false)=false");
+  // Recurring TEMPLATES are configuration (the customer's base services), not bills — hidden by
+  // default; ?recurring=yes shows just the templates.
+  if (recurring === 'yes') where.push('COALESCE(i.is_recurring,false)=true');
+  else where.push('COALESCE(i.is_recurring,false)=false');
   const params: any[] = [];
   if (status && STATUSES.includes(status)) { params.push(status); where.push('i.status = $' + params.length); }
   // Payment filter: "unpaid" = anything not fully paid (unpaid + partial); "paid" = settled.
@@ -144,7 +149,7 @@ router.get('/invoices', requireAuth, async (req: Request, res: Response) => {
   const outstanding = rows.reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
   res.render('invoices/list', {
     user, invoices: rows, status, search, statusCounts, legacyCount, unmatchedCount, total, outstanding,
-    source, paid, dd, gc, qb, emailed, period, periodOptions: PERIOD_OPTIONS, from: req.query.from || '', to: req.query.to || '',
+    source, paid, dd, gc, qb, emailed, recurring, period, periodOptions: PERIOD_OPTIONS, from: req.query.from || '', to: req.query.to || '',
   });
 });
 

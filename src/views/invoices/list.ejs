@@ -68,6 +68,12 @@
       <option value="no" <%= qb==='no'?'selected':'' %>>Not sent</option>
     </select>
   </div>
+  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Show</label>
+    <select class="input" name="recurring" style="width:auto;" onchange="this.form.submit()">
+      <option value="" <%= (typeof recurring==='undefined'||recurring==='')?'selected':'' %>>Invoices</option>
+      <option value="yes" <%= (typeof recurring!=='undefined'&&recurring==='yes')?'selected':'' %>>♻ Templates</option>
+    </select>
+  </div>
   <div class="form-group" style="margin:0;"><label style="font-size:12px;">Emailed</label>
     <select class="input" name="emailed" style="width:auto;" onchange="this.form.submit()">
       <option value="" <%= (typeof emailed==='undefined'||emailed==='')?'selected':'' %>>Any</option>
