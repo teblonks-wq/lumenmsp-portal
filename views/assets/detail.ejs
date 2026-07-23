@@ -1,0 +1,44 @@
+<%- include('../partials/header', { title: asset.hostname || 'Device', user }) %>
+<% function fmt(v){ return (v===null || v===undefined || v==='') ? '—' : v; } %>
+<% function dt(v){ return v ? new Date(v).toLocaleString('en-GB') : '—'; } %>
+
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="<%= back %>">← Back</a></p>
+    <h1 style="margin:0;display:flex;align-items:center;gap:12px;">
+      <%= asset.hostname || '(unnamed device)' %>
+      <span title="<%= asset.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:11px;height:11px;border-radius:50%;background:<%= asset.online_status ? '#16a34a' : '#cbd5e1' %>;"></span>
+    </h1>
+    <p class="muted" style="margin:4px 0 0;">
+      <span class="badge badge-inactive"><%= asset.device_type || 'Device' %></span>
+      <% if (asset.customer_id) { %> · <a class="row-link" href="/customers/<%= asset.customer_id %>#assets"><%= asset.customer_name %></a><% } %>
+    </p>
+  </div>
+  <% if (remoteUrl) { %><a class="btn btn-primary" target="_blank" rel="noopener" href="<%= remoteUrl %>">🖥 Remote control</a><% } %>
+</div>
+
+<div class="card" style="background:#f0f9ff;border-color:#bae6fd;">
+  <p style="margin:0;font-size:13px;color:#0369a1;">
+    <strong>Synced from Atera</strong> — last refreshed <%= dt(asset.synced_at) %>. Locked from editing until we confirm Atera accepts changes written back from here.
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Specification</h2></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;">
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">Operating system</div><div><%= fmt(asset.os) %><% if (asset.os_version) { %> <span class="muted">(<%= asset.os_version %>)</span><% } %></div></div>
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">Manufacturer / Model</div><div><%= fmt([asset.manufacturer, asset.model].filter(Boolean).join(' ') || null) %></div></div>
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">Serial number</div><div><%= fmt(asset.serial_number) %></div></div>
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">Processor</div><div><%= fmt(asset.cpu) %></div></div>
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">RAM</div><div><%= asset.ram_gb ? asset.ram_gb + ' GB' : '—' %></div></div>
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">Disk</div><div><%= fmt(asset.disk_info) %></div></div>
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">IP address(es)</div><div><%= fmt(asset.ip_addresses) %></div></div>
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">MAC address</div><div><%= fmt(asset.mac_address) %></div></div>
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">Domain / Workgroup</div><div><%= fmt(asset.domain_or_workgroup) %></div></div>
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">Last seen</div><div><%= dt(asset.last_seen_at) %></div></div>
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">Last reboot</div><div><%= dt(asset.last_reboot_at) %></div></div>
+    <div><div class="muted" style="font-size:12px;text-transform:uppercase;">Atera Agent ID</div><div class="muted" style="font-family:monospace;font-size:12px;"><%= fmt(asset.external_id) %></div></div>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

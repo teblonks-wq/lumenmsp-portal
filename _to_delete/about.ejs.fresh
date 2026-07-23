@@ -1,0 +1,120 @@
+<%- include('../partials/header', { title: 'About', user }) %>
+
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+    <h1 style="margin:0;display:flex;align-items:center;gap:12px;">About <span style="font-size:13px;font-weight:600;background:#2563eb;color:#fff;padding:3px 12px;border-radius:999px;"><%= version %></span></h1>
+    <p class="muted" style="margin:4px 0 0;">LumenMSP Portal — at a glance.</p>
+  </div>
+</div>
+
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="margin-bottom:14px;"><%= notice %></div><% } %>
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" style="margin-bottom:14px;"><%= error %></div><% } %>
+
+<!-- Data fixes -->
+<% if (typeof gcBalanceCount !== 'undefined' && gcBalanceCount > 0) { %>
+<div class="card" style="border-color:#fbbf24;background:#fffbeb;">
+  <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+    <h2>Data fix available</h2>
+  </div>
+  <p style="margin:0 0 12px;">
+    <strong><%= gcBalanceCount %></strong> Direct Debit invoice(s) are marked <strong>Paid</strong> but still show their full amount as outstanding
+    (<strong>£<%= Number(gcBalanceTotal).toLocaleString('en-GB', {minimumFractionDigits:2,maximumFractionDigits:2}) %></strong> total) —
+    a bug where GoCardless payouts mark an invoice paid but never clear its balance. This just corrects the reporting figure; nothing is re-billed and no emails go out.
+  </p>
+  <form method="post" action="/admin/fix-gc-balances" onsubmit="return confirm('Zero the balance on ' + <%= gcBalanceCount %> + ' paid Direct Debit invoice(s)? This only updates the outstanding figure, nothing else.');">
+    <button class="btn btn-primary" type="submit">Fix <%= gcBalanceCount %> invoice(s) now</button>
+  </form>
+</div>
+<% } %>
+
+<!-- Next document numbers -->
+<div class="card">
+  <div class="card-header"><h2>Next numbers</h2></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;">
+    <% var nn = [
+      { l: 'Next ticket', v: nextNumbers.ticket, i: 'ti-ticket' },
+      { l: 'Next quote', v: nextNumbers.quote, i: 'ti-file-text' },
+      { l: 'Next invoice (IT)', v: nextNumbers.invIt, i: 'ti-receipt' },
+      { l: 'Next invoice (CS)', v: nextNumbers.invCs, i: 'ti-receipt' }
+    ]; %>
+    <% nn.forEach(function(x){ %>
+      <div style="background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:14px;">
+        <div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;"><%= x.l %></div>
+        <div style="font-size:22px;font-weight:800;font-family:monospace;margin-top:4px;"><%= x.v %></div>
+      </div>
+    <% }); %>
+  </div>
+</div>
+
+<!-- Case throughput -->
+<div class="card">
+  <div class="card-header"><h2>Cases <span class="muted" style="font-weight:400;font-size:13px;">— last 30 days</span></h2></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;">
+    <% var st = [
+      { l: 'Avg new per day', v: avgPerDay },
+      { l: 'Avg resolved per day', v: resolvedPerDay },
+      { l: 'Open cases', v: stats.open_cases },
+      { l: 'Total cases', v: stats.total }
+    ]; %>
+    <% st.forEach(function(x){ %>
+      <div style="background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center;">
+        <div style="font-size:28px;font-weight:800;color:#2563eb;"><%= x.v %></div>
+        <div class="muted" style="font-size:12px;margin-top:2px;"><%= x.l %></div>
+      </div>
+    <% }); %>
+  </div>
+</div>
+
+<!-- Codebase -->
+<% if (typeof loc !== 'undefined' && loc) {
+     var extName = { '.ts':'TypeScript', '.ejs':'EJS views', '.js':'JavaScript', '.css':'CSS', '.prisma':'Prisma schema', '.tsx':'TSX' };
+     var extEntries = Object.keys(loc.byExt||{}).sort(function(a,b){ return loc.byExt[b]-loc.byExt[a]; }); %>
+<div class="card">
+  <div class="card-header"><h2>Codebase</h2></div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:14px;">
+    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:18px;text-align:center;">
+      <div style="font-size:34px;font-weight:800;color:#166534;"><%= Number(loc.total).toLocaleString('en-GB') %></div>
+      <div class="muted" style="font-size:12px;margin-top:2px;">Lines of code</div>
+    </div>
+    <div style="background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:18px;text-align:center;">
+      <div style="font-size:34px;font-weight:800;color:#2563eb;"><%= Number(loc.files).toLocaleString('en-GB') %></div>
+      <div class="muted" style="font-size:12px;margin-top:2px;">Source files</div>
+    </div>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;">
+    <% extEntries.forEach(function(ext){ %>
+      <span class="badge" style="background:#eef2ff;color:#3730a3;font-size:12px;padding:5px 10px;"><%= extName[ext] || ext %>: <%= Number(loc.byExt[ext]).toLocaleString('en-GB') %></span>
+    <% }); %>
+  </div>
+  <p class="muted" style="margin:12px 0 0;font-size:12px;">Hand-written source only — excludes dependencies, build output and uploads. Counted live on this server.</p>
+</div>
+<% } %>
+
+<!-- Version history / changelog -->
+<div class="card">
+  <div class="card-header"><h2>Version history</h2></div>
+  <p class="muted" style="margin:0 0 12px;font-size:13px;">Everything shipped, by release. New work lands under the current version; a bigger batch ships as the next major version.</p>
+  <% changelog.forEach(function(rel, i){ %>
+    <details <%= i === 0 ? 'open' : '' %> style="border:1px solid var(--line);border-radius:10px;margin-bottom:10px;overflow:hidden;">
+      <summary style="cursor:pointer;list-style:none;padding:14px 16px;display:flex;align-items:center;gap:12px;background:#f8fafc;">
+        <span style="font-size:14px;font-weight:700;background:#1e293b;color:#fff;padding:3px 11px;border-radius:8px;font-family:monospace;"><%= rel.version %></span>
+        <span style="font-weight:600;flex:1;min-width:0;"><%= rel.title %></span>
+        <span class="muted" style="font-size:12px;white-space:nowrap;"><%= new Date(rel.date).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) %></span>
+        <i class="ti ti-chevron-down" style="font-size:18px;color:#94a3b8;"></i>
+      </summary>
+      <div style="padding:6px 16px 16px;">
+        <% rel.groups.forEach(function(g){ %>
+          <div style="margin-top:14px;">
+            <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#2563eb;margin-bottom:6px;"><%= g.area %></div>
+            <ul style="margin:0;padding-left:18px;">
+              <% g.items.forEach(function(it){ %><li style="font-size:13.5px;line-height:1.6;color:#334155;"><%= it %></li><% }); %>
+            </ul>
+          </div>
+        <% }); %>
+      </div>
+    </details>
+  <% }); %>
+</div>
+
+<%- include('../partials/footer') %>

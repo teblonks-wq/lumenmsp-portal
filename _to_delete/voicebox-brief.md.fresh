@@ -1,0 +1,172 @@
+# [C] VoiceBox — Customer Voicemail Module — Brief
+
+> Agreed with Terry 2026-07-22. Status: **SPEC — not built.**
+> Product name: **VoiceBox** (full: *Lumen VoiceBox*). Sits in the Portal family alongside
+> Insights, OneBoard, Wallboard, Learn, MailHealth.
+> **UPDATE (same day): built as a Luminate module** — the third one, after PRISM and PRS.
+
+---
+
+## 1. What it is
+
+A customer-facing voicemail management module. End users at a customer log in and see their
+company's voicemails in one place: **listen**, **read the transcript**, **return the call**,
+add **notes** (optional), and **claim** a message so colleagues know it's being handled.
+
+It is built as a **Luminate module** (key `voicebox`, mounted at `/my/voicebox` on
+apps.lumenmsp.co.uk behind the customer launcher, wrapped in the shared "Back to Luminate"
+banner) — same shape as PRISM and PRS Xmas List, per [[portal-is-the-hub]] and
+[[customer-portal-vision]]. It is NOT a separate app. Teams is a **channel onto it**: a Teams
+app whose **channel tab embeds the Luminate VoiceBox page**. The platform holds the voicemail
+audio, transcripts, notes and state.
+
+## 2. Decisions locked 2026-07-22
+
+- **Name:** VoiceBox.
+- **Shape: Luminate module** — listed in the **App Store** (platform tier, icon, Get/Added),
+  tile in the customer `/my` launcher, per-user visibility via the Apps column on sign-ins
+  (`customer_logins.apps`), per-customer staff settings at `/c/:id/m/voicebox/settings`
+  (config in `customer_modules.config`), post-first-ship deploys via `deploy-module.ps1
+  voicebox` / Toolbox dropdown (no logouts).
+- **Ingestion:** **voicemail-to-email** — the customer's phone system emails the voicemail
+  (.wav/.mp3 attachment + caller ID) to a Portal-monitored mailbox; Portal ingests it. Same
+  family of pattern as the existing email pipelines.
+- **Teams depth (v1):** **tab app only** — a Teams channel tab embedding
+  `portal.lumenmsp.co.uk/my/voicebox`, SSO via Entra (customers already log in with Entra).
+  No bot, no notification cards in v1. (Note: this is unrelated to the broken Teams *message
+  relay* — see [[internal-note-channel-leak]] — a tab app is a different mechanism.)
+- **Returning a message (v1):** **log it** — a `tel:` click-to-dial / copy-number affordance so
+  the user calls from their own phone or Teams, then they **mark it Returned** with an optional
+  outcome note. VoiceBox tracks status; it does not place the call.
+- **Locking:** users can **claim** a voicemail (Terry: "check out", but not called that in the
+  UI). While claimed, other users at the customer cannot open/action it and see
+  **“Locked by <name>”**. Notes are optional, never mandatory.
+
+## 3. User-facing spec (v1)
+
+### Inbox
+- List of the company's voicemails, newest first. Columns: caller (number + matched contact
+  name where known), received time, duration, status, claimed-by.
+- Status filter tabs: **New · In progress · Returned** (+ All). Unreturned count badge.
+- Caller name resolution via the existing `matchContactByNumber` where the number is known.
+
+### Message view
+- **Player** — streamed audio with scrubber; playback speed toggle (1×/1.5×/2×) is cheap and
+  worth it.
+- **Transcript** — auto-generated on ingest, shown beside the player. If transcription fails
+  or is pending, show state honestly ("Transcript processing / unavailable") — never block
+  listening on it.
+- **Return** — prominent number with `tel:` link + copy button → **"Mark returned"** button,
+  with an *optional* outcome note ("left message", "resolved", free text).
+- **Notes** — simple note thread (author + timestamp), optional everywhere. No mandatory
+  fields anywhere in the flow.
+
+### Claim / lock (the "check out")
+- **"Take this"** (or similar) claims the message: status → In progress, `claimed_by` set.
+- Everyone else sees the row greyed/badged **“Locked by Sarah”** and cannot open or action it.
+- The claimer (and Lumen staff/admin) can **release** the lock.
+- **Auto-release after a configurable idle window (default 2h)** so a claim never strands a
+  message when someone goes home. Marking Returned releases it implicitly.
+- All claim/release/return events recorded (who + when) — doubles as a light audit trail.
+
+## 4. Ingestion pipeline (voicemail-to-email)
+
+1. Phone system is pointed at a dedicated ingest mailbox (one address per customer, or
+   plus-addressing / distinct aliases routed by recipient — decide per customer at onboarding).
+   The ingest address + platform profile live in the module's per-customer settings page
+   (`customer_modules.config`), same pattern as PRISM/PRS settings; keep the separate
+   `voicemail_mailboxes` table only if a customer ever needs multiple ingest addresses.
+2. Portal ingest job parses the email: caller ID + timestamp from subject/body (formats vary
+   per phone platform — keep the parser per-platform-profile, configurable), audio attachment
+   saved to Portal file storage.
+3. Row created in `voicemails`; **dedup on the email `Message-ID`** so a re-delivered email
+   never creates a duplicate.
+4. Async transcription job picks up new rows (STT provider TBC — e.g. Whisper API or Azure
+   Speech; short UK-English voicemails, cost is pennies). Transcript + status written back.
+5. Malformed emails (no audio, unknown recipient) land in a staff-visible dead-letter list,
+   not silently dropped.
+
+## 5. Data model (raw pg, **and declared in schema.prisma** — see §8)
+
+```
+voicemails
+  id, customer_id, mailbox_key,            -- which ingest address it arrived on
+  caller_number, caller_name,              -- name = matched contact snapshot, nullable
+  received_at, duration_secs,
+  audio_path, email_message_id (unique),
+  transcript, transcript_status,           -- pending | done | failed
+  status,                                  -- new | in_progress | returned
+  claimed_by_contact_id, claimed_at,
+  returned_by_contact_id, returned_at, return_note,
+  created_at
+
+voicemail_notes
+  id, voicemail_id, author_contact_id, body, created_at
+
+voicemail_mailboxes
+  id, customer_id, ingest_address (unique), platform_profile, active
+```
+
+## 6. Access & security
+
+- Lives under `/my/voicebox` behind the customer-area guard; **every query server-side scoped
+  by `customer_id`** (IDOR-critical, same rule as the rest of `/my`).
+- Which contacts see VoiceBox: per-contact enable flag (same shape as
+  `customer_contacts.insights_sites` — see [[insights-site-layer]]) or fold into the /my tier
+  model; default = enabled contacts only, decided per customer.
+- Audio streamed through an authenticated Portal route — never a public/static URL.
+- Lock enforcement is **server-side** (claim checked on every message route), not just UI.
+
+## 7. Teams tab app (v1 shape)
+
+- Teams app manifest with a **configurable channel tab** pointing at
+  `https://apps.lumenmsp.co.uk/my/voicebox?embed=teams`.
+- **CSP/frame-ancestors:** the Portal must allow framing of this route by
+  `teams.microsoft.com` (and `*.cloud.microsoft` / desktop-client hosts). Do this **per-route**,
+  not portal-wide — the rest of the Portal should stay un-frameable.
+- Auth: Entra SSO. Ideal is Teams silent SSO (`getAuthToken`) mapped to the same Entra
+  identities customers already log in with; acceptable v1 fallback is an interactive login
+  popup inside the tab (Entra blocks framed login pages, so it must be a popup, not in-frame).
+- The embedded view hides the Portal chrome (`?embed=teams` → minimal layout, no top nav).
+- App distributed as a **custom app upload / org catalogue** per customer tenant — no public
+  store listing needed.
+- v2 candidates (explicitly out of v1): bot/webhook card in the channel on new voicemail;
+  activity-feed notifications; Teams click-to-call deep link.
+
+## 8. Gotchas that WILL bite (from memory)
+
+- **[[prisma-managed-column-gotcha]]** — every new table above MUST be added to
+  `schema.prisma` before first deploy, or `prisma db push` will DROP them (social_posts lost
+  51 rows this way).
+- **[[portal-deploy-logs-everyone-out]]** — shipping VoiceBox is a full deploy; warn staff,
+  and note it will also boot any customers mid-session in Teams tabs.
+- Audio storage grows forever — set a retention policy up front (e.g. audio kept N months,
+  transcript + metadata kept indefinitely) rather than retrofitting one.
+- Voicemail-to-email formats differ per phone platform — treat the parser as per-platform
+  profiles from day one, don't hardcode the first customer's format.
+
+## 9. How it "gets to apps" — build + rollout order
+
+1. Schema + module scaffold: tables into schema.prisma, module key `voicebox` registered,
+   App Store entry (platform tier + icon), launcher tile, shared banner.
+2. Ingestion (mailbox → `voicemails` rows + audio storage + dedup + dead-letter).
+3. Transcription job (provider decision needed here).
+4. `/my/voicebox` UI: inbox, player, transcript, claim/lock, return flow, notes.
+5. Staff side: per-customer settings page (ingest address + platform profile), ingestion
+   health, dead-letter, lock override.
+6. **First ship = full `deploy.ps1`** (new tables); afterwards `deploy-module.ps1 voicebox`
+   / Toolbox dropdown for module tweaks.
+7. Embed mode + per-route CSP; Teams app manifest zip (manifest + 2 icons); customer's Teams
+   admin uploads to their org catalogue; users add the tab to a channel.
+8. Pilot with one friendly customer (Larkmead is the obvious candidate): Get app from the
+   App Store → settings → point their phone system's voicemail-to-email at the ingest
+   address → invite users → add the Teams tab.
+9. Test suite for lock semantics + scoping before first deploy (same discipline as Insights).
+
+## 10. Open questions
+
+- STT provider for transcripts (Whisper vs Azure Speech) — pick at build step 2.
+- First pilot customer + their phone platform's voicemail-email format.
+- Retention window for audio.
+- Whether "locked" hides the message entirely from others or shows it read-only greyed out
+  (spec above says cannot open; confirm Terry's preference during build).

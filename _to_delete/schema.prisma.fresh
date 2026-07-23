@@ -94,6 +94,7 @@ model Customer {
   leads       Lead[]
   credentials CustomerCredential[]
   credits     CustomerCredit[]
+  assets      CustomerAsset[]
 
   @@index([status])
   @@index([deletedAt])
@@ -339,6 +340,44 @@ model CustomerExternalId {
   @@unique([sourceSystem, externalId])
   @@index([customerId])
   @@map("customer_external_ids")
+}
+
+// ── Customer assets / device inventory ──────────────────────────────────────────
+// v1: one-way sync FROM Atera (RMM agents). Read-only in the Portal until we confirm
+// Atera's API accepts write-back — see lib/asset-sync.ts. `raw` keeps the full source
+// payload so new spec fields can be surfaced later without re-syncing the schema.
+model CustomerAsset {
+  id             Int       @id @default(autoincrement())
+  customerId     Int?      @map("customer_id") // null = Atera agent not yet matched to a portal customer
+  sourceSystem   String    @default("atera") @map("source_system")
+  externalId     String    @map("external_id") // Atera AgentID
+  hostname       String?
+  deviceType     String?   @map("device_type") // Workstation | Server | Mobile Device | Network Device | ...
+  os             String?
+  osVersion      String?   @map("os_version")
+  manufacturer   String?
+  model          String?
+  serialNumber   String?   @map("serial_number")
+  cpu            String?
+  ramGb          Float?    @map("ram_gb")
+  diskInfo       String?   @map("disk_info")
+  ipAddresses    String?   @map("ip_addresses")
+  macAddress     String?   @map("mac_address")
+  domainOrWorkgroup String? @map("domain_or_workgroup")
+  onlineStatus   Boolean   @default(false) @map("online_status")
+  lastSeenAt     DateTime? @map("last_seen_at")
+  lastRebootAt   DateTime? @map("last_reboot_at")
+  raw            Json?     // full source payload, for fields not yet promoted to columns
+  syncedAt       DateTime  @default(now()) @map("synced_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  customer Customer? @relation(fields: [customerId], references: [id])
+
+  @@unique([sourceSystem, externalId])
+  @@index([customerId])
+  @@index([hostname])
+  @@map("customer_assets")
 }
 
 // Durable note against a comms CLI / ref (e.g. "line rental ceasing next month"). Kept in its own
@@ -600,6 +639,7 @@ model ServiceItem {
   isProrata            Boolean   @default(false) @map("is_prorata") // true = part-period (mid-month start/end), not a full recurring month
   location             String?   // customer-set label for a circuit/CLI (e.g. broadband site/office)
   isManual             Boolean   @default(false) @map("is_manual") // added by hand (not from Giacom) — survives the import wipe
+  isProjected          Boolean   @default(false) @map("is_projected") // rolled forward from the last actual month (advance billing) — replaced when the supplier file lands
   isOneOff             Boolean   @default(false) @map("is_one_off") // install/cease/connection fee — bill once
   billedAt             DateTime? @map("billed_at") // when a one-off was billed; once set it drops off the rate card
   invoiceCategory      String?   @map("invoice_category") // internet|voice|mobile|additional|oneoff|call (override; else classified from description)
@@ -662,11 +702,13 @@ model CallRecord {
   description   String?
   cost          Decimal   @default(0) @db.Decimal(12, 4) // what the carrier charges us
   billingPeriod String?   @map("billing_period")          // YYYY-MM
+  billedAt      DateTime? @map("billed_at") // stamped when the call went out on a sent invoice — billing selects by THIS flag, never period arithmetic
   createdAt     DateTime  @default(now()) @map("created_at")
 
   @@index([customerId])
   @@index([cli])
   @@index([billingPeriod])
+  @@index([billedAt])
   @@map("call_records")
 }
 

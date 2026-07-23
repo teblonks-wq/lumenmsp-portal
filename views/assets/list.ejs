@@ -1,0 +1,80 @@
+<%- include('../partials/header', { title: 'Assets', user }) %>
+<% function timeAgo(iso){ if(!iso) return 'never'; var d=new Date(iso); var mins=Math.round((Date.now()-d.getTime())/60000); if(mins<1) return 'just now'; if(mins<60) return mins+'m ago'; var hrs=Math.round(mins/60); if(hrs<24) return hrs+'h ago'; return Math.round(hrs/24)+'d ago'; } %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><h1>Assets</h1><p class="muted"><%= rows.length %> device<%= rows.length===1?'':'s' %> shown · synced from Atera <%= timeAgo(lastSynced) %></p></div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <% if (typeof user!=='undefined' && user.role==='admin') { %>
+    <form method="post" action="/assets/sync"><button class="btn btn-primary" type="submit">↻ Sync from Atera</button></form>
+    <% } %>
+    <% if (unmatchedCount > 0) { %><a class="btn" href="/assets/unmatched" style="border-color:#f59e0b;color:#b45309;">⚠ <%= unmatchedCount %> unmatched</a><% } %>
+  </div>
+</div>
+
+<% if (notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<div class="card" style="background:#f0f9ff;border-color:#bae6fd;">
+  <p style="margin:0;font-size:13px;color:#0369a1;">
+    <strong>Read-only for now.</strong> Everything here comes straight from Atera — details are locked until we confirm Atera's API will
+    accept changes written back from the Portal. Once a "next RMM" replaces Atera (expected in 6–10 months), this sync will point there instead.
+  </p>
+</div>
+
+<div class="card" style="padding:16px 20px;">
+  <form method="get" action="/assets" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <input class="input" type="search" name="q" value="<%= filters.q %>" placeholder="Search hostname, serial, model, customer…" style="min-width:260px;">
+    <select class="input" name="customer" style="min-width:200px;">
+      <option value="">All customers</option>
+      <% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= filters.customer===c.id?'selected':'' %>><%= c.name %></option><% }); %>
+    </select>
+    <select class="input" name="type">
+      <option value="">All types</option>
+      <% types.forEach(function(t){ %><option value="<%= t %>" <%= filters.type===t?'selected':'' %>><%= t %></option><% }); %>
+    </select>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" name="online" value="1" <%= filters.online?'checked':'' %>> Online only</label>
+    <button class="btn" type="submit">Filter</button>
+    <% if (filters.q || filters.customer || filters.type || filters.online) { %><a class="btn" href="/assets">Clear</a><% } %>
+  </form>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th></th><th>Hostname</th><th>Customer</th><th>Type</th><th>OS</th><th>Manufacturer / Model</th><th>Last seen</th><th></th></tr></thead>
+      <tbody>
+        <% if (rows.length===0) { %><tr><td colspan="8"><div class="empty-state">No devices match. Try "↻ Sync from Atera" if this is the first run.</div></td></tr><% } %>
+        <% rows.forEach(function(a){ %>
+          <tr>
+            <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? '#16a34a' : '#cbd5e1' %>;"></span></td>
+            <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/assets') %>"><%= a.hostname || '(unnamed device)' %></a></td>
+            <td class="muted"><% if (a.customer_id) { %><a class="row-link" href="/customers/<%= a.customer_id %>#assets"><%= a.customer_name %></a><% } else { %>—<% } %></td>
+            <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span></td>
+            <td class="muted"><%= a.os || '—' %><% if (a.os_version) { %> <span style="font-size:11px;">(<%= a.os_version %>)</span><% } %></td>
+            <td class="muted"><%= [a.manufacturer, a.model].filter(Boolean).join(' ') || '—' %></td>
+            <td class="muted" style="font-size:12px;"><%= timeAgo(a.last_seen_at) %></td>
+            <td style="text-align:right;white-space:nowrap;">
+              <% if (a.external_id) { %><a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="<%= remoteTemplate.replace('{agentId}', encodeURIComponent(a.external_id)) %>">🖥 Remote</a><% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<% if (typeof user!=='undefined' && user.role==='admin') { %>
+<div class="card">
+  <div class="card-header"><h2>Remote-access link</h2></div>
+  <p class="muted" style="margin:0 0 12px;font-size:13px;">
+    The "🖥 Remote" button opens this URL with <code>{agentId}</code> replaced by the device's Atera Agent ID. Adjust it here if Atera's
+    exact link format turns out to be different once you've tried it live — no redeploy needed.
+  </p>
+  <form method="post" action="/assets/remote-settings" style="display:flex;gap:8px;">
+    <input class="input" type="text" name="template" value="<%= remoteTemplate %>" style="flex:1;font-family:monospace;font-size:13px;">
+    <button class="btn btn-primary" type="submit">Save</button>
+  </form>
+</div>
+<% } %>
+
+<%- include('../partials/footer') %>

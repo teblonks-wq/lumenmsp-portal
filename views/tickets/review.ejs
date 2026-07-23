@@ -1,0 +1,110 @@
+<%- include('../partials/header', { title: 'Helpdesk review — ' + (ticket.ticket_number || ('#' + ticket.id)), user }) %>
+<% function cap(s){ return s ? String(s).replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
+   function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); }
+   function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; }
+   var ageDays = Math.floor((Date.now() - new Date(ticket.created_at).getTime()) / 86400000); %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/tickets">← Exit review</a></p>
+    <h1 style="margin:0;">Helpdesk review <span class="muted" style="font-weight:500;font-size:16px;">· case <%= position %> of <%= total %> (oldest first)</span></h1>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <a class="btn" href="/tickets/<%= ticket.id %>" target="_blank" title="Open the full case screen in a new tab">Open full case ↗</a>
+    <a class="btn" href="/tickets/review/<%= ticket.id %>/next" title="Move on without saving anything">Skip →</a>
+  </div>
+</div>
+
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="margin-bottom:14px;"><%= notice %></div><% } %>
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" style="margin-bottom:14px;"><%= error %></div><% } %>
+
+<div style="display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;align-items:start;">
+
+  <!-- Case at a glance + recent activity -->
+  <div>
+    <div class="card" style="margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start;">
+        <div>
+          <div style="font-size:12px;color:#64748b;font-weight:700;"><%= ticket.ticket_number || ('#' + ticket.id) %></div>
+          <h2 style="margin:4px 0 6px;font-size:17px;"><%= ticket.subject || '(no subject)' %></h2>
+          <div class="muted" style="font-size:13px;">
+            <%= ticket.customer_name || 'No customer linked' %><% if (ticket.contact_name) { %> · <%= ticket.contact_name %><% } %>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <span class="badge <%= sbadge(ticket.status) %>"><%= cap(ticket.status) %></span>
+          <div class="muted" style="font-size:12px;margin-top:6px;">Opened <%= dt(ticket.created_at) %> · <strong><%= ageDays %></strong> day<%= ageDays===1?'':'s' %> old</div>
+          <div class="muted" style="font-size:12px;"><%= ticket.assigned_name ? ('Assigned: ' + ticket.assigned_name) : 'Unassigned' %></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="padding:0;">
+      <div class="card-header" style="padding:14px 18px 0;"><h2 style="font-size:14px;">Latest activity <span class="muted" style="font-weight:500;font-size:12px;">(newest first, up to 6)</span></h2></div>
+      <% if (!timeline.length) { %>
+        <p class="muted" style="padding:12px 18px;">No messages or notes on this case yet.</p>
+      <% } else { %>
+        <div style="padding:8px 18px 14px;">
+          <% timeline.forEach(function(t){ %>
+            <div style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:8px;<%= t.kind==='note' ? 'background:#fffbeb;' : (t.direction==='inbound' ? 'background:#f8fafc;' : '') %>">
+              <div style="font-size:11px;color:#64748b;margin-bottom:4px;">
+                <strong><%= t.author %></strong>
+                · <%= t.kind==='note' ? (t.noteType==='private_note' ? 'Private note' : cap(t.noteType)) : ((t.direction==='inbound'?'Received':'Sent') + ' · ' + (t.channel||'email')) %>
+                · <%= dt(t.at) %>
+              </div>
+              <div style="font-size:13px;line-height:1.5;max-height:130px;overflow:auto;"><%- t.body %></div>
+            </div>
+          <% }); %>
+        </div>
+      <% } %>
+    </div>
+  </div>
+
+  <!-- Review actions -->
+  <div class="card" style="position:sticky;top:14px;">
+    <h2 style="font-size:15px;margin:0 0 10px;">Review this case</h2>
+    <form method="post" action="/tickets/review/<%= ticket.id %>">
+      <div class="form-group">
+        <label>Private note <span class="muted" style="font-weight:400;">(internal only — never sent to the customer)</span></label>
+        <textarea class="input" name="body" id="revNote" rows="6" placeholder="e.g. Chased supplier this morning; awaiting RMA number. Check again Friday." style="width:100%;box-sizing:border-box;"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Status</label>
+        <select class="input" name="set_status" id="revStatus" style="width:100%;">
+          <% statusList.forEach(function(s){ %>
+            <option value="<%= s %>" <%= ticket.status===s?'selected':'' %>><%= cap(s) %><%= ticket.status===s?' (current)':'' %></option>
+          <% }); %>
+        </select>
+      </div>
+      <div class="form-group" id="revPPWrap" style="display:none;">
+        <label>Return date &amp; time</label>
+        <input class="input" type="datetime-local" name="postponed_until" id="revPP" style="width:100%;box-sizing:border-box;">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:12px;">
+        <button class="btn btn-primary" type="submit" id="revSave" disabled title="Add the note, apply the status, and open the next oldest case">Save &amp; Next →</button>
+        <a class="btn" href="/tickets/review/<%= ticket.id %>/next">Skip →</a>
+      </div>
+      <p class="muted" style="font-size:11px;margin:10px 0 0;">Save &amp; Next unlocks once you've written a note or changed the status. Notes are always added as <strong>private notes</strong>.</p>
+    </form>
+  </div>
+</div>
+
+<script>
+  (function(){
+    var note = document.getElementById('revNote'), st = document.getElementById('revStatus'),
+        save = document.getElementById('revSave'), ppWrap = document.getElementById('revPPWrap');
+    var startStatus = <%- JSON.stringify(ticket.status || '') %>;
+    function refresh(){
+      var changed = note.value.trim().length > 0 || st.value !== startStatus;
+      save.disabled = !changed;
+      ppWrap.style.display = (st.value === 'postponed' || st.value === 'awaiting_installation') ? 'block' : 'none';
+    }
+    note.addEventListener('input', refresh);
+    st.addEventListener('change', refresh);
+    refresh();
+    // Ctrl+Enter = Save & Next
+    note.addEventListener('keydown', function(e){ if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !save.disabled) save.closest('form').submit(); });
+  })();
+</script>
+
+<%- include('../partials/footer') %>

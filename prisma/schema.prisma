@@ -94,6 +94,7 @@ model Customer {
   leads       Lead[]
   credentials CustomerCredential[]
   credits     CustomerCredit[]
+  assets      CustomerAsset[]
 
   @@index([status])
   @@index([deletedAt])
@@ -339,6 +340,44 @@ model CustomerExternalId {
   @@unique([sourceSystem, externalId])
   @@index([customerId])
   @@map("customer_external_ids")
+}
+
+// ── Customer assets / device inventory ──────────────────────────────────────────
+// v1: one-way sync FROM Atera (RMM agents). Read-only in the Portal until we confirm
+// Atera's API accepts write-back — see lib/asset-sync.ts. `raw` keeps the full source
+// payload so new spec fields can be surfaced later without re-syncing the schema.
+model CustomerAsset {
+  id             Int       @id @default(autoincrement())
+  customerId     Int?      @map("customer_id") // null = Atera agent not yet matched to a portal customer
+  sourceSystem   String    @default("atera") @map("source_system")
+  externalId     String    @map("external_id") // Atera AgentID
+  hostname       String?
+  deviceType     String?   @map("device_type") // Workstation | Server | Mobile Device | Network Device | ...
+  os             String?
+  osVersion      String?   @map("os_version")
+  manufacturer   String?
+  model          String?
+  serialNumber   String?   @map("serial_number")
+  cpu            String?
+  ramGb          Float?    @map("ram_gb")
+  diskInfo       String?   @map("disk_info")
+  ipAddresses    String?   @map("ip_addresses")
+  macAddress     String?   @map("mac_address")
+  domainOrWorkgroup String? @map("domain_or_workgroup")
+  onlineStatus   Boolean   @default(false) @map("online_status")
+  lastSeenAt     DateTime? @map("last_seen_at")
+  lastRebootAt   DateTime? @map("last_reboot_at")
+  raw            Json?     // full source payload, for fields not yet promoted to columns
+  syncedAt       DateTime  @default(now()) @map("synced_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  customer Customer? @relation(fields: [customerId], references: [id])
+
+  @@unique([sourceSystem, externalId])
+  @@index([customerId])
+  @@index([hostname])
+  @@map("customer_assets")
 }
 
 // Durable note against a comms CLI / ref (e.g. "line rental ceasing next month"). Kept in its own

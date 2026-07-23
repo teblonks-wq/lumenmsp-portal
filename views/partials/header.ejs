@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+  <title><%= typeof title !== 'undefined' ? title + ' — ' : '' %>Lumen MSP Portal</title>
+  <link rel="icon" type="image/png" href="/static/lumen-crest.png">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <meta name="theme-color" content="#0ea5b7">
+  <meta name="application-name" content="Lumen MSP Portal">
+  <link rel="manifest" href="/portal.webmanifest">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    /* Flash the Chat nav red while a website chat is waiting to be claimed. */
+    @keyframes navChatFlash { 0%, 100% { background: transparent; } 50% { background: #ef4444; } }
+    .nav-item.chat-flash { animation: navChatFlash 1s ease-in-out infinite; border-radius: 8px; }
+    .nav-item.chat-flash .nav-label, .nav-item.chat-flash svg { color: #fff !important; stroke: #fff; }
+  </style>
+  <script>try { if (localStorage.getItem('portalNavCollapsed') === '1') document.documentElement.classList.add('nav-collapsed'); } catch (e) {}</script>
+</head>
+<body class="app">
+<aside class="sidebar">
+  <div class="sidebar-top">
+    <a href="/" class="sidebar-brand">
+      <span class="brand-text">
+        <span class="brand-logo" style="font-size:30px;font-weight:800;letter-spacing:-.5px;line-height:1;">Portal</span>
+      </span>
+    </a>
+    <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle navigation" title="Toggle navigation">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+  </div>
+
+  <nav class="sidebar-nav">
+    <div class="nav-section">Operations</div>
+    <a href="/" class="nav-item" title="Dashboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      <span class="nav-label">Dashboard</span>
+    </a>
+    <a href="/tickets" class="nav-item" id="navSupport" title="Support tickets">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+      <span class="nav-label">Support</span>
+      <span class="nav-badge" id="navSupportBadge" style="display:none;background:#f59e0b;" title="Awaiting engineer"></span>
+    </a>
+    <a href="/mail" class="nav-item" title="Mail">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+      <span class="nav-label">Mail</span>
+      <% if (typeof unreadMail !== 'undefined' && unreadMail > 0) { %><span class="nav-badge"><%= unreadMail %></span><% } %>
+    </a>
+    <a href="/chat" class="nav-item" id="navChat" title="Website chat">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+      <span class="nav-label">Chat</span>
+      <span class="nav-badge" id="navChatBadge" style="display:none;background:#ef4444;"></span>
+    </a>
+    <a href="/tasks" class="nav-item" title="Tasks">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <span class="nav-label">Tasks</span>
+    </a>
+    <a href="/customers" class="nav-item" title="Customers">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <span class="nav-label">Customers</span>
+    </a>
+    <a href="/contacts" class="nav-item" title="Contacts">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+      <span class="nav-label">Contacts</span>
+    </a>
+    <a href="/leads" class="nav-item" title="Leads">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+      <span class="nav-label">Leads</span>
+      <% if (typeof leadCount !== 'undefined' && leadCount > 0) { %><span class="nav-badge"><%= leadCount %></span><% } %>
+    </a>
+    <a href="/assets" class="nav-item" title="Assets — customer device inventory">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <span class="nav-label">Assets</span>
+    </a>
+
+    <div class="nav-section">Finance</div>
+    <a href="/quotes" class="nav-item" title="Quotes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      <span class="nav-label">Quotes</span>
+    </a>
+    <% if (typeof canFinance==='undefined' || canFinance) { %>
+    <a href="/invoices" class="nav-item" title="Invoices">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+      <span class="nav-label">Invoices</span>
+    </a>
+    <% } %>
+    <a href="/products" class="nav-item" title="Products &amp; Services">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16.5 9.4l-9-5.19"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+      <span class="nav-label">Products</span>
+    </a>
+    <a href="/contracts" class="nav-item" title="Contracts">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg>
+      <span class="nav-label">Contracts</span>
+    </a>
+
+    <% if (typeof user !== 'undefined' && (user.role === 'admin' || user.role === 'staff')) { %>
+    <div class="nav-section">Tools</div>
+    <a href="/insights" class="nav-item" title="Insights — reporting &amp; call analytics" style="padding-top:10px;padding-bottom:10px;">
+      <span class="nav-label" style="font-weight:700;font-size:24px;line-height:1.1;background:linear-gradient(90deg,#10b981,#2563eb);-webkit-background-clip:text;background-clip:text;color:transparent;">Insights</span>
+    </a>
+    <a href="https://learn.lumenmsp.co.uk" target="_blank" rel="noopener" class="nav-item" title="Learn — staff training &amp; onboarding (opens in a new tab — Microsoft sign-in can't be embedded)" style="padding-top:10px;padding-bottom:10px;">
+      <span class="nav-label" style="font-weight:700;font-size:24px;line-height:1.1;background:linear-gradient(90deg,#8b5cf6,#3b82f6);-webkit-background-clip:text;background-clip:text;color:transparent;">Learn</span>
+    </a>
+    <% if (user.role === 'admin') { %>
+    <a href="/bureau" class="nav-item" title="Back Office — allocate imported services &amp; billing" style="padding-top:10px;padding-bottom:10px;">
+      <span class="nav-label" style="font-weight:700;font-size:24px;line-height:1.1;background:linear-gradient(90deg,#f59e0b,#ef4444);-webkit-background-clip:text;background-clip:text;color:transparent;">Back Office</span>
+      <% if (typeof bureauCount !== 'undefined' && bureauCount > 0) { %><span class="nav-badge"><%= bureauCount %></span><% } %>
+    </a>
+    <a href="/purchases" class="nav-item" title="Purchase Ledger — expense reconciliation" style="padding-top:10px;padding-bottom:10px;">
+      <span class="nav-label" style="font-weight:700;font-size:24px;line-height:1.1;background:linear-gradient(90deg,#14b8a6,#0ea5e9);-webkit-background-clip:text;background-clip:text;color:transparent;">Purchases</span>
+    </a>
+    <a href="/marketing" class="nav-item" title="Marketing — socials, website stats &amp; chatbot" style="padding-top:10px;padding-bottom:10px;">
+      <span class="nav-label" style="font-weight:700;font-size:24px;line-height:1.1;background:linear-gradient(90deg,#ec4899,#8b5cf6);-webkit-background-clip:text;background-clip:text;color:transparent;">Marketing</span>
+    </a>
+    <a href="https://apps.lumenmsp.co.uk" target="_blank" rel="noopener" class="nav-item" title="Luminate — customer app platform (opens in a new tab)" style="padding-top:10px;padding-bottom:10px;">
+      <span class="nav-label" style="font-weight:700;font-size:24px;line-height:1.1;background:linear-gradient(90deg,#6366f1,#06b6d4);-webkit-background-clip:text;background-clip:text;color:transparent;">Luminate</span>
+    </a>
+    <% } %>
+    <% } %>
+    <% if (typeof user !== 'undefined' && user.role === 'admin') { %>
+    <div class="nav-section">Admin</div>
+    <a href="/admin" class="nav-item" title="Admin">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      <span class="nav-label">Admin</span>
+    </a>
+    <a href="/recycle-bin" class="nav-item" title="Recycle bin">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      <span class="nav-label">Recycle bin</span>
+    </a>
+    <% } %>
+  </nav>
+
+  <div class="sidebar-foot">
+    <% if (typeof user !== 'undefined') { %>
+    <div class="nav-item nav-user" title="<%= user.displayName %>">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="nav-label"><%= user.displayName %></span>
+    </div>
+    <a href="/logout" class="nav-item" title="Sign out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      <span class="nav-label">Sign out</span>
+    </a>
+    <% } %>
+  </div>
+</aside>
+
+<main class="main">
+<div class="topbar" style="position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:center;gap:14px;background:#fff;border-bottom:1px solid var(--line);padding:8px 16px;min-height:46px;">
+  <div style="position:relative;display:flex;align-items:center;gap:12px;">
+    <button id="notifBell" type="button" class="btn" style="display:flex;align-items:center;gap:6px;">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      Notifications <span id="notifCount" style="display:none;background:#ef4444;color:#fff;border-radius:10px;padding:0 6px;font-size:11px;"></span>
+    </button>
+    <span id="notifLatest" class="muted" style="font-size:13px;max-width:440px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+    <a href="/notifications" class="row-link" style="font-size:12px;">View all</a>
+    <div id="notifDropdown" style="display:none;position:absolute;top:42px;left:50%;transform:translateX(-50%);width:400px;max-width:92vw;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.14);z-index:60;max-height:64vh;overflow:auto;"></div>
+  </div>
+  <button id="installApp" type="button" class="btn btn-primary" title="Install the Portal as an app on this computer" style="display:none;position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:13px;padding:5px 12px;gap:6px;align-items:center;">⬇ Install app</button>
+</div>
+<script>
+(function(){
+  var bell=document.getElementById('notifBell'), dd=document.getElementById('notifDropdown'),
+      cnt=document.getElementById('notifCount'), latest=document.getElementById('notifLatest');
+  if(!bell) return;
+  function esc(s){return (s||'').replace(/[&<>"]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];});}
+  function load(){
+    fetch('/notifications.json').then(function(r){return r.json();}).then(function(d){
+      var items=d.items||[];
+      if(d.unread>0){cnt.style.display='';cnt.textContent=d.unread;}else{cnt.style.display='none';}
+      latest.textContent = items.length ? items[0].title : '';
+      dd.innerHTML = items.length ? items.map(function(n){
+        return '<div style="padding:10px 12px;border-bottom:1px solid var(--line);'+(n.read_at?'':'background:#f0f9ff;')+'">'
+          +'<div style="font-weight:600;font-size:13px;">'+(n.link?'<a class="row-link" href="'+esc(n.link)+'">'+esc(n.title)+'</a>':esc(n.title))+'</div>'
+          +(n.body?'<div class="muted" style="font-size:12px;margin:2px 0 6px;">'+esc(n.body)+'</div>':'')
+          +'<div style="display:flex;gap:8px;margin-top:4px;">'
+          +'<button class="btn" data-snooze="'+n.id+'" style="padding:1px 8px;font-size:11px;">Snooze 1h</button>'
+          +'<button class="btn" data-clear="'+n.id+'" style="padding:1px 8px;font-size:11px;">Clear</button>'
+          +'</div></div>';
+      }).join('') : '<div class="muted" style="padding:14px;text-align:center;">No notifications</div>';
+    }).catch(function(){});
+  }
+  bell.addEventListener('click', function(){
+    dd.style.display = dd.style.display==='none' ? 'block' : 'none';
+    if(dd.style.display==='block'){ fetch('/notifications/read-all',{method:'POST'}).then(load); }
+  });
+  document.addEventListener('click', function(e){
+    var sn=e.target.closest && e.target.closest('[data-snooze]');
+    var cl=e.target.closest && e.target.closest('[data-clear]');
+    if(sn){ e.preventDefault(); fetch('/notifications/'+sn.getAttribute('data-snooze')+'/snooze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({minutes:60})}).then(load); return; }
+    if(cl){ e.preventDefault(); fetch('/notifications/'+cl.getAttribute('data-clear')+'/clear',{method:'POST'}).then(load); return; }
+    if(dd && dd.style.display==='block' && !e.target.closest('#notifDropdown') && !e.target.closest('#notifBell')){ dd.style.display='none'; }
+  });
+  load(); setInterval(load, 60000);
+})();
+</script>
+<script>
+// Desktop PWA install — Edge/Chrome offer "Install app" once the SW is registered and the
+// desktop manifest is present. Uses /portal.webmanifest (kept separate from the mobile /m app).
+(function(){
+  if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js').catch(function(){}); }
+  var btn = document.getElementById('installApp');
+  if (!btn) return;
+  // Already running as an installed app → never show the button.
+  if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) return;
+  var deferred = null;
+  window.addEventListener('beforeinstallprompt', function(e){ e.preventDefault(); deferred = e; btn.style.display = 'inline-flex'; });
+  btn.addEventListener('click', function(){
+    if (!deferred) return;
+    deferred.prompt();
+    deferred.userChoice.then(function(){ deferred = null; btn.style.display = 'none'; });
+  });
+  window.addEventListener('appinstalled', function(){ btn.style.display = 'none'; });
+})();
+</script>

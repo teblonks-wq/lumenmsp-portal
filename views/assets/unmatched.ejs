@@ -1,0 +1,33 @@
+<%- include('../partials/header', { title: 'Unmatched assets', user }) %>
+
+<div class="page-header">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/assets">← Assets</a></p>
+    <h1>Unmatched devices</h1>
+    <p class="muted">Atera devices whose customer isn't linked to a portal customer yet (via Settings → Atera → Clients &amp; contacts review). Once that customer is matched, the next sync will pick these up automatically.</p>
+  </div>
+</div>
+
+<% if (notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Hostname</th><th>Type</th><th>OS</th><th>Manufacturer / Model</th><th>Atera Agent ID</th></tr></thead>
+      <tbody>
+        <% if (rows.length===0) { %><tr><td colspan="5"><div class="empty-state">Nothing unmatched — every synced device is linked to a customer.</div></td></tr><% } %>
+        <% rows.forEach(function(a){ %>
+          <tr>
+            <td><%= a.hostname || '(unnamed device)' %></td>
+            <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span></td>
+            <td class="muted"><%= a.os || '—' %></td>
+            <td class="muted"><%= [a.manufacturer, a.model].filter(Boolean).join(' ') || '—' %></td>
+            <td class="muted" style="font-family:monospace;font-size:12px;"><%= a.external_id %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

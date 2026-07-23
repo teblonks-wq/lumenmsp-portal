@@ -1,0 +1,304 @@
+<%- include('../partials/header', { title: 'Support', user }) %>
+<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); } %>
+<% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
+
+<style>
+  /* Support board fits the monitor width at any zoom — columns size by proportion and
+     long subjects/names wrap to a new line instead of pushing the table wider. */
+  .tk-wrap { overflow-x: hidden; }
+  .ticket-table { table-layout: fixed; width: 100%; }
+  .ticket-table th, .ticket-table td { overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
+  .ticket-table col.c-ticket   { width: 6rem; }
+  .ticket-table col.c-subject  { width: 22rem; }
+  /* Customer is the flex column — it absorbs the slack so the board fits the screen. */
+  .ticket-table col.c-requester { width: 13rem; }
+  .ticket-table col.c-status   { width: 9.5rem; }
+  .ticket-table col.c-assigned { width: 9.5rem; }
+  .ticket-table col.c-created  { width: 6.5rem; }
+  .ticket-table col.c-updated  { width: 6.5rem; }
+  .qf-sel { width: 100%; max-width: 100%; font-size: 12px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--text); cursor: pointer; }
+  .qf-sel:hover { border-color: var(--accent); }
+  /* Resizable headers — drag the right edge of any column. */
+  .ticket-table th { position: relative; }
+  .col-resizer { position: absolute; top: 0; right: -1px; width: 9px; height: 100%; cursor: col-resize; user-select: none; touch-action: none; }
+  .col-resizer::after { content: ''; position: absolute; top: 6px; bottom: 6px; right: 4px; width: 2px; background: var(--line); border-radius: 2px; }
+  .col-resizer:hover::after, .col-resizing .col-resizer::after { background: var(--accent); }
+  body.col-resizing, body.col-resizing * { cursor: col-resize !important; }
+  .col-reset { font-size: 12px; }
+</style>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div><h1>Support</h1><p class="muted">Tickets, cases and manually raised work.</p></div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <form method="get" action="/tickets" style="display:flex;gap:8px;align-items:center;">
+      <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search ticket, subject, customer…" style="min-width:240px;">
+      <button class="btn" type="submit">Search</button>
+      <% if (search) { %><a class="btn" href="/tickets">Clear</a><% } %>
+    </form>
+    <form method="post" action="/tickets/pickup-mail" style="margin:0;"><button class="btn" type="submit" title="Sync the support mailbox into tickets now">↻ Pick up email</button></form>
+    <button class="btn col-reset" type="button" id="colReset" title="Reset column widths">↔ Reset columns</button>
+    <a class="btn" href="/tickets/review" title="Walk every open case oldest-first — add a private note, set the status, then Next">☑ Review cases</a>
+    <a class="btn btn-primary" href="/tickets/new">+ New ticket</a>
+  </div>
+</div>
+
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" style="margin-bottom:14px;"><%= error %></div><% } %>
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="margin-bottom:14px;"><%= notice %></div><% } %>
+
+<%- include('../partials/master-search') %>
+
+<div class="tabs" style="margin-bottom:16px;flex-wrap:wrap;">
+  <a class="tab-btn <%= view==='helpdesk' ? 'active' : '' %>" href="/tickets">Helpdesk</a>
+  <a class="tab-btn <%= view==='all' ? 'active' : '' %>" href="/tickets?view=all">All</a>
+  <% ['new','open','awaiting_customer','awaiting_3rd_party','awaiting_engineer','awaiting_installation','postponed','resolved','closed'].forEach(function(s){ %>
+    <a class="tab-btn <%= status===s ? 'active' : '' %>" href="/tickets?status=<%= s %>"><%= cap(s) %><% if (statusCounts[s]) { %> <span class="muted">(<%= statusCounts[s] %>)</span><% } %></a>
+  <% }); %>
+</div>
+
+<% if (view === 'all') { var _fc = (typeof fc !== 'undefined' ? String(fc) : ''); var _fe = (typeof fe !== 'undefined' ? String(fe) : ''); %>
+  <form method="get" action="/tickets" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin:-4px 0 16px;">
+    <input type="hidden" name="view" value="all">
+    <div class="form-group" style="margin:0;">
+      <label style="font-size:11px;">Customer</label>
+      <select name="fc" class="input" style="font-size:13px;padding:6px 8px;min-width:200px;" onchange="this.form.submit()">
+        <option value="">All customers</option>
+        <% (typeof customersList !== 'undefined' ? customersList : []).forEach(function(c){ %>
+          <option value="<%= c.id %>" <%= _fc === String(c.id) ? 'selected' : '' %>><%= c.name %></option>
+        <% }); %>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label style="font-size:11px;">Engineer</label>
+      <select name="fe" class="input" style="font-size:13px;padding:6px 8px;min-width:180px;" onchange="this.form.submit()">
+        <option value="">All engineers</option>
+        <option value="unassigned" <%= _fe === 'unassigned' ? 'selected' : '' %>>Unassigned</option>
+        <% engineers.forEach(function(e){ %>
+          <option value="<%= e.id %>" <%= _fe === String(e.id) ? 'selected' : '' %>><%= e.display_name %></option>
+        <% }); %>
+      </select>
+    </div>
+    <% if (_fc || _fe) { %><a class="btn" href="/tickets?view=all" style="font-size:13px;">Clear filters</a><% } %>
+  </form>
+<% } %>
+
+<%
+  function ticketRow(t, sel){ %>
+    <tr style="<%= t.activity_status==='unread' ? 'font-weight:600;' : '' %>">
+      <td><% if (sel) { %><input type="checkbox" class="bulk-cb" value="<%= t.id %>" style="margin-right:7px;vertical-align:middle;"><% } %><a class="row-link" href="/tickets/<%= t.id %>"><%= t.ticket_number %></a></td>
+      <td><a class="row-link" href="/tickets/<%= t.id %>" style="color:inherit;"><%= t.subject %></a></td>
+      <td class="muted"><% if (t.customer_id) { %><a class="row-link" href="/customers/<%= t.customer_id %>"><%= t.customer_name %></a><% } else { %>—<% } %></td>
+      <td><% if (t.requester_name) { %><% if (t.requester_contact_id) { %><a class="row-link" href="/contacts/<%= t.requester_contact_id %>"><%= t.requester_name %></a><% } else { %><%= t.requester_name %><% } %><% if (t.requester_email) { %><br><a class="row-link" href="mailto:<%= t.requester_email %>" style="font-size:12px;"><%= t.requester_email %></a><% } %><% } else if (t.requester_email) { %><span style="word-break:break-all;"><%= t.requester_email %></span><% } else { %><span class="muted">—</span><% } %></td>
+      <td>
+        <form method="post" action="/tickets/<%= t.id %>/quick" style="margin:0;">
+          <input type="hidden" name="return" value="<%= currentUrl %>">
+          <select name="status" class="qf-sel" onchange="this.form.submit()" title="Change status">
+            <% statusList.forEach(function(s){ %><option value="<%= s %>" <%= t.status===s?'selected':'' %>><%= cap(s) %></option><% }); %>
+          </select>
+        </form>
+      </td>
+      <td>
+        <form method="post" action="/tickets/<%= t.id %>/quick" style="margin:0;">
+          <input type="hidden" name="return" value="<%= currentUrl %>">
+          <select name="assigned_user_id" class="qf-sel" onchange="this.form.submit()" title="Assign engineer">
+            <option value="">Unassigned</option>
+            <% engineers.forEach(function(e){ %><option value="<%= e.id %>" <%= String(t.assigned_user_id)===String(e.id)?'selected':'' %>><%= e.display_name %></option><% }); %>
+          </select>
+        </form>
+      </td>
+      <td class="muted" style="white-space:nowrap;" data-sort="<%= t.created_at ? new Date(t.created_at).getTime() : 0 %>"><% if (t.created_at) { %><%= new Date(t.created_at).toLocaleDateString('en-GB',{timeZone:'Europe/London'}) %><br><span style="font-size:11px;"><%= new Date(t.created_at).toLocaleTimeString('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit'}) %></span><% } else { %>—<% } %></td>
+      <td class="muted" style="white-space:nowrap;" data-sort="<%= t.updated_at ? new Date(t.updated_at).getTime() : 0 %>"><% if (t.updated_at) { %><%= new Date(t.updated_at).toLocaleDateString('en-GB',{timeZone:'Europe/London'}) %><br><span style="font-size:11px;"><%= new Date(t.updated_at).toLocaleTimeString('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit'}) %></span><% } else { %>—<% } %></td>
+    </tr>
+  <% }
+  function thead(sel){ %>
+    <colgroup><col class="c-ticket"><col class="c-subject"><col class="c-customer"><col class="c-requester"><col class="c-status"><col class="c-assigned"><col class="c-created"><col class="c-updated"></colgroup>
+    <thead><tr><th><% if (sel) { %><input type="checkbox" onclick="tkSelectAll(this)" title="Select all" style="margin-right:7px;vertical-align:middle;"><% } %>Ticket</th><th>Subject</th><th>Customer</th><th>Requester</th><th>Status</th><th>Assigned</th><th>Created</th><th>Updated</th></tr></thead>
+  <% } %>
+
+<% if (mode === 'helpdesk') { %>
+  <% groups.forEach(function(g){ var sel = g.key==='unassigned'; %>
+    <div class="card" style="padding:0;margin-bottom:16px;">
+      <div class="card-header" style="padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <h2 style="margin:0;"><%= g.label %> <span class="muted" style="font-weight:400;font-size:14px;">(<%= g.rows.length %>)</span></h2>
+        <% if (sel && g.rows.length) { %>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span class="muted" id="bulkCount" style="font-size:12px;"></span>
+            <button class="btn" type="button" onclick="tkBulk('merge')">⤚ Merge selected</button>
+            <button class="btn" type="button" onclick="tkBulk('spam')" style="color:#9f1239;">⊘ Mark spam</button>
+            <button class="btn" type="button" onclick="tkBulk('delete')" style="color:var(--lumen-dark);">🗑 Delete selected</button>
+          </div>
+        <% } %>
+      </div>
+      <% if (!g.rows.length) { %>
+        <div style="padding:0 20px 16px;" class="muted">Nothing here. 🎉</div>
+      <% } else { %>
+        <div class="table-wrap tk-wrap"><table class="table ticket-table"><% thead(sel); %><tbody><% g.rows.forEach(function(t){ ticketRow(t, sel); }); %></tbody></table></div>
+      <% } %>
+    </div>
+  <% }); %>
+<% } else { %>
+  <div class="card" style="padding:0;">
+    <div class="table-wrap tk-wrap"><table class="table ticket-table sortable"><% thead(false); %>
+      <tbody>
+        <% if (!tickets.length) { %><tr><td colspan="8"><div class="empty-state">No tickets.</div></td></tr><% } %>
+        <% tickets.forEach(function(t){ ticketRow(t, false); }); %>
+      </tbody>
+    </table></div>
+  </div>
+<% } %>
+
+<script>
+  // Bulk actions on the New bucket — checkboxes drive delete / spam / merge.
+  function tkSelectAll(cb) {
+    document.querySelectorAll('.bulk-cb').forEach(function (b) { b.checked = cb.checked; });
+    tkBulkCount();
+  }
+  function tkBulkCount() {
+    var n = document.querySelectorAll('.bulk-cb:checked').length;
+    var el = document.getElementById('bulkCount');
+    if (el) el.textContent = n ? n + ' selected' : '';
+  }
+  document.addEventListener('change', function (e) { if (e.target && e.target.classList && e.target.classList.contains('bulk-cb')) tkBulkCount(); });
+  function tkBulk(action) {
+    var boxes = document.querySelectorAll('.bulk-cb:checked');
+    if (!boxes.length) { alert('Select at least one ticket first.'); return; }
+    var n = boxes.length;
+    if (action === 'merge' && n < 2) { alert('Select at least two tickets to merge.'); return; }
+    var msg = action === 'delete' ? 'Move ' + n + ' ticket(s) to the recycle bin?'
+            : action === 'spam' ? 'Mark ' + n + ' ticket(s) as spam and block their senders?'
+            : 'Merge ' + n + ' tickets into the oldest selected? The rest will be closed.';
+    if (!confirm(msg)) return;
+    var f = document.createElement('form');
+    f.method = 'post';
+    f.action = '/tickets/bulk-' + action;
+    boxes.forEach(function (b) { var i = document.createElement('input'); i.type = 'hidden'; i.name = 'ids'; i.value = b.value; f.appendChild(i); });
+    var r = document.createElement('input'); r.type = 'hidden'; r.name = 'return'; r.value = '<%= currentUrl %>'; f.appendChild(r);
+    document.body.appendChild(f); f.submit();
+  }
+</script>
+
+<script>
+  // Resizable, per-user-persistent columns. Widths are saved in this browser keyed by
+  // the signed-in user, and re-applied to every board table (helpdesk groups + flat list).
+  (function () {
+    var UID = '<%= user.id %>';
+    var KEY = 'tkCols:' + UID;
+    // Column keys in header order. Every divider is draggable: a drag grows one column
+    // and shrinks its right-hand neighbour by the same amount, so the row total stays
+    // constant and the board keeps fitting the screen.
+    var KEYS = ['c-ticket', 'c-subject', 'c-customer', 'c-requester', 'c-status', 'c-assigned', 'c-created', 'c-updated'];
+    var MIN = 48;
+
+    function load() { try { return JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { return {}; } }
+    function save(w) { try { localStorage.setItem(KEY, JSON.stringify(w)); } catch (e) {} }
+    function setW(key, px) {
+      document.querySelectorAll('.ticket-table col.' + key).forEach(function (c) { c.style.width = px + 'px'; });
+    }
+    function applyAll(w) { KEYS.forEach(function (k) { if (k in w) setW(k, w[k]); }); }
+
+    var widths = load();
+    applyAll(widths);
+
+    // Pin every column to its current rendered pixel width (off the first board table).
+    // Keeps the table fixed so pair-resizing only moves the dragged boundary.
+    function pinAll() {
+      var firstCols = document.querySelectorAll('.ticket-table');
+      if (!firstCols.length) return;
+      var cols = firstCols[0].querySelectorAll('col');
+      KEYS.forEach(function (k, i) {
+        if (k in widths) return; // already an explicit saved width
+        var px = cols[i] ? Math.round(cols[i].getBoundingClientRect().width) : MIN;
+        widths[k] = Math.max(MIN, px);
+      });
+      applyAll(widths);
+    }
+
+    var drag = null;
+    function onMove(e) {
+      if (!drag) return;
+      var x = (e.touches ? e.touches[0].clientX : e.clientX);
+      var delta = x - drag.x;
+      // Clamp so neither the left nor right neighbour drops below MIN.
+      if (drag.leftStart + delta < MIN) delta = MIN - drag.leftStart;
+      if (drag.rightStart - delta < MIN) delta = drag.rightStart - MIN;
+      widths[drag.leftKey] = Math.round(drag.leftStart + delta);
+      widths[drag.rightKey] = Math.round(drag.rightStart - delta);
+      setW(drag.leftKey, widths[drag.leftKey]);
+      setW(drag.rightKey, widths[drag.rightKey]);
+      if (e.cancelable) e.preventDefault();
+    }
+    function onUp() {
+      if (!drag) return;
+      drag = null;
+      document.body.classList.remove('col-resizing');
+      save(widths);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onUp);
+
+    // Add a drag handle to every divider — i.e. the right edge of every column except the
+    // last (its right edge isn't between two columns).
+    document.querySelectorAll('.ticket-table > thead > tr').forEach(function (tr) {
+      Array.prototype.forEach.call(tr.children, function (th, i) {
+        var leftKey = KEYS[i], rightKey = KEYS[i + 1];
+        if (!leftKey || !rightKey) return; // skip the last column
+        var h = document.createElement('div');
+        h.className = 'col-resizer';
+        h.addEventListener('mousedown', startDrag);
+        h.addEventListener('touchstart', startDrag, { passive: false });
+        function startDrag(e) {
+          pinAll();
+          drag = {
+            leftKey: leftKey, rightKey: rightKey,
+            x: (e.touches ? e.touches[0].clientX : e.clientX),
+            leftStart: widths[leftKey], rightStart: widths[rightKey],
+          };
+          document.body.classList.add('col-resizing');
+          if (e.cancelable) e.preventDefault();
+          e.stopPropagation();
+        }
+        th.appendChild(h);
+      });
+    });
+
+    var reset = document.getElementById('colReset');
+    if (reset) reset.addEventListener('click', function () {
+      try { localStorage.removeItem(KEY); } catch (e) {}
+      location.reload();
+    });
+  })();
+</script>
+
+<script>
+  // Auto-refresh the support board every 60s with a visible countdown. Pauses (and resets) while
+  // you're typing, have text selected, have tickets checked, or the tab's in the background — so it
+  // never interrupts active use. Click the pill to refresh now.
+  (function(){
+    var SECS = 60, left = SECS;
+    var el = document.createElement('div');
+    el.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:900;background:#0f172a;color:#cbd5e1;'
+      + 'font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;box-shadow:0 4px 12px rgba(2,6,23,.25);'
+      + 'opacity:.85;cursor:pointer;user-select:none;';
+    el.title = 'Auto-refreshing the board — click to refresh now';
+    el.addEventListener('click', function(){ el.textContent = '↻ refreshing…'; location.reload(); });
+    document.body.appendChild(el);
+    function paused(){
+      if (document.hidden) return true;
+      var a = document.activeElement;
+      if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+      if (window.getSelection && String(window.getSelection())) return true;
+      if (document.querySelector('.bulk-cb:checked')) return true; // don't wipe a selection mid-action
+      return false;
+    }
+    el.textContent = '↻ ' + left + 's';
+    setInterval(function(){
+      if (paused()) { el.textContent = '↻ paused'; left = SECS; return; }
+      left -= 1;
+      if (left <= 0) { el.textContent = '↻ refreshing…'; location.reload(); return; }
+      el.textContent = '↻ ' + left + 's';
+    }, 1000);
+  })();
+</script>
+
+<%- include('../partials/footer') %>
