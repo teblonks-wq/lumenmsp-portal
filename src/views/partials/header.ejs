@@ -151,7 +151,26 @@
     <div id="notifDropdown" style="display:none;position:absolute;top:42px;left:50%;transform:translateX(-50%);width:400px;max-width:92vw;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.14);z-index:60;max-height:64vh;overflow:auto;"></div>
   </div>
   <button id="installApp" type="button" class="btn btn-primary" title="Install the Portal as an app on this computer" style="display:none;position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:13px;padding:5px 12px;gap:6px;align-items:center;">⬇ Install app</button>
+  <div id="portalClock" title="Portal time — the server clock the Portal works from (Europe/London)" style="position:absolute;left:16px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:8px;background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;border-radius:8px;padding:4px 12px;white-space:nowrap;">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    <span id="portalClockDate" style="font-size:12px;"></span>
+    <span id="portalClockTime" style="font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;"></span>
+  </div>
 </div>
+<script>
+// Portal clock — shows the time the PORTAL is working from (server clock, Europe/London),
+// not the browser's own clock. Seeded from the server at render; ticks locally using the
+// offset, so any drift between the server and the user's machine stays visible.
+(function(){
+  var t=document.getElementById('portalClockTime'), d=document.getElementById('portalClockDate');
+  if(!t) return;
+  var offset = <%= Date.now() %> - Date.now();
+  var tf = new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  var df = new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',weekday:'short',day:'numeric',month:'short'});
+  function tick(){ var now=new Date(Date.now()+offset); t.textContent=tf.format(now); d.textContent=df.format(now); }
+  tick(); setInterval(tick, 1000);
+})();
+</script>
 <script>
 (function(){
   var bell=document.getElementById('notifBell'), dd=document.getElementById('notifDropdown'),
