@@ -20,14 +20,29 @@ const statusColour = s => ({
 
 const total = stats ? stats.total : 0;
 
+// Data freshness. Call data is a cached copy of Tollring, refreshed by the sync job every
+// 10 minutes; admins get an "Update now" button to pull the newest calls on demand.
+const lastSyncTxt = lastSynced
+  ? new Date(lastSynced).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
+  : null;
+// Where "Update now" returns to, so the admin lands back on this exact search.
+const returnUrl = `/insights/number?customer=${cid}${number ? '&q=' + encodeURIComponent(number) : ''}`;
+
+// Everything below is built as a template literal, so nothing is auto-escaped by EJS.
+// `number`, `notice` and `qerr` all come off the query string — escape them.
+const esc = v => String(v == null ? '' : v)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 // Customer dropdown for the search bar.
-const customerOptions = customers.map(c => `<option value="${c.id}" ${cid === c.id ? 'selected' : ''}>${c.name}</option>`).join('');
+const customerOptions = customers.map(c => `<option value="${c.id}" ${cid === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
 %>
 <%- include('_layout', { title: number ? `Number: ${number}` : 'Number Lookup', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
 <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
   <div>
-    <h1 style="font-family:monospace;letter-spacing:1px;">${number || 'Number Lookup'}</h1>
+    <h1 style="font-family:monospace;letter-spacing:1px;">${esc(number) || 'Number Lookup'}</h1>
     <div style="font-size:12px;color:var(--muted);margin-top:4px;">${number ? `Showing the last 4 weeks · ${fmtD(fromDate)} – ${fmtD(toDate)}` : 'Search a number across the last 4 weeks of cached call data.'}</div>
+    ${cid ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;">Call data updates every 10 minutes${lastSyncTxt ? ` · last updated ${lastSyncTxt}` : ' · never synced'}</div>` : ''}
   </div>
   <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
     <form method="GET" action="/insights/number" style="display:flex;gap:6px;align-items:flex-end;margin:0;">
@@ -40,16 +55,23 @@ const customerOptions = customers.map(c => `<option value="${c.id}" ${cid === c.
       </div>
       <div>
         <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Number</label>
-        <input type="text" name="q" id="np-number" value="${number}" list="numList" class="input" style="padding:7px 10px;font-size:13px;font-family:monospace;min-width:160px;" autocomplete="off">
+        <input type="text" name="q" id="np-number" value="${esc(number)}" list="numList" class="input" style="padding:7px 10px;font-size:13px;font-family:monospace;min-width:160px;" autocomplete="off">
         <datalist id="numList"></datalist>
       </div>
       <button type="submit" class="btn-primary" style="padding:7px 14px;font-size:13px;">Search</button>
     </form>
     ${number ? '<button onclick="window.print()" class="btn-secondary" style="padding:7px 14px;font-size:13px;">&#128438; PDF</button>' : ''}
+    ${isAdmin && cid ? `
+    <form method="POST" action="/insights/customer/${cid}/sync-now" style="margin:0;" onsubmit="var b=this.querySelector('button');setTimeout(function(){b.disabled=true;b.textContent='Updating...';},0);">
+      <input type="hidden" name="return_to" value="${esc(returnUrl)}">
+      <button type="submit" class="btn-secondary" style="padding:7px 14px;font-size:13px;" title="Pull this customer's newest calls from Tollring right now, instead of waiting for the next 10-minute sync">&#8635; Update now</button>
+    </form>` : ''}
   </div>
 </div>
 
-${error ? `<div class="alert alert-error">${error}</div>` : ''}
+${notice ? `<div class="alert alert-success">${esc(notice)}</div>` : ''}
+${qerr ? `<div class="alert alert-error">${esc(qerr)}</div>` : ''}
+${error ? `<div class="alert alert-error">${esc(error)}</div>` : ''}
 
 ${!isConnected ? `
 <div class="card"><div class="card-header"><h2>Insights database not connected</h2></div>

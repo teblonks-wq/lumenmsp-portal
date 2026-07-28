@@ -278,6 +278,6 @@ async function syncAllCustomers(): Promise<void> {
 
 export function startTollringSync(): void {
   if (!insightsPool) { console.log('• Tollring sync not started (INSIGHTS_DATABASE_URL not set)'); return; }
-  cron.schedule('0 * * * *', syncAllCustomers);
-  console.log('✓ Tollring sync scheduler started (hourly)');
+  cron.schedule('*/10 * * * *', syncAllCustomers);
+  console.log('✓ Tollring sync scheduler started (every 10 minutes)');
 }

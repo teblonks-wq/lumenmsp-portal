@@ -31,6 +31,7 @@ import mobileRoutes from './routes/mobile';
 import myRoutes, { ensureCustomerPortalColumn } from './routes/my';
 import credentialRoutes from './routes/credentials';
 import ateraRoutes from './routes/atera';
+import assetRoutes from './routes/assets';
 import webhookRoutes from './routes/webhooks';
 import insightsRoutes from './routes/insights';
 import itReportRoutes from './routes/it-report';
@@ -294,6 +295,7 @@ app.use('/', mobileRoutes);
 app.use('/', myRoutes);           // customer portal (/my) — requireCustomer-guarded inside
 app.use('/', credentialRoutes);
 app.use('/', ateraRoutes);
+app.use('/', assetRoutes);
 app.use('/', reviewRoutes);
 app.use('/', insightsRoutes);
 app.use('/', itReportRoutes);     // Monthly IT Operations & Security Snapshot (staff)
@@ -355,7 +357,7 @@ server.listen(config.PORT, () => {
   // invoice with a gocardless_payment_id (GC's payout sync owns those). Division of authority
   // decided 2026-07-09 after QB's stale balances kept overwriting GC-confirmed payments.
   startRecurringBilling();
-  startTollringSync();      // Insights: hourly Tollring call sync → call_events
+  startTollringSync();      // Insights: Tollring call sync every 10 min → call_events
   startReportScheduler();   // Insights: per-minute due-report generate + email
   ensureSiteLogicColumn().catch((e) => console.error('ensureSiteLogicColumn failed:', e.message)); // Insights: lift call logic to the site level + backfill
   ensureReportPoolTables().catch((e) => console.error('ensureReportPoolTables failed:', e.message)); // Insights: report pool (templates) + per-site schedules

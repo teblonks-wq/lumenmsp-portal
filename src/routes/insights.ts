@@ -236,15 +236,22 @@ router.get('/insights/number-search', requireAuth, async (req: Request, res: Res
 // Number lookup — the page. Pick a customer + number → call journeys (cached, last 28 days).
 router.get('/insights/number', requireAuth, async (req: Request, res: Response) => {
   const user = req.session.user!;
-  const base: any = { user, connected: !!insightsPool, customers: [], cid: 0, number: '', journeys: [], stats: null, error: null, fromDate: '', toDate: '' };
+  const base: any = {
+    user, connected: !!insightsPool, customers: [], cid: 0, number: '', journeys: [], stats: null,
+    error: null, fromDate: '', toDate: '',
+    // Admin-only "Update now" button + freshness line (see the Tollring sync, which runs every 10 min).
+    isAdmin: user.role === 'admin', lastSynced: null,
+    notice: req.query.msg || null, qerr: req.query.err || null,
+  };
   if (!insightsPool) { res.render('insights/number', base); return; }
   try {
-    base.customers = (await insightsPool.query('SELECT id, name FROM customers WHERE is_active=true ORDER BY name')).rows;
+    base.customers = (await insightsPool.query('SELECT id, name, last_synced_at FROM customers WHERE is_active=true ORDER BY name')).rows;
   } catch (e: any) { base.error = e.message; res.render('insights/number', base); return; }
 
   const cid = parseInt(String(req.query.customer || ''), 10) || 0;
   const number = String(req.query.q || '').trim();
   base.cid = cid; base.number = number;
+  base.lastSynced = cid ? (base.customers.find((c: any) => c.id === cid)?.last_synced_at ?? null) : null;
   if (!cid || number.length < 3) { res.render('insights/number', base); return; }
 
   const from = new Date(Date.now() - 28 * 86400000).toISOString().slice(0, 10);
@@ -607,13 +614,19 @@ router.post('/insights/site/:id', requireAuth, requireAdmin, async (req: Request
 
 // Manual Tollring sync for one Insights customer.
 router.post('/insights/customer/:id/sync-now', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  if (!insightsPool) { res.redirect('/insights?err=' + encodeURIComponent('Insights DB not connected')); return; }
+  // Optional `return_to` so the same button can be used from Number Lookup and land you back
+  // on your search. Only same-site relative paths are honoured — never trust it for a redirect
+  // to another host (open-redirect), and never accept a protocol-relative `//evil.com`.
+  const rawBack = String((req.body && req.body.return_to) || '');
+  const back = (/^\/[A-Za-z0-9/_\-?=&.%+]*$/.test(rawBack) && !rawBack.startsWith('//')) ? rawBack : '/insights';
+  const sep = back.includes('?') ? '&' : '?';
+  if (!insightsPool) { res.redirect(back + sep + 'err=' + encodeURIComponent('Insights DB not connected')); return; }
   const id = parseInt(String(req.params.id), 10);
   try {
     const { syncCustomer } = await import('../lib/insights/tollring-sync');
     const result = await syncCustomer(id);
-    res.redirect(`/insights?msg=` + encodeURIComponent(`Sync done: +${result.eventsAdded} events (${result.fetched} fetched, ${result.rawAdded} raw)`));
-  } catch (e: any) { res.redirect(`/insights?err=` + encodeURIComponent('Sync failed: ' + (e.message || '').slice(0, 100))); }
+    res.redirect(back + sep + 'msg=' + encodeURIComponent(`Sync done: +${result.eventsAdded} events (${result.fetched} fetched, ${result.rawAdded} raw)`));
+  } catch (e: any) { res.redirect(back + sep + 'err=' + encodeURIComponent('Sync failed: ' + (e.message || '').slice(0, 100))); }
 });
 
 // Save a customer's iCalls/Tollring credentials + internal flag. Redirects back to the portal
@@ -763,7 +776,7 @@ router.post('/insights/site/:id/delete', requireAuth, requireAdmin, async (req: 
   }
 });
 
-// CSV import — REMOVED (2026-07-07). Ingestion is Tollring-API-only (hourly sync +
+// CSV import — REMOVED (2026-07-07). Ingestion is Tollring-API-only (10-minute sync +
 // per-customer Sync now). Removed both to simplify and because the CSV event_hash had
 // no customer ID (cross-customer dedupe collision risk — a second company's identical
 // row was silently dropped and stayed attributed to the first). Legacy CSV rows already
