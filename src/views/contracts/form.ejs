@@ -9,6 +9,7 @@
 </div>
 
 <% if (error) { %><div class="alert alert-error" style="max-width:900px;"><%= error %></div><% } %>
+<% if (typeof msg !== 'undefined' && msg) { %><div class="alert alert-success" style="max-width:900px;"><%= msg %></div><% } %>
 
 <form method="post" action="<%= isEdit ? '/contracts/' + contract.id : '/contracts' %>">
   <div class="card">

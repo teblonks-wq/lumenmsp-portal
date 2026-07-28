@@ -689,6 +689,12 @@
   <div class="card" style="padding:0;">
     <div class="card-header" style="padding:20px 24px 0;display:flex;justify-content:space-between;align-items:center;">
       <h2>Contracts <span class="muted">(<%= contracts.length %>)</span></h2>
+      <form method="post" action="/contracts/from-billing" style="margin:0;display:inline;"
+            onsubmit="return confirm('Draft a contract from this customer\'s recurring monthly bill?\n\nIt lands as a draft for you to check before anything is sent.');">
+        <input type="hidden" name="customer_id" value="<%= customer.id %>">
+        <input type="hidden" name="back" value="/customers/<%= customer.id %>#contracts">
+        <button class="btn" type="submit">Build from monthly bill</button>
+      </form>
       <a class="btn btn-primary" href="/contracts/new?customer=<%= customer.id %>">+ New contract</a>
     </div>
     <div class="table-wrap">

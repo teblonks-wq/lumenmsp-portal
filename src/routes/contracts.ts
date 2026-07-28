@@ -7,7 +7,7 @@ import { logActivity } from '../lib/activity';
 import { buildContractDoc } from '../lib/contract-doc';
 import { SUPPLIER } from '../lib/contract-template';
 import { htmlToPdf } from '../lib/pdf';
-import { pushContractToTemplate } from '../lib/contract-billing';
+import { buildContractFromBilling, pushContractToTemplate } from '../lib/contract-billing';
 import { dueRenewals } from '../lib/contract-renewals';
 import { clientIp, documentFooterHtml, PDF_OPTS, renderContractHtml, snapshotContract, typedSignatureSvg } from '../lib/contract-sign';
 import { SUPPLIER as SUP } from '../lib/contract-template';
@@ -106,7 +106,8 @@ router.get('/contracts', requireAuth, async (req: Request, res: Response) => {
 router.get('/contracts/new', requireAuth, async (req: Request, res: Response) => {
   const customers = await pool.query(`SELECT id, name FROM customers WHERE deleted_at IS NULL AND is_placeholder=false ORDER BY name`);
   const preselectCustomer = req.query.customer ? parseInt(String(req.query.customer), 10) : null;
-  res.render('contracts/form', { user: req.session.user!, contract: null, lines: [], customers: customers.rows, preselectCustomer, error: null });
+  res.render('contracts/form', { user: req.session.user!, contract: null, lines: [], customers: customers.rows,
+    preselectCustomer, error: null, msg: null });
 });
 
 // ── Create ──────────────────────────────────────────────────────────────────────
@@ -177,7 +178,10 @@ router.get('/contracts/:id/edit', requireAuth, async (req: Request, res: Respons
     pool.query('SELECT * FROM contract_lines WHERE contract_id=$1 ORDER BY sort_order, id', [id]),
     pool.query(`SELECT id, name FROM customers WHERE deleted_at IS NULL AND is_placeholder=false ORDER BY name`),
   ]);
-  res.render('contracts/form', { user: req.session.user!, contract: r.rows[0], lines: lines.rows, customers: customers.rows, preselectCustomer: null, error: null });
+  res.render('contracts/form', { user: req.session.user!, contract: r.rows[0], lines: lines.rows,
+    customers: customers.rows, preselectCustomer: null,
+    error: req.query.err ? String(req.query.err) : null,
+    msg: req.query.msg ? String(req.query.msg) : null });
 });
 
 // ── Update ──────────────────────────────────────────────────────────────────────
@@ -223,6 +227,32 @@ router.post('/contracts/:id/delete', requireAuth, async (req: Request, res: Resp
   await pool.query('UPDATE contracts SET deleted_at=NOW(), deleted_by_user_id=$1 WHERE id=$2', [user.id, id]);
   await logActivity(user.id, 'deleted', 'contracts', id, 'Deleted contract #' + id);
   res.redirect('/contracts');
+});
+
+// ── Draft a contract from what the customer is already billed ──────────────────
+// The fast path onto contracts for existing customers: their recurring bill already IS the
+// commercial truth, so it is pulled in wholesale rather than retyped. Lands as a DRAFT so
+// nothing reaches a customer without being looked at.
+router.post('/contracts/from-billing', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const customerId = parseInt(String(req.body.customer_id), 10);
+  const back = String(req.body.back || '') || '/contracts';
+  if (!customerId) { res.redirect(back + '?err=' + encodeURIComponent('Choose a customer first.')); return; }
+  try {
+    const r = await buildContractFromBilling(customerId, user.id, nextContractNumber);
+    if (!r.contractId) {
+      res.redirect(back + (back.includes('?') ? '&' : '?') + 'err=' + encodeURIComponent(r.reason || 'Could not build a contract.'));
+      return;
+    }
+    await logActivity(user.id, 'created', 'contracts', r.contractId,
+      'Drafted contract from the monthly bill (' + r.lines + ' lines)');
+    res.redirect('/contracts/' + r.contractId + '/edit?msg=' +
+      encodeURIComponent(r.lines + ' service(s) pulled in — £' + r.monthly.toFixed(2) +
+        '/month. Check the sections, quantities and term, then save.'));
+  } catch (e) {
+    console.error('[contract-from-billing] failed:', e);
+    res.redirect(back + (back.includes('?') ? '&' : '?') + 'err=' + encodeURIComponent('Could not build the contract from billing.'));
+  }
 });
 
 // ── Push contract lines onto the customer's recurring billing template ─────────
