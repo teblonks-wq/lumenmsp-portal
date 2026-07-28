@@ -16,6 +16,10 @@
     <p class="muted" style="margin:4px 0 0;"><%= contract.title %><% if (contract.customer_name) { %> · <a class="row-link" href="/customers/<%= contract.customer_id %>"><%= contract.customer_name %></a><% } %></p>
   </div>
   <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+    <form method="post" action="/contracts/<%= contract.id %>/push-billing" style="margin:0;"
+          onsubmit="return confirm('Update this customer\'s recurring billing template from the contract lines?\n\nLines that came from this contract are updated in place; manual and Giacom lines are left alone.');">
+      <button class="btn" type="submit">Send to billing</button>
+    </form>
     <a class="btn" href="/contracts/<%= contract.id %>/document" target="_blank">Preview agreement</a>
     <a class="btn" href="/contracts/<%= contract.id %>/document.pdf" target="_blank">PDF</a>
     <a class="btn" href="/contracts/<%= contract.id %>/edit">Edit</a>
@@ -26,6 +30,9 @@
     <form method="post" action="/contracts/<%= contract.id %>/delete" onsubmit="return confirm('Move this contract to the recycle bin?');" style="margin:0;"><button class="btn" type="submit" style="color:var(--lumen-dark);">Delete</button></form>
   </div>
 </div>
+
+<% if (typeof msg !== 'undefined' && msg) { %><div class="alert alert-success" style="margin-bottom:14px;"><%= msg %></div><% } %>
+<% if (typeof err !== 'undefined' && err) { %><div class="alert alert-error" style="margin-bottom:14px;"><%= err %></div><% } %>
 
 <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
   <div class="card"><div class="card-header"><h2>Service</h2></div><div><%= contract.service_type %></div></div>
@@ -39,11 +46,11 @@
   <div class="card-header" style="padding:20px 24px 0;"><h2>Contract lines</h2></div>
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit</th><th>Billing</th><th style="text-align:right;">Line total</th></tr></thead>
+      <thead><tr><th>Description</th><th>Section</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit</th><th>Billing</th><th style="text-align:right;">Line total</th></tr></thead>
       <tbody>
         <% if (lines.length===0) { %><tr><td colspan="5"><div class="empty-state">No lines.</div></td></tr><% } %>
         <% lines.forEach(function(l){ %>
-          <tr><td><%= l.description %></td><td style="text-align:right;"><%= Number(l.quantity) %></td><td style="text-align:right;"><%= money(l.unit_price) %></td><td class="muted"><%= l.billing_frequency.replace('_',' ') %></td><td style="text-align:right;"><%= money(l.line_total) %></td></tr>
+          <tr><td><%= l.description %></td><td class="muted"><%= l.section || 'IT' %></td><td style="text-align:right;"><%= Number(l.quantity) %></td><td style="text-align:right;"><%= money(l.unit_price) %></td><td class="muted"><%= l.billing_frequency.replace('_',' ') %></td><td style="text-align:right;"><%= money(l.line_total) %></td></tr>
         <% }); %>
       </tbody>
     </table>

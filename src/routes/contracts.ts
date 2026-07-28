@@ -5,12 +5,14 @@ import { logActivity } from '../lib/activity';
 import { buildContractDoc } from '../lib/contract-doc';
 import { SUPPLIER } from '../lib/contract-template';
 import { htmlToPdf } from '../lib/pdf';
+import { pushContractToTemplate } from '../lib/contract-billing';
 
 const router = Router();
 const STATUSES = ['draft', 'active', 'expired', 'cancelled'];
 const SERVICE_TYPES = ['IT', 'Cloud', 'Comms', 'Hardware'];
 const PAY_METHODS = ['upfront', 'delivery', 'direct_debit'];
 const FREQS = ['monthly', 'annual', 'one_off'];
+const SECTIONS = ['IT', 'Cloud', 'Backup', 'Comms', 'Hardware'];
 
 const nz = (v: any): string | null => { const s = (v ?? '').toString().trim(); return s !== '' ? s : null; };
 const num = (v: any): number => { const x = parseFloat((v ?? '').toString()); return isNaN(x) ? 0 : x; };
@@ -29,6 +31,7 @@ async function saveLines(client: any, contractId: number, body: any): Promise<vo
   const price = asArray(body['price']);
   const freq = asArray(body['freq']);
   const prodId = asArray(body['product_id']);
+  const sect = asArray(body['section']);
   await client.query('DELETE FROM contract_lines WHERE contract_id = $1', [contractId]);
   let sort = 1;
   for (let i = 0; i < desc.length; i++) {
@@ -37,10 +40,11 @@ async function saveLines(client: any, contractId: number, body: any): Promise<vo
     const q = num(qty[i]) || 1, p = num(price[i]);
     const f = FREQS.includes(freq[i]) ? freq[i] : 'monthly';
     const pid = prodId[i] ? (parseInt(prodId[i], 10) || null) : null;
+    const sec = SECTIONS.includes(sect[i]) ? sect[i] : 'IT';
     await client.query(
-      `INSERT INTO contract_lines (contract_id, product_id, description, quantity, unit_price, billing_frequency, line_total, sort_order)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [contractId, pid, d, q, p, f, q * p, sort++]
+      `INSERT INTO contract_lines (contract_id, product_id, description, quantity, unit_price, billing_frequency, section, line_total, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [contractId, pid, d, q, p, f, sec, q * p, sort++]
     );
   }
 }
@@ -119,7 +123,12 @@ router.get('/contracts/:id', requireAuth, async (req: Request, res: Response) =>
   const lines = await pool.query('SELECT * FROM contract_lines WHERE contract_id=$1 ORDER BY sort_order, id', [id]);
   // Optional same-site return path (e.g. the customer screen's Contracts tab).
   const backQ = String(req.query.back || '');
-  res.render('contracts/detail', { user, contract: r.rows[0], lines: lines.rows, back: /^\/(?!\/)/.test(backQ) ? backQ : null });
+  res.render('contracts/detail', {
+    user, contract: r.rows[0], lines: lines.rows,
+    back: /^\/(?!\/)/.test(backQ) ? backQ : null,
+    msg: req.query.msg ? String(req.query.msg) : null,
+    err: req.query.err ? String(req.query.err) : null,
+  });
 });
 
 // ── Edit ──────────────────────────────────────────────────────────────────────
@@ -173,6 +182,29 @@ router.post('/contracts/:id/delete', requireAuth, async (req: Request, res: Resp
   await pool.query('UPDATE contracts SET deleted_at=NOW(), deleted_by_user_id=$1 WHERE id=$2', [user.id, id]);
   await logActivity(user.id, 'deleted', 'contracts', id, 'Deleted contract #' + id);
   res.redirect('/contracts');
+});
+
+// ── Push contract lines onto the customer's recurring billing template ─────────
+// Services are entered once, on the contract, and flow to billing from there. Deliberately an
+// explicit action rather than a side effect of saving: this writes to a live recurring invoice
+// template, so it should happen when someone means it, not on every draft edit.
+router.post('/contracts/:id/push-billing', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  try {
+    const r = await pushContractToTemplate(id);
+    if (r.reason) { res.redirect('/contracts/' + id + '?err=' + encodeURIComponent(r.reason)); return; }
+    const bits = [] as string[];
+    if (r.added) bits.push(r.added + ' added');
+    if (r.updated) bits.push(r.updated + ' updated');
+    if (r.removed) bits.push(r.removed + ' removed');
+    await logActivity(user.id, 'updated', 'contracts', id, 'Pushed contract lines to billing template');
+    res.redirect('/contracts/' + id + '?msg=' + encodeURIComponent(
+      bits.length ? 'Billing template updated — ' + bits.join(', ') + '.' : 'Billing template already up to date.'));
+  } catch (e) {
+    console.error('[contract-billing] push failed:', e);
+    res.redirect('/contracts/' + id + '?err=' + encodeURIComponent('Could not update the billing template.'));
+  }
 });
 
 // ── Generated agreement document ───────────────────────────────────────────────

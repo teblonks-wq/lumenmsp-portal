@@ -881,11 +881,16 @@ model InvoiceItem {
   syncRef     String?  @map("sync_ref")                     // Giacom match key (product_reference|unit_cost)
   syncDrift   String?  @map("sync_drift")                   // note when a locked override differs from current Giacom
   lastSyncedAt DateTime? @map("last_synced_at")
+  // ── Contract sync (source='contract') ──
+  // Links a template line back to the contract line it came from, so pushing a contract to
+  // billing updates the same rows instead of appending duplicates every time.
+  contractLineId Int?   @map("contract_line_id")
   createdAt   DateTime @default(now()) @map("created_at")
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId])
+  @@index([contractLineId])
   @@map("invoice_items")
 }
 

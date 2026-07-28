@@ -32,12 +32,13 @@
     <div class="card-header" style="padding:20px 24px 0;"><h2>Contract lines</h2></div>
     <div class="table-wrap">
       <table class="table" id="itemsTable">
-        <thead><tr><th style="min-width:240px;">Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit £</th><th>Billing</th><th style="text-align:right;">Line £</th><th></th></tr></thead>
+        <thead><tr><th style="min-width:230px;">Service</th><th style="width:120px;">Section</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit £</th><th>Billing</th><th style="text-align:right;">Line £</th><th></th></tr></thead>
         <tbody id="itemsBody">
           <% var rows = (lines && lines.length) ? lines : [{}]; %>
           <% rows.forEach(function(l){ %>
             <tr class="item-row">
-              <td><input type="hidden" name="product_id[]" class="prod-id" value="<%= l.product_id || '' %>"><input class="input" name="desc[]" value="<%= l.description || '' %>" style="width:100%;"></td>
+              <td><input type="hidden" name="product_id[]" class="prod-id" value="<%= l.product_id || '' %>"><input class="input prod-search" name="desc[]" list="catList" placeholder="Search the service list, or type a description…" value="<%= l.description || '' %>" style="width:100%;" autocomplete="off"></td>
+              <td><select class="input sect" name="section[]"><% ['IT','Cloud','Backup','Comms','Hardware'].forEach(function(sc){ %><option value="<%= sc %>" <%= (l.section||'IT')===sc?'selected':'' %>><%= sc %></option><% }); %></select></td>
               <td><input class="input num-qty" name="qty[]" type="number" step="0.01" value="<%= l.quantity!=null ? Number(l.quantity) : 1 %>" style="width:80px;text-align:right;"></td>
               <td><input class="input num-price" name="price[]" type="number" step="0.01" value="<%= l.unit_price!=null ? Number(l.unit_price) : '' %>" style="width:100px;text-align:right;"></td>
               <td><select class="input freq" name="freq[]"><% ['monthly','annual','one_off'].forEach(function(f){ %><option value="<%= f %>" <%= l.billing_frequency===f?'selected':'' %>><%= f.replace('_',' ') %></option><% }); %></select></td>
@@ -51,9 +52,9 @@
     <div style="padding:12px 24px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <button type="button" class="btn" id="addRow">+ Add line</button>
-        <input class="input" id="catSearch" list="catList" placeholder="Add from catalogue…" style="min-width:220px;">
+        <input class="input" id="catSearch" list="catList" placeholder="Add from the service list…" style="min-width:230px;">
         <datalist id="catList"></datalist>
-        <button type="button" class="btn" id="addFromCat">+ From catalogue</button>
+        <button type="button" class="btn" id="addFromCat">+ From service list</button>
       </div>
       <div style="text-align:right;font-size:14px;">
         <div class="muted">Monthly: <span id="sumMonthly">£0.00</span> · Annual: <span id="sumAnnual">£0.00</span> · One-off: <span id="sumOneOff">£0.00</span></div>
@@ -92,6 +93,7 @@
     function addRow(){
       var clone = body.querySelector('.item-row').cloneNode(true);
       clone.querySelectorAll('input').forEach(function(i){ if (i.classList.contains('num-qty')) i.value = 1; else i.value = ''; });
+      var sc = clone.querySelector('.sect'); if (sc) sc.value = 'IT';
       body.appendChild(clone);
       return clone;
     }
@@ -110,6 +112,27 @@
       catalogue = rows; var dl = document.getElementById('catList');
       rows.forEach(function(p){ var o = document.createElement('option'); o.value = p.name; dl.appendChild(o); });
     }).catch(function(){});
+    // Per-row picker: choosing a service from the list fills in its price and links the
+    // catalogue product, so the price is not retyped (and reporting stays joined up).
+    function guessSection(p){
+      var t = ((p.item_type||'') + ' ' + (p.name||'') + ' ' + (p.description||'')).toLowerCase();
+      if (/backup|acronis|veeam/.test(t)) return 'Backup';
+      if (/365|azure|licence|license|cloud|entra|sharepoint/.test(t)) return 'Cloud';
+      if (/voip|sip|call|mobile|broadband|line rental|comms/.test(t)) return 'Comms';
+      if (/laptop|desktop|server|hardware|switch|firewall|nas/.test(t)) return 'Hardware';
+      return 'IT';
+    }
+    body.addEventListener('input', function(e){
+      if (!e.target.classList.contains('prod-search')) return;
+      var row = e.target.closest('.item-row');
+      var p = catalogue.find(function(x){ return x.name === e.target.value; });
+      if (!p) { row.querySelector('.prod-id').value = ''; return; }
+      row.querySelector('.prod-id').value = p.id;
+      var price = row.querySelector('.num-price');
+      if (!price.value || parseFloat(price.value) === 0) price.value = Number(p.unit_price || 0).toFixed(2);
+      row.querySelector('.sect').value = guessSection(p);
+      recalc();
+    });
     document.getElementById('addFromCat').addEventListener('click', function(){
       var name = document.getElementById('catSearch').value.trim(); if (!name) return;
       var p = catalogue.find(function(x){ return x.name === name; }); if (!p) return;
@@ -117,6 +140,7 @@
       row.querySelector('[name="desc[]"]').value = p.description || p.name;
       row.querySelector('.prod-id').value = p.id;
       row.querySelector('.num-price').value = Number(p.unit_price) || 0;
+      row.querySelector('.sect').value = guessSection(p);
       document.getElementById('catSearch').value = '';
       recalc();
     });
