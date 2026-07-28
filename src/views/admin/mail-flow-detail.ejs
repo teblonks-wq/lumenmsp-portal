@@ -3,7 +3,7 @@
 <% var atts = []; try { atts = m.attachments ? JSON.parse(m.attachments) : []; } catch (e) {} %>
 
 <div class="page-header">
-  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin/mail-flow">← Mail flow</a></p>
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin/portal-flow?tab=mail">← Portal Flow</a></p>
   <h1 style="margin:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><%= m.subject || '(no subject)' %> <span class="badge <%= badge(m.status) %>"><%= m.status %></span></h1>
 </div>
 

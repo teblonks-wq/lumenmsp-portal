@@ -246,34 +246,104 @@ router.post('/admin/branding/status-emails', async (req: Request, res: Response)
   res.redirect('/admin/branding?saved=1');
 });
 
-// ── Mail flow (outbound email log) ──────────────────────────────────────────────
-router.get('/admin/mail-flow', async (req: Request, res: Response) => {
+// ── Portal Flow — every comms admin tool on one tabbed page ─────────────────────
+// Replaces the three separate cards (Mail flow / Comms log / Email delivery test).
+// Only the ACTIVE tab's data is queried, so switching tabs never pays for the others.
+// The old URLs still work — see the redirects below — because they are bookmarked and
+// linked from other pages (e.g. mail-flow-detail's back link).
+const PORTAL_FLOW_TABS = ['mail', 'comms', 'test'];
+
+router.get('/admin/portal-flow', async (req: Request, res: Response) => {
+  const tab = PORTAL_FLOW_TABS.includes(String(req.query.tab || '')) ? String(req.query.tab) : 'mail';
   const status = String(req.query.status || '').trim();
-  const params: any[] = [];
-  let where = '';
-  if (['sent', 'failed', 'not_sent'].includes(status)) { params.push(status); where = 'WHERE status=$1'; }
-  const { rows } = await pool.query(`SELECT * FROM email_log ${where} ORDER BY created_at DESC LIMIT 200`, params);
-  const counts = await pool.query(`SELECT status, COUNT(*)::int n FROM email_log WHERE created_at >= NOW() - INTERVAL '7 days' GROUP BY status`);
-  const summary: Record<string, number> = {};
-  counts.rows.forEach((r: any) => { summary[r.status] = r.n; });
-  let spam: any[] = [];
-  try {
-    spam = (await pool.query(
-      `SELECT s.*, u.display_name AS created_by_name FROM spam_senders s
-       LEFT JOIN users u ON u.id = s.created_by_id ORDER BY s.created_at DESC`
-    )).rows;
-  } catch { /* table may not exist before first db push */ }
-  // Inbound that the auto-mail/loop guard filed away without raising a ticket.
-  let suppressed: any[] = [];
-  try {
-    suppressed = (await pool.query(
-      `SELECT id, from_name, from_email, subject, suppression_reason, received_at
-         FROM inbox_messages
-        WHERE processing_status='suppressed' AND ticket_id IS NULL
-        ORDER BY received_at DESC LIMIT 100`
-    )).rows;
-  } catch { /* noop */ }
-  res.render('admin/mail-flow', { user: req.session.user!, items: rows, status, summary, spam, suppressed, saved: req.query.saved || null });
+  const q = String(req.query.q || '').trim();
+  const channel = String(req.query.channel || '').trim();
+  const direction = String(req.query.direction || '').trim();
+
+  // Defaults for every tab, so the view can reference any local without a guard.
+  const base: any = {
+    user: req.session.user!, tab, status, q, channel, direction,
+    items: [], summary: {}, spam: [], suppressed: [],
+    comms: [], commsSummary: [],
+    templates: [], graphOn: false, fromAddr: '',
+    saved: req.query.saved || null, notice: req.query.msg || null, error: req.query.err || null,
+  };
+
+  if (tab === 'mail') {
+    const conds: string[] = [];
+    const params: any[] = [];
+    if (['sent', 'failed', 'not_sent'].includes(status)) { params.push(status); conds.push(`status=$${params.length}`); }
+    // Server-side search: the table only ever shows the newest 200 rows, so a client-side
+    // filter would silently miss anything older — which is exactly when you go looking.
+    if (q) {
+      params.push('%' + q + '%');
+      const n = params.length;
+      conds.push(`(to_email ILIKE $${n} OR from_email ILIKE $${n} OR subject ILIKE $${n} OR error ILIKE $${n})`);
+    }
+    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+    base.items = (await pool.query(`SELECT * FROM email_log ${where} ORDER BY created_at DESC LIMIT 200`, params)).rows;
+    const counts = await pool.query(`SELECT status, COUNT(*)::int n FROM email_log WHERE created_at >= NOW() - INTERVAL '7 days' GROUP BY status`);
+    const summary: Record<string, number> = {};
+    counts.rows.forEach((r: any) => { summary[r.status] = r.n; });
+    base.summary = summary;
+    try {
+      base.spam = (await pool.query(
+        `SELECT s.*, u.display_name AS created_by_name FROM spam_senders s
+         LEFT JOIN users u ON u.id = s.created_by_id ORDER BY s.created_at DESC`
+      )).rows;
+    } catch { /* table may not exist before first db push */ }
+    // Inbound that the auto-mail/loop guard filed away without raising a ticket.
+    try {
+      base.suppressed = (await pool.query(
+        `SELECT id, from_name, from_email, subject, suppression_reason, received_at
+           FROM inbox_messages
+          WHERE processing_status='suppressed' AND ticket_id IS NULL
+          ORDER BY received_at DESC LIMIT 100`
+      )).rows;
+    } catch { /* noop */ }
+  } else if (tab === 'comms') {
+    const conds: string[] = [];
+    const params: any[] = [];
+    if (['whatsapp', 'teams'].includes(channel)) { params.push(channel); conds.push(`cl.channel=$${params.length}`); }
+    if (['inbound', 'outbound'].includes(direction)) { params.push(direction); conds.push(`cl.direction=$${params.length}`); }
+    if (q) {
+      params.push('%' + q + '%');
+      const n = params.length;
+      conds.push(`(cl.peer ILIKE $${n} OR cl.peer_name ILIKE $${n} OR cl.preview ILIKE $${n} OR cl.error ILIKE $${n})`);
+    }
+    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+    try {
+      base.comms = (await pool.query(
+        `SELECT cl.*, t.ticket_number FROM channel_log cl
+           LEFT JOIN inbox_tickets t ON t.id = cl.ticket_id
+         ${where} ORDER BY cl.created_at DESC LIMIT 300`, params
+      )).rows;
+    } catch { /* table may not exist before first db push */ }
+    try {
+      base.commsSummary = (await pool.query(
+        `SELECT channel, direction, status, COUNT(*)::int n FROM channel_log
+          WHERE created_at >= NOW() - INTERVAL '7 days' GROUP BY channel, direction, status`
+      )).rows;
+    } catch { /* noop */ }
+  } else {
+    base.templates = await buildTestTemplates();
+    base.graphOn = graphConfigured();
+    base.fromAddr = config.GRAPH_SEND_FROM || config.FROM_EMAIL;
+  }
+
+  res.render('admin/portal-flow', base);
+});
+
+// Old URLs kept alive — bookmarks, and the back link on the mail-flow detail page.
+router.get('/admin/mail-flow', (req: Request, res: Response) => {
+  const qs = new URLSearchParams(req.query as Record<string, string>);
+  qs.set('tab', 'mail');
+  res.redirect('/admin/portal-flow?' + qs.toString());
+});
+router.get('/admin/comms-log', (req: Request, res: Response) => {
+  const qs = new URLSearchParams(req.query as Record<string, string>);
+  qs.set('tab', 'comms');
+  res.redirect('/admin/portal-flow?' + qs.toString());
 });
 
 // Recover a suppressed inbound email → raise it as a proper support ticket.
@@ -281,7 +351,7 @@ router.post('/admin/mail-flow/suppressed/:id/raise', async (req: Request, res: R
   const user = req.session.user!;
   const id = parseInt(String(req.params.id), 10);
   const m = (await pool.query('SELECT * FROM inbox_messages WHERE id=$1 AND processing_status=\'suppressed\'', [id])).rows[0];
-  if (!m) { res.redirect('/admin/mail-flow?saved=norecover'); return; }
+  if (!m) { res.redirect('/admin/portal-flow?tab=mail&saved=norecover'); return; }
   const from = (m.from_email || '').toLowerCase().trim();
   // Match a customer/contact by the sender address.
   const contact = from ? (await pool.query('SELECT id, customer_id FROM customer_contacts WHERE email IS NOT NULL AND lower(email)=lower($1) LIMIT 1', [from])).rows[0] : null;
@@ -314,49 +384,24 @@ router.post('/admin/mail-flow/spam', async (req: Request, res: Response) => {
       [raw, kind, req.session.user!.id]
     );
   }
-  res.redirect('/admin/mail-flow?saved=blocked');
+  res.redirect('/admin/portal-flow?tab=mail&saved=blocked');
 });
 
 // Release — remove a sender/domain from the block list.
 router.post('/admin/mail-flow/spam/:id/release', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   await pool.query('DELETE FROM spam_senders WHERE id=$1', [id]);
-  res.redirect('/admin/mail-flow?saved=released');
+  res.redirect('/admin/portal-flow?tab=mail&saved=released');
 });
 
 router.get('/admin/mail-flow/:id', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const r = await pool.query('SELECT * FROM email_log WHERE id=$1', [id]);
-  if (!r.rows.length) { res.redirect('/admin/mail-flow'); return; }
+  if (!r.rows.length) { res.redirect('/admin/portal-flow?tab=mail'); return; }
   res.render('admin/mail-flow-detail', { user: req.session.user!, m: r.rows[0] });
 });
 
-// ── Comms Log (WhatsApp / Teams, inbound + outbound) ──────────────────────────────
-router.get('/admin/comms-log', async (req: Request, res: Response) => {
-  const channel = String(req.query.channel || '').trim();
-  const direction = String(req.query.direction || '').trim();
-  const conds: string[] = [];
-  const params: any[] = [];
-  if (['whatsapp', 'teams'].includes(channel)) { params.push(channel); conds.push(`channel=$${params.length}`); }
-  if (['inbound', 'outbound'].includes(direction)) { params.push(direction); conds.push(`direction=$${params.length}`); }
-  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
-  let items: any[] = [];
-  try {
-    items = (await pool.query(
-      `SELECT cl.*, t.ticket_number FROM channel_log cl
-         LEFT JOIN inbox_tickets t ON t.id = cl.ticket_id
-       ${where} ORDER BY cl.created_at DESC LIMIT 300`, params
-    )).rows;
-  } catch { /* table may not exist before first db push */ }
-  let summary: any[] = [];
-  try {
-    summary = (await pool.query(
-      `SELECT channel, direction, status, COUNT(*)::int n FROM channel_log
-        WHERE created_at >= NOW() - INTERVAL '7 days' GROUP BY channel, direction, status`
-    )).rows;
-  } catch { /* noop */ }
-  res.render('admin/comms-log', { user: req.session.user!, items, summary, channel, direction });
-});
+
 
 // ── Backups ──────────────────────────────────────────────────────────────────────
 router.get('/admin/backups', async (req: Request, res: Response) => {
@@ -591,12 +636,10 @@ async function buildTestTemplates(): Promise<{ key: string; label: string; subje
   return out;
 }
 
-router.get('/admin/email-test', async (req: Request, res: Response) => {
-  res.render('admin/email-test', {
-    user: req.session.user!, templates: await buildTestTemplates(), graphOn: graphConfigured(),
-    fromAddr: config.GRAPH_SEND_FROM || config.FROM_EMAIL,
-    notice: req.query.msg || null, error: req.query.err || null,
-  });
+router.get('/admin/email-test', (req: Request, res: Response) => {
+  const qs = new URLSearchParams(req.query as Record<string, string>);
+  qs.set('tab', 'test');
+  res.redirect('/admin/portal-flow?' + qs.toString());
 });
 
 router.post('/admin/email-test', async (req: Request, res: Response) => {
@@ -605,16 +648,16 @@ router.post('/admin/email-test', async (req: Request, res: Response) => {
   const valid = recipients.filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
   const subject = String(req.body.subject || '').trim();
   const body = String(req.body.body || '');
-  if (!valid.length) { res.redirect('/admin/email-test?err=' + encodeURIComponent('Enter at least one valid email address.')); return; }
-  if (!subject) { res.redirect('/admin/email-test?err=' + encodeURIComponent('Enter a subject.')); return; }
+  if (!valid.length) { res.redirect('/admin/portal-flow?tab=test&err=' + encodeURIComponent('Enter at least one valid email address.')); return; }
+  if (!subject) { res.redirect('/admin/portal-flow?tab=test&err=' + encodeURIComponent('Enter a subject.')); return; }
   try {
     await sendMail({ to: valid, subject, html: body });
     const note = graphConfigured()
       ? `Sent to ${valid.length} recipient(s): ${valid.join(', ')}.`
       : `Graph isn't configured, so nothing actually sent — logged to Mail flow only.`;
-    res.redirect('/admin/email-test?msg=' + encodeURIComponent(note));
+    res.redirect('/admin/portal-flow?tab=test&msg=' + encodeURIComponent(note));
   } catch (e: any) {
-    res.redirect('/admin/email-test?err=' + encodeURIComponent('Send failed: ' + (e.message || e)));
+    res.redirect('/admin/portal-flow?tab=test&err=' + encodeURIComponent('Send failed: ' + (e.message || e)));
   }
 });
 
