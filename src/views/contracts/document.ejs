@@ -159,20 +159,96 @@
     <% if (contract.renewal_mode === 'signed_extension') { %>Renewed only by a further signed extension.<% } else { %>Automatically renewed unless <%= contract.notice_days %> days' notice is provided.<% } %>
   </div>
 
-  <h2><%= (typeof changedLines !== 'undefined' && changedLines && changedLines.length) ? 'Revised lines' : 'Services and pricing' %></h2>
-  <% if (typeof changedLines !== 'undefined' && changedLines && changedLines.length) { %>
-    <p>The following lines are revised from the start of the extended term. All other services continue on the same terms.</p>
+  <h2>The agreement being extended</h2>
+  <p>This extension continues the following agreement. Its details are restated here so this document
+     can be read on its own, but the original agreement remains the governing document.</p>
+  <table>
+    <tbody>
+      <tr><td style="width:38%;">Agreement</td><td><strong><%= contract.contract_number %></strong><% if (contract.title) { %> — <%= contract.title %><% } %></td></tr>
+      <tr><td>Originally dated</td><td><%= dl(contract.start_date) %></td></tr>
+      <tr><td>Original term</td><td><%= contract.term_months || '—' %> months</td></tr>
+      <tr><td>Notice period</td><td><%= contract.notice_days %> days</td></tr>
+      <tr><td>Payment method</td><td><%= String(contract.payment_method || '').replace(/_/g,' ') || '—' %></td></tr>
+      <tr><td>Renewal basis</td><td><%= contract.renewal_mode === 'signed_extension' ? 'Signed extension required' : 'Automatic unless notice is given' %></td></tr>
+    </tbody>
+  </table>
+
+  <% if (terms && terms.length) { %>
+    <h3>Term history</h3>
+    <table>
+      <thead><tr><th style="width:8%;">#</th><th>From</th><th>To</th><th style="width:14%;">Months</th><th>How agreed</th></tr></thead>
+      <tbody><% terms.forEach(function(t){ %>
+        <tr><td><%= t.seq %></td><td><%= d(t.start_date) %></td><td><%= d(t.end_date) %></td><td><%= t.months %></td>
+            <td class="muted"><%= String(t.source||'').replace(/_/g,' ') %><% if (t.signed_at) { %> · signed <%= d(t.signed_at) %><% } %></td></tr>
+      <% }); %></tbody>
+    </table>
+  <% } %>
+</div>
+
+<div class="sheet">
+  <% var revised = (typeof changedLines !== 'undefined' && changedLines) ? changedLines : []; %>
+  <%
+    // A licence or backup block carries its own annual term. On a forward-looking extension,
+    // restating a sub-term that has already expired reads as though it still applies, so a
+    // line's own dates are shown only while they still run into the extended term.
+    var extStart = newTerm && newTerm.startDate ? new Date(newTerm.startDate) : null;
+    function showLineTerm(l){
+      if (!l.term_start && !l.term_end) return false;
+      if (!extStart || !l.term_end) return true;
+      return new Date(l.term_end) >= extStart;
+    }
+  %>
+  <h2>Services continuing under this extension</h2>
+  <p>The services below continue on the same terms for the extended term.
+     <% if (revised.length) { %>Lines marked <strong>revised</strong> are superseded by the revised schedule that follows.<% } %></p>
+  <% if (!groups.length) { %><p class="muted">No services are recorded on this agreement.</p><% } %>
+  <% groups.forEach(function(g){ %>
+    <h3><%= g.title %></h3>
     <table>
       <thead><tr><th>Item</th><th class="r" style="width:9%;">Qty</th><th class="r" style="width:16%;">Unit price</th><th style="width:14%;">Billing</th><th class="r" style="width:16%;">Total</th></tr></thead>
-      <tbody><% changedLines.forEach(function(l){ %>
-        <tr><td><%= l.description %></td><td class="r"><%= Number(l.quantity) %></td><td class="r"><%= m(l.unit_price) %></td>
-            <td class="muted"><%= String(l.billing_frequency||'').replace(/_/g,' ') %></td><td class="r"><%= m(l.line_total) %></td></tr>
+      <tbody><% g.lines.forEach(function(l){ var isRev = revised.some(function(r){ return r.id === l.id; }); %>
+        <tr>
+          <td><%= l.description %><% if (isRev) { %> <strong>(revised)</strong><% } %>
+            <% if (l.detail) { %><span class="sub"><%= l.detail %></span><% } %>
+            <% if (showLineTerm(l)) { %><span class="sub">Term <%= d(l.term_start) %> – <%= d(l.term_end) %><% if (l.notice_days) { %>, <%= l.notice_days %> day notice<% } %></span>
+            <% } else if (l.term_end && l.notice_days) { %><span class="sub">Renews on its own annual anniversary · <%= l.notice_days %> day notice</span><% } %></td>
+          <td class="r"><%= Number(l.quantity) %></td>
+          <td class="r"><%= m(l.unit_price) %></td>
+          <td class="muted"><%= String(l.billing_frequency||'').replace(/_/g,' ') %></td>
+          <td class="r"><%= m(l.line_total) %></td>
+        </tr>
+      <% }); %></tbody>
+    </table>
+  <% }); %>
+  <table style="margin-top:12px;">
+    <tbody>
+      <tr><td><strong>Total monthly</strong></td><td class="r"><strong><%= m(totals.monthly) %></strong></td></tr>
+      <% if (totals.annual) { %><tr><td>Total annual</td><td class="r"><%= m(totals.annual) %></td></tr><% } %>
+      <tr><td><strong>Annualised value</strong></td><td class="r"><strong><%= m(totals.annualised) %></strong></td></tr>
+    </tbody>
+  </table>
+
+  <% if (revised.length) { %>
+    <h2>Revised lines</h2>
+    <p>These lines are revised from the start of the extended term. Everything else above continues unchanged.</p>
+    <table>
+      <thead><tr><th>Item</th><th class="r" style="width:9%;">Qty</th><th class="r" style="width:16%;">Unit price</th><th style="width:14%;">Billing</th><th class="r" style="width:16%;">Total</th></tr></thead>
+      <tbody><% revised.forEach(function(l){ %>
+        <tr>
+          <td><%= l.description %>
+            <% if (l.prev_quantity != null || l.prev_unit_price != null) { %>
+              <span class="sub">Previously <%= l.prev_quantity != null ? Number(l.prev_quantity) : Number(l.quantity) %>
+                × <%= m(l.prev_unit_price != null ? l.prev_unit_price : l.unit_price) %></span>
+            <% } %></td>
+          <td class="r"><%= Number(l.quantity) %></td>
+          <td class="r"><%= m(l.unit_price) %></td>
+          <td class="muted"><%= String(l.billing_frequency||'').replace(/_/g,' ') %></td>
+          <td class="r"><%= m(l.line_total) %></td>
+        </tr>
       <% }); %></tbody>
     </table>
   <% } else { %>
-    <p>Services and pricing continue unchanged. The schedule of services in the original agreement applies in full for
-       the extended term, at a current total of <strong><%= m(totals.monthly) %> per month</strong>
-       (<%= m(totals.annualised) %> annualised).</p>
+    <p style="margin-top:10px;">No line is revised by this extension — services and pricing continue exactly as set out above.</p>
   <% } %>
 </div>
 <% } %>
