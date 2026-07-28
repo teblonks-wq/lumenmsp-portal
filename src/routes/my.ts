@@ -338,6 +338,20 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
     base.insName = ins.name;
     const allowed = (perms(req) as any).insightsSites as number[] | null;   // site layer (null = all)
 
+    // The extension list is needed by BOTH call tools now — the "Answered by" form, and the
+    // "Who answered?" panel promoted onto the Home tab alongside the number tracker. Built
+    // once here so the site layer is applied identically to both (it decides which staff
+    // extensions this contact may even see, so it must never be tab-specific).
+    const normX = (x: any) => String(x || '').replace(/@.*$/, '').trim().toLowerCase();
+    let staffAllowed: Set<string> | null = null;
+    if (tab === 'home' || tab === 'reverse') {
+      base.extensions = (await getGroupsAndExtensions(ins.id)).extensions;
+      if (allowed?.length) {
+        staffAllowed = new Set((await siteLogicsByIds(ins.id, allowed)).flatMap((l) => l.staff_extensions || []).map(normX));
+        base.extensions = base.extensions.filter((e: any) => staffAllowed!.has(normX(e)));
+      }
+    }
+
     // Home tab — Call Tracker: look up a number across the customer's cached calls (last 28 days).
     if (tab === 'home' && q.length >= 3) {
       const norm = q.replace(/[\s\-()]/g, '').replace(/^\+44/, '0');
@@ -374,14 +388,7 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
     // autocomplete list is scoped to ins.id; staff /insights/* routes stay blocked to the
     // customer role by requireAuth. Same anti-IDOR posture as the rest of /my.
     if (tab === 'reverse') {
-      base.extensions = (await getGroupsAndExtensions(ins.id)).extensions;
-      // Site layer: only the allowed sites' configured staff extensions are offered or usable.
-      const normX = (x: any) => String(x || '').replace(/@.*$/, '').trim().toLowerCase();
-      let staffAllowed: Set<string> | null = null;
-      if (allowed?.length) {
-        staffAllowed = new Set((await siteLogicsByIds(ins.id, allowed)).flatMap((l) => l.staff_extensions || []).map(normX));
-        base.extensions = base.extensions.filter((e: any) => staffAllowed!.has(normX(e)));
-      }
+      // Site layer already applied to base.extensions / staffAllowed above.
       const ext = String(req.query.ext || '').trim().slice(0, 80);
       base.ext = ext;
       if (ext && staffAllowed && !staffAllowed.has(normX(ext))) {
