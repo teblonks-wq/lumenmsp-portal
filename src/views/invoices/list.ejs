@@ -88,7 +88,7 @@
   </div>
   <div class="form-group inv-custom" style="margin:0;<%= (period&&period.key)==='custom'?'':'display:none;' %>"><label style="font-size:12px;">From</label><input class="input" type="date" name="from" value="<%= from %>"></div>
   <div class="form-group inv-custom" style="margin:0;<%= (period&&period.key)==='custom'?'':'display:none;' %>"><label style="font-size:12px;">To</label><input class="input" type="date" name="to" value="<%= to %>"></div>
-  <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search number, title, customer…" style="min-width:220px;">
+  <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search number, title, customer, line item…" style="min-width:220px;">
   <button class="btn" type="submit">Filter</button>
   <% if (status||search||source||paid||dd||(period&&period.from)) { %><a class="btn" href="/invoices">Clear</a><% } %>
 </form>
@@ -199,7 +199,11 @@
           <tr>
             <td style="text-align:center;"><input type="checkbox" class="batch-chk" name="ids" value="<%= i.id %>" form="batchForm"></td>
             <td><a class="row-link" href="/invoices/<%= i.id %>"><%= i.invoice_number %></a><% if (i.is_recurring) { %> <span title="Recurring template">♻</span><% } %><% if (i.is_legacy) { %> <span class="badge badge-inactive" title="Imported from QuickBooks" style="font-size:10px;">Legacy</span><% } %></td>
-            <td><%= i.title %></td>
+            <td><%= i.title %>
+              <% if (i.match_lines) { %>
+                <div class="muted" style="font-size:11px;margin-top:2px;" title="Matching line items on this invoice">&#8627; <%= i.match_lines %></div>
+              <% } %>
+            </td>
             <td class="muted"><% if (i.customer_id) { %><a class="row-link" href="/customers/<%= i.customer_id %>"><%= i.customer_name %></a><% } else { %>—<% } %></td>
             <td>
               <% var ps = pstate(i); %><span class="badge <%= ps.cls %>"><%= ps.label %></span>

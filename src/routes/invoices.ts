@@ -124,9 +124,21 @@ router.get('/invoices', requireAuth, async (req: Request, res: Response) => {
   else if (source === 'nocustomer') where.push('i.customer_id IS NULL');
   if (period.from) { params.push(period.from); where.push('i.issue_date >= $' + params.length); }
   if (period.to) { params.push(period.to); where.push('i.issue_date <= $' + params.length); }
+  // Search covers the invoice header AND its line items, so "printer" finds every invoice with
+  // a printer on it — not just ones with "printer" in the title. Line match looks at the typed
+  // description and, where the line came from the catalogue, the product name too.
+  let matchSelect = ', NULL AS match_lines';
   if (search) {
     params.push('%' + search + '%');
-    where.push(`(i.invoice_number ILIKE $${params.length} OR i.title ILIKE $${params.length} OR c.name ILIKE $${params.length})`);
+    const n = params.length;
+    where.push(`(i.invoice_number ILIKE $${n} OR i.title ILIKE $${n} OR c.name ILIKE $${n}
+       OR EXISTS (SELECT 1 FROM invoice_items ii LEFT JOIN asset_products ap ON ap.id = ii.product_id
+                   WHERE ii.invoice_id = i.id AND (ii.description ILIKE $${n} OR ap.name ILIKE $${n})))`);
+    // Show WHICH lines matched, so a search result explains itself.
+    matchSelect = `, (SELECT string_agg(DISTINCT COALESCE(NULLIF(ii.description, ''), ap.name), ' | ')
+                        FROM invoice_items ii LEFT JOIN asset_products ap ON ap.id = ii.product_id
+                       WHERE ii.invoice_id = i.id AND (ii.description ILIKE $${n} OR ap.name ILIKE $${n})
+                     ) AS match_lines`;
   }
   const { rows } = await pool.query(
     `SELECT i.id, i.invoice_number, i.title, i.total, i.balance, i.status, i.payment_status,
@@ -134,7 +146,7 @@ router.get('/invoices', requireAuth, async (req: Request, res: Response) => {
             i.quickbooks_invoice_id, i.gocardless_payment_id,
             (i.quickbooks_invoice_id IS NOT NULL AND i.created_by IS NULL) AS is_legacy,
             c.name AS customer_name, c.id AS customer_id, c.gocardless_mandate_id,
-            (em.entity_id IS NOT NULL) AS emailed
+            (em.entity_id IS NOT NULL) AS emailed${matchSelect}
      FROM invoices i
      LEFT JOIN customers c ON c.id = i.customer_id
      LEFT JOIN (SELECT entity_id FROM communications WHERE entity_type='invoice' AND direction='outbound' GROUP BY entity_id) em ON em.entity_id = i.id
