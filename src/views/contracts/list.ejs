@@ -1,13 +1,45 @@
 <%- include('../partials/header', { title: 'Contracts', user }) %>
-<% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
-<% function badge(s){ return s==='active'?'badge-sent':s==='draft'?'badge-inactive':s==='expired'?'badge-failed':'badge-failed'; } %>
+<%
+  function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function dd(x){ return x ? new Date(x).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—'; }
+  var rc = (typeof renewalCount !== 'undefined') ? renewalCount : 0;
+  var rl = (typeof renewals !== 'undefined' && renewals) ? renewals : [];
+%>
+<style>
+  .ctab{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:16px;border-bottom:1px solid var(--line);}
+  .ctab a{font-size:13.5px;font-weight:600;color:#64748b;text-decoration:none;padding:9px 14px;border-bottom:2px solid transparent;
+          border-radius:8px 8px 0 0;transition:color .14s,background .14s;}
+  .ctab a:hover{color:var(--lumen-dark);background:#f8fafc;}
+  .ctab a.on{color:var(--accent);border-bottom-color:var(--accent);}
+  .ctab a .c{font-weight:500;color:#94a3b8;font-size:12px;}
+  .ctab a.warn.on{color:#b45309;border-bottom-color:#f59e0b;}
+  .ctab a.warn .c{color:#b45309;background:#fef3c7;border-radius:999px;padding:1px 7px;}
+  .st{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:999px;white-space:nowrap;}
+  .st i{width:6px;height:6px;border-radius:50%;background:currentColor;}
+  .st.active{background:#dcfce7;color:#166534;} .st.draft{background:#f1f5f9;color:#475569;}
+  .st.expired{background:#fee2e2;color:#b91c1c;} .st.cancelled{background:#fee2e2;color:#b91c1c;}
+  .sg{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:#f1f5f9;color:#475569;white-space:nowrap;}
+  .sg.signed{background:#dcfce7;color:#166534;} .sg.out{background:#e0e7ff;color:#3730a3;}
+  .rn{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 18px;margin-bottom:10px;display:flex;
+      justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;border-left:4px solid #f59e0b;}
+  .rn.urgent{border-left-color:#dc2626;background:#fffbfb;}
+  .rn.past{border-left-color:#dc2626;background:#fef2f2;}
+  .rn h3{margin:0;font-size:14.5px;}
+  .rn .meta{font-size:12.5px;color:#64748b;margin-top:2px;}
+  .rn .when{font-size:12.5px;font-weight:700;text-align:right;white-space:nowrap;}
+  .rn .when small{display:block;font-weight:500;color:#64748b;font-size:11.5px;margin-top:1px;}
+  .table tbody tr{transition:background .12s;} .table tbody tr:hover{background:#f8fafc;}
+</style>
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-  <div><h1>Contracts</h1><p class="muted"><%= contracts.length %> shown</p></div>
+  <div>
+    <h1>Contracts</h1>
+    <p class="muted"><%= status === 'renewals' ? rl.length + ' coming up for renewal' : contracts.length + ' shown' %></p>
+  </div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
     <form method="get" action="/contracts" style="display:flex;gap:8px;align-items:center;">
-      <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search number, title, customer…" style="min-width:240px;">
-      <% if (status) { %><input type="hidden" name="status" value="<%= status %>"><% } %>
+      <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search number, title, customer…" style="min-width:230px;">
+      <% if (status && status !== 'renewals') { %><input type="hidden" name="status" value="<%= status %>"><% } %>
       <button class="btn" type="submit">Search</button>
       <% if (search) { %><a class="btn" href="/contracts<%= status ? '?status=' + status : '' %>">Clear</a><% } %>
     </form>
@@ -15,33 +47,69 @@
   </div>
 </div>
 
-<div class="tabs" style="margin-bottom:16px;">
-  <a class="tab-btn <%= status==='' ? 'active' : '' %>" href="/contracts">All</a>
+<div class="ctab">
+  <a class="<%= status==='' ? 'on' : '' %>" href="/contracts">All</a>
   <% ['draft','active','expired','cancelled'].forEach(function(s){ %>
-    <a class="tab-btn <%= status===s ? 'active' : '' %>" href="/contracts?status=<%= s %>"><%= s.charAt(0).toUpperCase()+s.slice(1) %> <span class="muted">(<%= statusCounts[s]||0 %>)</span></a>
+    <a class="<%= status===s ? 'on' : '' %>" href="/contracts?status=<%= s %>"><%= s.charAt(0).toUpperCase()+s.slice(1) %> <span class="c"><%= statusCounts[s]||0 %></span></a>
   <% }); %>
+  <a class="warn <%= status==='renewals' ? 'on' : '' %>" href="/contracts?status=renewals">Renewals due <% if (rc) { %><span class="c"><%= rc %></span><% } %></a>
 </div>
 
-<div class="card" style="padding:0;">
-  <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Number</th><th>Title</th><th>Customer</th><th>Service</th><th>Status</th><th>Term</th><th style="text-align:right;">Monthly</th></tr></thead>
-      <tbody>
-        <% if (contracts.length===0) { %><tr><td colspan="7"><div class="empty-state">No contracts.</div></td></tr><% } %>
-        <% contracts.forEach(function(ct){ %>
-          <tr>
-            <td><a class="row-link" href="/contracts/<%= ct.id %>"><%= ct.contract_number %></a></td>
-            <td><%= ct.title %></td>
-            <td class="muted"><% if (ct.customer_id) { %><a class="row-link" href="/customers/<%= ct.customer_id %>"><%= ct.customer_name %></a><% } else { %>—<% } %></td>
-            <td class="muted"><%= ct.service_type %></td>
-            <td><span class="badge <%= badge(ct.status) %>"><%= ct.status.charAt(0).toUpperCase()+ct.status.slice(1) %></span></td>
-            <td class="muted"><%= ct.start_date ? new Date(ct.start_date).toLocaleDateString('en-GB') : '—' %><% if (ct.end_date) { %> → <%= new Date(ct.end_date).toLocaleDateString('en-GB') %><% } %></td>
-            <td style="text-align:right;"><%= money(ct.monthly_total) %></td>
-          </tr>
-        <% }); %>
-      </tbody>
-    </table>
+<% if (status === 'renewals') { %>
+  <% if (!rl.length) { %>
+    <div class="card"><div class="empty-state">Nothing coming up in the next 90 days. Renewals appear here as their notice deadline approaches.</div></div>
+  <% } %>
+  <% rl.forEach(function(r){
+       var dn = Number(r.days_to_notice), de = Number(r.days_to_end);
+       var cls = dn < 0 ? 'past' : dn <= 14 ? 'urgent' : '';
+  %>
+    <div class="rn <%= cls %>">
+      <div style="flex:1;min-width:230px;">
+        <h3><a class="row-link" href="/contracts/<%= r.id %>"><%= r.contract_number %></a> — <%= r.customer_name || 'No customer' %></h3>
+        <div class="meta">
+          <%= r.title %> · <%= money(r.monthly) %>/month ·
+          <%= r.renewal_mode === 'signed_extension' ? 'needs a signed extension' : 'auto-renews unless notice given' %>
+        </div>
+      </div>
+      <div class="when" style="color:<%= dn < 0 ? '#b91c1c' : dn <= 14 ? '#b45309' : '#334155' %>;">
+        <% if (dn < 0) { %>
+          Notice deadline passed
+          <small><%= Math.abs(dn) %> day<%= Math.abs(dn)===1?'':'s' %> ago · ends <%= dd(r.end_date) %></small>
+        <% } else { %>
+          <%= dn %> day<%= dn===1?'':'s' %> to give notice
+          <small>Term ends <%= dd(r.end_date) %> (<%= de %> day<%= de===1?'':'s' %>)</small>
+        <% } %>
+      </div>
+      <a class="btn btn-primary" href="/contracts/<%= r.id %>/extend">Extend</a>
+    </div>
+  <% }); %>
+<% } else { %>
+  <div class="card" style="padding:0;">
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Number</th><th>Title</th><th>Customer</th><th>Status</th><th>Signature</th><th>Term</th><th style="text-align:right;">Monthly</th></tr></thead>
+        <tbody>
+          <% if (contracts.length===0) { %><tr><td colspan="7"><div class="empty-state">No contracts.</div></td></tr><% } %>
+          <% contracts.forEach(function(ct){ %>
+            <tr>
+              <td><a class="row-link" href="/contracts/<%= ct.id %>"><%= ct.contract_number %></a></td>
+              <td><%= ct.title %></td>
+              <td class="muted"><% if (ct.customer_id) { %><a class="row-link" href="/customers/<%= ct.customer_id %>"><%= ct.customer_name %></a><% } else { %>—<% } %></td>
+              <td><span class="st <%= ct.status %>"><i></i><%= ct.status.charAt(0).toUpperCase()+ct.status.slice(1) %></span></td>
+              <td>
+                <% var ss = ct.sign_status || 'unsigned'; %>
+                <span class="sg <%= (ss==='signed'||ss==='countersigned') ? 'signed' : (ss==='sent'||ss==='viewed') ? 'out' : '' %>">
+                  <%= ({unsigned:'Not sent',sent:'Sent',viewed:'Opened',signed:'Signed',countersigned:'Executed',declined:'Declined'})[ss] || ss %>
+                </span>
+              </td>
+              <td class="muted"><%= dd(ct.start_date) %><% if (ct.end_date) { %> → <%= dd(ct.end_date) %><% } %></td>
+              <td style="text-align:right;font-weight:600;"><%= money(ct.monthly_total) %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
   </div>
-</div>
+<% } %>
 
 <%- include('../partials/footer') %>

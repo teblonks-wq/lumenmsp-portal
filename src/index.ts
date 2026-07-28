@@ -25,6 +25,7 @@ import recycleRoutes from './routes/recycle';
 import notificationRoutes from './routes/notifications';
 import toolsRoutes from './routes/tools';
 import trackingRoutes from './routes/tracking';
+import { startRenewalScheduler } from './lib/contract-renewals';
 import bureauRoutes from './routes/bureau';
 import packageRoutes from './routes/packages';
 import purchaseRoutes from './routes/purchases';
@@ -354,6 +355,7 @@ server.listen(config.PORT, () => {
   startGoCardlessSync();    // hourly: auto-link new GoCardless mandates by email
   startExtLabelSync();      // 04:30: label CLIs with their extension name from Insights
   startReviewReminders();
+  startRenewalScheduler();  // contracts approaching their notice deadline
   startTaskReminders();
   startQbPaymentSync();     // QB payment sync: BANK-TRANSFER invoices only — it now skips any
   // invoice with a gocardless_payment_id (GC's payout sync owns those). Division of authority

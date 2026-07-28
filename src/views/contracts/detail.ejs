@@ -1,4 +1,30 @@
 <%- include('../partials/header', { title: contract.contract_number, user }) %>
+<style>
+  /* Contract detail — lighter cards, status as pills, quieter chrome. Matches the
+     refreshed list and the customer-facing Agreements page. */
+  .cd-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px;}
+  .cd-head h1{margin:0;display:flex;align-items:center;gap:11px;flex-wrap:wrap;font-size:23px;}
+  .st{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:999px;white-space:nowrap;}
+  .st i{width:6px;height:6px;border-radius:50%;background:currentColor;}
+  .st.active{background:#dcfce7;color:#166534;} .st.draft{background:#f1f5f9;color:#475569;}
+  .st.expired,.st.cancelled{background:#fee2e2;color:#b91c1c;}
+  .st.signed{background:#dcfce7;color:#166534;} .st.out{background:#e0e7ff;color:#3730a3;}
+  .st.none{background:#f1f5f9;color:#475569;} .st.bad{background:#fee2e2;color:#b91c1c;}
+  .cd-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px;}
+  .cd-stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 17px;}
+  .cd-stat span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:4px;}
+  .cd-stat strong{font-size:16px;color:var(--lumen-dark);font-weight:700;display:block;line-height:1.35;}
+  .cd-stat small{color:#64748b;font-weight:500;font-size:12px;}
+  .cd-stat.value{background:linear-gradient(135deg,#f0fdfa,#ecfeff);border-color:#ccfbf1;}
+  .cd-stat.value strong{font-size:22px;color:#0f766e;}
+  .cd-sig{background:#fff;border:1px solid var(--line);border-radius:12px;padding:0;margin-bottom:14px;overflow:hidden;}
+  .cd-sig-h{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:15px 18px;border-bottom:1px solid var(--line);}
+  .cd-sig-h h2{margin:0;font-size:15px;display:flex;align-items:center;gap:9px;}
+  .cd-sig-b{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:15px;padding:16px 18px;font-size:13px;}
+  .cd-sig-b span.k{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:3px;}
+  .table tbody tr{transition:background .12s;} .table tbody tr:hover{background:#f8fafc;}
+</style>
+
 <% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
 <% function badge(s){ return s==='active'?'badge-sent':s==='draft'?'badge-inactive':'badge-failed'; } %>
 <% function dd(x){ return x ? new Date(x).toLocaleDateString('en-GB') : '—'; } %>
@@ -8,11 +34,11 @@
   var annualised = mMonthly*12 + mAnnual;
 %>
 
-<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+<div class="page-header cd-head">
   <div>
     <% var _back = (typeof back !== 'undefined' && back) ? back : null; %>
     <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="<%= _back || '/contracts' %>">← <%= _back ? (_back.indexOf('/customers/') === 0 ? 'Back to customer' : 'Back') : 'Contracts' %></a></p>
-    <h1 style="margin:0;display:flex;align-items:center;gap:12px;"><%= contract.contract_number %> <span class="badge <%= badge(contract.status) %>"><%= contract.status.charAt(0).toUpperCase()+contract.status.slice(1) %></span></h1>
+    <h1><%= contract.contract_number %> <span class="st <%= contract.status %>"><i></i><%= contract.status.charAt(0).toUpperCase()+contract.status.slice(1) %></span></h1>
     <p class="muted" style="margin:4px 0 0;"><%= contract.title %><% if (contract.customer_name) { %> · <a class="row-link" href="/customers/<%= contract.customer_id %>"><%= contract.customer_name %></a><% } %></p>
   </div>
   <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
@@ -42,9 +68,9 @@
                   signed:'Signed by customer', countersigned:'Signed by both parties', declined:'Declined' }[ss] || ss;
   var ssBadge = (ss==='countersigned'||ss==='signed') ? 'badge-sent' : ss==='declined' ? 'badge-failed' : 'badge-inactive';
 %>
-<div class="card" style="margin-bottom:14px;">
-  <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
-    <h2 style="margin:0;">Signature <span class="badge <%= ssBadge %>" style="margin-left:6px;"><%= ssLabel %></span></h2>
+<div class="cd-sig">
+  <div class="cd-sig-h">
+    <h2>Signature <span class="st <%= (ss==='signed'||ss==='countersigned') ? 'signed' : (ss==='sent'||ss==='viewed') ? 'out' : ss==='declined' ? 'bad' : 'none' %>"><i></i><%= ssLabel %></span></h2>
     <% if (ss === 'signed') { %>
       <form method="post" action="/contracts/<%= contract.id %>/countersign" style="margin:0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
         <input class="input" name="name" placeholder="Your name" style="width:150px;font-size:13px;">
@@ -53,36 +79,39 @@
       </form>
     <% } %>
   </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;font-size:13px;">
-    <div><span class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Sent to</span><br>
+  <div class="cd-sig-b">
+    <div><span class="k">Sent to</span>
       <%= contract.sent_to || '—' %><% if (contract.sent_at) { %><br><span class="muted"><%= new Date(contract.sent_at).toLocaleString('en-GB') %></span><% } %></div>
-    <div><span class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Opened</span><br>
+    <div><span class="k">Opened</span>
       <%= contract.view_count || 0 %> time<%= (contract.view_count||0)===1?'':'s' %></div>
-    <div><span class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Client signature</span><br>
+    <div><span class="k">Client signature</span>
       <% if (contract.client_signed_at) { %>
         <%= contract.client_sign_name %><% if (contract.client_sign_position) { %><br><span class="muted"><%= contract.client_sign_position %></span><% } %>
         <br><span class="muted"><%= new Date(contract.client_signed_at).toLocaleString('en-GB') %><% if (contract.client_sign_ip) { %> · <%= contract.client_sign_ip %><% } %></span>
       <% } else { %>—<% } %></div>
-    <div><span class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Counter-signature</span><br>
+    <div><span class="k">Counter-signature</span>
       <% if (contract.supplier_signed_at) { %>
         <%= contract.supplier_sign_name %><br><span class="muted"><%= new Date(contract.supplier_signed_at).toLocaleString('en-GB') %></span>
       <% } else { %>—<% } %></div>
   </div>
   <% if (contract.sign_token) { %>
     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">
-      <span class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Signing link (no login required)</span>
+      <span class="k" style="display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;">Signing link (no login required)</span>
       <input class="input" readonly onclick="this.select();" style="width:100%;font-size:12px;margin-top:4px;"
              value="<%= (typeof appUrl !== 'undefined' && appUrl ? appUrl : '') %>/c/<%= contract.sign_token %>">
     </div>
   <% } %>
 </div>
 
-<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">
-  <div class="card"><div class="card-header"><h2>Service</h2></div><div><%= contract.service_type %></div></div>
-  <div class="card"><div class="card-header"><h2>Term</h2></div><div><%= dd(contract.start_date) %><% if (contract.end_date) { %><br>→ <%= dd(contract.end_date) %><% } %></div></div>
-  <div class="card"><div class="card-header"><h2>Notice / renew</h2></div><div><%= contract.notice_days %> days<br><span class="muted"><%= contract.auto_renew ? 'Auto-renews' : 'No auto-renew' %></span></div></div>
-  <div class="card"><div class="card-header"><h2>Payment</h2></div><div><%= contract.payment_method.replace('_',' ') %></div></div>
-  <div class="card" style="background:#f0fdf9;"><div class="card-header"><h2>Annualised value</h2></div><div class="stat" style="font-size:22px;"><%= money(annualised) %></div><p class="muted" style="margin:4px 0 0;"><%= money(mMonthly) %>/mo<% if (mAnnual) { %> · <%= money(mAnnual) %>/yr<% } %><% if (mOneOff) { %> · <%= money(mOneOff) %> one-off<% } %></p></div>
+<div class="cd-stats">
+  <div class="cd-stat"><span>Service</span><strong><%= contract.service_type %></strong></div>
+  <div class="cd-stat"><span>Term</span><strong><%= dd(contract.start_date) %></strong>
+    <small><%= contract.end_date ? 'to ' + dd(contract.end_date) : 'no end date' %><%= contract.term_months ? ' · ' + contract.term_months + ' months' : '' %></small></div>
+  <div class="cd-stat"><span>Notice / renew</span><strong><%= contract.notice_days %> days</strong>
+    <small><%= contract.renewal_mode === 'signed_extension' ? 'signed extension required' : (contract.auto_renew ? 'auto-renews' : 'no auto-renew') %></small></div>
+  <div class="cd-stat"><span>Payment</span><strong style="font-size:14px;"><%= contract.payment_method.replace('_',' ') %></strong></div>
+  <div class="cd-stat value"><span>Annualised value</span><strong><%= money(annualised) %></strong>
+    <small><%= money(mMonthly) %>/mo<% if (mAnnual) { %> · <%= money(mAnnual) %>/yr<% } %><% if (mOneOff) { %> · <%= money(mOneOff) %> one-off<% } %></small></div>
 </div>
 
 <div class="card" style="padding:0;">

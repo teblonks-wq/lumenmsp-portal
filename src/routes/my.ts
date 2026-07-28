@@ -10,6 +10,10 @@ import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam, siteLogicsByIds }
 import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
 import { buildWallboard, wallboardSites, WALLBOARD_MODULES, WALLBOARD_DEFAULT } from '../lib/wallboard';
 import { htmlToPdf } from '../lib/pdf';
+import * as fsx from 'fs';
+import { buildContractDoc } from '../lib/contract-doc';
+import { documentFooterHtml, PDF_OPTS, renderContractHtml } from '../lib/contract-sign';
+import { logDocEvent, clientIp as evIp, userAgent as evUa } from '../lib/doc-events';
 
 // ── Customer Portal (/my) ──────────────────────────────────────────────────────────
 // A dedicated, reduced-access area for CUSTOMER-role users. Distinct from the staff /m app.
@@ -106,6 +110,10 @@ async function attachPerms(req: Request, res: Response, next: NextFunction): Pro
     allTickets: isPrincipal || isService || isSupportInsights, // see beyond your own tickets
     finance:    isPrincipal || isFinance,            // invoices
     services:   isPrincipal || isService,            // services & contracts
+    // Agreements: the principal and the named service contact — the two people who would
+    // actually sign. Kept as its own flag rather than reusing `services` so it can be
+    // widened or narrowed without touching what the Services page shows.
+    agreements: isPrincipal || isService,
     viewUsers:  isPrincipal || isService,            // view (not manage) company users
     insights:   isPrincipal || isService || isSupportInsights || isTicketsInsights, // call insights / number lookup (their own data only)
     itReports:  isPrincipal || isService,            // monthly IT Operations & Security Snapshots
@@ -315,6 +323,61 @@ router.get('/my/quotes/:id', need('finance'), async (req: Request, res: Response
     'SELECT description, quantity, unit_price, tax_rate, line_total FROM quote_items WHERE quote_id=$1 ORDER BY sort_order NULLS LAST, id', [id]);
   res.render('my/quote', { active: 'quotes', user: req.session.user, qt, items });
 });
+// ── Agreements ─────────────────────────────────────────────────────────────────
+// The page the signing invitation, the signed-copy receipt and the signing page all
+// promise ("all your agreements are available any time in your portal"). Scoped to the
+// logged-in company, and only ever serves that company's own contracts.
+router.get('/my/agreements', need('agreements'), async (req: Request, res: Response) => {
+  const c = Number(req.session.user!.customerId);
+  const list = await rows(
+    `SELECT ct.id, ct.contract_number, ct.title, ct.status, ct.sign_status, ct.sign_token,
+            ct.start_date, ct.end_date, ct.term_months, ct.notice_days, ct.renewal_mode,
+            ct.current_doc_kind, ct.client_signed_at, ct.supplier_signed_at,
+            COALESCE((SELECT SUM(line_total) FROM contract_lines cl
+                       WHERE cl.contract_id = ct.id AND cl.billing_frequency='monthly'), 0) AS monthly,
+            (SELECT COUNT(*)::int FROM contract_documents cd WHERE cd.contract_id = ct.id) AS doc_count
+       FROM contracts ct
+      WHERE ct.customer_id = $1 AND ct.deleted_at IS NULL AND ct.status <> 'draft'
+      ORDER BY (ct.status = 'active') DESC, ct.end_date DESC NULLS LAST, ct.id DESC`, [c]);
+  res.render('my/agreements', {
+    active: 'agreements', user: req.session.user, title: 'Agreements', list,
+  });
+});
+
+// Their own agreement as a PDF. Serves the frozen signed snapshot when one exists, so what
+// they download is byte-identical to what was signed; otherwise renders the live document.
+router.get('/my/agreements/:id.pdf', need('agreements'), async (req: Request, res: Response) => {
+  const c = Number(req.session.user!.customerId);
+  const id = parseInt(String((req.params as any).id), 10);
+  const own = (await rows(
+    'SELECT id, contract_number, customer_id, client_signed_at FROM contracts WHERE id=$1 AND customer_id=$2 AND deleted_at IS NULL',
+    [id, c]))[0];
+  if (!own) { res.status(404).render('error', { message: 'Agreement not found.' }); return; }
+
+  await logDocEvent('contract', id, 'downloaded', {
+    customerId: c, actor: req.session.user!.email, ip: evIp(req), userAgent: evUa(req),
+    meta: { via: 'portal' },
+  });
+
+  const frozen = (await rows(
+    'SELECT file_path FROM contract_documents WHERE contract_id=$1 ORDER BY version DESC LIMIT 1', [id]))[0];
+  const send = (buf: Buffer) => {
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', (req.query.dl ? 'attachment' : 'inline') + `; filename="${own.contract_number}.pdf"`);
+    res.send(buf);
+  };
+  if (frozen && fsx.existsSync(frozen.file_path)) { send(fsx.readFileSync(frozen.file_path)); return; }
+  const ctx = await buildContractDoc(id);
+  if (!ctx) { res.status(404).render('error', { message: 'Agreement not found.' }); return; }
+  try {
+    const html = await renderContractHtml(ctx, { watermark: !own.client_signed_at });
+    send(await htmlToPdf(html, { ...PDF_OPTS, footerHtml: documentFooterHtml() }));
+  } catch (e) {
+    console.error('[my/agreements] pdf failed:', e);
+    res.status(500).render('error', { message: 'That agreement could not be produced just now. Please contact us.' });
+  }
+});
+
 router.get('/my/services', need('services'), (req: Request, res: Response) =>
   res.render('my/soon', { active: 'services', user: req.session.user, title: 'Services', blurb: 'The services and contracts you have with us will be listed here soon.' }));
 // Customer Insights — their own call-analytics reports, scoped via the Insights DB's lumenmsp_id

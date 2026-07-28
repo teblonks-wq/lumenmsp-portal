@@ -8,6 +8,7 @@ import { buildContractDoc } from '../lib/contract-doc';
 import { SUPPLIER } from '../lib/contract-template';
 import { htmlToPdf } from '../lib/pdf';
 import { pushContractToTemplate } from '../lib/contract-billing';
+import { dueRenewals } from '../lib/contract-renewals';
 import { clientIp, documentFooterHtml, PDF_OPTS, renderContractHtml, snapshotContract, typedSignatureSvg } from '../lib/contract-sign';
 import { SUPPLIER as SUP } from '../lib/contract-template';
 import { config } from '../config';
@@ -43,6 +44,10 @@ async function saveLines(client: any, contractId: number, body: any): Promise<vo
   const freq = asArray(body['freq']);
   const prodId = asArray(body['product_id']);
   const sect = asArray(body['section']);
+  const det = asArray(body['detail']);
+  const tStart = asArray(body['line_term_start']);
+  const tEnd = asArray(body['line_term_end']);
+  const tNotice = asArray(body['line_notice']);
   await client.query('DELETE FROM contract_lines WHERE contract_id = $1', [contractId]);
   let sort = 1;
   for (let i = 0; i < desc.length; i++) {
@@ -52,10 +57,17 @@ async function saveLines(client: any, contractId: number, body: any): Promise<vo
     const f = FREQS.includes(freq[i]) ? freq[i] : 'monthly';
     const pid = prodId[i] ? (parseInt(prodId[i], 10) || null) : null;
     const sec = SECTIONS.includes(sect[i]) ? sect[i] : 'IT';
+    // A licence or backup block carries its own annual term, which need not line up with the
+    // contract term (Staybrook: contract 01/08, licences 01/07).
+    const isDate = (v: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '').trim());
+    const ln = parseInt(String(tNotice[i] ?? ''), 10);
     await client.query(
-      `INSERT INTO contract_lines (contract_id, product_id, description, quantity, unit_price, billing_frequency, section, line_total, sort_order)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [contractId, pid, d, q, p, f, sec, q * p, sort++]
+      `INSERT INTO contract_lines (contract_id, product_id, description, quantity, unit_price, billing_frequency,
+                                   section, detail, term_start, term_end, notice_days, line_total, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [contractId, pid, d, q, p, f, sec, nz(det[i]),
+       isDate(tStart[i]) ? tStart[i] : null, isDate(tEnd[i]) ? tEnd[i] : null,
+       isNaN(ln) ? null : ln, q * p, sort++]
     );
   }
 }
@@ -71,7 +83,7 @@ router.get('/contracts', requireAuth, async (req: Request, res: Response) => {
   if (search) { params.push('%' + search + '%'); where.push(`(ct.contract_number ILIKE $${params.length} OR ct.title ILIKE $${params.length} OR c.name ILIKE $${params.length})`); }
   const { rows } = await pool.query(
     `SELECT ct.id, ct.contract_number, ct.title, ct.status, ct.service_type, ct.start_date, ct.end_date,
-            c.name AS customer_name, c.id AS customer_id,
+            ct.sign_status, c.name AS customer_name, c.id AS customer_id,
             (SELECT COALESCE(SUM(line_total),0) FROM contract_lines cl WHERE cl.contract_id=ct.id AND cl.billing_frequency='monthly') AS monthly_total
      FROM contracts ct LEFT JOIN customers c ON c.id = ct.customer_id
      WHERE ${where.join(' AND ')} ORDER BY ct.id DESC`, params
@@ -79,7 +91,15 @@ router.get('/contracts', requireAuth, async (req: Request, res: Response) => {
   const stat = await pool.query(`SELECT status, COUNT(*)::int n FROM contracts WHERE deleted_at IS NULL GROUP BY status`);
   const statusCounts: Record<string, number> = {};
   stat.rows.forEach((r: any) => { statusCounts[r.status] = r.n; });
-  res.render('contracts/list', { user, contracts: rows, status, search, statusCounts });
+
+  // Renewals: anchored on the NOTICE deadline (end date minus notice days), not the end
+  // date — the notice date is the one that costs money to miss.
+  const renewals = await dueRenewals(90);
+  if (status === 'renewals') {
+    res.render('contracts/list', { user, contracts: [], status, search, statusCounts, renewals, renewalCount: renewals.length });
+    return;
+  }
+  res.render('contracts/list', { user, contracts: rows, status, search, statusCounts, renewals: [], renewalCount: renewals.length });
 });
 
 // ── New ──────────────────────────────────────────────────────────────────────────

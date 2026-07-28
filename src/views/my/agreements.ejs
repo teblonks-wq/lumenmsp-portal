@@ -1,0 +1,114 @@
+<%- include('header', { title: 'Agreements', active: 'agreements', user }) %>
+<%
+  function dl(x){ return x ? new Date(x).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}) : '—'; }
+  function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var today = new Date(); today.setHours(0,0,0,0);
+  function daysTo(d){ if(!d) return null; return Math.round((new Date(d) - today) / 86400000); }
+  var awaiting = list.filter(function(a){ return a.sign_status==='sent' || a.sign_status==='viewed'; });
+%>
+<style>
+  .ag-wrap{display:flex;flex-direction:column;gap:14px;}
+  .ag{background:#fff;border:1px solid var(--line);border-radius:14px;padding:0;overflow:hidden;transition:box-shadow .16s ease,transform .16s ease;}
+  .ag:hover{box-shadow:0 6px 22px rgba(15,23,42,.07);}
+  .ag-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:18px 20px 0;flex-wrap:wrap;}
+  .ag-name{font-size:16px;font-weight:700;color:var(--lumen-dark);margin:0;}
+  .ag-sub{font-size:12.5px;color:#64748b;margin:3px 0 0;}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:999px;white-space:nowrap;}
+  .pill.live{background:#dcfce7;color:#166534;}
+  .pill.wait{background:#fef3c7;color:#92400e;}
+  .pill.past{background:#f1f5f9;color:#475569;}
+  .pill i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block;}
+  .ag-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:2px 18px;padding:16px 20px 4px;}
+  .ag-facts div span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:2px;}
+  .ag-facts div strong{font-size:14px;color:var(--lumen-dark);font-weight:600;}
+  .ag-acts{display:flex;gap:8px;flex-wrap:wrap;padding:14px 20px 18px;border-top:1px solid var(--line);margin-top:14px;}
+  .ag-note{font-size:12.5px;padding:10px 20px;background:#fffbeb;border-top:1px solid #fde68a;color:#92400e;}
+  .ag-renew{font-size:12.5px;padding:10px 20px;background:#f0fdfa;border-top:1px solid #ccfbf1;color:#115e59;}
+  .ag-empty{background:#fff;border:1px solid var(--line);border-radius:14px;padding:44px 24px;text-align:center;}
+  .ag-empty svg{width:34px;height:34px;stroke:#cbd5e1;fill:none;stroke-width:1.6;margin-bottom:10px;}
+  .ag-banner{background:linear-gradient(135deg,#0f766e,#0891b2);color:#fff;border-radius:14px;padding:18px 22px;margin-bottom:16px;}
+  .ag-banner h2{color:#fff;margin:0 0 4px;font-size:16px;}
+  .ag-banner p{margin:0;font-size:13px;opacity:.92;}
+  .ag-banner a{display:inline-block;margin-top:11px;background:#fff;color:#0f766e;font-weight:600;font-size:13.5px;
+               padding:9px 18px;border-radius:8px;text-decoration:none;}
+</style>
+
+<div class="myc">
+  <h1>Agreements</h1>
+  <p class="ag-sub" style="margin:0 0 18px;">Your service agreements with Lumen — current and past. Download a copy any time.</p>
+
+  <% if (awaiting.length) { %>
+    <div class="ag-banner">
+      <h2><%= awaiting.length === 1 ? 'An agreement is waiting for your signature' : awaiting.length + ' agreements are waiting for your signature' %></h2>
+      <p>Read it in full, download or print it, and sign online — no account needed.</p>
+      <% if (awaiting[0].sign_token) { %><a href="/c/<%= awaiting[0].sign_token %>">Review &amp; sign</a><% } %>
+    </div>
+  <% } %>
+
+  <% if (!list.length) { %>
+    <div class="ag-empty">
+      <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <h2 style="margin:0 0 4px;">No agreements yet</h2>
+      <p style="color:#64748b;margin:0;font-size:13.5px;">Once an agreement is issued it will appear here for you to read, download and sign.</p>
+    </div>
+  <% } %>
+
+  <div class="ag-wrap">
+    <% list.forEach(function(a){
+         var pending = a.sign_status==='sent' || a.sign_status==='viewed';
+         var live    = a.status==='active';
+         var d = daysTo(a.end_date);
+         var isExt = a.current_doc_kind==='extension';
+    %>
+      <div class="ag">
+        <div class="ag-top">
+          <div>
+            <p class="ag-name"><%= a.title || 'Service agreement' %><% if (isExt) { %> <span style="font-weight:500;color:#64748b;">(extended)</span><% } %></p>
+            <p class="ag-sub"><%= a.contract_number %></p>
+          </div>
+          <span class="pill <%= pending ? 'wait' : live ? 'live' : 'past' %>"><i></i>
+            <%= pending ? 'Awaiting your signature' : live ? 'Active' : (a.status.charAt(0).toUpperCase() + a.status.slice(1)) %>
+          </span>
+        </div>
+
+        <div class="ag-facts">
+          <div><span>Started</span><strong><%= dl(a.start_date) %></strong></div>
+          <div><span>Runs to</span><strong><%= dl(a.end_date) %></strong></div>
+          <div><span>Term</span><strong><%= a.term_months ? a.term_months + ' months' : '—' %></strong></div>
+          <div><span>Monthly</span><strong><%= money(a.monthly) %></strong></div>
+          <div><span>Notice</span><strong><%= a.notice_days %> days</strong></div>
+        </div>
+
+        <% if (pending) { %>
+          <div class="ag-note">This agreement has been sent to you and is waiting to be signed.</div>
+        <% } else if (live && d !== null && d >= 0 && d <= (a.notice_days || 30) + 60) { %>
+          <div class="ag-renew">
+            <% if (a.renewal_mode === 'signed_extension') { %>
+              Your term ends in <%= d %> day<%= d===1?'':'s' %>. We will be in touch about extending it.
+            <% } else { %>
+              Your term ends in <%= d %> day<%= d===1?'':'s' %> and renews automatically unless you give <%= a.notice_days %> days' notice.
+            <% } %>
+          </div>
+        <% } %>
+
+        <div class="ag-acts">
+          <% if (pending && a.sign_token) { %>
+            <a class="btn btn-primary" href="/c/<%= a.sign_token %>">Review &amp; sign</a>
+          <% } %>
+          <a class="btn" href="/my/agreements/<%= a.id %>.pdf" target="_blank">View PDF</a>
+          <a class="btn" href="/my/agreements/<%= a.id %>.pdf?dl=1">Download</a>
+          <% if (a.client_signed_at) { %>
+            <span class="ag-sub" style="align-self:center;margin:0;">Signed <%= dl(a.client_signed_at) %><%= a.supplier_signed_at ? ' · counter-signed' : '' %></span>
+          <% } %>
+        </div>
+      </div>
+    <% }); %>
+  </div>
+
+  <p class="ag-sub" style="margin-top:18px;">
+    Questions about any of these? Reply to the email they came from, or
+    <a class="row-link" href="/my/tickets/new">raise a ticket</a> and we'll pick it up.
+  </p>
+</div>
+
+<%- include('footer') %>
