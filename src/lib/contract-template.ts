@@ -22,6 +22,14 @@ export interface TemplateSection {
 
 export const MSA_TEMPLATE_CODE = 'msa';
 
+// Bump whenever DEFAULT_MSA_SECTIONS changes. The template is stored in the database once
+// seeded, so without this a wording fix would sit in the code and never reach production.
+// loadTemplate() refreshes a stored template whose version is behind this number.
+//   1 — initial
+//   2 — Service Levels section added; phone hours corrected to 08:00–18:00; Client
+//       Responsibilities reworded to address the client (all three review flags resolved)
+export const MSA_TEMPLATE_VERSION = 2;
+
 export const DEFAULT_MSA_SECTIONS: TemplateSection[] = [
   {
     key: 'confidential',
@@ -36,12 +44,25 @@ export const DEFAULT_MSA_SECTIONS: TemplateSection[] = [
     heading: 'Introduction',
     body:
       'This Service Agreement sets out the terms under which Lumen IT Solutions Limited ("Supplier") will provide IT, ' +
-      'Cloud, and Communications services to the Client. This document outlines the scope of services, SLAs, ' +
+      'Cloud, and Communications services to the Client. This document outlines the scope of services, service levels, ' +
       'responsibilities, and fees associated with our support and service offerings.',
-    needsReview: true,
-    note:
-      'This paragraph promises "SLAs", but the agreement contains no SLA table — only the channel response times in ' +
-      'Support Methods. Either add an SLA section or reword this sentence.',
+  },
+  {
+    // Resolves the old contradiction: the introduction promised "SLAs" while the agreement held
+    // only channel response times. These ARE those response times, stated as a service level —
+    // no new commitment, just presented as what the introduction says it is.
+    key: 'service_levels',
+    heading: 'Service Levels',
+    body:
+      'Support is available on every contracted channel from 08:00 to 18:00, Monday to Friday, excluding public holidays. ' +
+      'The targets below are response times — the time within which a request is acknowledged and work begins. They are ' +
+      'not resolution times, which vary with the nature of the fault.\n\n' +
+      '- Telephone (0333 335 0170) — response within 15–60 minutes\n' +
+      '- Email (sp@lumensolutions.co.uk) — response within 1 hour\n' +
+      '- WhatsApp / Microsoft Teams — response within 15–60 minutes\n' +
+      '- Support Portal (https://sp.lumensolutions.co.uk) — response within 1 hour\n\n' +
+      'Requests raised outside these hours are responded to from the start of the next working day. Out-of-hours ' +
+      'support is available at the rates set out under Additional fees.',
   },
   {
     key: 'updates',
@@ -92,16 +113,12 @@ export const DEFAULT_MSA_SECTIONS: TemplateSection[] = [
     body:
       'The following support channels are included in your service agreement and should be used for all support-related ' +
       'communication. Use of these methods ensures proper ticket tracking and SLA coverage.\n\n' +
-      '- Phone: 09:00–17:00 — 0333 335 0170 — response 15–60 minutes\n' +
-      '- Email: sp@lumensolutions.co.uk — response 1 hour during office hours\n' +
-      '- WhatsApp / Microsoft Teams: general queries or minor issues — response 15–60 minutes during office hours\n' +
+      '- Phone: 08:00–18:00 — 0333 335 0170 — response 15–60 minutes\n' +
+      '- Email: sp@lumensolutions.co.uk — response 1 hour\n' +
+      '- WhatsApp / Microsoft Teams: general queries or minor issues — response 15–60 minutes\n' +
       '- Support Portal: https://sp.lumensolutions.co.uk — submit and track support requests online\n\n' +
       'Important: communication outside of these channels (e.g. personal numbers or social media) is not monitored and ' +
       'will fall outside of contracted support terms.',
-    needsReview: true,
-    note:
-      'Support hours contradict the IT Services inclusions, which advertise an unlimited helpdesk 08:00–18:00 while this ' +
-      'section says phone support runs 09:00–17:00. Both appear in the same agreement. Pick one.',
   },
   {
     key: 'client_responsibilities',
@@ -113,11 +130,6 @@ export const DEFAULT_MSA_SECTIONS: TemplateSection[] = [
       '- Provide the supplier with access to equipment, software and services for maintenance, upgrades and fault prevention.\n' +
       '- Keep the supplier informed of potential changes to the IT system. For instance, if a member of staff needs remote access or their access level has changed.\n' +
       '- Maintain good communication with the supplier at all times.',
-    needsReview: true,
-    note:
-      'The manual template opened this section with the Supplier Responsibilities sentence — "The supplier will maintain, ' +
-      'and support business IT system used by the client. Additionally, the supplier will:" — above a list of client ' +
-      'obligations. Reworded to address the client. Confirm the new wording reads as you intend.',
   },
   {
     key: 'additional_fees',
@@ -233,5 +245,54 @@ export const EXTENSION_SECTIONS: TemplateSection[] = [
     body:
       'At the end of the extended term this agreement continues to renew on the same basis as the original agreement, ' +
       'unless notice is given in accordance with the notice period stated below.',
+  },
+];
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Template changelog. An extension says the agreement "continues on the same terms" — so if
+// the standard wording has moved since the original was signed, the extension has to say so.
+// Silently extending onto changed wording is exactly the trap the Staybrook amendment fell
+// into: two documents, no record of what differed.
+//
+// Add an entry whenever MSA_TEMPLATE_VERSION is bumped. Entries render on extension documents
+// under "Wording changes since your original agreement".
+// ─────────────────────────────────────────────────────────────────────────────
+export interface TemplateChange {
+  version: number; date: string;
+  items: { heading: string; detail: string; kind: 'improvement' | 'clarification' }[];
+}
+
+export const TEMPLATE_CHANGELOG: TemplateChange[] = [
+  {
+    version: 2,
+    date: '2026-07-28',
+    items: [
+      {
+        // The one that genuinely increases what the customer gets — two extra hours of phone
+        // cover per day, at no extra cost. Led with, and labelled as such.
+        kind: 'improvement',
+        heading: 'Longer telephone support hours',
+        detail:
+          'Telephone support now runs 08:00–18:00, two hours longer each day than the 09:00–17:00 previously ' +
+          'stated, bringing it in line with the unlimited helpdesk hours already listed in your inclusions. ' +
+          'There is no change to your monthly cost.',
+      },
+      {
+        kind: 'improvement',
+        heading: 'Response times now committed in writing',
+        detail:
+          'Your response-time targets are set out as their own Service Levels section rather than being implied ' +
+          'by the support channel list — 15–60 minutes by telephone and messaging, one hour by email and portal. ' +
+          'The targets are unchanged; they are now something you can hold us to.',
+      },
+      {
+        kind: 'clarification',
+        heading: 'Client Responsibilities',
+        detail:
+          'This section previously opened with a sentence describing the supplier\'s obligations rather than the ' +
+          'client\'s. It now addresses the client. The obligations listed beneath it are unchanged.',
+      },
+    ],
   },
 ];

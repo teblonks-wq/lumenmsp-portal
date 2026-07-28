@@ -4,7 +4,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { pool } from '../db/pool';
 import {
-  DEFAULT_MSA_SECTIONS, DEFAULT_SERVICE_BLURBS, EXTENSION_SECTIONS, MSA_TEMPLATE_CODE, SUPPLIER, TemplateSection,
+  DEFAULT_MSA_SECTIONS, DEFAULT_SERVICE_BLURBS, EXTENSION_SECTIONS, MSA_TEMPLATE_CODE,
+  MSA_TEMPLATE_VERSION, SUPPLIER, TEMPLATE_CHANGELOG, TemplateChange, TemplateSection,
 } from './contract-template';
 
 // Same logo the invoice PDFs use, inlined as a data URI so the print page needs no network.
@@ -35,6 +36,7 @@ export interface ContractDocContext {
   docKind: 'agreement' | 'extension';
   extensionSections: TemplateSection[];
   extension: { previousEnd: any; startDate: any; endDate: any; months: number } | null;
+  wordingChanges: TemplateChange[];
   changedLines: any[];
   reviewFlags: TemplateSection[];
 }
@@ -46,15 +48,27 @@ export async function loadTemplate(code = MSA_TEMPLATE_CODE): Promise<{ id: numb
     'SELECT id, version, sections FROM contract_templates WHERE code=$1 AND active=true ORDER BY version DESC LIMIT 1', [code]
   );
   if (rows.length) {
+    // A stored template that predates the current built-in wording is refreshed in place.
+    // Without this, a wording fix would live in the code and never reach a real agreement,
+    // because the database copy always wins. Already-signed documents are unaffected — those
+    // are frozen PDFs in contract_documents, not re-rendered from the template.
+    if ((rows[0].version || 1) < MSA_TEMPLATE_VERSION) {
+      const upd = await pool.query(
+        `UPDATE contract_templates SET sections=$1::jsonb, version=$2, updated_at=NOW()
+          WHERE id=$3 RETURNING id, version`,
+        [JSON.stringify(DEFAULT_MSA_SECTIONS), MSA_TEMPLATE_VERSION, rows[0].id]);
+      console.log('[contract-template] refreshed stored template to v' + MSA_TEMPLATE_VERSION);
+      return { id: upd.rows[0].id, version: upd.rows[0].version, sections: DEFAULT_MSA_SECTIONS };
+    }
     const secs = Array.isArray(rows[0].sections) ? rows[0].sections : DEFAULT_MSA_SECTIONS;
     return { id: rows[0].id, version: rows[0].version, sections: secs as TemplateSection[] };
   }
   const ins = await pool.query(
     `INSERT INTO contract_templates (code, name, version, active, sections)
-     VALUES ($1,$2,1,true,$3::jsonb)
+     VALUES ($1,$2,$4,true,$3::jsonb)
      ON CONFLICT (code) DO UPDATE SET updated_at=NOW()
      RETURNING id, version, sections`,
-    [code, 'Multi Product — Service Contract', JSON.stringify(DEFAULT_MSA_SECTIONS)]
+    [code, 'Multi Product — Service Contract', JSON.stringify(DEFAULT_MSA_SECTIONS), MSA_TEMPLATE_VERSION]
   );
   return { id: ins.rows[0].id, version: ins.rows[0].version, sections: DEFAULT_MSA_SECTIONS };
 }
@@ -118,6 +132,9 @@ export async function buildContractDoc(contractId: number): Promise<ContractDocC
   return {
     contract, customer: contract, serviceContacts: contactsRes.rows, groups,
     docKind, extensionSections: EXTENSION_SECTIONS, extension, changedLines: [],
+    // Only shown on an extension: what has changed in the standard wording since the original
+    // was issued. Empty on a new agreement — there is nothing to have changed from.
+    wordingChanges: docKind === 'extension' ? TEMPLATE_CHANGELOG : [],
     sections: tpl.sections, changeControl, terms: termsRes.rows,
     totals: { monthly, annual, oneOff, annualised: monthly * 12 + annual },
     supplier: SUPPLIER,

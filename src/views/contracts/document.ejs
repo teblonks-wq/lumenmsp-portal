@@ -159,6 +159,42 @@
     <% if (contract.renewal_mode === 'signed_extension') { %>Renewed only by a further signed extension.<% } else { %>Automatically renewed unless <%= contract.notice_days %> days' notice is provided.<% } %>
   </div>
 
+  <% var wc = (typeof wordingChanges !== 'undefined' && wordingChanges) ? wordingChanges : []; %>
+  <% var wcItems = []; wc.forEach(function(c){ (c.items||[]).forEach(function(it){ wcItems.push(it); }); }); %>
+  <% var wcUp = wcItems.filter(function(i){ return i.kind === 'improvement'; }); %>
+  <% var wcCl = wcItems.filter(function(i){ return i.kind !== 'improvement'; }); %>
+  <% if (wcItems.length) { %>
+    <h2>What has improved since your original agreement</h2>
+    <p>This extension continues your agreement on the same commercial terms. Since your original was issued we have
+       improved our standard wording, and those changes are set out below.
+       <strong>Each one is in your favour and none carries any additional cost.</strong></p>
+    <% if (wcUp.length) { %>
+      <table>
+        <thead><tr><th style="width:30%;">Improvement</th><th>What it means for you</th></tr></thead>
+        <tbody>
+          <% wcUp.forEach(function(it){ %>
+            <tr><td><strong><%= it.heading %></strong></td><td><%= it.detail %></td></tr>
+          <% }); %>
+        </tbody>
+      </table>
+    <% } %>
+    <% if (wcCl.length) { %>
+      <h3>Also corrected</h3>
+      <table>
+        <thead><tr><th style="width:30%;">Section</th><th>What changed</th></tr></thead>
+        <tbody>
+          <% wcCl.forEach(function(it){ %>
+            <tr><td><strong><%= it.heading %></strong></td><td><%= it.detail %></td></tr>
+          <% }); %>
+        </tbody>
+      </table>
+    <% } %>
+    <p>Nothing in your commercial terms — the services, quantities, prices, term or notice period — is altered by
+       these changes. If you would rather continue on the exact wording of your original agreement, tell us before
+       signing and we will reissue this extension on that basis. A full copy of the current standard terms is
+       available on request.</p>
+  <% } %>
+
   <h2>The agreement being extended</h2>
   <p>This extension continues the following agreement. Its details are restated here so this document
      can be read on its own, but the original agreement remains the governing document.</p>
