@@ -33,10 +33,9 @@ export async function renderContractHtml(ctx: ContractDocContext, opts: RenderOp
   const file = path.join(VIEWS_DIR, 'contracts', 'document.ejs');
   return ejs.renderFile(file, {
     ...ctx,
-    docKind: opts.docKind || 'agreement',
+    // The context already knows which document is live; opts can still force one.
+    docKind: opts.docKind || ctx.docKind || 'agreement',
     extensionSections: EXTENSION_SECTIONS,
-    changedLines: [],
-    extension: null,
     watermark: opts.watermark !== false,
     documentHash: opts.documentHash ?? null,
   }, { views: [VIEWS_DIR] });
@@ -58,7 +57,7 @@ export async function snapshotContract(
   changeSummary: string,
   userId?: number | null,
 ): Promise<{ version: number; sha256: string; filePath: string } | null> {
-  const rendered = await renderContractPdf(contractId, { docKind: kind === 'extension' ? 'extension' : 'agreement', watermark: false });
+  const rendered = await renderContractPdf(contractId, { watermark: false });
   if (!rendered) return null;
 
   const sha256 = crypto.createHash('sha256').update(rendered.pdf).digest('hex');

@@ -7,6 +7,7 @@
 </div>
 
 <% if (err) { %><div class="alert alert-error" style="margin-bottom:14px;"><%= err %></div><% } %>
+<% if (typeof msg !== 'undefined' && msg) { %><div class="alert alert-success" style="margin-bottom:14px;"><%= msg %></div><% } %>
 
 <% if (reviewFlags && reviewFlags.length) { %>
   <div class="alert alert-error" style="margin-bottom:14px;">
@@ -32,6 +33,33 @@
     <iframe src="/contracts/<%= contract.id %>/document.pdf#view=FitH" title="Agreement preview"
             style="width:100%;height:760px;border:0;border-top:1px solid var(--line);display:block;background:#f8fafc;"></iframe>
   </div>
+
+  <div>
+  <!-- Last chance to correct the dates: editable here, and locked once it is signed. -->
+  <% var signedOff = contract.sign_status === 'signed' || contract.sign_status === 'countersigned'; %>
+  <form method="post" action="/contracts/<%= contract.id %>/dates">
+    <input type="hidden" name="back" value="send">
+    <div class="card">
+      <div class="card-header"><h2><%= docKind === 'extension' ? 'Extension dates' : 'Agreement dates' %></h2></div>
+      <% if (signedOff) { %>
+        <p class="muted" style="font-size:12.5px;margin:0;">Signed on <%= new Date(contract.client_signed_at).toLocaleDateString('en-GB') %> — the dates are fixed now.</p>
+      <% } else { %>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="form-group" style="margin:0;"><label>Start date</label>
+            <input class="input" type="date" name="start_date" id="sStart"
+                   value="<%= contract.start_date ? new Date(contract.start_date).toISOString().slice(0,10) : '' %>"></div>
+          <div class="form-group" style="margin:0;"><label>Term (months)</label>
+            <input class="input" type="number" name="term_months" id="sTerm" min="1" max="120" value="<%= contract.term_months || 12 %>"></div>
+          <div class="form-group" style="margin:0;"><label>End date</label>
+            <input class="input" type="date" name="end_date" id="sEnd"
+                   value="<%= contract.end_date ? new Date(contract.end_date).toISOString().slice(0,10) : '' %>"></div>
+          <div class="form-group" style="margin:0;"><label>Notice (days)</label>
+            <input class="input" type="number" name="notice_days" min="0" value="<%= contract.notice_days %>"></div>
+        </div>
+        <button class="btn" type="submit" style="width:100%;margin-top:10px;">Update dates &amp; refresh preview</button>
+      <% } %>
+    </div>
+  </form>
 
   <form method="post" action="/contracts/<%= contract.id %>/send">
     <div class="card">
@@ -76,6 +104,25 @@
       </div>
     <% } %>
   </form>
+  </div>
 </div>
+
+<script>
+  (function(){
+    var start=document.getElementById('sStart'), term=document.getElementById('sTerm'), end=document.getElementById('sEnd');
+    if(!start||!term||!end) return;
+    var manual=false; end.addEventListener('input',function(){ manual=true; });
+    function derive(){
+      if(manual||!start.value) return;
+      var m=parseInt(term.value,10); if(isNaN(m)||m<1) return;
+      var d=new Date(start.value+'T00:00:00Z'), day=d.getUTCDate();
+      d.setUTCMonth(d.getUTCMonth()+m);
+      if(d.getUTCDate()<day) d.setUTCDate(0);
+      d.setUTCDate(d.getUTCDate()-1);
+      end.value=d.toISOString().slice(0,10);
+    }
+    start.addEventListener('change',derive); term.addEventListener('input',derive);
+  })();
+</script>
 
 <%- include('../partials/footer') %>

@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { pool } from '../db/pool';
 import {
-  DEFAULT_MSA_SECTIONS, DEFAULT_SERVICE_BLURBS, MSA_TEMPLATE_CODE, SUPPLIER, TemplateSection,
+  DEFAULT_MSA_SECTIONS, DEFAULT_SERVICE_BLURBS, EXTENSION_SECTIONS, MSA_TEMPLATE_CODE, SUPPLIER, TemplateSection,
 } from './contract-template';
 
 // Same logo the invoice PDFs use, inlined as a data URI so the print page needs no network.
@@ -32,6 +32,10 @@ export interface ContractDocContext {
   totals: { monthly: number; annual: number; oneOff: number; annualised: number };
   supplier: typeof SUPPLIER;
   logoUrl: string;
+  docKind: 'agreement' | 'extension';
+  extensionSections: TemplateSection[];
+  extension: { previousEnd: any; startDate: any; endDate: any; months: number } | null;
+  changedLines: any[];
   reviewFlags: TemplateSection[];
 }
 
@@ -101,8 +105,19 @@ export async function buildContractDoc(contractId: number): Promise<ContractDocC
     ? docsRes.rows
     : [{ version: 1, kind: 'agreement', title: 'Initial issue', change_summary: 'Agreement created', generated_at: contract.created_at, signed_at: null }];
 
+  // Once a contract has been extended the live document is the extension, built from the
+  // newest term with the one before it as the term that just ended.
+  const allTerms = termsRes.rows;
+  const latest = allTerms.length ? allTerms[allTerms.length - 1] : null;
+  const prior = allTerms.length > 1 ? allTerms[allTerms.length - 2] : null;
+  const docKind: 'agreement' | 'extension' = contract.current_doc_kind === 'extension' ? 'extension' : 'agreement';
+  const extension = docKind === 'extension' && latest
+    ? { previousEnd: prior ? prior.end_date : contract.start_date, startDate: latest.start_date, endDate: latest.end_date, months: latest.months }
+    : null;
+
   return {
     contract, customer: contract, serviceContacts: contactsRes.rows, groups,
+    docKind, extensionSections: EXTENSION_SECTIONS, extension, changedLines: [],
     sections: tpl.sections, changeControl, terms: termsRes.rows,
     totals: { monthly, annual, oneOff, annualised: monthly * 12 + annual },
     supplier: SUPPLIER,

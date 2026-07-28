@@ -20,8 +20,20 @@
       </div>
       <div class="form-group"><label>Status</label><select class="input" name="status"><% ['draft','active','expired','cancelled'].forEach(function(s){ %><option value="<%= s %>" <%= v('status')===s?'selected':'' %>><%= s.charAt(0).toUpperCase()+s.slice(1) %></option><% }); %></select></div>
       <div class="form-group"><label>Service type</label><select class="input" name="service_type"><% ['IT','Cloud','Comms','Hardware'].forEach(function(s){ %><option value="<%= s %>" <%= v('service_type')===s?'selected':'' %>><%= s %></option><% }); %></select></div>
-      <div class="form-group"><label>Start date</label><input class="input" type="date" name="start_date" value="<%= dateVal('start_date') %>"></div>
-      <div class="form-group"><label>End date</label><input class="input" type="date" name="end_date" value="<%= dateVal('end_date') %>"></div>
+      <div class="form-group"><label>Start date</label><input class="input" type="date" name="start_date" id="startDate" value="<%= dateVal('start_date') %>"></div>
+      <div class="form-group"><label>Term (months)</label>
+        <input class="input" type="number" name="term_months" id="termMonths" min="1" max="120"
+               value="<%= contract && contract.term_months != null ? contract.term_months : 12 %>">
+      </div>
+      <div class="form-group"><label>End date <span class="muted" style="font-weight:400;">— follows the term unless you set it</span></label>
+        <input class="input" type="date" name="end_date" id="endDate" value="<%= dateVal('end_date') %>">
+      </div>
+      <div class="form-group"><label>Renewal</label>
+        <select class="input" name="renewal_mode">
+          <option value="auto" <%= (!contract || contract.renewal_mode !== 'signed_extension') ? 'selected' : '' %>>Auto-renew unless notice is given</option>
+          <option value="signed_extension" <%= (contract && contract.renewal_mode === 'signed_extension') ? 'selected' : '' %>>Signed extension required</option>
+        </select>
+      </div>
       <div class="form-group"><label>Notice (days)</label><input class="input" type="number" name="notice_days" value="<%= contract && contract.notice_days!=null ? contract.notice_days : 30 %>"></div>
       <div class="form-group"><label>Payment method</label><select class="input" name="payment_method"><% ['upfront','delivery','direct_debit'].forEach(function(s){ %><option value="<%= s %>" <%= v('payment_method')===s?'selected':'' %>><%= s.replace('_',' ') %></option><% }); %></select></div>
       <label style="display:flex;align-items:center;gap:8px;font-weight:500;"><input type="checkbox" name="auto_renew" <%= (!contract || contract.auto_renew) ? 'checked' : '' %>> Auto-renew</label>
@@ -72,6 +84,25 @@
 </form>
 
 <script>
+  // Dates: the term drives the end date, but a typed end date is never overwritten -- the
+  // dates can be overridden right up to the point of sending.
+  (function () {
+    var start = document.getElementById('startDate'), term = document.getElementById('termMonths'), end = document.getElementById('endDate');
+    if (!start || !term || !end) return;
+    var manual = !!end.value;
+    end.addEventListener('input', function(){ manual = true; });
+    function derive(){
+      if (manual || !start.value) return;
+      var m = parseInt(term.value, 10); if (isNaN(m) || m < 1) return;
+      var d = new Date(start.value + 'T00:00:00Z'), day = d.getUTCDate();
+      d.setUTCMonth(d.getUTCMonth() + m);
+      if (d.getUTCDate() < day) d.setUTCDate(0);
+      d.setUTCDate(d.getUTCDate() - 1);
+      end.value = d.toISOString().slice(0, 10);
+    }
+    start.addEventListener('change', derive); term.addEventListener('input', derive);
+    derive();
+  })();
   (function () {
     var body = document.getElementById('itemsBody');
     function money(x){ return '£' + (isNaN(x)?0:x).toFixed(2); }

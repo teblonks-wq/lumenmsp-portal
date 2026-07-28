@@ -19,6 +19,7 @@ const SERVICE_TYPES = ['IT', 'Cloud', 'Comms', 'Hardware'];
 const PAY_METHODS = ['upfront', 'delivery', 'direct_debit'];
 const FREQS = ['monthly', 'annual', 'one_off'];
 const SECTIONS = ['IT', 'Cloud', 'Backup', 'Comms', 'Hardware'];
+const intOr = (v: any, d: number): number => { const x = parseInt(String(v ?? ''), 10); return isNaN(x) ? d : x; };
 
 const nz = (v: any): string | null => { const s = (v ?? '').toString().trim(); return s !== '' ? s : null; };
 const num = (v: any): number => { const x = parseFloat((v ?? '').toString()); return isNaN(x) ? 0 : x; };
@@ -99,14 +100,19 @@ router.post('/contracts', requireAuth, async (req: Request, res: Response) => {
     await client.query('BEGIN');
     const cn = await nextContractNumber();
     const { rows } = await client.query(
-      `INSERT INTO contracts (customer_id, contract_number, title, status, service_type, start_date, end_date, notice_days, auto_renew, payment_method, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      `INSERT INTO contracts (customer_id, contract_number, title, status, service_type, start_date, end_date, term_months, notice_days, auto_renew, renewal_mode, payment_method, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
       [
         b.customer_id ? parseInt(b.customer_id, 10) : null, cn, title,
         STATUSES.includes(b.status) ? b.status : 'draft',
         SERVICE_TYPES.includes(b.service_type) ? b.service_type : 'IT',
-        nz(b.start_date), nz(b.end_date), parseInt(b.notice_days, 10) || 30,
-        b.auto_renew === 'on' || b.auto_renew === '1', PAY_METHODS.includes(b.payment_method) ? b.payment_method : 'upfront',
+        nz(b.start_date),
+        // End date follows from start + term unless one is typed in explicitly.
+        nz(b.end_date) || (nz(b.start_date) ? addMonths(String(b.start_date), intOr(b.term_months, 12)) : null),
+        intOr(b.term_months, 12), parseInt(b.notice_days, 10) || 30,
+        b.auto_renew === 'on' || b.auto_renew === '1',
+        b.renewal_mode === 'signed_extension' ? 'signed_extension' : 'auto',
+        PAY_METHODS.includes(b.payment_method) ? b.payment_method : 'upfront',
         nz(b.notes), user.id,
       ]
     );
@@ -158,15 +164,19 @@ router.post('/contracts/:id', requireAuth, async (req: Request, res: Response) =
     await client.query('BEGIN');
     await client.query(
       `UPDATE contracts SET customer_id=$1, title=$2, status=$3, service_type=$4, start_date=$5, end_date=$6,
-         notice_days=$7, auto_renew=$8, payment_method=$9, notes=$10, updated_at=NOW()
+         notice_days=$7, auto_renew=$8, payment_method=$9, notes=$10,
+         term_months=$12, renewal_mode=$13, updated_at=NOW()
        WHERE id=$11 AND deleted_at IS NULL`,
       [
         b.customer_id ? parseInt(b.customer_id, 10) : null, (b.title || '').trim(),
         STATUSES.includes(b.status) ? b.status : 'draft',
         SERVICE_TYPES.includes(b.service_type) ? b.service_type : 'IT',
-        nz(b.start_date), nz(b.end_date), parseInt(b.notice_days, 10) || 30,
+        nz(b.start_date),
+        nz(b.end_date) || (nz(b.start_date) ? addMonths(String(b.start_date), intOr(b.term_months, 12)) : null),
+        parseInt(b.notice_days, 10) || 30,
         b.auto_renew === 'on' || b.auto_renew === '1', PAY_METHODS.includes(b.payment_method) ? b.payment_method : 'upfront',
         nz(b.notes), id,
+        intOr(b.term_months, 12), b.renewal_mode === 'signed_extension' ? 'signed_extension' : 'auto',
       ]
     );
     await saveLines(client, id, b);
@@ -213,6 +223,142 @@ router.post('/contracts/:id/push-billing', requireAuth, async (req: Request, res
   }
 });
 
+// End date = start + N months, less a day (a 12-month term from 01/08/2025 ends 31/07/2026).
+function addMonths(startIso: string, months: number): string {
+  const d = new Date(startIso + 'T00:00:00Z');
+  const day = d.getUTCDate();
+  d.setUTCMonth(d.getUTCMonth() + months);
+  if (d.getUTCDate() < day) d.setUTCDate(0); // clamp for short months
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+const iso = (v: any): string | null => {
+  const s = String(v ?? '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+};
+
+// Every contract needs a term 1 before it can be extended; older contracts pre-date the
+// terms table, so it is backfilled from the contract's own dates on first use.
+async function ensureFirstTerm(client: any, contractId: number): Promise<void> {
+  const n = (await client.query('SELECT COUNT(*)::int n FROM contract_terms WHERE contract_id=$1', [contractId])).rows[0].n;
+  if (n > 0) return;
+  const c = (await client.query('SELECT start_date, end_date, term_months FROM contracts WHERE id=$1', [contractId])).rows[0];
+  if (!c || !c.start_date) return;
+  const start = new Date(c.start_date).toISOString().slice(0, 10);
+  const months = c.term_months || 12;
+  const end = c.end_date ? new Date(c.end_date).toISOString().slice(0, 10) : addMonths(start, months);
+  await client.query(
+    `INSERT INTO contract_terms (contract_id, seq, start_date, end_date, months, source, notes)
+     VALUES ($1,1,$2,$3,$4,'original','Backfilled from the contract record')`,
+    [contractId, start, end, months]);
+}
+
+// ── Override the dates before it goes out ──────────────────────────────────────
+router.post('/contracts/:id/dates', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  const back = String(req.body.back || '') === 'send' ? '/contracts/' + id + '/send' : '/contracts/' + id;
+  const c = (await pool.query('SELECT sign_status FROM contracts WHERE id=$1 AND deleted_at IS NULL', [id])).rows[0];
+  if (!c) { res.status(404).render('error', { message: 'Contract not found.' }); return; }
+  if (c.sign_status === 'signed' || c.sign_status === 'countersigned') {
+    res.redirect(back + '?err=' + encodeURIComponent('This agreement is already signed — its dates cannot be changed.'));
+    return;
+  }
+  const start = iso(req.body.start_date);
+  const months = parseInt(String(req.body.term_months || ''), 10);
+  if (!start) { res.redirect(back + '?err=' + encodeURIComponent('Enter a valid start date.')); return; }
+  const m = isNaN(months) || months < 1 ? 12 : months;
+  // An explicit end date wins; otherwise it follows from start + term.
+  const end = iso(req.body.end_date) || addMonths(start, m);
+  const notice = parseInt(String(req.body.notice_days || ''), 10);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE contracts SET start_date=$1, end_date=$2, term_months=$3,
+         notice_days=COALESCE($4, notice_days) WHERE id=$5`,
+      [start, end, m, isNaN(notice) ? null : notice, id]);
+    // Keep term 1 in step so the document and the term history do not disagree.
+    await client.query(
+      `UPDATE contract_terms SET start_date=$1, end_date=$2, months=$3
+        WHERE contract_id=$4 AND seq=1`, [start, end, m, id]);
+    await client.query('COMMIT');
+  } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  await logActivity(user.id, 'updated', 'contracts', id, 'Changed contract dates');
+  res.redirect(back + '?msg=' + encodeURIComponent('Dates updated — the preview below reflects them.'));
+});
+
+// ── Extend the term ────────────────────────────────────────────────────────────
+router.get('/contracts/:id/extend', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  const r = await pool.query(
+    `SELECT ct.*, c.name AS customer_name FROM contracts ct LEFT JOIN customers c ON c.id=ct.customer_id
+      WHERE ct.id=$1 AND ct.deleted_at IS NULL LIMIT 1`, [id]);
+  if (!r.rows.length) { res.status(404).render('error', { message: 'Contract not found.' }); return; }
+  const contract = r.rows[0];
+  const terms = (await pool.query('SELECT * FROM contract_terms WHERE contract_id=$1 ORDER BY seq', [id])).rows;
+  const currentEnd = contract.end_date ? new Date(contract.end_date).toISOString().slice(0, 10) : null;
+  const suggestedStart = currentEnd
+    ? new Date(new Date(currentEnd + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
+  res.render('contracts/extend', {
+    user, contract, terms, suggestedStart,
+    defaultMonths: contract.term_months || 12,
+    err: req.query.err ? String(req.query.err) : null,
+  });
+});
+
+router.post('/contracts/:id/extend', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  const raw = String(req.body.months || '');
+  const months = parseInt(raw === 'custom' ? String(req.body.custom_months || '') : raw, 10);
+  if (isNaN(months) || months < 1 || months > 120) {
+    res.redirect('/contracts/' + id + '/extend?err=' + encodeURIComponent('Choose an extension length between 1 and 120 months.'));
+    return;
+  }
+  const start = iso(req.body.start_date);
+  if (!start) { res.redirect('/contracts/' + id + '/extend?err=' + encodeURIComponent('Enter a valid start date for the extension.')); return; }
+  const end = iso(req.body.end_date) || addMonths(start, months);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await ensureFirstTerm(client, id);
+    const seq = (((await client.query('SELECT COALESCE(MAX(seq),0) s FROM contract_terms WHERE contract_id=$1', [id])).rows[0].s) || 0) + 1;
+    await client.query(
+      `INSERT INTO contract_terms (contract_id, seq, start_date, end_date, months, source, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [id, seq, start, end, months,
+       String(req.body.source) === 'auto_renew' ? 'auto_renew' : 'signed_extension', nz(req.body.notes)]);
+
+    // The extension is a fresh document with its own signature cycle: clear the previous
+    // signatures and mint a new link on send, so an old link cannot sign the new term.
+    const autoOnly = String(req.body.source) === 'auto_renew';
+    await client.query(
+      `UPDATE contracts SET end_date=$1, current_doc_kind='extension',
+         sign_status = CASE WHEN $2::boolean THEN sign_status ELSE 'unsigned' END,
+         sign_token  = CASE WHEN $2::boolean THEN sign_token  ELSE NULL END,
+         sent_to     = CASE WHEN $2::boolean THEN sent_to     ELSE NULL END,
+         sent_at     = CASE WHEN $2::boolean THEN sent_at     ELSE NULL END,
+         view_count  = CASE WHEN $2::boolean THEN view_count  ELSE 0 END,
+         client_sign_name=NULL, client_sign_position=NULL, client_sign_email=NULL,
+         client_signed_at=NULL, client_sign_ip=NULL, client_sign_user_agent=NULL, client_signature_svg=NULL,
+         supplier_sign_name=NULL, supplier_sign_position=NULL, supplier_signed_at=NULL, supplier_signature_svg=NULL
+       WHERE id=$3`, [end, autoOnly, id]);
+    await client.query('COMMIT');
+  } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+
+  await logActivity(user.id, 'updated', 'contracts', id, 'Extended contract by ' + months + ' months');
+  if (String(req.body.source) === 'auto_renew') {
+    res.redirect('/contracts/' + id + '?msg=' + encodeURIComponent('Term recorded as auto-renewed for ' + months + ' months. No signature required.'));
+  } else {
+    res.redirect('/contracts/' + id + '/send?msg=' + encodeURIComponent('Extension of ' + months + ' months prepared — review it below, then send for signature.'));
+  }
+});
+
 // ── Review & send for signature ────────────────────────────────────────────────
 // The preview is the point of this screen: nothing goes out until someone has looked at the
 // PDF the customer will actually be asked to sign.
@@ -232,7 +378,9 @@ router.get('/contracts/:id/send', requireAuth, async (req: Request, res: Respons
   res.render('contracts/send', {
     user, contract, contacts, appUrl: config.APP_URL,
     reviewFlags: ctx ? ctx.reviewFlags : [],
+    docKind: ctx ? ctx.docKind : 'agreement',
     err: req.query.err ? String(req.query.err) : null,
+    msg: req.query.msg ? String(req.query.msg) : null,
   });
 });
 

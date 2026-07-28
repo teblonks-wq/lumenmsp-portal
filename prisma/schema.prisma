@@ -1022,6 +1022,9 @@ model Contract {
 
   // ── Renewal behaviour (decided per contract) ──
   renewalMode     String    @default("auto") @map("renewal_mode") // auto | signed_extension
+  // Which document is currently in play. Once extended, the thing being signed is the
+  // extension, not the original agreement — the renderer needs to know which to produce.
+  currentDocKind  String    @default("agreement") @map("current_doc_kind") // agreement | extension
 
   // ── Signature state. The portal owns this end to end; no third-party e-sign service. ──
   signStatus      String    @default("unsigned") @map("sign_status") // unsigned|sent|viewed|signed|countersigned|declined
