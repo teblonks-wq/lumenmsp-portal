@@ -12,6 +12,7 @@ import { clientIp, documentFooterHtml, PDF_OPTS, renderContractHtml, snapshotCon
 import { SUPPLIER as SUP } from '../lib/contract-template';
 import { config } from '../config';
 import { sendMail } from '../lib/mailer';
+import { contractEmailHtml, contractSignedEmailHtml } from '../lib/emails';
 
 const router = Router();
 const STATUSES = ['draft', 'active', 'expired', 'cancelled'];
@@ -396,24 +397,36 @@ router.post('/contracts/:id/send', requireAuth, async (req: Request, res: Respon
     [token, sendTo, id]);
 
   const c = (await pool.query(
-    `SELECT ct.contract_number, ct.title, ct.sign_token, c.name AS customer_name
+    `SELECT ct.contract_number, ct.title, ct.sign_token, ct.customer_id, ct.start_date, ct.end_date,
+            ct.term_months, ct.current_doc_kind, c.name AS customer_name
        FROM contracts ct LEFT JOIN customers c ON c.id=ct.customer_id WHERE ct.id=$1`, [id])).rows[0];
   const link = config.APP_URL + '/c/' + c.sign_token;
-  const message = String(req.body.message || '').trim();
+  const isExt = c.current_doc_kind === 'extension';
+
+  // Personalise from the contact record when the address is one we know.
+  let contactName = '';
+  if (c.customer_id) {
+    contactName = (await pool.query(
+      'SELECT full_name FROM customer_contacts WHERE customer_id=$1 AND lower(email)=lower($2) LIMIT 1',
+      [c.customer_id, sendTo])).rows[0]?.full_name || '';
+  }
+  const ctx = await buildContractDoc(id);
+  const gb = (d: any) => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+  const money = (n: number) => '£' + (Number(n) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
   try {
     await sendMail({
       to: sendTo,
-      subject: `${c.contract_number} — service agreement for signature`,
-      html:
-        `<p>Hello,</p><p>Your service agreement <strong>${c.contract_number}</strong>` +
-        (c.title ? ` (${c.title})` : '') + ` is ready to sign.</p>` +
-        (message ? `<p>${message.replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>` : '') +
-        `<p><a href="${link}" style="display:inline-block;background:#0f766e;color:#fff;padding:11px 20px;` +
-        `border-radius:8px;text-decoration:none;font-weight:600;">Read and sign the agreement</a></p>` +
-        `<p style="font-size:13px;color:#64748b;">No login needed — the link opens the agreement on our site, ` +
-        `where you can read it, download it, print it and sign it.</p>` +
-        `<p style="font-size:13px;color:#64748b;">All your agreements are also available any time in your ` +
-        `portal at <a href="${config.APP_URL}/my">${config.APP_URL.replace(/^https?:\/\//, '')}/my</a>.</p>`,
+      subject: `${c.contract_number} — your ${isExt ? 'service agreement extension' : 'service agreement'} for signature`,
+      html: contractEmailHtml({
+        contactName, contractNumber: c.contract_number, title: c.title, isExtension: isExt,
+        startDate: gb(isExt && ctx?.extension ? ctx.extension.startDate : c.start_date),
+        endDate: gb(isExt && ctx?.extension ? ctx.extension.endDate : c.end_date),
+        termMonths: isExt && ctx?.extension ? ctx.extension.months : (c.term_months || undefined),
+        monthly: ctx ? money(ctx.totals.monthly) : undefined,
+        message: String(req.body.message || '').trim(),
+        link, portalUrl: config.APP_URL + '/my',
+      }),
       signatureName: user.displayName,
     });
   } catch (e) {
@@ -524,13 +537,18 @@ router.post('/c/:token/sign', async (req: Request, res: Response) => {
   try {
     await sendMail({
       to: email,
-      subject: `${contract.contract_number} — signed copy of your agreement`,
-      html:
-        `<p>Thank you, ${name.replace(/</g, '&lt;')}.</p>` +
-        `<p>Your service agreement <strong>${contract.contract_number}</strong> has been signed.</p>` +
-        `<p><a href="${config.APP_URL}/c/${token}/document.pdf?dl=1">Download your signed copy</a></p>` +
-        `<p style="font-size:13px;color:#64748b;">All your agreements are available any time in your portal at ` +
-        `<a href="${config.APP_URL}/my">${config.APP_URL.replace(/^https?:\/\//, '')}/my</a>.</p>`,
+      subject: `${contract.contract_number} — signed copy of your ${contract.current_doc_kind === 'extension' ? 'extension' : 'agreement'}`,
+      html: contractSignedEmailHtml({
+        contactName: name, contractNumber: contract.contract_number, title: contract.title,
+        isExtension: contract.current_doc_kind === 'extension',
+        signedBy: name + (position ? ', ' + position : ''),
+        signedAt: new Date().toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        downloadLink: config.APP_URL + '/c/' + token + '/document.pdf?dl=1',
+        portalUrl: config.APP_URL + '/my',
+      }),
+      // Carries the branded signature block so the receipt looks like every other email
+      // they get from us, rather than a bare system message.
+      signatureName: 'The Lumen MSP Team',
     });
   } catch (e) { console.error('[contract-sign] confirmation mail failed:', e); }
   res.redirect('/c/' + token);

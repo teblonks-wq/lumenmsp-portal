@@ -137,3 +137,66 @@ export async function sendTicketStatusEmail(
   const subjectLine = renderTemplate(def.subject, vars).replace(/:\s*$/, '');
   await sendMail({ to: toEmail, subject: subjectLine, html: renderTemplate(tpl, vars), signatureName: fromName, autoSubmitted: true });
 }
+
+
+// Branded agreement email — same shape as the quotation email so every customer-facing
+// message reads as one house style. The mailer appends the branded signature (contact
+// block, Cyber Readiness banner, legal disclaimer), so no logo or footer is repeated here.
+export function contractEmailHtml(opts: {
+  contactName?: string; contractNumber: string; title: string; isExtension?: boolean;
+  startDate?: string; endDate?: string; termMonths?: number; monthly?: string;
+  message?: string; link: string; portalUrl: string;
+}): string {
+  const first = (opts.contactName || '').trim().split(/\s+/)[0] || 'there';
+  const esc = (s: string) => (s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as Record<string, string>)[c]);
+  const note = opts.message ? `<p style="margin:0 0 16px;">${esc(opts.message).replace(/\n/g, '<br>')}</p>` : '';
+  const what = opts.isExtension ? 'Extension' : 'Agreement';
+  const rows: [string, string][] = [[what, opts.contractNumber], ['Subject', opts.title]];
+  if (opts.termMonths) rows.push(['Term', opts.termMonths + ' months']);
+  if (opts.startDate) rows.push([opts.isExtension ? 'Extension starts' : 'Starts', opts.startDate]);
+  if (opts.endDate) rows.push(['Ends', opts.endDate]);
+  if (opts.monthly) rows.push(['Monthly total', opts.monthly]);
+  const summary = rows.map(([k, v]) =>
+    `<tr><td style="padding:5px 18px 5px 0;color:#6b7280;font-size:14px;">${k}</td><td style="padding:5px 0;font-weight:600;font-size:14px;">${esc(v)}</td></tr>`).join('');
+  const shown = (opts.portalUrl || '').replace(/^https?:\/\//, '');
+  const lead = opts.isExtension
+    ? 'Your service agreement is due to continue, and the extension is ready for you to review. It carries the same terms as your existing agreement — a summary is below.'
+    : 'Your service agreement is ready to review and sign. A summary is below, and the full agreement opens in your browser using the button.';
+  return `
+  <div style="font-family:'Segoe UI',Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.6;">
+    <p style="margin:0 0 14px;">Hi ${esc(first)},</p>
+    ${note}
+    <p style="margin:0 0 16px;">${lead}</p>
+    <table style="border-collapse:collapse;margin:0 0 22px;">${summary}</table>
+    <p style="margin:0 0 20px;">
+      <a href="${opts.link}" style="display:inline-block;background:#0ea5b7;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 28px;border-radius:6px;font-size:15px;">Read &amp; sign your ${opts.isExtension ? 'extension' : 'agreement'}</a>
+    </p>
+    <p style="margin:0 0 16px;color:#6b7280;font-size:13px;">No login or account needed — the link opens the document on our site, where you can read it, download it, print it and sign it.</p>
+    <p style="margin:0;color:#6b7280;font-size:13px;">All your agreements are also available any time in your portal at <a href="${opts.portalUrl}" style="color:#0e7490;">${shown}</a>, alongside your invoices, tickets and reports.</p>
+  </div>`;
+}
+
+// Confirmation once the customer has signed — their receipt, with the signed copy attached
+// by link and the portal reminder repeated.
+export function contractSignedEmailHtml(opts: {
+  contactName?: string; contractNumber: string; title: string; isExtension?: boolean;
+  signedBy: string; signedAt: string; downloadLink: string; portalUrl: string;
+}): string {
+  const first = (opts.contactName || '').trim().split(/\s+/)[0] || 'there';
+  const esc = (s: string) => (s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as Record<string, string>)[c]);
+  const shown = (opts.portalUrl || '').replace(/^https?:\/\//, '');
+  return `
+  <div style="font-family:'Segoe UI',Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.6;">
+    <p style="margin:0 0 14px;">Hi ${esc(first)},</p>
+    <p style="margin:0 0 16px;">Thank you — your ${opts.isExtension ? 'extension' : 'service agreement'}
+       <strong>${esc(opts.contractNumber)}</strong>${opts.title ? ' (' + esc(opts.title) + ')' : ''} has been signed.</p>
+    <table style="border-collapse:collapse;margin:0 0 22px;">
+      <tr><td style="padding:5px 18px 5px 0;color:#6b7280;font-size:14px;">Signed by</td><td style="padding:5px 0;font-weight:600;font-size:14px;">${esc(opts.signedBy)}</td></tr>
+      <tr><td style="padding:5px 18px 5px 0;color:#6b7280;font-size:14px;">Signed on</td><td style="padding:5px 0;font-weight:600;font-size:14px;">${esc(opts.signedAt)}</td></tr>
+    </table>
+    <p style="margin:0 0 20px;">
+      <a href="${opts.downloadLink}" style="display:inline-block;background:#0ea5b7;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 28px;border-radius:6px;font-size:15px;">Download your signed copy</a>
+    </p>
+    <p style="margin:0;color:#6b7280;font-size:13px;">Keep this for your records, or find it any time in your portal at <a href="${opts.portalUrl}" style="color:#0e7490;">${shown}</a>. We will countersign and you will receive the fully executed copy shortly.</p>
+  </div>`;
+}
