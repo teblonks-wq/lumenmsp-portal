@@ -352,7 +352,7 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
       }
     }
 
-    // Home tab — Call Tracker: look up a number across the customer's cached calls (last 28 days).
+    // Home tab — Number Lookup: look up a number across the customer's cached calls (last 28 days).
     if (tab === 'home' && q.length >= 3) {
       const norm = q.replace(/[\s\-()]/g, '').replace(/^\+44/, '0');
       const from = new Date(Date.now() - 28 * 86400000).toISOString().slice(0, 10);

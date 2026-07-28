@@ -41,15 +41,10 @@
   <div class="card"><div class="empty">Your call insights aren't switched on yet. Please contact Lumen IT and we'll set them up for you.</div></div>
 <% } else { %>
 
-  <div class="my-tabs">
-    <a class="my-tab <%= tab === 'home' ? 'active' : '' %>" href="/my/insights?tab=home">Number Lookup</a>
-    <a class="my-tab <%= tab === 'reverse' ? 'active' : '' %>" href="/my/insights?tab=reverse">Answered by</a>
-    <a class="my-tab <%= tab === 'reports' ? 'active' : '' %>" href="/my/insights?tab=reports">Reports</a>
-  </div>
-
-  <% if (tab === 'home') { %>
-    <div class="ins-tools">
-      <form method="get" action="/my/insights" class="ins-tool <%= q ? 'is-active' : '' %>">
+  <!-- Both call tools live above the tabs: they are the reason customers come here,
+       and keeping them out of the tab strip means neither is ever a click away. -->
+  <div class="ins-tools">
+    <form method="get" action="/my/insights" class="ins-tool <%= q ? 'is-active' : '' %>">
         <input type="hidden" name="tab" value="home">
         <h2><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Number Lookup</h2>
         <p class="ins-blurb">Follow one caller's journey — every call to or from a number, who it reached, how long they waited and where it went.</p>
@@ -61,19 +56,27 @@
         <p class="ins-hint">Searches the last 28 days of calls involving your numbers.</p>
       </form>
 
-      <form method="get" action="/my/insights" class="ins-tool">
+    <form method="get" action="/my/insights" class="ins-tool <%= ext ? 'is-active' : '' %>">
         <input type="hidden" name="tab" value="reverse">
         <h2><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Answered by</h2>
         <p class="ins-blurb">The other way round — every call a person or extension answered in a window, with the caller's number to follow up.</p>
         <label for="insExt">Extension or person</label>
         <div class="ins-go">
-          <input id="insExt" class="input" name="ext" list="extListHome" placeholder="e.g. 201 or a name" autocomplete="off">
+          <input id="insExt" class="input" name="ext" value="<%= ext %>" list="extListHome" placeholder="e.g. 201 or a name" autocomplete="off">
           <datalist id="extListHome"><% (extensions || []).forEach(function(e){ %><option value="<%= e %>"></option><% }); %></datalist>
           <button class="btn btn-primary" type="submit">Show calls</button>
         </div>
         <p class="ins-hint">Defaults to the last 7 days — you can narrow the dates and times on the next screen.</p>
       </form>
-    </div>
+  </div>
+
+  <div class="my-tabs">
+    <a class="my-tab <%= tab === 'home' ? 'active' : '' %>" href="/my/insights?tab=home">Number Lookup</a>
+    <a class="my-tab <%= tab === 'reverse' ? 'active' : '' %>" href="/my/insights?tab=reverse">Answered by</a>
+    <a class="my-tab <%= tab === 'reports' ? 'active' : '' %>" href="/my/insights?tab=reports">Reports</a>
+  </div>
+
+  <% if (tab === 'home') { %>
 
     <% if (q && q.length >= 3) { %>
       <% if (stats && stats.total) { %>
@@ -108,9 +111,8 @@
 
   <% } else if (tab === 'reverse') { %>
 
-    <div class="ins-tool <%= ext ? 'is-active' : '' %>" style="margin-bottom:18px;">
-      <h2><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Answered by</h2>
-      <p class="ins-blurb">Every call a person or extension answered in the window below. Looking for one caller instead? Use <a class="row-link" href="/my/insights?tab=home">Number Lookup</a>.</p>
+    <div class="card">
+      <p class="muted" style="margin:0 0 12px;font-size:13px;">Narrow the window — every call <strong><%= ext || 'that person' %></strong> answered between these dates and times.</p>
       <form method="get" action="/my/insights" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
         <input type="hidden" name="tab" value="reverse">
         <div class="form-group" style="margin:0;min-width:210px;">
