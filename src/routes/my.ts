@@ -325,7 +325,12 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
   const tab = req.query.tab === 'reports' ? 'reports' : req.query.tab === 'reverse' ? 'reverse' : 'home';
   const q = String(req.query.q || '').trim();
   const base: any = {
-    active: 'insights', user: u, title: 'Insights', tab, q,
+    // Number Lookup and Answered by have their own sidebar entries, so the active nav
+    // item follows the tab rather than always being 'insights'.
+    active: tab === 'home' ? 'number-lookup' : tab === 'reverse' ? 'answered-by' : 'insights',
+    user: u,
+    title: tab === 'home' ? 'Number Lookup' : tab === 'reverse' ? 'Answered by' : 'Insights',
+    tab, q,
     journeys: [], stats: null, templates: [], sites: [], reports: [], emails: [], insName: '',
     ext: '', fromDate: '', toDate: '', fromTime: '00:00', toTime: '23:59', extensions: [], calls: [], rstats: null,
     msg: req.query.msg || null, err: req.query.err || null, state: 'ok',
