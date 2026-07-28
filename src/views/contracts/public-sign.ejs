@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title><%= contract.contract_number %> — <%= supplier.brand %></title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#f1f5f9;color:#1f2937;line-height:1.55;}
+  .bar{background:#fff;border-bottom:1px solid #e2e8f0;padding:14px 22px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;position:sticky;top:0;z-index:5;}
+  .bar img{max-height:38px;width:auto;display:block;}
+  .bar .who{font-size:12px;color:#64748b;text-align:right;}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px 18px 60px;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(310px,1fr);gap:18px;align-items:start;}
+  @media (max-width:900px){ .wrap{grid-template-columns:1fr;} }
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;}
+  .card h2{font-size:15px;padding:15px 18px;border-bottom:1px solid #f1f5f9;color:#0f172a;}
+  .card .in{padding:17px 18px;}
+  .acts{display:flex;gap:8px;padding:11px 18px;border-bottom:1px solid #f1f5f9;flex-wrap:wrap;background:#f8fafc;}
+  .btn{display:inline-block;border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;text-decoration:none;font-family:inherit;}
+  .btn:hover{background:#f8fafc;}
+  .btn-primary{background:#0f766e;border-color:#0f766e;color:#fff;font-weight:600;}
+  .btn-primary:hover{background:#115e59;}
+  .btn-primary:disabled{background:#94a3b8;border-color:#94a3b8;cursor:not-allowed;}
+  iframe{width:100%;height:78vh;min-height:520px;border:0;display:block;background:#f8fafc;}
+  label{display:block;font-size:12px;font-weight:600;color:#475569;margin:0 0 4px;}
+  .f{margin-bottom:13px;}
+  input[type=text],input[type=email]{width:100%;border:1px solid #cbd5e1;border-radius:8px;padding:9px 11px;font-size:14px;font-family:inherit;}
+  input:focus{outline:2px solid #99f6e4;border-color:#0f766e;}
+  .sigprev{border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc;min-height:62px;display:flex;align-items:center;justify-content:center;
+           font-family:'Segoe Script','Brush Script MT',cursive;font-size:27px;color:#0f766e;padding:6px 10px;word-break:break-word;text-align:center;}
+  .sigprev.empty{color:#cbd5e1;font-family:inherit;font-size:12.5px;}
+  .agree{display:flex;gap:9px;align-items:flex-start;font-size:12.5px;color:#475569;margin:13px 0;}
+  .agree input{margin-top:2px;flex:none;width:16px;height:16px;}
+  .note{background:#f0fdfa;border:1px solid #ccfbf1;border-radius:10px;padding:13px 15px;font-size:12.5px;color:#115e59;}
+  .note strong{display:block;margin-bottom:3px;color:#0f766e;}
+  .legal{font-size:11px;color:#94a3b8;text-align:center;padding:22px 18px 0;line-height:1.6;}
+  .err{background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:10px 13px;font-size:13px;margin-bottom:13px;}
+  .done{background:#dcfce7;color:#166534;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px;font-size:13.5px;}
+</style></head>
+<body>
+<div class="bar">
+  <img src="/static/lumen-msp-logo.png" alt="<%= supplier.brand %>">
+  <div class="who">
+    <strong style="color:#0f172a;font-size:13px;"><%= contract.contract_number %></strong><br>
+    <%= contract.title %><% if (customerName) { %> · <%= customerName %><% } %>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="card">
+    <div class="acts">
+      <a class="btn" href="/c/<%= token %>/document.pdf?dl=1">Download PDF</a>
+      <button class="btn" type="button" id="printBtn">Print</button>
+      <a class="btn" href="/c/<%= token %>/document.pdf" target="_blank">Open in new tab</a>
+    </div>
+    <iframe id="doc" src="/c/<%= token %>/document.pdf#view=FitH" title="Agreement"></iframe>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2><%= signed ? 'Signed' : 'Sign this agreement' %></h2>
+      <div class="in">
+        <% if (signed) { %>
+          <div class="done">
+            <strong>Thank you — this agreement is signed.</strong><br>
+            Signed by <%= contract.client_sign_name %><% if (contract.client_sign_position) { %>, <%= contract.client_sign_position %><% } %>
+            on <%= new Date(contract.client_signed_at).toLocaleString('en-GB') %>.<br>
+            <span style="font-size:12px;">A copy has been emailed to you. You can download it above at any time.</span>
+          </div>
+        <% } else { %>
+          <% if (error) { %><div class="err"><%= error %></div><% } %>
+          <form method="post" action="/c/<%= token %>/sign" id="signForm">
+            <div class="f"><label for="n">Full name</label><input type="text" id="n" name="name" required autocomplete="name" value="<%= prefill.name || '' %>"></div>
+            <div class="f"><label for="p">Position</label><input type="text" id="p" name="position" required placeholder="e.g. Managing Director" value="<%= prefill.position || '' %>"></div>
+            <div class="f"><label for="e">Email</label><input type="email" id="e" name="email" required autocomplete="email" value="<%= prefill.email || '' %>"></div>
+            <div class="f">
+              <label>Your signature</label>
+              <div class="sigprev empty" id="sigPrev">Your name will appear here as your signature</div>
+            </div>
+            <label class="agree">
+              <input type="checkbox" name="agree" value="1" required id="agree">
+              <span>I have read the agreement above, I am authorised to sign on behalf of
+                <strong><%= customerName || 'my organisation' %></strong>, and I agree to be bound by its terms.
+                I accept that typing my name constitutes my electronic signature.</span>
+            </label>
+            <button class="btn btn-primary" type="submit" id="submitBtn" style="width:100%;" disabled>Sign agreement</button>
+          </form>
+        <% } %>
+      </div>
+    </div>
+
+    <!-- Reminder: this is not the only place they can find their paperwork. -->
+    <div class="note" style="margin-top:14px;">
+      <strong>All your agreements live in your portal</strong>
+      Every agreement, past and present, is available to view and download any time at
+      <a href="<%= appUrl %>/my" style="color:#0f766e;"><%= (appUrl||'').replace(/^https?:\/\//,'') %>/my</a> —
+      along with your invoices, tickets and reports. No need to keep track of this email.
+    </div>
+
+    <div class="legal"><%= supplier.tradingStatement %></div>
+  </div>
+</div>
+
+<script>
+  (function(){
+    var pb = document.getElementById('printBtn');
+    if (pb) pb.addEventListener('click', function(){
+      var f = document.getElementById('doc');
+      // Printing the embedded viewer directly is blocked in some browsers; fall back to a tab.
+      try { f.contentWindow.focus(); f.contentWindow.print(); }
+      catch (e) { window.open('/c/<%= token %>/document.pdf', '_blank'); }
+    });
+
+    var n = document.getElementById('n'), prev = document.getElementById('sigPrev');
+    var agree = document.getElementById('agree'), btn = document.getElementById('submitBtn');
+    if (!n) return;
+    function refresh(){
+      var v = n.value.trim();
+      if (v) { prev.textContent = v; prev.classList.remove('empty'); }
+      else { prev.textContent = 'Your name will appear here as your signature'; prev.classList.add('empty'); }
+      btn.disabled = !(v && agree.checked && document.getElementById('p').value.trim() && document.getElementById('e').value.trim());
+    }
+    ['input','change'].forEach(function(ev){
+      n.addEventListener(ev, refresh);
+      agree.addEventListener(ev, refresh);
+      document.getElementById('p').addEventListener(ev, refresh);
+      document.getElementById('e').addEventListener(ev, refresh);
+    });
+    document.getElementById('signForm').addEventListener('submit', function(){ btn.disabled = true; btn.textContent = 'Signing…'; });
+    refresh();
+  })();
+</script>
+</body></html>

@@ -1,0 +1,81 @@
+<%- include('../partials/header', { title: 'Send for signature', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/contracts/<%= contract.id %>">← Back to contract</a></p>
+  <h1 style="margin:0;">Send for signature</h1>
+  <p class="muted" style="margin:4px 0 0;"><%= contract.contract_number %> · <%= contract.title %><% if (contract.customer_name) { %> · <%= contract.customer_name %><% } %></p>
+</div>
+
+<% if (err) { %><div class="alert alert-error" style="margin-bottom:14px;"><%= err %></div><% } %>
+
+<% if (reviewFlags && reviewFlags.length) { %>
+  <div class="alert alert-error" style="margin-bottom:14px;">
+    <strong>Template wording still needs a decision (<%= reviewFlags.length %>).</strong>
+    <ul style="margin:6px 0 0 18px;">
+      <% reviewFlags.forEach(function(f){ %><li><strong><%= f.heading %>:</strong> <%= f.note %></li><% }); %>
+    </ul>
+    <p style="margin:6px 0 0;">You can still send — this is a reminder, not a block.</p>
+  </div>
+<% } %>
+
+<div style="display:grid;grid-template-columns:minmax(0,1.55fr) minmax(300px,1fr);gap:16px;align-items:start;">
+
+  <!-- Preview exactly what the customer will be asked to sign, before it goes anywhere. -->
+  <div class="card" style="padding:0;overflow:hidden;">
+    <div class="card-header" style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+      <h2 style="margin:0;">Preview</h2>
+      <div style="display:flex;gap:8px;">
+        <a class="btn" href="/contracts/<%= contract.id %>/document.pdf" target="_blank" style="font-size:12px;padding:4px 10px;">Open in new tab</a>
+        <a class="btn" href="/contracts/<%= contract.id %>/document.pdf?dl=1" style="font-size:12px;padding:4px 10px;">Download</a>
+      </div>
+    </div>
+    <iframe src="/contracts/<%= contract.id %>/document.pdf#view=FitH" title="Agreement preview"
+            style="width:100%;height:760px;border:0;border-top:1px solid var(--line);display:block;background:#f8fafc;"></iframe>
+  </div>
+
+  <form method="post" action="/contracts/<%= contract.id %>/send">
+    <div class="card">
+      <div class="card-header"><h2>Recipient</h2></div>
+      <div class="form-group">
+        <label>Send to</label>
+        <input class="input" name="send_to" type="email" list="contactList" required
+               value="<%= contract.sent_to || (contacts[0] && contacts[0].email) || '' %>" placeholder="name@company.co.uk">
+        <datalist id="contactList">
+          <% contacts.forEach(function(c){ if (c.email) { %><option value="<%= c.email %>"><%= c.full_name %><%= c.job_title ? ' — ' + c.job_title : '' %></option><% } }); %>
+        </datalist>
+        <% if (!contacts.length) { %>
+          <p class="muted" style="font-size:12px;margin:6px 0 0;">No primary or service contact is set on this customer. Add one on the customer screen so the agreement names them.</p>
+        <% } else { %>
+          <p class="muted" style="font-size:12px;margin:6px 0 0;">
+            Primary and service contacts: <%= contacts.map(function(c){ return c.full_name; }).join(', ') %>
+          </p>
+        <% } %>
+      </div>
+      <div class="form-group">
+        <label>Message <span class="muted" style="font-weight:400;">(optional)</span></label>
+        <textarea class="input" name="message" rows="5" style="width:100%;" placeholder="Anything you want to say alongside the agreement…"></textarea>
+      </div>
+      <p class="muted" style="font-size:12px;">
+        They receive a link that opens the agreement on our site — no login, no account. They can read it,
+        download it, print it and sign it there.
+      </p>
+      <button class="btn btn-primary" type="submit" style="width:100%;">
+        <%= contract.sign_status === 'sent' || contract.sign_status === 'viewed' ? 'Resend for signature' : 'Send for signature' %>
+      </button>
+      <a class="btn" href="/contracts/<%= contract.id %>" style="width:100%;margin-top:8px;text-align:center;">Cancel</a>
+    </div>
+
+    <% if (contract.sign_token) { %>
+      <div class="card">
+        <div class="card-header"><h2>Signing link</h2></div>
+        <input class="input" readonly value="<%= appUrl %>/c/<%= contract.sign_token %>" style="width:100%;font-size:12px;"
+               onclick="this.select();">
+        <p class="muted" style="font-size:12px;margin:6px 0 0;">
+          Opened <%= contract.view_count || 0 %> time<%= (contract.view_count||0) === 1 ? '' : 's' %><% if (contract.sent_at) { %> · sent <%= new Date(contract.sent_at).toLocaleString('en-GB') %><% } %>
+        </p>
+      </div>
+    <% } %>
+  </form>
+</div>
+
+<%- include('../partials/footer') %>

@@ -1,4 +1,6 @@
 import { Router, Request, Response } from 'express';
+import * as crypto from 'crypto';
+import * as fs from 'fs';
 import { requireAuth } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
@@ -6,6 +8,10 @@ import { buildContractDoc } from '../lib/contract-doc';
 import { SUPPLIER } from '../lib/contract-template';
 import { htmlToPdf } from '../lib/pdf';
 import { pushContractToTemplate } from '../lib/contract-billing';
+import { clientIp, documentFooterHtml, PDF_OPTS, renderContractHtml, snapshotContract, typedSignatureSvg } from '../lib/contract-sign';
+import { SUPPLIER as SUP } from '../lib/contract-template';
+import { config } from '../config';
+import { sendMail } from '../lib/mailer';
 
 const router = Router();
 const STATUSES = ['draft', 'active', 'expired', 'cancelled'];
@@ -124,7 +130,7 @@ router.get('/contracts/:id', requireAuth, async (req: Request, res: Response) =>
   // Optional same-site return path (e.g. the customer screen's Contracts tab).
   const backQ = String(req.query.back || '');
   res.render('contracts/detail', {
-    user, contract: r.rows[0], lines: lines.rows,
+    user, contract: r.rows[0], lines: lines.rows, appUrl: config.APP_URL,
     back: /^\/(?!\/)/.test(backQ) ? backQ : null,
     msg: req.query.msg ? String(req.query.msg) : null,
     err: req.query.err ? String(req.query.err) : null,
@@ -205,6 +211,181 @@ router.post('/contracts/:id/push-billing', requireAuth, async (req: Request, res
     console.error('[contract-billing] push failed:', e);
     res.redirect('/contracts/' + id + '?err=' + encodeURIComponent('Could not update the billing template.'));
   }
+});
+
+// ── Review & send for signature ────────────────────────────────────────────────
+// The preview is the point of this screen: nothing goes out until someone has looked at the
+// PDF the customer will actually be asked to sign.
+router.get('/contracts/:id/send', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  const r = await pool.query(
+    `SELECT ct.*, c.name AS customer_name FROM contracts ct LEFT JOIN customers c ON c.id=ct.customer_id
+      WHERE ct.id=$1 AND ct.deleted_at IS NULL LIMIT 1`, [id]);
+  if (!r.rows.length) { res.status(404).render('error', { message: 'Contract not found.' }); return; }
+  const contract = r.rows[0];
+  const contacts = contract.customer_id ? (await pool.query(
+    `SELECT full_name, job_title, email FROM customer_contacts
+      WHERE customer_id=$1 AND archived=false AND (is_service_contact=true OR is_primary=true) AND email IS NOT NULL
+      ORDER BY is_service_contact DESC, is_primary DESC, full_name`, [contract.customer_id])).rows : [];
+  const ctx = await buildContractDoc(id);
+  res.render('contracts/send', {
+    user, contract, contacts, appUrl: config.APP_URL,
+    reviewFlags: ctx ? ctx.reviewFlags : [],
+    err: req.query.err ? String(req.query.err) : null,
+  });
+});
+
+router.post('/contracts/:id/send', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  const sendTo = nz(req.body.send_to);
+  if (!sendTo) { res.redirect('/contracts/' + id + '/send?err=' + encodeURIComponent('Enter an email address.')); return; }
+  const token = crypto.randomBytes(24).toString('hex');
+  await pool.query(
+    `UPDATE contracts SET sign_status = CASE WHEN sign_status IN ('signed','countersigned') THEN sign_status ELSE 'sent' END,
+       sign_token = COALESCE(sign_token, $1), sent_to = $2, sent_at = NOW() WHERE id = $3`,
+    [token, sendTo, id]);
+
+  const c = (await pool.query(
+    `SELECT ct.contract_number, ct.title, ct.sign_token, c.name AS customer_name
+       FROM contracts ct LEFT JOIN customers c ON c.id=ct.customer_id WHERE ct.id=$1`, [id])).rows[0];
+  const link = config.APP_URL + '/c/' + c.sign_token;
+  const message = String(req.body.message || '').trim();
+  try {
+    await sendMail({
+      to: sendTo,
+      subject: `${c.contract_number} — service agreement for signature`,
+      html:
+        `<p>Hello,</p><p>Your service agreement <strong>${c.contract_number}</strong>` +
+        (c.title ? ` (${c.title})` : '') + ` is ready to sign.</p>` +
+        (message ? `<p>${message.replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>` : '') +
+        `<p><a href="${link}" style="display:inline-block;background:#0f766e;color:#fff;padding:11px 20px;` +
+        `border-radius:8px;text-decoration:none;font-weight:600;">Read and sign the agreement</a></p>` +
+        `<p style="font-size:13px;color:#64748b;">No login needed — the link opens the agreement on our site, ` +
+        `where you can read it, download it, print it and sign it.</p>` +
+        `<p style="font-size:13px;color:#64748b;">All your agreements are also available any time in your ` +
+        `portal at <a href="${config.APP_URL}/my">${config.APP_URL.replace(/^https?:\/\//, '')}/my</a>.</p>`,
+      signatureName: user.displayName,
+    });
+  } catch (e) {
+    console.error('[contract-send] mail failed:', e);
+    res.redirect('/contracts/' + id + '?err=' + encodeURIComponent('Link created, but the email could not be sent. Copy the signing link from the send screen.'));
+    return;
+  }
+  await logActivity(user.id, 'updated', 'contracts', id, 'Sent contract for signature to ' + sendTo);
+  res.redirect('/contracts/' + id + '?msg=' + encodeURIComponent('Sent to ' + sendTo + ' for signature.'));
+});
+
+// ── Counter-signature (Lumen side) ─────────────────────────────────────────────
+router.post('/contracts/:id/countersign', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  const c = (await pool.query('SELECT sign_status FROM contracts WHERE id=$1 AND deleted_at IS NULL', [id])).rows[0];
+  if (!c) { res.status(404).render('error', { message: 'Contract not found.' }); return; }
+  if (c.sign_status !== 'signed') {
+    res.redirect('/contracts/' + id + '?err=' + encodeURIComponent('The customer has not signed this yet.'));
+    return;
+  }
+  await pool.query(
+    `UPDATE contracts SET sign_status='countersigned', status='active',
+       supplier_sign_name=$1, supplier_sign_position=$2, supplier_signed_at=NOW(),
+       supplier_signature_svg=$3 WHERE id=$4`,
+    [nz(req.body.name) || SUP.serviceContact.split('—')[0].trim(), nz(req.body.position) || 'Managing Director',
+     typedSignatureSvg(nz(req.body.name) || SUP.serviceContact.split('—')[0].trim()), id]);
+  try { await snapshotContract(id, 'agreement', 'Counter-signed by ' + (nz(req.body.name) || 'Lumen'), user.id); }
+  catch (e) { console.error('[contract-sign] countersign snapshot failed:', e); }
+  await logActivity(user.id, 'updated', 'contracts', id, 'Counter-signed contract #' + id);
+  res.redirect('/contracts/' + id + '?msg=' + encodeURIComponent('Counter-signed. The agreement is now active.'));
+});
+
+// ── PUBLIC signing page (no login — the link IS the credential) ────────────────
+async function loadByToken(token: string) {
+  const r = await pool.query(
+    `SELECT ct.*, c.name AS customer_name FROM contracts ct LEFT JOIN customers c ON c.id=ct.customer_id
+      WHERE ct.sign_token=$1 AND ct.deleted_at IS NULL LIMIT 1`, [token]);
+  return r.rows[0] || null;
+}
+
+router.get('/c/:token', async (req: Request, res: Response) => {
+  const token = String(req.params.token);
+  const contract = await loadByToken(token);
+  if (!contract) { res.status(404).render('error', { message: 'This signing link is not valid. It may have been withdrawn — please contact us.' }); return; }
+  await pool.query(
+    `UPDATE contracts SET view_count = view_count + 1,
+       sign_status = CASE WHEN sign_status='sent' THEN 'viewed' ELSE sign_status END WHERE sign_token=$1`, [token]);
+  const prefillRow = contract.customer_id ? (await pool.query(
+    `SELECT full_name, job_title, email FROM customer_contacts
+      WHERE customer_id=$1 AND archived=false AND lower(email)=lower($2) LIMIT 1`,
+    [contract.customer_id, contract.sent_to || ''])).rows[0] : null;
+  res.render('contracts/public-sign', {
+    contract, token, supplier: SUP, appUrl: config.APP_URL,
+    customerName: contract.customer_name, signed: !!contract.client_signed_at,
+    error: req.query.err ? String(req.query.err) : null,
+    prefill: { name: prefillRow?.full_name || '', position: prefillRow?.job_title || '', email: contract.sent_to || '' },
+  });
+});
+
+// Token-gated PDF. Serves the frozen signed copy once one exists, so what the customer
+// downloads after signing is byte-identical to what they signed.
+router.get('/c/:token/document.pdf', async (req: Request, res: Response) => {
+  const token = String(req.params.token);
+  const contract = await loadByToken(token);
+  if (!contract) { res.status(404).render('error', { message: 'This link is not valid.' }); return; }
+  const frozen = (await pool.query(
+    'SELECT file_path FROM contract_documents WHERE contract_id=$1 ORDER BY version DESC LIMIT 1', [contract.id])).rows[0];
+  const send = (buf: Buffer) => {
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', (req.query.dl ? 'attachment' : 'inline') + `; filename="${contract.contract_number}.pdf"`);
+    res.send(buf);
+  };
+  if (frozen && fs.existsSync(frozen.file_path)) { send(fs.readFileSync(frozen.file_path)); return; }
+  const ctx = await buildContractDoc(contract.id);
+  if (!ctx) { res.status(404).render('error', { message: 'Agreement not found.' }); return; }
+  try {
+    const html = await renderContractHtml(ctx, { watermark: !contract.client_signed_at });
+    send(await htmlToPdf(html, { ...PDF_OPTS, footerHtml: documentFooterHtml() }));
+  } catch (e) {
+    console.error('[contract-public] pdf failed:', e);
+    res.status(500).render('error', { message: 'The agreement could not be produced. Please contact us.' });
+  }
+});
+
+router.post('/c/:token/sign', async (req: Request, res: Response) => {
+  const token = String(req.params.token);
+  const contract = await loadByToken(token);
+  if (!contract) { res.status(404).render('error', { message: 'This link is not valid.' }); return; }
+  if (contract.client_signed_at) { res.redirect('/c/' + token); return; }
+  const name = nz(req.body.name), position = nz(req.body.position), email = nz(req.body.email);
+  if (!name || !position || !email || !req.body.agree) {
+    res.redirect('/c/' + token + '?err=' + encodeURIComponent('Please complete every field and confirm you agree.'));
+    return;
+  }
+  await pool.query(
+    `UPDATE contracts SET sign_status='signed', client_sign_name=$1, client_sign_position=$2,
+       client_sign_email=$3, client_signed_at=NOW(), client_sign_ip=$4, client_sign_user_agent=$5,
+       client_signature_svg=$6 WHERE sign_token=$7`,
+    [name, position, email, clientIp(req), String(req.headers['user-agent'] || '').slice(0, 400),
+     typedSignatureSvg(name), token]);
+
+  // Freeze what was signed. Without this the signature points at a document that could later
+  // be regenerated differently.
+  try { await snapshotContract(contract.id, 'agreement', 'Signed by ' + name + (position ? ', ' + position : '')); }
+  catch (e) { console.error('[contract-sign] snapshot failed:', e); }
+
+  try {
+    await sendMail({
+      to: email,
+      subject: `${contract.contract_number} — signed copy of your agreement`,
+      html:
+        `<p>Thank you, ${name.replace(/</g, '&lt;')}.</p>` +
+        `<p>Your service agreement <strong>${contract.contract_number}</strong> has been signed.</p>` +
+        `<p><a href="${config.APP_URL}/c/${token}/document.pdf?dl=1">Download your signed copy</a></p>` +
+        `<p style="font-size:13px;color:#64748b;">All your agreements are available any time in your portal at ` +
+        `<a href="${config.APP_URL}/my">${config.APP_URL.replace(/^https?:\/\//, '')}/my</a>.</p>`,
+    });
+  } catch (e) { console.error('[contract-sign] confirmation mail failed:', e); }
+  res.redirect('/c/' + token);
 });
 
 // ── Generated agreement document ───────────────────────────────────────────────
