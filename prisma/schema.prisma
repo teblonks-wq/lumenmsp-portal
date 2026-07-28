@@ -894,6 +894,35 @@ model InvoiceItem {
   @@map("invoice_items")
 }
 
+// ── Document activity ──────────────────────────────────────────────────────────
+// One timeline for quotes, contracts and invoices: what we sent, what the customer did
+// with it, and when. Deliberately records HOW MUCH each event can be trusted --
+// `confidence` separates things that happened on our own site (a page load, a download,
+// a signature: evidence) from things inferred from an email client fetching an image
+// (indicative at best, since Outlook blocks images and Apple Mail pre-fetches them).
+model DocumentEvent {
+  id         Int      @id @default(autoincrement())
+  docType    String   @map("doc_type")   // quote | contract | invoice
+  docId      Int      @map("doc_id")
+  customerId Int?     @map("customer_id")
+  event      String                       // sent | delivered | email_opened | opened | downloaded | printed | signed | countersigned | accepted | declined | reminder_sent
+  confidence String   @default("evidence") // evidence | indicative
+  actor      String?                      // email address or name this is attributed to
+  ip         String?
+  userAgent  String?  @map("user_agent")
+  meta       Json?                        // recipient, version, prefetch flag, anything event-specific
+  // Set on the 'sent' row; the tracking pixel URL carries it back so an open can be tied
+  // to one specific send rather than the document in general.
+  pixelToken String?  @unique @map("pixel_token")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([docType, docId])
+  @@index([customerId])
+  @@index([event])
+  @@index([createdAt])
+  @@map("document_events")
+}
+
 // ── Tickets / Helpdesk / Inbox ──────────────────────────────────────────────────
 model Ticket {
   id                    Int       @id @default(autoincrement())

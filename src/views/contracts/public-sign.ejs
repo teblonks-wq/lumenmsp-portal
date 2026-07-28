@@ -104,6 +104,13 @@
   (function(){
     var pb = document.getElementById('printBtn');
     if (pb) pb.addEventListener('click', function(){
+      // Printing never touches the server, so tell it explicitly.
+      try {
+        fetch('/c/<%= token %>/event', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ event:'printed' }), keepalive:true
+        }).catch(function(){});
+      } catch (e) { /* tracking must never block the print */ }
       var f = document.getElementById('doc');
       // Printing the embedded viewer directly is blocked in some browsers; fall back to a tab.
       try { f.contentWindow.focus(); f.contentWindow.print(); }

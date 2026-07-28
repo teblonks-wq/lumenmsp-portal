@@ -24,6 +24,10 @@ function logoDataUri(): string {
   return _logoDataUri;
 }
 
+import {
+  clientIp as evIp, getDocEvents, logDocEvent, newPixelToken, pixelImg, userAgent as evUa,
+} from '../lib/doc-events';
+
 const router = Router();
 const STATUSES = ['draft', 'sent', 'accepted', 'lost'];
 
@@ -176,7 +180,8 @@ router.get('/quotes/:id', requireAuth, async (req: Request, res: Response) => {
   const commsTo = quote.sent_to || (contacts[0]?.email) || '';
   // Optional same-site return path (e.g. the customer screen's Quotes tab).
   const backQ = String(req.query.back || '');
-  res.render('quotes/detail', { user, quote, items: items.rows, contacts, comms, commsTo, back: /^\/(?!\/)/.test(backQ) ? backQ : null });
+  res.render('quotes/detail', { user, quote, items: items.rows, contacts, comms, commsTo,
+    back: /^\/(?!\/)/.test(backQ) ? backQ : null, events: await getDocEvents('quote', quote.id) });
 });
 
 // ── Edit ──────────────────────────────────────────────────────────────────────
@@ -308,11 +313,17 @@ router.post('/quotes/:id/send', requireAuth, async (req: Request, res: Response)
     }
     const total = '£' + (Number(quote.total) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const validUntil = quote.valid_until ? new Date(quote.valid_until).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
+    const pixelToken = newPixelToken();
+    const sentEventId = await logDocEvent('quote', id, 'sent', {
+      customerId: quote.customer_id, actor: sendTo, pixelToken,
+      meta: { recipient: sendTo, by: user.displayName },
+    });
     try {
       await sendMail({
         to: sendTo,
         subject: `Quotation ${quote.quote_number} from Lumen IT Solutions`,
-        html: quoteEmailHtml({ contactName, quoteNumber: quote.quote_number, title: quote.title, total, validUntil, message, link }),
+        html: (sentEventId ? pixelImg(config.APP_URL, pixelToken) : '') +
+          quoteEmailHtml({ contactName, quoteNumber: quote.quote_number, title: quote.title, total, validUntil, message, link }),
         signatureName: user.displayName,
       });
     } catch (e) { console.error('Quote email failed (mail not configured?):', e); }
@@ -329,6 +340,10 @@ router.get('/q/:token', async (req: Request, res: Response) => {
   );
   if (!qRes.rows.length) { res.status(404).render('error', { message: 'This quote link is not valid.' }); return; }
   await pool.query('UPDATE quotes SET view_count = view_count + 1 WHERE accept_token=$1', [token]);
+  await logDocEvent('quote', qRes.rows[0].id, 'opened', {
+    customerId: qRes.rows[0].customer_id, actor: qRes.rows[0].sent_to,
+    ip: evIp(req), userAgent: evUa(req),
+  });
   const items = await pool.query('SELECT * FROM quote_items WHERE quote_id=$1 ORDER BY sort_order, id', [qRes.rows[0].id]);
   res.render('quotes/public', { quote: qRes.rows[0], items: items.rows, done: null });
 });
@@ -353,6 +368,10 @@ router.post('/q/:token/accept', async (req: Request, res: Response) => {
           WHERE customer_id=$1 AND deleted_at IS NULL AND status NOT IN ('won','lost')`, [quote.customer_id]
       );
     }
+    await logDocEvent('quote', quote.id, 'accepted', {
+      customerId: quote.customer_id, actor: name + (nz(req.body.email) ? ' <' + nz(req.body.email) + '>' : ''),
+      ip: evIp(req), userAgent: evUa(req),
+    });
     await alertGroup('sales', 'Quote accepted — ' + quote.quote_number, name + ' accepted the quote', '/quotes/' + quote.id);
   }
   res.render('quotes/public', { quote: null, items: [], done: 'accepted' });
@@ -360,7 +379,14 @@ router.post('/q/:token/accept', async (req: Request, res: Response) => {
 
 router.post('/q/:token/reject', async (req: Request, res: Response) => {
   const token = String(req.params.token);
+  const rq = (await pool.query('SELECT id, customer_id FROM quotes WHERE accept_token=$1', [token])).rows[0];
   await pool.query(`UPDATE quotes SET status='lost', reject_reason=$1 WHERE accept_token=$2`, [nz(req.body.reason), token]);
+  if (rq) {
+    await logDocEvent('quote', rq.id, 'declined', {
+      customerId: rq.customer_id, ip: evIp(req), userAgent: evUa(req),
+      meta: { reason: nz(req.body.reason) },
+    });
+  }
   res.render('quotes/public', { quote: null, items: [], done: 'rejected' });
 });
 

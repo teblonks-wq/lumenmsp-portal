@@ -13,6 +13,9 @@ import { SUPPLIER as SUP } from '../lib/contract-template';
 import { config } from '../config';
 import { sendMail } from '../lib/mailer';
 import { contractEmailHtml, contractSignedEmailHtml } from '../lib/emails';
+import {
+  clientIp as evIp, getDocEvents, logDocEvent, newPixelToken, pixelImg, userAgent as evUa,
+} from '../lib/doc-events';
 
 const router = Router();
 const STATUSES = ['draft', 'active', 'expired', 'cancelled'];
@@ -141,6 +144,7 @@ router.get('/contracts/:id', requireAuth, async (req: Request, res: Response) =>
     back: /^\/(?!\/)/.test(backQ) ? backQ : null,
     msg: req.query.msg ? String(req.query.msg) : null,
     err: req.query.err ? String(req.query.err) : null,
+    events: await getDocEvents('contract', id),
   });
 });
 
@@ -414,11 +418,19 @@ router.post('/contracts/:id/send', requireAuth, async (req: Request, res: Respon
   const gb = (d: any) => d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
   const money = (n: number) => '£' + (Number(n) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+  // One token per send, so an open ties back to this specific email rather than the
+  // document in general (and a resend does not inherit the previous send's opens).
+  const pixelToken = newPixelToken();
+  const sentEventId = await logDocEvent('contract', id, 'sent', {
+    customerId: c.customer_id, actor: sendTo, pixelToken,
+    meta: { recipient: sendTo, kind: isExt ? 'extension' : 'agreement', by: user.displayName },
+  });
+
   try {
     await sendMail({
       to: sendTo,
       subject: `${c.contract_number} — your ${isExt ? 'service agreement extension' : 'service agreement'} for signature`,
-      html: contractEmailHtml({
+      html: (sentEventId ? pixelImg(config.APP_URL, pixelToken) : '') + contractEmailHtml({
         contactName, contractNumber: c.contract_number, title: c.title, isExtension: isExt,
         startDate: gb(isExt && ctx?.extension ? ctx.extension.startDate : c.start_date),
         endDate: gb(isExt && ctx?.extension ? ctx.extension.endDate : c.end_date),
@@ -454,6 +466,9 @@ router.post('/contracts/:id/countersign', requireAuth, async (req: Request, res:
        supplier_signature_svg=$3 WHERE id=$4`,
     [nz(req.body.name) || SUP.serviceContact.split('—')[0].trim(), nz(req.body.position) || 'Managing Director',
      typedSignatureSvg(nz(req.body.name) || SUP.serviceContact.split('—')[0].trim()), id]);
+  await logDocEvent('contract', id, 'countersigned', {
+    actor: nz(req.body.name) || user.displayName, ip: evIp(req), userAgent: evUa(req),
+  });
   try { await snapshotContract(id, 'agreement', 'Counter-signed by ' + (nz(req.body.name) || 'Lumen'), user.id); }
   catch (e) { console.error('[contract-sign] countersign snapshot failed:', e); }
   await logActivity(user.id, 'updated', 'contracts', id, 'Counter-signed contract #' + id);
@@ -475,6 +490,11 @@ router.get('/c/:token', async (req: Request, res: Response) => {
   await pool.query(
     `UPDATE contracts SET view_count = view_count + 1,
        sign_status = CASE WHEN sign_status='sent' THEN 'viewed' ELSE sign_status END WHERE sign_token=$1`, [token]);
+  // Served by us, so this is evidence rather than an inference.
+  await logDocEvent('contract', contract.id, 'opened', {
+    customerId: contract.customer_id, actor: contract.sent_to,
+    ip: evIp(req), userAgent: evUa(req), meta: { version: contract.version },
+  });
   const prefillRow = contract.customer_id ? (await pool.query(
     `SELECT full_name, job_title, email FROM customer_contacts
       WHERE customer_id=$1 AND archived=false AND lower(email)=lower($2) LIMIT 1`,
@@ -495,6 +515,12 @@ router.get('/c/:token/document.pdf', async (req: Request, res: Response) => {
   if (!contract) { res.status(404).render('error', { message: 'This link is not valid.' }); return; }
   const frozen = (await pool.query(
     'SELECT file_path FROM contract_documents WHERE contract_id=$1 ORDER BY version DESC LIMIT 1', [contract.id])).rows[0];
+  if (req.query.dl) {
+    await logDocEvent('contract', contract.id, 'downloaded', {
+      customerId: contract.customer_id, actor: contract.sent_to,
+      ip: evIp(req), userAgent: evUa(req), meta: { version: contract.version },
+    });
+  }
   const send = (buf: Buffer) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', (req.query.dl ? 'attachment' : 'inline') + `; filename="${contract.contract_number}.pdf"`);
@@ -529,6 +555,12 @@ router.post('/c/:token/sign', async (req: Request, res: Response) => {
     [name, position, email, clientIp(req), String(req.headers['user-agent'] || '').slice(0, 400),
      typedSignatureSvg(name), token]);
 
+  await logDocEvent('contract', contract.id, 'signed', {
+    customerId: contract.customer_id, actor: name + ' <' + email + '>',
+    ip: clientIp(req), userAgent: String(req.headers['user-agent'] || '').slice(0, 400),
+    meta: { position, version: contract.version },
+  });
+
   // Freeze what was signed. Without this the signature points at a document that could later
   // be regenerated differently.
   try { await snapshotContract(contract.id, 'agreement', 'Signed by ' + name + (position ? ', ' + position : '')); }
@@ -552,6 +584,19 @@ router.post('/c/:token/sign', async (req: Request, res: Response) => {
     });
   } catch (e) { console.error('[contract-sign] confirmation mail failed:', e); }
   res.redirect('/c/' + token);
+});
+
+// Print happens entirely in the browser, so the page reports it back.
+router.post('/c/:token/event', async (req: Request, res: Response) => {
+  const contract = await loadByToken(String(req.params.token));
+  const ev = String(req.body?.event || '');
+  if (contract && (ev === 'printed' || ev === 'downloaded')) {
+    await logDocEvent('contract', contract.id, ev as any, {
+      customerId: contract.customer_id, actor: contract.sent_to,
+      ip: evIp(req), userAgent: evUa(req), meta: { version: contract.version },
+    });
+  }
+  res.status(204).end();
 });
 
 // ── Generated agreement document ───────────────────────────────────────────────

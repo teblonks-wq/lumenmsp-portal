@@ -215,4 +215,6 @@
 
 <%- include('../partials/comms', { entityType: 'invoice', entityId: invoice.id, comms: comms, toEmail: commsTo, toContacts: commsContacts, commsSubject: 'Invoice ' + invoice.invoice_number }) %>
 
+<%- include('../partials/doc-activity', { events: (typeof events !== 'undefined' && events) ? events : [] }) %>
+
 <%- include('../partials/footer') %>

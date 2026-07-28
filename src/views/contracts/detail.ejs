@@ -100,6 +100,8 @@
   </div>
 </div>
 
+<%- include('../partials/doc-activity', { events: (typeof events !== 'undefined' && events) ? events : [] }) %>
+
 <% if (contract.notes) { %><div class="card"><div class="card-header"><h2>Notes</h2></div><p style="white-space:pre-wrap;margin:0;"><%= contract.notes %></p></div><% } %>
 
 <%- include('../partials/footer') %>

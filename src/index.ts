@@ -24,6 +24,7 @@ import searchRoutes from './routes/search';
 import recycleRoutes from './routes/recycle';
 import notificationRoutes from './routes/notifications';
 import toolsRoutes from './routes/tools';
+import trackingRoutes from './routes/tracking';
 import bureauRoutes from './routes/bureau';
 import packageRoutes from './routes/packages';
 import purchaseRoutes from './routes/purchases';
@@ -268,6 +269,7 @@ app.use(async (req, res, next) => {
 // Public inbound webhooks (WhatsApp) MUST be registered before any router that applies
 // auth/finance gates — Meta calls them unauthenticated.
 app.use('/', webhookRoutes);
+app.use('/', trackingRoutes);     // public email-open pixel (per-send token, no auth)
 app.use('/', chatPublicRoutes);   // public website chat API (token-based, CORS, no auth)
 app.use('/', leadsApiRoutes);     // public website lead intake (bearer token, no session)
 app.use('/', authRoutes);

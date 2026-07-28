@@ -16,6 +16,10 @@ import { resolvePeriod, PERIOD_OPTIONS } from '../lib/date-periods';
 import { getSetting } from '../lib/settings';
 import { config } from '../config';
 
+import {
+  getDocEvents, logDocEvent, newPixelToken, pixelImg,
+} from '../lib/doc-events';
+
 const router = Router();
 // Finance-only (admins included). Scoped to this module's paths so it never gates unrelated
 // requests that pass through this '/'-mounted router (it previously redirected everything to login).
@@ -335,7 +339,9 @@ router.get('/invoices/:id', requireAuth, async (req: Request, res: Response) => 
       "SELECT id, amount, reason, source_invoice_id, quickbooks_credit_id, created_at FROM customer_credits WHERE customer_id=$1 AND status='open' ORDER BY created_at", [inv.customer_id]
     )).rows;
   }
-  res.render('invoices/detail', { user, invoice: inv, items: items.rows, openCredits, notice: req.query.msg || null, error: req.query.err || null, comms, commsTo, commsContacts, back: safeBack(req.query.back, '') || null });
+  res.render('invoices/detail', { user, invoice: inv, items: items.rows, openCredits,
+    notice: req.query.msg || null, error: req.query.err || null, comms, commsTo, commsContacts,
+    back: safeBack(req.query.back, '') || null, events: await getDocEvents('invoice', inv.id) });
 });
 
 // ── Log an overpayment / credit against the customer (from this invoice) ──────────
@@ -566,7 +572,16 @@ router.post('/invoices/:id/resend-finance', requireAuth, async (req: Request, re
   const dueDate = inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
   const body = invoiceEmailHtml({ contactName: toName, invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate, directDebit: !!inv.gocardless_mandate_id });
   try {
-    await sendMail({ to, subject: `Invoice ${inv.invoice_number} from Lumen IT Solutions`, html: body, signatureName: user.displayName, attachments });
+    // Invoices go out as an attachment with no landing page, so the only signal available
+    // is the tracking pixel — recorded as indicative, never presented as delivery.
+    const pixelToken = newPixelToken();
+    const sentEventId = await logDocEvent('invoice', inv.id, 'sent', {
+      customerId: inv.customer_id, actor: to, pixelToken,
+      meta: { recipient: to, by: user.displayName, attached: true },
+    });
+    await sendMail({ to, subject: `Invoice ${inv.invoice_number} from Lumen IT Solutions`,
+      html: (sentEventId ? pixelImg(config.APP_URL, pixelToken) : '') + body,
+      signatureName: user.displayName, attachments });
     await pool.query(
       `INSERT INTO communications (entity_type, entity_id, direction, from_name, from_email, to_email, subject, body, sent_by_user_id)
        VALUES ('invoice',$1,'outbound',$2,$3,$4,$5,$6,$7)`,

@@ -112,4 +112,6 @@
 
 <%- include('../partials/comms', { entityType: 'quote', entityId: quote.id, comms: comms, toEmail: commsTo, toContacts: contacts, commsSubject: quote.quote_number + ' — ' + quote.title, sendQuote: true, quoteStatus: quote.status }) %>
 
+<%- include('../partials/doc-activity', { events: (typeof events !== 'undefined' && events) ? events : [] }) %>
+
 <%- include('../partials/footer') %>
