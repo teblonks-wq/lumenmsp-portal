@@ -156,12 +156,24 @@ export interface SyncResult {
 
 export const HISTORY_FLOOR = new Date('2026-01-01T00:00:00Z');
 
+// How far past the API window's end we ask for. See the note in syncCustomer.
+const API_END_PAD_MS = 3 * 60 * 60 * 1000; // 3 hours
+
+// Tollring's first record will never sit exactly on HISTORY_FLOOR, so "have we got all the
+// history?" has to allow a gap. Without this the guard below can never be satisfied and every
+// single run re-backfills the first minutes of the floor day for ever — the pm2 log 2026-07-28
+// showed "ensuring history from floor - backfilling 2026-01-01 00:00:00 -> 2026-01-01 00:46:36"
+// on EVERY run of both customers, because the earliest record is 00:46:36.
+const HISTORY_SETTLE_MS = 24 * 60 * 60 * 1000; // 1 day
+
 async function ensureMinHistory(
   customerId: number, custName: string, client: TollringClient, target: Date
 ): Promise<SyncResult> {
   const r = await db().query('SELECT MIN(call_date) AS earliest FROM tollring_calls WHERE customer_id = $1', [customerId]);
   const earliest: Date | null = r.rows[0]?.earliest ? new Date(r.rows[0].earliest) : null;
-  if (earliest && earliest <= target) return { fetched: 0, rawAdded: 0, eventsAdded: 0 };
+  if (earliest && earliest.getTime() <= target.getTime() + HISTORY_SETTLE_MS) {
+    return { fetched: 0, rawAdded: 0, eventsAdded: 0 };
+  }
 
   const backfillEnd = earliest ?? new Date();
   const fmt = (d: Date) => d.toISOString().replace('T', ' ').substring(0, 19);
@@ -220,11 +232,21 @@ export async function syncCustomer(customerId: number, fromOverride?: Date): Pro
   let fetched = hist.fetched, rawAdded = hist.rawAdded, eventsAdded = hist.eventsAdded;
   let winStart = syncFrom;
 
-  console.log(`[tollring-sync] ${cust.name}: backfilling ${fmt(syncFrom)} → ${fmt(syncTo)} in 7-day windows`);
+  console.log(`[tollring-sync] ${cust.name}: backfilling ${fmt(syncFrom)} → ${fmt(syncTo)} in 7-day windows (asking the API to ${fmt(new Date(syncTo.getTime() + API_END_PAD_MS))})`);
 
   while (winStart < syncTo) {
     const winEnd = new Date(Math.min(winStart.getTime() + WINDOW_MS, syncTo.getTime()));
-    const records = await client.getCallsByDate({ startDate: fmt(winStart), endDate: fmt(winEnd) });
+    // The end date we SEND is padded forward; the end date we RECORD (last_synced_at) is not.
+    // We send a bare wall-clock string and Tollring reads it as UK local time, so an unpadded
+    // end left us permanently ~1h behind through BST — confirmed from the pm2 log 2026-07-28,
+    // where a run at 09:50 BST asked for "... -> 08:50" and returned nothing after ~08:45.
+    // Asking for a window that runs into the future is harmless (you just get everything up
+    // to now) and stays correct whichever way the API reads the string, which is why this is
+    // preferred over re-formatting the timestamps into Europe/London and hoping.
+    const records = await client.getCallsByDate({
+      startDate: fmt(winStart),
+      endDate: fmt(new Date(winEnd.getTime() + API_END_PAD_MS)),
+    });
     fetched += records.length;
 
     rawAdded += await storeRaw(customerId, records);

@@ -201,7 +201,16 @@ export class TollringClient {
     if (params.directions)  body.Directions      = params.directions;
     if (params.minDuration) body.MinCallDuration = params.minDuration;
     const resp = await this.post<TollringCallRecord>('GetCallsByDate', body);
-    if (resp.Result.ErrorCode !== '0x0000') throw new Error(`GetCallsByDate: ${resp.Result.Description}`);
+    if (resp.Result.ErrorCode !== '0x0000') {
+      // A window containing no calls is a NORMAL outcome (overnight, weekends, any quiet
+      // spell) but Tollring reports it as an error. Throwing here stalls the whole sync for
+      // that customer: syncCustomer aborts before it can advance last_synced_at, so the next
+      // run asks for the same empty window again — and keeps asking until a call happens to
+      // land in it. Confirmed in the pm2 log 2026-07-28: LumenMSP retried
+      // "01:00:00 -> 03:00 / 04:00 / 05:00 / 06:00" for hours before it moved on.
+      if (/no records found/i.test(resp.Result.Description || '')) return [];
+      throw new Error(`GetCallsByDate: ${resp.Result.Description}`);
+    }
     return resp.Data;
   }
 
