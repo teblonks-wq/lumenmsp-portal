@@ -1,0 +1,133 @@
+<%- include('../partials/header', { title: asset.hostname || 'Device', user }) %>
+<% function fmt(v){ return (v===null || v===undefined || v==='') ? '—' : v; } %>
+<% function dt(v){ return v ? new Date(v).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
+
+<style>
+  .dev-tabs { display:flex; flex-wrap:wrap; gap:2px; border-bottom:2px solid var(--line); margin:0 0 18px; }
+  .dev-tabs button { background:none; border:none; padding:10px 16px; font-size:14px; font-weight:600; color:#64748b; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; }
+  .dev-tabs button:hover { color:#0f172a; }
+  .dev-tabs button.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .dev-tab-panel { display:none; }
+  .dev-tab-panel.active { display:block; }
+  .dev-info-cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:0 32px; }
+  .dev-field-row { display:grid; grid-template-columns:150px 1fr; gap:10px; padding:9px 0; border-bottom:1px solid #f1f5f9; font-size:13px; }
+  .dev-field-row:last-child { border-bottom:none; }
+  .dev-field-row .k { color:var(--muted); }
+  .dev-field-row .v { font-weight:500; }
+  .dev-subcard-title { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); margin:0 0 6px; }
+</style>
+
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="<%= back %>">← Back</a></p>
+    <h1 style="margin:0;display:flex;align-items:center;gap:12px;">
+      <%= asset.hostname || '(unnamed device)' %>
+    </h1>
+    <p class="muted" style="margin:6px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;color:<%= asset.online_status ? '#16a34a' : '#94a3b8' %>;">
+        <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= asset.online_status ? '#16a34a' : '#cbd5e1' %>;"></span>
+        <%= asset.online_status ? 'Online' : 'Offline' %>
+      </span>
+      <span class="badge badge-inactive"><%= asset.device_type || 'Device' %></span>
+      <% if (asset.customer_id) { %>· <a class="row-link" href="/customers/<%= asset.customer_id %>#assets"><%= asset.customer_name %></a><% } %>
+      <% if (asset.last_login_user) { %>· <span class="muted"><%= asset.last_login_user %></span><% } %>
+    </p>
+  </div>
+  <% if (remoteUrl) { %><a class="btn btn-primary" target="_blank" rel="noopener" href="<%= remoteUrl %>">🖥 Remote control</a><% } %>
+</div>
+
+<div class="card" style="background:#f0f9ff;border-color:#bae6fd;">
+  <p style="margin:0;font-size:13px;color:#0369a1;">
+    <strong>Synced from Atera</strong> — last refreshed <%= dt(asset.synced_at) %>. Locked from editing until we confirm Atera accepts changes written back from here.
+  </p>
+</div>
+
+<div class="card">
+  <nav class="dev-tabs">
+    <button type="button" data-tab="overview">Overview</button>
+    <button type="button" data-tab="hardware">Hardware</button>
+    <button type="button" data-tab="os">OS</button>
+  </nav>
+
+  <section class="dev-tab-panel" data-key="overview">
+    <div class="dev-info-cols">
+      <div>
+        <p class="dev-subcard-title">Device info</p>
+        <div class="dev-field-row"><div class="k">Machine name</div><div class="v"><%= fmt(asset.hostname) %></div></div>
+        <div class="dev-field-row"><div class="k">Domain / Workgroup</div><div class="v"><%= fmt(asset.domain_or_workgroup) %></div></div>
+        <div class="dev-field-row"><div class="k">Public IP</div><div class="v"><%= fmt(asset.public_ip) %></div></div>
+        <div class="dev-field-row"><div class="k">Local IP address(es)</div><div class="v"><%= fmt(asset.ip_addresses) %></div></div>
+        <div class="dev-field-row"><div class="k">MAC address</div><div class="v"><%= fmt(asset.mac_address) %></div></div>
+        <div class="dev-field-row"><div class="k">Last logged-in user</div><div class="v"><%= fmt(asset.last_login_user) %></div></div>
+        <div class="dev-field-row"><div class="k">Last seen</div><div class="v"><%= dt(asset.last_seen_at) %></div></div>
+        <div class="dev-field-row"><div class="k">Last reboot</div><div class="v"><%= dt(asset.last_reboot_at) %></div></div>
+        <div class="dev-field-row"><div class="k">Agent version</div><div class="v"><%= fmt(asset.agent_version) %></div></div>
+        <div class="dev-field-row"><div class="k">Date added</div><div class="v"><%= dt(asset.added_at) %></div></div>
+      </div>
+      <div>
+        <p class="dev-subcard-title">Device relations</p>
+        <div class="dev-field-row">
+          <div class="k">Customer</div>
+          <div class="v">
+            <% if (asset.customer_id) { %><a class="row-link" href="/customers/<%= asset.customer_id %>#assets"><%= asset.customer_name %></a>
+            <% } else { %><span class="muted">Not matched yet</span><% } %>
+          </div>
+        </div>
+        <div class="dev-field-row"><div class="k">Source</div><div class="v"><span class="badge badge-primary">Atera</span></div></div>
+        <div class="dev-field-row"><div class="k">Atera Agent ID</div><div class="v muted" style="font-family:monospace;font-size:12px;"><%= fmt(asset.external_id) %></div></div>
+        <% if (asset.device_guid) { %>
+        <div class="dev-field-row"><div class="k">Device GUID</div><div class="v muted" style="font-family:monospace;font-size:11px;overflow-wrap:anywhere;"><%= asset.device_guid %></div></div>
+        <% } %>
+      </div>
+    </div>
+    <p class="muted" style="font-size:12px;margin:14px 0 0;">Assigned contact isn't wired in yet — Atera links that via the device's Folder, which we don't pull yet. Flagged to add.</p>
+  </section>
+
+  <section class="dev-tab-panel" data-key="hardware">
+    <div class="dev-info-cols">
+      <div>
+        <div class="dev-field-row"><div class="k">Manufacturer / Model</div><div class="v"><%= fmt([asset.manufacturer, asset.model].filter(Boolean).join(' ') || null) %></div></div>
+        <div class="dev-field-row"><div class="k">Serial number</div><div class="v"><%= fmt(asset.serial_number) %></div></div>
+        <div class="dev-field-row"><div class="k">Processor</div><div class="v"><%= fmt(asset.cpu) %></div></div>
+        <div class="dev-field-row"><div class="k">RAM</div><div class="v"><%= asset.ram_gb ? asset.ram_gb + ' GB' : '—' %></div></div>
+        <div class="dev-field-row"><div class="k">Disk</div><div class="v"><%= fmt(asset.disk_info) %></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="dev-tab-panel" data-key="os">
+    <div class="dev-info-cols">
+      <div>
+        <div class="dev-field-row"><div class="k">Operating system</div><div class="v"><%= fmt(asset.os) %></div></div>
+        <div class="dev-field-row"><div class="k">Version / build</div><div class="v"><%= fmt(asset.os_version) %></div></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<% if (typeof rawJson !== 'undefined' && rawJson) { %>
+<div class="card">
+  <details>
+    <summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--muted);">🔧 Raw Atera payload (debug — admin only, ?debug=1)</summary>
+    <pre style="margin-top:10px;font-size:11px;line-height:1.5;overflow:auto;max-height:500px;background:#0f172a;color:#e2e8f0;padding:14px;border-radius:8px;"><%= rawJson %></pre>
+  </details>
+</div>
+<% } %>
+
+<script>
+  (function () {
+    var KEY = 'assetTab:<%= asset.id %>';
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.dev-tabs button'));
+    var panels = Array.prototype.slice.call(document.querySelectorAll('.dev-tab-panel'));
+    function show(k) {
+      tabs.forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-tab') === k); });
+      panels.forEach(function (p) { p.classList.toggle('active', p.getAttribute('data-key') === k); });
+      try { localStorage.setItem(KEY, k); } catch (e) {}
+    }
+    tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.getAttribute('data-tab')); }); });
+    var saved = null; try { saved = localStorage.getItem(KEY); } catch (e) {}
+    show((saved && document.querySelector('.dev-tab-panel[data-key="' + saved + '"]')) ? saved : 'overview');
+  })();
+</script>
+
+<%- include('../partials/footer') %>

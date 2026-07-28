@@ -57,6 +57,10 @@ export class Atera {
 
   getCustomers(): Promise<any[]> { return this.getAll('/customers'); }
   getContacts(): Promise<any[]> { return this.getAll('/contacts'); }
+  // Device inventory (workstations, servers, mobiles, network devices) — Atera calls these "agents"
+  // for computer-based devices; network/SNMP devices come back from the same list in newer API
+  // versions. Capped at maxPages*50 like other pulls.
+  getAgents(maxPages = 400): Promise<any[]> { return this.getAll('/agents', maxPages); }
   // Full comment thread for a ticket (the whole case history).
   getTicketComments(ticketId: string): Promise<any[]> {
     return this.getAll(`/tickets/${encodeURIComponent(ticketId)}/comments`, 50);

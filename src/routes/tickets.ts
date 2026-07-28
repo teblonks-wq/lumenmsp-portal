@@ -463,7 +463,7 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
   if (!r.rows.length) { res.status(404).render('error', { message: 'Ticket not found.' }); return; }
 
   const [msgs, notes, users, quotesRes] = await Promise.all([
-    pool.query('SELECT id, message_direction, channel, from_name, from_email, to_raw, cc_raw, subject, body_html, body_text, received_at, created_at FROM inbox_messages WHERE ticket_id=$1 ORDER BY COALESCE(received_at, created_at)', [id]),
+    pool.query('SELECT id, message_direction, channel, from_name, from_email, to_raw, cc_raw, subject, body_html, body_text, received_at, created_at, graph_message_id FROM inbox_messages WHERE ticket_id=$1 ORDER BY COALESCE(received_at, created_at)', [id]),
     pool.query(`SELECT nt.id, nt.note_type, nt.channel, nt.body, nt.to_raw, nt.cc_raw, nt.created_at, u.display_name AS author FROM inbox_notes nt LEFT JOIN users u ON u.id=nt.user_id WHERE nt.ticket_id=$1 ORDER BY nt.created_at`, [id]),
     pool.query(`SELECT id, display_name FROM users WHERE is_active=true AND customer_id IS NULL AND hidden_from_lookups=false ORDER BY display_name`),
     pool.query(`SELECT id, quote_number, title, status, total FROM quotes WHERE inbox_ticket_id=$1 AND deleted_at IS NULL ORDER BY id DESC`, [id]),
@@ -471,7 +471,9 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
 
   // Merge into one timeline
   const timeline: any[] = [];
-  for (const m of msgs.rows) timeline.push({ kind: 'message', id: m.id, direction: m.message_direction, channel: m.channel || 'email', author: m.from_name || m.from_email || 'Email', fromEmail: m.from_email || '', to: m.to_raw || '', cc: m.cc_raw || '', body: m.body_html || m.body_text || '', at: m.received_at || m.created_at });
+  // Teams messages carry a graph_message_id like 'teamsg:<id>' — strip the prefix so we can build
+  // a "Open in Teams" deep link (https://teams.microsoft.com/l/message/{chatId}/{messageId}...).
+  for (const m of msgs.rows) timeline.push({ kind: 'message', id: m.id, direction: m.message_direction, channel: m.channel || 'email', author: m.from_name || m.from_email || 'Email', fromEmail: m.from_email || '', to: m.to_raw || '', cc: m.cc_raw || '', body: m.body_html || m.body_text || '', at: m.received_at || m.created_at, teamsMessageId: (m.graph_message_id || '').replace(/^teamsg:/, '') || null });
   for (const nt of notes.rows) timeline.push({ kind: 'note', id: nt.id, noteType: nt.note_type, channel: nt.channel || '', author: nt.author || 'System', to: nt.to_raw || '', cc: nt.cc_raw || '', body: nt.body, at: nt.created_at });
   // Newest on top, always. Tiebreak on id so items sharing a timestamp (e.g. an auto-assign note
   // stamped the same instant as its reply) still order deterministically, latest first.
@@ -509,11 +511,15 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
   const waWindowOpen = !!(waInb && (Date.now() - new Date(waInb.at).getTime()) < 24 * 60 * 60 * 1000);
   // Whether a Teams send can actually work on this case (drives the composer's Teams pill).
   const teamsSendOk = await teamsSendPossible(r.rows[0].teams_conversation || null);
+  // Chat id for "Open in Teams" deep links on this case's Teams messages (Graph path only — the
+  // old Bot Framework/Power Automate relay never stored a usable chatId here).
+  let teamsChatId = '';
+  if (r.rows[0].teams_conversation) { try { teamsChatId = JSON.parse(r.rows[0].teams_conversation).chatId || ''; } catch { /* not JSON */ } }
   const aiCatOn = await aiTicketCategoryEnabled();
   await ensureReplyTemplates().catch(() => {});
   const replyTemplates = await listReplyTemplates().catch(() => [] as any[]);
 
-  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, aiCatOn, replyTemplates, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
+  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, teamsChatId, aiCatOn, replyTemplates, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
 });
 
 // ── Update fields ────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 <%- include('../partials/header', { title: 'Helpdesk review — ' + (ticket.ticket_number || ('#' + ticket.id)), user }) %>
 <% function cap(s){ return s ? String(s).replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
    function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); }
-   function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; }
+   function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; }
    var ageDays = Math.floor((Date.now() - new Date(ticket.created_at).getTime()) / 86400000); %>
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">

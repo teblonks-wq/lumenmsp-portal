@@ -8,6 +8,26 @@
   </div>
 </div>
 
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="margin-bottom:14px;"><%= notice %></div><% } %>
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" style="margin-bottom:14px;"><%= error %></div><% } %>
+
+<!-- Data fixes -->
+<% if (typeof gcBalanceCount !== 'undefined' && gcBalanceCount > 0) { %>
+<div class="card" style="border-color:#fbbf24;background:#fffbeb;">
+  <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+    <h2>Data fix available</h2>
+  </div>
+  <p style="margin:0 0 12px;">
+    <strong><%= gcBalanceCount %></strong> Direct Debit invoice(s) are marked <strong>Paid</strong> but still show their full amount as outstanding
+    (<strong>£<%= Number(gcBalanceTotal).toLocaleString('en-GB', {minimumFractionDigits:2,maximumFractionDigits:2}) %></strong> total) —
+    a bug where GoCardless payouts mark an invoice paid but never clear its balance. This just corrects the reporting figure; nothing is re-billed and no emails go out.
+  </p>
+  <form method="post" action="/admin/fix-gc-balances" onsubmit="return confirm('Zero the balance on ' + <%= gcBalanceCount %> + ' paid Direct Debit invoice(s)? This only updates the outstanding figure, nothing else.');">
+    <button class="btn btn-primary" type="submit">Fix <%= gcBalanceCount %> invoice(s) now</button>
+  </form>
+</div>
+<% } %>
+
 <!-- Next document numbers -->
 <div class="card">
   <div class="card-header"><h2>Next numbers</h2></div>

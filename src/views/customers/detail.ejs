@@ -59,6 +59,7 @@
   <button type="button" data-tab="quotes">Quotes (<%= quotes.length %>)</button>
   <button type="button" data-tab="invoices">Invoices (<%= invoices.length %>)</button>
   <button type="button" data-tab="contracts">Contracts (<%= contracts.length %>)</button>
+  <button type="button" data-tab="assets">Assets (<%= (typeof assets!=='undefined'?assets:[]).length %>)</button>
   <button type="button" data-tab="onboarding">Onboarding</button>
   <button type="button" data-tab="review">Account Review</button>
   <% if (typeof canVault!=='undefined' && canVault) { %><button type="button" data-tab="passwords">Passwords (<%= (typeof credentials!=='undefined'?credentials:[]).length %>)</button><% } %>
@@ -697,6 +698,49 @@
           <% if (contracts.length===0) { %><tr><td colspan="4"><div class="empty-state">No contracts.</div></td></tr><% } %>
           <% contracts.forEach(function(ct){ %>
             <tr><td><a class="row-link" href="/contracts/<%= ct.id %>?back=<%= encodeURIComponent('/customers/' + customer.id + '#contracts') %>"><%= ct.contract_number %></a></td><td><%= ct.title %></td><td class="muted"><%= ct.service_type %></td><td><span class="badge <%= ct.status==='active'?'badge-sent':ct.status==='draft'?'badge-inactive':'badge-failed' %>"><%= ct.status %></span></td></tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ Assets (device inventory, synced from Atera) ═══ -->
+<section class="tab-panel" data-key="assets" id="assets">
+  <% var custAssets = (typeof assets!=='undefined') ? assets : []; %>
+  <%
+  function assetRemoteHref(a){
+    var tpl = (typeof remoteTemplate!=='undefined'?remoteTemplate:'');
+    if (tpl.indexOf('{deviceGuid}') !== -1 && !a.device_guid) {
+      return 'https://app.atera.com/AgentDetails/' + encodeURIComponent(a.external_id || '');
+    }
+    var url = tpl;
+    if (a.device_guid) url = url.split('{deviceGuid}').join(encodeURIComponent(a.device_guid));
+    if (a.external_id) url = url.split('{agentId}').join(encodeURIComponent(a.external_id));
+    return url;
+  }
+  %>
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;display:flex;justify-content:space-between;align-items:center;">
+      <h2>Assets <span class="muted">(<%= custAssets.length %>)</span></h2>
+      <a class="btn" href="/assets?customer=<%= customer.id %>">Open in Assets →</a>
+    </div>
+    <p class="muted" style="margin:8px 24px 0;font-size:13px;">Synced from Atera, read-only for now.</p>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th></th><th>Hostname</th><th>Type</th><th>OS</th><th>Manufacturer / Model</th><th>Last seen</th><th></th></tr></thead>
+        <tbody>
+          <% if (custAssets.length===0) { %><tr><td colspan="7"><div class="empty-state">No devices synced for this customer yet.</div></td></tr><% } %>
+          <% custAssets.forEach(function(a){ %>
+            <tr>
+              <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? '#16a34a' : '#cbd5e1' %>;"></span></td>
+              <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/customers/' + customer.id + '#assets') %>"><%= a.hostname || '(unnamed device)' %></a></td>
+              <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span></td>
+              <td class="muted"><%= a.os || '—' %></td>
+              <td class="muted"><%= [a.manufacturer, a.model].filter(Boolean).join(' ') || '—' %></td>
+              <td class="muted" style="font-size:12px;"><%= a.last_seen_at ? new Date(a.last_seen_at).toLocaleDateString('en-GB') : '—' %></td>
+              <td style="text-align:right;"><% if (a.external_id) { %><a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="<%= assetRemoteHref(a) %>">🖥 Remote</a><% } %></td>
+            </tr>
           <% }); %>
         </tbody>
       </table>

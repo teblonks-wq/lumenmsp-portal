@@ -20,7 +20,7 @@
         <div style="border:1px solid <%= inbound ? '#fde68a' : 'var(--line)' %>;background:<%= inbound ? '#fffbeb' : '#eff6ff' %>;border-radius:10px;padding:12px 14px;margin-bottom:10px;">
           <div style="display:flex;justify-content:space-between;gap:12px;font-size:12px;margin-bottom:6px;">
             <strong><%= inbound ? 'From ' + (m.from_name || m.from_email || 'customer') : 'Sent' + (m.sent_by_name ? ' by ' + m.sent_by_name : '') %><% if (m.to_email && !inbound) { %> &rarr; <%= m.to_email %><% } %></strong>
-            <span class="muted"><%= new Date(m.created_at).toLocaleString('en-GB') %><% if (inbound && m.is_unread) { %> · <span class="badge badge-primary">new</span><% } %></span>
+            <span class="muted"><%= new Date(m.created_at).toLocaleString('en-GB',{timeZone:'Europe/London'}) %><% if (inbound && m.is_unread) { %> · <span class="badge badge-primary">new</span><% } %></span>
           </div>
           <% if (m.subject) { %><div style="font-weight:600;font-size:13px;margin-bottom:4px;"><%= m.subject %></div><% } %>
           <div class="email-body" style="font-size:14px;line-height:1.6;overflow-wrap:anywhere;"><%- m.body %></div>

@@ -527,8 +527,17 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
   let itcloudHistory: any[] = [];
   try { itcloudHistory = (await pool.query("SELECT description, change_type, old_qty, new_qty, detected_at FROM it_cloud_change_log WHERE customer_id=$1 ORDER BY detected_at DESC LIMIT 40", [customer.id])).rows; } catch { /* not migrated */ }
 
+  // Device inventory (Assets tab) — synced from Atera, read-only.
+  let assets: any[] = []; let remoteTemplate = '';
+  try {
+    assets = (await pool.query("SELECT * FROM customer_assets WHERE customer_id=$1 ORDER BY hostname", [customer.id])).rows;
+    const { remoteUrlTemplate } = await import('../lib/asset-sync');
+    remoteTemplate = await remoteUrlTemplate();
+  } catch { /* not migrated yet */ }
+
   res.render('customers/detail', {
     user, customer, contacts, sites: sitesRes.rows, domains: domainsRes.rows, keyContacts, insights, itcloud, itcloudTpl, itcloudHistory,
+    assets, remoteTemplate,
     quotes: quotesRes.rows, invoices: invoicesRes.rows, contracts: contractsRes.rows,
     serviceItems: serviceItemsRes.rows, lead, credentials, canVault, creditBalance, documents,
     comms, commsTo: primaryEmail, graphClientId: config.GRAPH_CLIENT_ID,

@@ -1,6 +1,6 @@
 <%- include('../partials/header', { title: ticket.ticket_number, user }) %>
 <% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s==='pending'?'badge-failed':'badge-primary')); } %>
-<% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; } %>
+<% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; } %>
 <% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
 <style>
   /* Render inbound email HTML cleanly inside its card — tame Outlook's fixed-width tables,
@@ -356,7 +356,12 @@
         %>
           <div id="tl-<%= e.kind==='message' ? 'm' : 'n' %>-<%= e.id %>" style="border:1px solid <%= bd %>;background:<%= bg %>;border-radius:10px;padding:14px 16px;margin:12px 0;">
             <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:8px;font-size:12px;align-items:center;">
-              <span><strong><%= label %></strong><% if (e.channel==='teams' || e.channel==='whatsapp') { %><span style="font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;<%= e.channel==='teams' ? 'background:#eef2ff;color:#4338ca;' : 'background:#f0fdf4;color:#15803d;' %>"><%= e.channel==='teams' ? '👥 Teams' : '🟢 WhatsApp' %></span><% } %></span>
+              <span><strong><%= label %></strong>
+              <% if (e.channel==='teams' && typeof teamsChatId!=='undefined' && teamsChatId && e.teamsMessageId) { %>
+                <a href="https://teams.microsoft.com/l/message/<%= encodeURIComponent(teamsChatId) %>/<%= encodeURIComponent(e.teamsMessageId) %>?context=%7B%22contextType%22%3A%22chat%22%7D" target="_blank" rel="noopener" title="Open this message in Microsoft Teams" style="text-decoration:none;font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;background:#eef2ff;color:#4338ca;">👥 Teams ↗</a>
+              <% } else if (e.channel==='teams' || e.channel==='whatsapp') { %>
+                <span style="font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;<%= e.channel==='teams' ? 'background:#eef2ff;color:#4338ca;' : 'background:#f0fdf4;color:#15803d;' %>"><%= e.channel==='teams' ? '👥 Teams' : '🟢 WhatsApp' %></span>
+              <% } %></span>
               <span class="muted" style="display:flex;gap:8px;align-items:center;">
                 <% if (e.kind==='note' && (e.noteType==='public_reply' || e.noteType==='private_note')) { %>
                   <form method="post" action="/tickets/<%= ticket.id %>/note/<%= e.id %>/privacy" style="display:inline;margin:0;"><button class="btn" type="submit" style="padding:1px 8px;font-size:11px;"><%= e.noteType==='public_reply' ? 'Make private' : 'Make public' %></button></form>

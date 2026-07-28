@@ -351,6 +351,7 @@ model CustomerAsset {
   customerId     Int?      @map("customer_id") // null = Atera agent not yet matched to a portal customer
   sourceSystem   String    @default("atera") @map("source_system")
   externalId     String    @map("external_id") // Atera AgentID
+  deviceGuid     String?   @map("device_guid") // Atera's device GUID — used by the new Atera web UI's device URL
   hostname       String?
   deviceType     String?   @map("device_type") // Workstation | Server | Mobile Device | Network Device | ...
   os             String?
@@ -365,6 +366,10 @@ model CustomerAsset {
   macAddress     String?   @map("mac_address")
   domainOrWorkgroup String? @map("domain_or_workgroup")
   onlineStatus   Boolean   @default(false) @map("online_status")
+  publicIp       String?   @map("public_ip") // the WAN IP Atera saw the agent report from
+  agentVersion   String?   @map("agent_version")
+  lastLoginUser  String?   @map("last_login_user")
+  addedAt        DateTime? @map("added_at") // when Atera first recorded this agent
   lastSeenAt     DateTime? @map("last_seen_at")
   lastRebootAt   DateTime? @map("last_reboot_at")
   raw            Json?     // full source payload, for fields not yet promoted to columns

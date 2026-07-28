@@ -55,7 +55,7 @@ router.get('/admin', async (req: Request, res: Response) => {
 router.get('/admin/about', async (req: Request, res: Response) => {
   const digitsMax = (col: string, where = '') =>
     `SELECT COALESCE(MAX(NULLIF(regexp_replace(${col}, '[^0-9]', '', 'g'), '')::bigint), 0) AS m FROM ${where}`;
-  const [nextTicket, qn, invIt, invCs, stats] = await Promise.all([
+  const [nextTicket, qn, invIt, invCs, stats, gcBalance] = await Promise.all([
     nextTicketNumber(),
     pool.query(digitsMax('quote_number', 'quotes')),
     pool.query(digitsMax('invoice_number', "invoices WHERE invoice_scheme='IT'")),
@@ -65,6 +65,8 @@ router.get('/admin/about', async (req: Request, res: Response) => {
         (SELECT COUNT(*)::int FROM inbox_tickets WHERE deleted_at IS NULL AND status NOT IN ('resolved','closed')) AS open_cases,
         (SELECT COUNT(*)::int FROM inbox_tickets WHERE created_at >= NOW() - INTERVAL '30 days') AS created_30d,
         (SELECT COUNT(*)::int FROM inbox_tickets WHERE closed_at >= NOW() - INTERVAL '30 days') AS resolved_30d`),
+    // Paid Direct Debit invoices whose balance was never cleared (see /admin/fix-gc-balances).
+    pool.query("SELECT COUNT(*)::int AS n, COALESCE(SUM(balance),0)::numeric AS total FROM invoices WHERE deleted_at IS NULL AND payment_status='paid' AND gocardless_payment_id IS NOT NULL AND balance <> 0"),
   ]);
   const pad = (n: number) => String(n).padStart(4, '0');
   res.render('admin/about', {
@@ -81,7 +83,30 @@ router.get('/admin/about', async (req: Request, res: Response) => {
     avgPerDay:      (stats.rows[0].created_30d / 30).toFixed(1),
     resolvedPerDay: (stats.rows[0].resolved_30d / 30).toFixed(1),
     loc: linesOfCode(),
+    gcBalanceCount: gcBalance.rows[0].n,
+    gcBalanceTotal: gcBalance.rows[0].total,
+    notice: req.query.msg || null,
+    error: req.query.err || null,
   });
+});
+
+// One-off data fix: GoCardless payouts mark an invoice payment_status='paid' but never clear
+// its `balance` column (only the QuickBooks sync writes balance, and it was deliberately
+// blocked from touching GC-linked invoices on 2026-07-09 to stop it reverting GC's paid status —
+// see lib/quickbooks.ts syncPayments). That left every GC-collected invoice's balance stuck at
+// its pre-payment figure forever, overstating "outstanding" on the invoices list and any
+// aged-debtor reporting. Safe to run repeatedly — only touches rows still showing a nonzero
+// balance on an already-paid, GC-linked invoice; never changes payment_status, total, or status.
+router.post('/admin/fix-gc-balances', async (req: Request, res: Response) => {
+  try {
+    const r = await pool.query(
+      "UPDATE invoices SET balance=0, updated_at=NOW() WHERE deleted_at IS NULL AND payment_status='paid' AND gocardless_payment_id IS NOT NULL AND balance <> 0"
+    );
+    await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Data fix: cleared stale balance on ${r.rowCount} paid Direct Debit invoice(s)`);
+    res.redirect('/admin/about?msg=' + encodeURIComponent(`Fixed — cleared the balance on ${r.rowCount} paid Direct Debit invoice(s).`));
+  } catch (e: any) {
+    res.redirect('/admin/about?err=' + encodeURIComponent('Fix failed: ' + (e.message || 'error')));
+  }
 });
 
 // ── Users ────────────────────────────────────────────────────────────────────────

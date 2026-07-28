@@ -83,8 +83,11 @@ export async function syncGoCardlessPayments(): Promise<{ checked: number; paid:
           } catch (e: any) { console.error(`[gocardless-sync] payout lookup failed for ${payoutId}:`, e.message); }
         }
         // Draft/void invoice statuses are left alone (same rule as the old QB payment sync).
+        // balance=0 here because GoCardless is the sole owner of this invoice's payment state
+        // (see DIVISION OF AUTHORITY note in lib/quickbooks.ts) — QB's sync never clears it for
+        // GC-linked invoices, so this is the only place it ever gets zeroed.
         await pool.query(
-          `UPDATE invoices SET payment_status='paid',
+          `UPDATE invoices SET payment_status='paid', balance=0,
                   status = CASE WHEN status IN ('draft','void') THEN status ELSE 'paid' END,
                   gocardless_payout_ref = COALESCE(NULLIF($2,''), gocardless_payout_ref),
                   gocardless_paid_out_at = COALESCE($3::date, gocardless_paid_out_at),

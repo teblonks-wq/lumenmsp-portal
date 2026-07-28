@@ -105,8 +105,8 @@
           </select>
         </form>
       </td>
-      <td class="muted" style="white-space:nowrap;" data-sort="<%= t.created_at ? new Date(t.created_at).getTime() : 0 %>"><% if (t.created_at) { %><%= new Date(t.created_at).toLocaleDateString('en-GB') %><br><span style="font-size:11px;"><%= new Date(t.created_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) %></span><% } else { %>—<% } %></td>
-      <td class="muted" style="white-space:nowrap;" data-sort="<%= t.updated_at ? new Date(t.updated_at).getTime() : 0 %>"><% if (t.updated_at) { %><%= new Date(t.updated_at).toLocaleDateString('en-GB') %><br><span style="font-size:11px;"><%= new Date(t.updated_at).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) %></span><% } else { %>—<% } %></td>
+      <td class="muted" style="white-space:nowrap;" data-sort="<%= t.created_at ? new Date(t.created_at).getTime() : 0 %>"><% if (t.created_at) { %><%= new Date(t.created_at).toLocaleDateString('en-GB',{timeZone:'Europe/London'}) %><br><span style="font-size:11px;"><%= new Date(t.created_at).toLocaleTimeString('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit'}) %></span><% } else { %>—<% } %></td>
+      <td class="muted" style="white-space:nowrap;" data-sort="<%= t.updated_at ? new Date(t.updated_at).getTime() : 0 %>"><% if (t.updated_at) { %><%= new Date(t.updated_at).toLocaleDateString('en-GB',{timeZone:'Europe/London'}) %><br><span style="font-size:11px;"><%= new Date(t.updated_at).toLocaleTimeString('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit'}) %></span><% } else { %>—<% } %></td>
     </tr>
   <% }
   function thead(sel){ %>
