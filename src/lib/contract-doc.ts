@@ -1,9 +1,23 @@
 // Builds the render context for a contract document: template boilerplate + customer data
 // + priced lines grouped into the sections the Multi Service Agreement uses.
+import * as fs from 'fs';
+import * as path from 'path';
 import { pool } from '../db/pool';
 import {
   DEFAULT_MSA_SECTIONS, DEFAULT_SERVICE_BLURBS, MSA_TEMPLATE_CODE, SUPPLIER, TemplateSection,
 } from './contract-template';
+
+// Same logo the invoice PDFs use, inlined as a data URI so the print page needs no network.
+let _logo: string | null = null;
+export function logoDataUri(): string {
+  if (_logo === null) {
+    try {
+      const p = path.join(process.cwd(), 'static', 'lumen-msp-logo.png');
+      _logo = fs.existsSync(p) ? 'data:image/png;base64,' + fs.readFileSync(p).toString('base64') : '';
+    } catch { _logo = ''; }
+  }
+  return _logo;
+}
 
 export const SECTION_ORDER = ['IT', 'Cloud', 'Backup', 'Comms', 'Hardware'];
 
@@ -17,6 +31,7 @@ export interface ContractDocContext {
   terms: any[];
   totals: { monthly: number; annual: number; oneOff: number; annualised: number };
   supplier: typeof SUPPLIER;
+  logoUrl: string;
   reviewFlags: TemplateSection[];
 }
 
@@ -91,6 +106,7 @@ export async function buildContractDoc(contractId: number): Promise<ContractDocC
     sections: tpl.sections, changeControl, terms: termsRes.rows,
     totals: { monthly, annual, oneOff, annualised: monthly * 12 + annual },
     supplier: SUPPLIER,
+    logoUrl: logoDataUri(),
     reviewFlags: tpl.sections.filter((s) => s.needsReview),
   };
 }

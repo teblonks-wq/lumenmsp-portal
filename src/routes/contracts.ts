@@ -3,6 +3,7 @@ import { requireAuth } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { buildContractDoc } from '../lib/contract-doc';
+import { SUPPLIER } from '../lib/contract-template';
 import { htmlToPdf } from '../lib/pdf';
 
 const router = Router();
@@ -193,7 +194,17 @@ router.get('/contracts/:id/document.pdf', requireAuth, async (req: Request, res:
   res.app.render('contracts/document', { ...ctx, watermark: true, documentHash: null }, async (err: any, html?: string) => {
     if (err || !html) { console.error('[contract-doc] render failed:', err); res.status(500).render('error', { message: 'Document render failed.' }); return; }
     try {
-      const pdf = await htmlToPdf(html, { margin: { top: '0', right: '0', bottom: '0', left: '0' } });
+      // Page furniture lives in Chromium's margin boxes, not in the document flow — a
+      // position:fixed footer used to print over any table that ran onto a new page.
+      const footer =
+        `<div style="width:100%;padding:0 16mm;font-family:Arial,Helvetica,sans-serif;font-size:6.5pt;color:#9ca3af;text-align:center;line-height:1.5;">` +
+        `${SUPPLIER.tradingStatement.replace(/&/g, '&amp;')}<br>` +
+        `Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>`;
+      const pdf = await htmlToPdf(html, {
+        margin: { top: '14mm', right: '16mm', bottom: '20mm', left: '16mm' },
+        footerHtml: footer,
+        headerHtml: '<span></span>',
+      });
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', (req.query.dl ? 'attachment' : 'inline') + `; filename="${ctx.contract.contract_number}.pdf"`);
       res.send(pdf);

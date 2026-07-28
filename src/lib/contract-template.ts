@@ -27,9 +27,9 @@ export const DEFAULT_MSA_SECTIONS: TemplateSection[] = [
     key: 'confidential',
     heading: 'Confidential statement',
     body:
-      'The contents of this document are confidential and are intended exclusively for the prospective customer. ' +
-      'Distribution or sharing of this information with persons or entities for which it is not intended is prohibited, ' +
-      'in any form, without the express written consent of Lumen IT Solutions.',
+      'The contents of this document are confidential and are intended exclusively for the customer named in this ' +
+      'agreement. Distribution or sharing of this information with persons or entities for which it is not intended ' +
+      'is prohibited, in any form, without the express written consent of Lumen IT Solutions.',
   },
   {
     key: 'introduction',
@@ -187,10 +187,51 @@ export const DEFAULT_SERVICE_BLURBS: Record<string, { title: string; intro?: str
 // the cover page footer still carried the old 54 Base Point Business Centre / SN5 7EX address
 // and the lumenitsolutions.co.uk domain, while inner pages used Gemini House / SN25 5AZ.
 export const SUPPLIER = {
+  // The CONTRACTING party is the limited company; LumenMSP is the trading name it is branded
+  // under. Both must appear — the customer signs with the brand they recognise, but the
+  // agreement has to name the legal entity to be enforceable against it.
+  brand: 'LumenMSP',
   legalName: 'Lumen IT Solutions Limited',
+  tradingAs: 'Lumen IT Solutions Limited, trading as LumenMSP',
   address: 'Gemini House, Hargreaves Road, Groundwell Industrial Estate, Swindon, Wiltshire',
   postcode: 'SN25 5AZ',
   serviceContact: 'Terry O’Kelly — Managing Director',
   phone: '0333 335 0170',
+  email: 'back.office@lumensolutions.co.uk',
   web: 'www.lumensolutions.co.uk',
+  companyNumber: '14951068',
+  vatNumber: '443375688',
+  // Matches the footer already used on invoice PDFs, so every document the customer receives
+  // carries identical legal wording.
+  tradingStatement:
+    'LumenMSP is a trading name of Lumen IT Solutions Limited. Registered in England & Wales · ' +
+    'Company No. 14951068 · Gemini House, Hargreaves Road, Groundwell Industrial Estate, Swindon, SN25 5AZ',
 };
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Extension document. An extension must not restate the agreement — it continues it.
+// The wording below is what carries the original terms forward, so the signed extension
+// and the original are read together rather than the extension replacing anything.
+// ─────────────────────────────────────────────────────────────────────────────
+export const EXTENSION_SECTIONS: TemplateSection[] = [
+  {
+    key: 'extension_continuation',
+    heading: 'Continuation of agreement',
+    body:
+      'This document extends the Multi Product — Service Contract already in place between the parties named below. ' +
+      'It is to be read together with that agreement and does not replace it.\n\n' +
+      'All services, pricing, responsibilities, support levels, exclusions and terms of the original agreement ' +
+      'continue on the same terms for the duration of the extended term set out below.\n\n' +
+      'Where a line in the schedule below shows a revised quantity or price, that line supersedes the equivalent line ' +
+      'in the original agreement from the start of the extended term. Every other part of the original agreement ' +
+      'continues unchanged and is not varied by this extension.',
+  },
+  {
+    key: 'extension_notice',
+    heading: 'Notice and further renewal',
+    body:
+      'At the end of the extended term this agreement continues to renew on the same basis as the original agreement, ' +
+      'unless notice is given in accordance with the notice period stated below.',
+  },
+];

@@ -1,137 +1,212 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title><%= contract.contract_number %></title>
 <style>
+  /* Page furniture is Chromium's job, not the document's. The footer used to be a
+     position:fixed bar, which sat ON TOP of any table that overflowed onto a new page —
+     that was the line collision. Margins below reserve the space; the footer itself is
+     supplied as a puppeteer footerTemplate so it can never overlap content. */
+  @page { size: A4; }  /* margins are set by the PDF renderer so they are defined in one place */
   * { box-sizing:border-box; margin:0; padding:0; }
   body { font-family:Arial,Helvetica,sans-serif; font-size:11.5px; color:#374151; background:#fff; line-height:1.55; }
-  .page { padding:26mm 18mm 22mm; position:relative; }
-  .page + .page { page-break-before:always; }
+  /* DRAFT is a repeating background, so it renders behind text instead of across it. */
+  body.is-draft { background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='673' height='340'><text x='336' y='196' font-family='Arial,Helvetica,sans-serif' font-size='66' font-weight='bold' fill='rgba(15,118,110,0.05)' text-anchor='middle' transform='rotate(-24 336 176)'>DRAFT</text></svg>"); background-repeat:repeat-y; background-position:center top; }
+  .sheet + .sheet { break-before:page; page-break-before:always; }
   h1 { font-size:22px; color:#111827; font-weight:700; }
-  h2 { font-size:15px; color:#0f766e; font-weight:700; margin:20px 0 7px; padding-bottom:4px; border-bottom:1.5px solid #99f6e4; }
-  h3 { font-size:12.5px; color:#111827; font-weight:700; margin:13px 0 5px; }
-  p { margin:0 0 8px; }
-  ul { margin:0 0 9px 17px; } li { margin:0 0 3px; }
-  table { border-collapse:collapse; width:100%; margin:7px 0 12px; font-size:11px; }
+  h2 { font-size:15px; color:#0f766e; font-weight:700; margin:19px 0 7px; padding-bottom:4px; border-bottom:1.5px solid #99f6e4;
+       break-after:avoid; page-break-after:avoid; }
+  h3 { font-size:12.5px; color:#111827; font-weight:700; margin:13px 0 5px; break-after:avoid; page-break-after:avoid; }
+  p { margin:0 0 8px; orphans:3; widows:3; }
+  ul { margin:0 0 9px 17px; } li { margin:0 0 3px; break-inside:avoid; }
+  /* Tables may split across pages, but never mid-row, and the header repeats. */
+  table { border-collapse:collapse; width:100%; margin:7px 0 12px; font-size:11px; break-inside:auto; }
+  thead { display:table-header-group; }
+  tr { break-inside:avoid; page-break-inside:avoid; }
   th { background:#f0fdfa; color:#115e59; text-align:left; font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; padding:6px 8px; border:1px solid #ccfbf1; }
   td { padding:6px 8px; border:1px solid #e5e7eb; vertical-align:top; }
   td.r, th.r { text-align:right; }
   .muted { color:#6b7280; }
-  .conf { text-align:center; font-size:11px; letter-spacing:.22em; color:#9ca3af; text-transform:uppercase; margin-bottom:60px; }
-  .cover-title { text-align:center; margin:70px 0 40px; }
-  .cover-title .sub { font-size:13px; color:#6b7280; margin-top:8px; }
-  .to { margin-top:70px; font-size:12px; }
-  .to .lbl { font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; color:#9ca3af; margin-bottom:5px; }
-  .parties { display:table; width:100%; table-layout:fixed; }
-  .party { display:table-cell; width:50%; padding-right:14px; vertical-align:top; }
-  .party dl { margin:0; } .party dt { font-size:9px; text-transform:uppercase; letter-spacing:.05em; color:#9ca3af; margin-top:7px; }
-  .party dd { margin:1px 0 0; font-size:11.5px; color:#111827; }
-  .term-box { background:#f0fdfa; border:1px solid #ccfbf1; border-radius:6px; padding:11px 14px; margin:8px 0 4px; }
-  .sig-grid { display:table; width:100%; margin-top:14px; }
-  .sig { display:table-cell; width:50%; padding-right:18px; vertical-align:top; }
-  .sig .box { border:1px solid #d1d5db; border-radius:6px; padding:12px 14px; min-height:118px; }
+  .sub { font-size:10px; color:#6b7280; display:block; margin-top:2px; }
+  .brandbar { width:100%; border-bottom:2px solid #0f766e; padding-bottom:9px; margin-bottom:16px; }
+  .brandbar td { border:0; padding:0; vertical-align:top; }
+  .brandbar img { display:block; max-width:172px; height:auto; border:0; }
+  .brandbar .co { text-align:right; font-size:9.5px; color:#6b7280; line-height:1.6; }
+  .brandbar .co strong { font-size:12px; color:#111827; display:block; margin-bottom:2px; }
+  .legalnote { font-size:8.5px; color:#9ca3af; text-align:center; margin-top:14px; line-height:1.5; }
+  .conf { text-align:center; font-size:11px; letter-spacing:.22em; color:#9ca3af; text-transform:uppercase; }
+  .cover-title { text-align:center; margin:64px 0 34px; }
+  .cover-title .meta { font-size:13px; color:#6b7280; margin-top:8px; }
+  /* Client / supplier sit in a real table so long addresses cannot ride over the divider. */
+  .parties { width:100%; table-layout:fixed; border-collapse:separate; border-spacing:0; margin-top:6px; }
+  .parties > tbody > tr > td { border:1px solid #e5e7eb; border-radius:6px; padding:12px 14px; vertical-align:top; width:50%; background:#fff; }
+  .parties > tbody > tr > td:first-child { border-right:none; }
+  .pt { font-size:12.5px; font-weight:700; color:#111827; margin-bottom:7px; }
+  .fld { margin-bottom:7px; }
+  .fld .k { font-size:9px; text-transform:uppercase; letter-spacing:.05em; color:#9ca3af; display:block; }
+  .fld .v { font-size:11.5px; color:#111827; }
+  .contact-strip { margin-top:9px; border:1px solid #ccfbf1; background:#f0fdfa; border-radius:6px; padding:10px 13px; break-inside:avoid; }
+  .contact-strip .k { font-size:9px; text-transform:uppercase; letter-spacing:.05em; color:#0f766e; display:block; margin-bottom:3px; }
+  .term-box { background:#f0fdfa; border:1px solid #ccfbf1; border-radius:6px; padding:11px 14px; margin:8px 0 4px; break-inside:avoid; }
+  .sig-wrap { width:100%; table-layout:fixed; border-collapse:separate; border-spacing:14px 0; margin-top:12px; }
+  .sig-wrap td { vertical-align:top; width:50%; padding:0; }
+  .sig .box { border:1px solid #d1d5db; border-radius:6px; padding:12px 14px; min-height:188px; break-inside:avoid; }
   .sig .mark { font-family:'Segoe Script','Brush Script MT',cursive; font-size:25px; color:#0f766e; margin:5px 0 7px; min-height:32px; }
-  .sig .line { border-bottom:1px solid #9ca3af; height:24px; margin:5px 0 3px; }
+  .sig .line { border-bottom:1px solid #9ca3af; height:22px; margin:4px 0 2px; }
   .sig .cap { font-size:9px; text-transform:uppercase; letter-spacing:.05em; color:#9ca3af; }
-  .audit { margin-top:9px; font-size:9.5px; color:#6b7280; background:#f9fafb; border:1px solid #f3f4f6; border-radius:5px; padding:8px 10px; }
+  .audit { margin-top:11px; font-size:9.5px; color:#6b7280; background:#f9fafb; border:1px solid #f3f4f6; border-radius:5px; padding:9px 11px; break-inside:avoid; }
   .audit code { font-family:'Courier New',monospace; font-size:9px; word-break:break-all; }
-  .foot { position:fixed; bottom:9mm; left:18mm; right:18mm; font-size:8.5px; color:#9ca3af; text-align:center; border-top:1px solid #f3f4f6; padding-top:5px; }
-  .draft { position:fixed; top:44%; left:0; right:0; text-align:center; font-size:78px; font-weight:700; color:rgba(15,118,110,.07); transform:rotate(-24deg); letter-spacing:.09em; }
-</style></head><body>
+</style></head>
 <%
+  var isExt = (typeof docKind !== 'undefined' && docKind === 'extension');
+  var showDraft = (typeof watermark !== 'undefined' && watermark) && contract.sign_status !== 'countersigned';
   function d(x){ return x ? new Date(x).toLocaleDateString('en-GB',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—'; }
   function dl(x){ return x ? new Date(x).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}) : '—'; }
   function m(v){ return '£' + (Number(v)||0).toFixed(2); }
   function esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-  // Section bodies use blank-line paragraphs and "- " bullets.
   function body(txt){
     var out='', buf=[];
     function flush(){ if(buf.length){ out += '<ul>' + buf.map(function(b){ return '<li>'+esc(b)+'</li>'; }).join('') + '</ul>'; buf=[]; } }
     String(txt||'').split(/\n/).forEach(function(raw){
       var t=raw.trim();
       if(t.indexOf('- ')===0){ buf.push(t.slice(2)); return; }
-      flush();
-      if(t) out += '<p>'+esc(t)+'</p>';
+      flush(); if(t) out += '<p>'+esc(t)+'</p>';
     });
     flush(); return out;
   }
   var addr = [customer.address_line_1, customer.address_line_2, customer.city, customer.county].filter(Boolean);
-  var svc = serviceContacts.map(function(c){ return c.full_name + (c.job_title ? ' — ' + c.job_title : ''); }).join('<br>');
-  var isDraft = contract.sign_status !== 'countersigned';
+  var docTitle = isExt ? 'Extension to Service Contract' : 'Multi Product — Service Contract';
+  var newTerm  = (typeof extension !== 'undefined' && extension) ? extension : null;
 %>
-<% if (isDraft && typeof watermark !== 'undefined' && watermark) { %><div class="draft">DRAFT</div><% } %>
-<div class="foot"><%= supplier.legalName %> — <%= supplier.address %>, <%= supplier.postcode %> — <%= supplier.web %> — <%= supplier.phone %></div>
+<body class="<%= showDraft ? 'is-draft' : '' %>">
 
 <!-- ── Cover ───────────────────────────────────────────────────────── -->
-<div class="page">
+<div class="sheet">
+  <table class="brandbar"><tbody><tr>
+    <td style="width:50%;">
+      <% if (typeof logoUrl !== 'undefined' && logoUrl) { %><img src="<%= logoUrl %>" alt="<%= supplier.brand %>">
+      <% } else { %><strong style="font-size:19px;color:#0f766e;"><%= supplier.brand %></strong><% } %>
+    </td>
+    <td class="co">
+      <strong><%= supplier.legalName %></strong>
+      <%= supplier.address %><br><%= supplier.postcode %><br>
+      <%= supplier.email %> · <%= supplier.phone %><br>
+      VAT Registration No.: <%= supplier.vatNumber %>
+    </td>
+  </tr></tbody></table>
   <div class="conf">Strictly Confidential</div>
   <div class="cover-title">
-    <h1>Multi Product — Service Contract</h1>
-    <div class="sub"><%= dl(contract.start_date) %></div>
-    <div class="sub" style="margin-top:4px;"><%= contract.contract_number %> · Version <%= contract.version || 1 %></div>
+    <h1><%= docTitle %></h1>
+    <div class="meta"><%= isExt && newTerm ? dl(newTerm.startDate) : dl(contract.start_date) %></div>
+    <div class="meta" style="margin-top:3px;"><%= contract.contract_number %> · Version <%= contract.version || 1 %></div>
   </div>
-  <div class="to">
-    <div class="lbl">To</div>
-    <strong style="font-size:14px;color:#111827;"><%= customer.customer_name || '—' %></strong><br>
-    <span class="muted"><%= addr.join(', ') %><% if (customer.postcode) { %>, <%= customer.postcode %><% } %></span>
+
+  <table class="parties">
+    <tbody><tr>
+      <td>
+        <div class="pt">The Client</div>
+        <div class="fld"><span class="k">Legal name</span><span class="v"><%= customer.customer_name || '—' %></span></div>
+        <div class="fld"><span class="k">Address</span><span class="v"><%= addr.length ? addr.join(', ') : '—' %></span></div>
+        <div class="fld" style="margin-bottom:0;"><span class="k">Postcode</span><span class="v"><%= customer.postcode || '—' %></span></div>
+      </td>
+      <td>
+        <div class="pt">The Supplier</div>
+        <div class="fld"><span class="k">Legal name</span><span class="v"><%= supplier.legalName %><span class="sub">Trading as <%= supplier.brand %></span></span></div>
+        <div class="fld"><span class="k">Address</span><span class="v"><%= supplier.address %></span></div>
+        <div class="fld" style="margin-bottom:0;"><span class="k">Postcode</span><span class="v"><%= supplier.postcode %></span></div>
+      </td>
+    </tr></tbody>
+  </table>
+
+  <!-- Service contacts get their own strip rather than being squeezed into the party columns,
+       where a long name and job title used to wrap into the address above it. -->
+  <div class="contact-strip">
+    <table style="margin:0;"><tbody><tr>
+      <td style="border:0;padding:0 14px 0 0;width:50%;background:transparent;">
+        <span class="k">Client service contact<%= serviceContacts.length > 1 ? 's' : '' %></span>
+        <% if (!serviceContacts.length) { %>
+          <span class="muted">Not yet nominated</span>
+        <% } else { serviceContacts.forEach(function(c, i){ %>
+          <div style="<%= i ? 'margin-top:4px;' : '' %>"><%= c.full_name %><% if (c.job_title) { %> <span class="muted">— <%= c.job_title %></span><% } %>
+            <% if (c.email) { %><span class="sub"><%= c.email %></span><% } %></div>
+        <% }); } %>
+      </td>
+      <td style="border:0;padding:0;width:50%;background:transparent;">
+        <span class="k">Supplier service contact</span>
+        <div><%= supplier.serviceContact %><span class="sub"><%= supplier.phone %></span></div>
+      </td>
+    </tr></tbody></table>
   </div>
+
+  <div class="legalnote"><%= supplier.tradingStatement %></div>
 </div>
 
-<!-- ── Change control + confidential statement ──────────────────────── -->
-<div class="page">
+<!-- ── Extension: continuation wording ─────────────────────────────── -->
+<% if (isExt) { %>
+<div class="sheet">
+  <% (typeof extensionSections !== 'undefined' ? extensionSections : []).forEach(function(s){ %>
+    <h2><%= s.heading %></h2>
+    <%- body(s.body) %>
+  <% }); %>
+
+  <h2>Extended term</h2>
+  <div class="term-box">
+    <% if (newTerm) { %>
+      <strong>Original agreement dated:</strong> <%= dl(contract.start_date) %><br>
+      <strong>Previous term ended:</strong> <%= dl(newTerm.previousEnd) %><br>
+      <strong>Extended term:</strong> <%= dl(newTerm.startDate) %> to <%= dl(newTerm.endDate) %> (<%= newTerm.months %> months)<br>
+    <% } %>
+    <strong>Notice:</strong> <%= contract.notice_days %> days<br>
+    <strong>Renewals:</strong>
+    <% if (contract.renewal_mode === 'signed_extension') { %>Renewed only by a further signed extension.<% } else { %>Automatically renewed unless <%= contract.notice_days %> days' notice is provided.<% } %>
+  </div>
+
+  <h2><%= (typeof changedLines !== 'undefined' && changedLines && changedLines.length) ? 'Revised lines' : 'Services and pricing' %></h2>
+  <% if (typeof changedLines !== 'undefined' && changedLines && changedLines.length) { %>
+    <p>The following lines are revised from the start of the extended term. All other services continue on the same terms.</p>
+    <table>
+      <thead><tr><th>Item</th><th class="r" style="width:9%;">Qty</th><th class="r" style="width:16%;">Unit price</th><th style="width:14%;">Billing</th><th class="r" style="width:16%;">Total</th></tr></thead>
+      <tbody><% changedLines.forEach(function(l){ %>
+        <tr><td><%= l.description %></td><td class="r"><%= Number(l.quantity) %></td><td class="r"><%= m(l.unit_price) %></td>
+            <td class="muted"><%= String(l.billing_frequency||'').replace(/_/g,' ') %></td><td class="r"><%= m(l.line_total) %></td></tr>
+      <% }); %></tbody>
+    </table>
+  <% } else { %>
+    <p>Services and pricing continue unchanged. The schedule of services in the original agreement applies in full for
+       the extended term, at a current total of <strong><%= m(totals.monthly) %> per month</strong>
+       (<%= m(totals.annualised) %> annualised).</p>
+  <% } %>
+</div>
+<% } %>
+
+<!-- ── Full agreement (new contracts only) ─────────────────────────── -->
+<% if (!isExt) { %>
+<div class="sheet">
   <h2>Document change control</h2>
   <p class="muted">The following is the document control for revisions to this document.</p>
   <table>
-    <thead><tr><th style="width:14%;">Version</th><th style="width:20%;">Date of issue</th><th style="width:22%;">Type</th><th>Description of change</th></tr></thead>
-    <tbody>
-      <% changeControl.forEach(function(r){ %>
-        <tr><td>V<%= r.version %>.0</td><td><%= d(r.generated_at) %></td><td class="muted"><%= (r.kind||'agreement').charAt(0).toUpperCase()+(r.kind||'agreement').slice(1) %></td><td><%= r.change_summary || r.title || '—' %></td></tr>
-      <% }); %>
-    </tbody>
+    <thead><tr><th style="width:13%;">Version</th><th style="width:19%;">Date of issue</th><th style="width:20%;">Type</th><th>Description of change</th></tr></thead>
+    <tbody><% changeControl.forEach(function(r){ %>
+      <tr><td>V<%= r.version %>.0</td><td><%= d(r.generated_at) %></td>
+          <td class="muted"><%= (r.kind||'agreement').charAt(0).toUpperCase()+(r.kind||'agreement').slice(1) %></td>
+          <td><%= r.change_summary || r.title || '—' %></td></tr>
+    <% }); %></tbody>
   </table>
+
   <% var confSec = sections.filter(function(s){ return s.key==='confidential'; })[0]; %>
   <% if (confSec) { %><h2>Confidential statement</h2><%- body(confSec.body) %><% } %>
-
-  <h2>Introduction</h2>
   <% var intro = sections.filter(function(s){ return s.key==='introduction'; })[0]; %>
-  <% if (intro) { %><%- body(intro.body) %><% } %>
-
-  <h2>Parties</h2>
-  <p>This contract is between the following parties.</p>
-  <div class="parties">
-    <div class="party">
-      <h3>The Client</h3>
-      <dl>
-        <dt>Legal name</dt><dd><%= customer.customer_name || '—' %></dd>
-        <dt>Address</dt><dd><%= addr.length ? addr.join(', ') : '—' %></dd>
-        <dt>Postcode</dt><dd><%= customer.postcode || '—' %></dd>
-        <dt>Service contact</dt><dd><%- svc || '—' %></dd>
-      </dl>
-    </div>
-    <div class="party">
-      <h3>The Supplier</h3>
-      <dl>
-        <dt>Legal name</dt><dd><%= supplier.legalName %></dd>
-        <dt>Address</dt><dd><%= supplier.address %></dd>
-        <dt>Postcode</dt><dd><%= supplier.postcode %></dd>
-        <dt>Service contact</dt><dd><%= supplier.serviceContact %></dd>
-      </dl>
-    </div>
-  </div>
+  <% if (intro) { %><h2>Introduction</h2><%- body(intro.body) %><% } %>
 
   <h2>Agreement term</h2>
   <div class="term-box">
     <strong>Start date:</strong> <%= dl(contract.start_date) %><br>
     <strong>Term:</strong> <%= contract.term_months || '—' %> months<% if (contract.end_date) { %> (to <%= dl(contract.end_date) %>)<% } %><br>
     <strong>Renewals:</strong>
-    <% if (contract.renewal_mode === 'signed_extension') { %>
-      Renewed only by a signed extension. <%= contract.notice_days %> days' notice.
-    <% } else { %>
-      Automatically renewed unless <%= contract.notice_days %> days' notice is provided.
-    <% } %>
+    <% if (contract.renewal_mode === 'signed_extension') { %>Renewed only by a signed extension. <%= contract.notice_days %> days' notice.<% } else { %>Automatically renewed unless <%= contract.notice_days %> days' notice is provided.<% } %>
   </div>
   <% if (terms && terms.length > 1) { %>
     <h3>Term history</h3>
     <table>
-      <thead><tr><th>#</th><th>From</th><th>To</th><th>Months</th><th>How agreed</th></tr></thead>
+      <thead><tr><th style="width:8%;">#</th><th>From</th><th>To</th><th style="width:14%;">Months</th><th>How agreed</th></tr></thead>
       <tbody><% terms.forEach(function(t){ %>
         <tr><td><%= t.seq %></td><td><%= d(t.start_date) %></td><td><%= d(t.end_date) %></td><td><%= t.months %></td>
             <td class="muted"><%= String(t.source||'').replace(/_/g,' ') %><% if (t.signed_at) { %> · signed <%= d(t.signed_at) %><% } %></td></tr>
@@ -140,8 +215,7 @@
   <% } %>
 </div>
 
-<!-- ── Services ────────────────────────────────────────────────────── -->
-<div class="page">
+<div class="sheet">
   <h2>Services subscribed to</h2>
   <% if (!groups.length) { %><p class="muted">No services have been added to this contract yet.</p><% } %>
   <% groups.forEach(function(g){ %>
@@ -150,18 +224,17 @@
     <% if (g.bullets && g.bullets.length) { %><ul><% g.bullets.forEach(function(b){ %><li><%= b %></li><% }); %></ul><% } %>
     <table>
       <thead><tr><th>Item</th><th class="r" style="width:9%;">Qty</th><th class="r" style="width:16%;">Unit price</th><th style="width:14%;">Billing</th><th class="r" style="width:16%;">Total</th></tr></thead>
-      <tbody>
-        <% g.lines.forEach(function(l){ %>
-          <tr>
-            <td><%= l.description %><% if (l.detail) { %><br><span class="muted"><%= l.detail %></span><% } %>
-              <% if (l.term_start || l.term_end) { %><br><span class="muted">Term <%= d(l.term_start) %> – <%= d(l.term_end) %><% if (l.notice_days) { %>, <%= l.notice_days %> day notice<% } %></span><% } %></td>
-            <td class="r"><%= Number(l.quantity) %></td>
-            <td class="r"><%= m(l.unit_price) %></td>
-            <td class="muted"><%= String(l.billing_frequency||'').replace(/_/g,' ') %></td>
-            <td class="r"><%= m(l.line_total) %></td>
-          </tr>
-        <% }); %>
-      </tbody>
+      <tbody><% g.lines.forEach(function(l){ %>
+        <tr>
+          <td><%= l.description %>
+            <% if (l.detail) { %><span class="sub"><%= l.detail %></span><% } %>
+            <% if (l.term_start || l.term_end) { %><span class="sub">Term <%= d(l.term_start) %> – <%= d(l.term_end) %><% if (l.notice_days) { %>, <%= l.notice_days %> day notice<% } %></span><% } %></td>
+          <td class="r"><%= Number(l.quantity) %></td>
+          <td class="r"><%= m(l.unit_price) %></td>
+          <td class="muted"><%= String(l.billing_frequency||'').replace(/_/g,' ') %></td>
+          <td class="r"><%= m(l.line_total) %></td>
+        </tr>
+      <% }); %></tbody>
     </table>
   <% }); %>
   <table style="margin-top:14px;">
@@ -174,20 +247,22 @@
   </table>
 </div>
 
-<!-- ── Terms & conditions ──────────────────────────────────────────── -->
-<div class="page">
+<div class="sheet">
   <% sections.filter(function(s){ return ['confidential','introduction'].indexOf(s.key) === -1; }).forEach(function(s){ %>
     <h2><%= s.heading %></h2>
     <%- body(s.body) %>
   <% }); %>
 </div>
+<% } %>
 
 <!-- ── Signatures ──────────────────────────────────────────────────── -->
-<div class="page">
+<div class="sheet">
   <h2>Signatures</h2>
-  <p>This contract is between <strong><%= customer.customer_name || '—' %></strong> and <strong><%= supplier.legalName %></strong>.</p>
-  <div class="sig-grid">
-    <div class="sig">
+  <p>This <%= isExt ? 'extension' : 'contract' %> is between <strong><%= customer.customer_name || '—' %></strong>
+     and <strong><%= supplier.legalName %></strong> (trading as <%= supplier.brand %>).</p>
+  <% if (isExt) { %><p>By signing below the parties agree that the original agreement continues on the same terms for the extended term set out above.</p><% } %>
+  <table class="sig-wrap"><tbody><tr>
+    <td class="sig">
       <h3>Signed on behalf of the client</h3>
       <div class="box">
         <% if (contract.client_signed_at) { %>
@@ -202,8 +277,8 @@
           <div class="cap">Date</div><div class="line"></div>
         <% } %>
       </div>
-    </div>
-    <div class="sig">
+    </td>
+    <td class="sig">
       <h3>Signed on behalf of the supplier</h3>
       <div class="box">
         <% if (contract.supplier_signed_at) { %>
@@ -217,8 +292,8 @@
           <div class="cap">Date</div><div class="line"></div>
         <% } %>
       </div>
-    </div>
-  </div>
+    </td>
+  </tr></tbody></table>
 
   <% if (contract.client_signed_at) { %>
     <div class="audit">
