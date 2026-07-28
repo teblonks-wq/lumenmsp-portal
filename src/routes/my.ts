@@ -329,7 +329,7 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
     // item follows the tab rather than always being 'insights'.
     active: tab === 'home' ? 'number-lookup' : tab === 'reverse' ? 'answered-by' : 'insights',
     user: u,
-    title: tab === 'home' ? 'Number Lookup' : tab === 'reverse' ? 'Answered by' : 'Insights',
+    title: tab === 'home' ? 'Find a call' : tab === 'reverse' ? 'Who answered it' : 'Call Reports',
     tab, q,
     journeys: [], stats: null, templates: [], sites: [], reports: [], emails: [], insName: '',
     ext: '', fromDate: '', toDate: '', fromTime: '00:00', toTime: '23:59', extensions: [], calls: [], rstats: null,

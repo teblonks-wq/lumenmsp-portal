@@ -46,7 +46,7 @@
   <div class="ins-tools">
     <form method="get" action="/my/insights" class="ins-tool <%= q ? 'is-active' : '' %>">
         <input type="hidden" name="tab" value="home">
-        <h2><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Number Lookup</h2>
+        <h2><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Find a call</h2>
         <p class="ins-blurb">Follow one caller's journey — every call to or from a number, who it reached, how long they waited and where it went.</p>
         <label for="insQ">Phone number</label>
         <div class="ins-go">
@@ -58,7 +58,7 @@
 
     <form method="get" action="/my/insights" class="ins-tool <%= ext ? 'is-active' : '' %>">
         <input type="hidden" name="tab" value="reverse">
-        <h2><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Answered by</h2>
+        <h2><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>Who answered it</h2>
         <p class="ins-blurb">The other way round — every call a person or extension answered in a window, with the caller's number to follow up.</p>
         <label for="insExt">Extension or person</label>
         <div class="ins-go">
@@ -71,8 +71,8 @@
   </div>
 
   <div class="my-tabs">
-    <a class="my-tab <%= tab === 'home' ? 'active' : '' %>" href="/my/insights?tab=home">Number Lookup</a>
-    <a class="my-tab <%= tab === 'reverse' ? 'active' : '' %>" href="/my/insights?tab=reverse">Answered by</a>
+    <a class="my-tab <%= tab === 'home' ? 'active' : '' %>" href="/my/insights?tab=home">Find a call</a>
+    <a class="my-tab <%= tab === 'reverse' ? 'active' : '' %>" href="/my/insights?tab=reverse">Who answered it</a>
     <a class="my-tab <%= tab === 'reports' ? 'active' : '' %>" href="/my/insights?tab=reports">Reports</a>
   </div>
 
