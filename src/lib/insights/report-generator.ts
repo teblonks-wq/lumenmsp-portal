@@ -143,7 +143,11 @@ export async function ensureSiteLogicColumn(): Promise<void> {
           SELECT DISTINCT ON (site_id) site_id, logic_config AS lc
             FROM report_configs
            WHERE logic_config IS NOT NULL
-           ORDER BY site_id, updated_at DESC NULLS LAST, id DESC
+           -- report_configs is a legacy table created outside Prisma and has no updated_at
+           -- column, so ordering by it threw on every boot ("column \"updated_at\" does not
+           -- exist") and this backfill has never actually run. id DESC gives the same
+           -- most-recent-config-per-site intent using a column that exists.
+           ORDER BY site_id, id DESC
         ) sub
        WHERE s.id = sub.site_id AND s.logic_config IS NULL`);
   } catch (e: any) {
