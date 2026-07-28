@@ -27,3 +27,7 @@ _t.js
 
 # offline document render scratch (not part of the app)
 .preview/
+
+# Files git created on the Windows share and then could not unlink. Moved here rather than
+# deleted (the mount forbids unlink); ignored so deploy.ps1's `git add -A` stops staging them.
+_to_delete/
