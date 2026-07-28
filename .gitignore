@@ -24,3 +24,6 @@ Getting Started.pdf
 *.zip
 *.pdf
 _t.js
+
+# offline document render scratch (not part of the app)
+.preview/

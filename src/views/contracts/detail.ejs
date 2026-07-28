@@ -16,6 +16,8 @@
     <p class="muted" style="margin:4px 0 0;"><%= contract.title %><% if (contract.customer_name) { %> · <a class="row-link" href="/customers/<%= contract.customer_id %>"><%= contract.customer_name %></a><% } %></p>
   </div>
   <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+    <a class="btn" href="/contracts/<%= contract.id %>/document" target="_blank">Preview agreement</a>
+    <a class="btn" href="/contracts/<%= contract.id %>/document.pdf" target="_blank">PDF</a>
     <a class="btn" href="/contracts/<%= contract.id %>/edit">Edit</a>
     <form method="post" action="/contracts/<%= contract.id %>/status" style="margin:0;display:flex;gap:6px;align-items:center;">
       <select class="input" name="status"><% ['draft','active','expired','cancelled'].forEach(function(s){ %><option value="<%= s %>" <%= contract.status===s?'selected':'' %>><%= s.charAt(0).toUpperCase()+s.slice(1) %></option><% }); %></select>

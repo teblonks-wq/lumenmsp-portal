@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
+import { buildContractDoc } from '../lib/contract-doc';
+import { htmlToPdf } from '../lib/pdf';
 
 const router = Router();
 const STATUSES = ['draft', 'active', 'expired', 'cancelled'];
@@ -170,6 +172,36 @@ router.post('/contracts/:id/delete', requireAuth, async (req: Request, res: Resp
   await pool.query('UPDATE contracts SET deleted_at=NOW(), deleted_by_user_id=$1 WHERE id=$2', [user.id, id]);
   await logActivity(user.id, 'deleted', 'contracts', id, 'Deleted contract #' + id);
   res.redirect('/contracts');
+});
+
+// ── Generated agreement document ───────────────────────────────────────────────
+// The MSA is assembled from the template + this contract's data rather than kept as a
+// Word file, so the change-control table, parties block and priced tables cannot drift
+// out of step with the record. `?html=1` renders the same markup in the browser for a
+// fast look without spinning up Chromium.
+router.get('/contracts/:id/document', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const ctx = await buildContractDoc(id);
+  if (!ctx) { res.status(404).render('error', { message: 'Contract not found.' }); return; }
+  res.render('contracts/document', { ...ctx, watermark: true, documentHash: null });
+});
+
+router.get('/contracts/:id/document.pdf', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const ctx = await buildContractDoc(id);
+  if (!ctx) { res.status(404).render('error', { message: 'Contract not found.' }); return; }
+  res.app.render('contracts/document', { ...ctx, watermark: true, documentHash: null }, async (err: any, html?: string) => {
+    if (err || !html) { console.error('[contract-doc] render failed:', err); res.status(500).render('error', { message: 'Document render failed.' }); return; }
+    try {
+      const pdf = await htmlToPdf(html, { margin: { top: '0', right: '0', bottom: '0', left: '0' } });
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', (req.query.dl ? 'attachment' : 'inline') + `; filename="${ctx.contract.contract_number}.pdf"`);
+      res.send(pdf);
+    } catch (e) {
+      console.error('[contract-doc] PDF error:', e);
+      res.status(500).render('error', { message: 'PDF generation failed (Chromium may be missing on the server).' });
+    }
+  });
 });
 
 export default router;

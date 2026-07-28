@@ -250,6 +250,7 @@ model Contact {
   department     String?
   isPrimary      Boolean  @default(false) @map("is_primary")
   isThirdParty   Boolean  @default(false) @map("is_third_party") // 3rd party (covered by the customer's support agreement)
+  isServiceContact Boolean @default(false) @map("is_service_contact") // named SERVICE CONTACT on the service agreement; may view and sign agreements
   protected      Boolean  @default(false)  // manually curated — directory sync must never update or archive this contact
   portalAccessLevel String? @map("portal_access_level") // customer-portal access: none|tickets|finance|service|full (null = none)
   insightsSites  Json?    @map("insights_sites") // site layer: insights site ids this contact may see in OneBoard/Wallboard/Insights (null = all)
@@ -1008,17 +1009,55 @@ model Contract {
   autoRenew       Boolean   @default(true) @map("auto_renew")
   paymentMethod   String    @default("upfront") @map("payment_method") // upfront | delivery | direct_debit
   notes           String?
+
+  // ── Generated document ──
+  templateId      Int?      @map("template_id")
+  version         Int       @default(1)          // bumps on every regenerate-after-signature
+  termMonths      Int?      @map("term_months")  // length of the ORIGINAL term; later terms live in contract_terms
+
+  // ── Renewal behaviour (decided per contract) ──
+  renewalMode     String    @default("auto") @map("renewal_mode") // auto | signed_extension
+
+  // ── Signature state. The portal owns this end to end; no third-party e-sign service. ──
+  signStatus      String    @default("unsigned") @map("sign_status") // unsigned|sent|viewed|signed|countersigned|declined
+  signToken       String?   @unique @map("sign_token")
+  sentTo          String?   @map("sent_to")
+  sentAt          DateTime? @map("sent_at")
+  viewCount       Int       @default(0) @map("view_count")
+  declinedReason  String?   @map("declined_reason")
+
+  // Client signature + the audit trail that makes it defensible: who, when, from where,
+  // and (via contract_documents.sha256) exactly which bytes they were shown.
+  clientSignName      String?   @map("client_sign_name")
+  clientSignPosition  String?   @map("client_sign_position")
+  clientSignEmail     String?   @map("client_sign_email")
+  clientSignedAt      DateTime? @map("client_signed_at")
+  clientSignIp        String?   @map("client_sign_ip")
+  clientSignUserAgent String?   @map("client_sign_user_agent")
+  clientSignatureSvg  String?   @map("client_signature_svg") // drawn or typed mark, stored inline
+
+  // Counter-signature (Lumen side)
+  supplierSignName     String?   @map("supplier_sign_name")
+  supplierSignPosition String?   @map("supplier_sign_position")
+  supplierSignedAt     DateTime? @map("supplier_signed_at")
+  supplierSignatureSvg String?   @map("supplier_signature_svg")
+
   createdBy       Int?      @map("created_by")
   deletedAt       DateTime? @map("deleted_at")
   deletedByUserId Int?      @map("deleted_by_user_id")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  customer Customer?      @relation(fields: [customerId], references: [id])
-  lines    ContractLine[]
+  customer   Customer?           @relation(fields: [customerId], references: [id])
+  template   ContractTemplate?   @relation(fields: [templateId], references: [id])
+  lines      ContractLine[]
+  terms      ContractTerm[]
+  documents  ContractDocument[]
+  amendments ContractAmendment[]
 
   @@index([customerId])
   @@index([status])
+  @@index([signStatus])
   @@index([deletedAt])
   @@map("contracts")
 }
@@ -1031,6 +1070,13 @@ model ContractLine {
   quantity         Decimal  @default(1) @db.Decimal(12, 2)
   unitPrice        Decimal  @default(0) @map("unit_price") @db.Decimal(12, 2)
   billingFrequency String   @default("monthly") @map("billing_frequency") // monthly | annual | one_off
+  section          String   @default("IT")  // IT | Cloud | Backup | Comms | Hardware — groups lines into document sections
+  // Licence/backup blocks in the MSA carry their own annual term, which need not line up with the
+  // contract term (Staybrook: contract 01/08, licences 01/07). Kept separate rather than flattened.
+  termStart        DateTime? @map("term_start") @db.Date
+  termEnd          DateTime? @map("term_end") @db.Date
+  noticeDays       Int?      @map("notice_days")
+  detail           String?   // e.g. "Unlimited" storage allocation, device count note
   lineTotal        Decimal  @default(0) @map("line_total") @db.Decimal(12, 2)
   sortOrder        Int      @default(1) @map("sort_order")
   createdAt        DateTime @default(now()) @map("created_at")
@@ -1039,6 +1085,90 @@ model ContractLine {
 
   @@index([contractId])
   @@map("contract_lines")
+}
+
+// ── Contract document template ─────────────────────────────────────────────────
+// The ~70% of the Multi Service Agreement that is boilerplate, held as ordered editable
+// sections so wording is changed once rather than per customer. Bumping `version` leaves
+// already-signed documents untouched — those are frozen in contract_documents.
+model ContractTemplate {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique          // msa
+  name      String
+  version   Int      @default(1)
+  active    Boolean  @default(true)
+  sections  Json                      // [{ key, heading, body, needsReview, note }]
+  createdBy Int?     @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  contracts Contract[]
+
+  @@map("contract_templates")
+}
+
+// ── Terms. Extending appends a term; it never edits the one before it. ─────────
+model ContractTerm {
+  id         Int       @id @default(autoincrement())
+  contractId Int       @map("contract_id")
+  seq        Int       @default(1)
+  startDate  DateTime  @map("start_date") @db.Date
+  endDate    DateTime  @map("end_date") @db.Date
+  months     Int
+  source     String    @default("original") // original | auto_renew | signed_extension
+  signedAt   DateTime? @map("signed_at")
+  documentId Int?      @map("document_id")  // the extension document that created this term
+  notes      String?
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
+  @@index([endDate])
+  @@map("contract_terms")
+}
+
+// ── Immutable PDF snapshots. One row per generated/signed document; sha256 is what
+// proves later exactly which bytes the customer was shown. The MSA's DOCUMENT CHANGE
+// CONTROL table is rendered from these rows rather than typed by hand. ───────────
+model ContractDocument {
+  id            Int       @id @default(autoincrement())
+  contractId    Int       @map("contract_id")
+  version       Int
+  kind          String    @default("agreement") // agreement | extension | amendment
+  title         String
+  filePath      String    @map("file_path")     // absolute path on disk (private)
+  sha256        String
+  fileSize      Int?      @map("file_size")
+  changeSummary String?   @map("change_summary") // fills the change-control table
+  generatedAt   DateTime  @default(now()) @map("generated_at")
+  signedAt      DateTime? @map("signed_at")
+  createdBy     Int?      @map("created_by")
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
+  @@map("contract_documents")
+}
+
+// ── Amendments under the "verified digital communication" clause. Quantity changes are
+// logged with their evidence and need no signature; term/price changes set
+// requiresSignature and drive a new document. ──────────────────────────────────
+model ContractAmendment {
+  id                Int      @id @default(autoincrement())
+  contractId        Int      @map("contract_id")
+  type              String   // quantity | price | term | party | other
+  description       String
+  evidenceKind      String?  @map("evidence_kind") // email | ticket | meeting_note | other
+  evidenceRef       String?  @map("evidence_ref")  // message id, ticket number, note reference
+  requiresSignature Boolean  @default(false) @map("requires_signature")
+  madeByUserId      Int?     @map("made_by_user_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
+  @@map("contract_amendments")
 }
 
 // ── Product catalogue (categories + products/services) ──────────────────────────
