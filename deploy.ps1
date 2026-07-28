@@ -37,7 +37,7 @@ if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 New-Item -ItemType Directory -Path $staging | Out-Null
 
 robocopy $localPath $staging /E /NFL /NDL /NJH /NJS `
-    /XD "node_modules" ".git" "01 Daily Logs" "02 Projects" `
+    /XD "node_modules" ".git" "01 Daily Logs" "02 Projects" ".preview" "_to_delete" `
     /XF ".env" "*.log" "CLAUDE.md" "Getting Started.pdf" | Out-Null
 
 # Step 2.5: Local revision backup. Since 2026-07-09 the code lives on GitHub
