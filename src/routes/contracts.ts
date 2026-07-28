@@ -7,7 +7,7 @@ import { logActivity } from '../lib/activity';
 import { buildContractDoc } from '../lib/contract-doc';
 import { SUPPLIER } from '../lib/contract-template';
 import { htmlToPdf } from '../lib/pdf';
-import { buildContractFromBilling, pushContractToTemplate } from '../lib/contract-billing';
+import { buildContractFromRateCard, pushContractToTemplate } from '../lib/contract-billing';
 import { dueRenewals } from '../lib/contract-renewals';
 import { clientIp, documentFooterHtml, PDF_OPTS, renderContractHtml, snapshotContract, typedSignatureSvg } from '../lib/contract-sign';
 import { coverFromLines, SUPPLIER as SUP } from '../lib/contract-template';
@@ -241,33 +241,33 @@ router.post('/contracts/:id/delete', requireAuth, async (req: Request, res: Resp
   res.redirect('/contracts');
 });
 
-// ── Draft a contract from what the customer is already billed ──────────────────
-// The fast path onto contracts for existing customers: their recurring bill already IS the
-// commercial truth, so it is pulled in wholesale rather than retyped. Lands as a DRAFT so
-// nothing reaches a customer without being looked at.
-router.post('/contracts/from-billing', requireAuth, async (req: Request, res: Response) => {
+// ── Draft a contract from the customer's rate card ─────────────────────────────
+// The fast path onto contracts for existing customers: their rate card already holds the
+// agreed services and prices, so it is pulled in wholesale rather than retyped. Lands as a
+// DRAFT so nothing reaches a customer without being looked at.
+router.post('/contracts/from-rate-card', requireAuth, async (req: Request, res: Response) => {
   const user = req.session.user!;
   const customerId = parseInt(String(req.body.customer_id), 10);
   const back = String(req.body.back || '') || '/contracts';
   if (!customerId) { res.redirect(back + '?err=' + encodeURIComponent('Choose a customer first.')); return; }
   try {
-    const r = await buildContractFromBilling(customerId, user.id, nextContractNumber);
+    const r = await buildContractFromRateCard(customerId, user.id, nextContractNumber);
     if (!r.contractId) {
       res.redirect(back + (back.includes('?') ? '&' : '?') + 'err=' + encodeURIComponent(r.reason || 'Could not build a contract.'));
       return;
     }
     await logActivity(user.id, 'created', 'contracts', r.contractId,
-      'Drafted contract from the monthly bill (' + r.lines + ' lines)');
+      'Drafted contract from the rate card (' + r.lines + ' lines)');
     res.redirect('/contracts/' + r.contractId + '/edit?msg=' +
       encodeURIComponent(r.lines + ' service(s) pulled in — £' + r.monthly.toFixed(2) +
         '/month. Check the sections, quantities and term, then save.'));
   } catch (e) {
-    console.error('[contract-from-billing] failed:', e);
-    res.redirect(back + (back.includes('?') ? '&' : '?') + 'err=' + encodeURIComponent('Could not build the contract from billing.'));
+    console.error('[contract-from-rate-card] failed:', e);
+    res.redirect(back + (back.includes('?') ? '&' : '?') + 'err=' + encodeURIComponent('Could not build the contract from the rate card.'));
   }
 });
 
-// ── Push contract lines onto the customer's recurring billing template ─────────
+// ── Push contract lines back onto the customer's rate card ────────────────────
 // Services are entered once, on the contract, and flow to billing from there. Deliberately an
 // explicit action rather than a side effect of saving: this writes to a live recurring invoice
 // template, so it should happen when someone means it, not on every draft edit.

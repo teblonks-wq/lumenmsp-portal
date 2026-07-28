@@ -43,8 +43,8 @@
   </div>
   <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
     <form method="post" action="/contracts/<%= contract.id %>/push-billing" style="margin:0;"
-          onsubmit="return confirm('Update this customer\'s recurring billing template from the contract lines?\n\nLines that came from this contract are updated in place; manual and Giacom lines are left alone.');">
-      <button class="btn" type="submit">Send to billing</button>
+          onsubmit="return confirm('Update this customer\'s rate card from the contract lines?\n\nLines that came from this contract are updated in place; manual and Giacom lines are left alone.');">
+      <button class="btn" type="submit">Send to rate card</button>
     </form>
     <a class="btn btn-primary" href="/contracts/<%= contract.id %>/send">Review &amp; send for signature</a>
     <a class="btn" href="/contracts/<%= contract.id %>/extend">Extend</a>

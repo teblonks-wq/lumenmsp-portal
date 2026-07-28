@@ -94,13 +94,17 @@ export async function pushContractToTemplate(contractId: number): Promise<PushRe
   return { added, updated, removed, templateId };
 }
 
-// ── The other direction: build a draft contract FROM what the customer is already billed ──
+// ── The other direction: build a draft contract FROM the customer's rate card ──
 //
-// Most customers already have a recurring IT & Cloud template — that IS the commercial truth
-// of the relationship. Retyping it into a contract invites drift and takes an afternoon per
-// customer. This pulls the template straight in, guesses each line's document section, and
-// links the two together so a later "Send to billing" updates the same rows instead of
-// appending duplicates.
+// The rate card (the recurring IT & Cloud template) is where a customer's agreed services and
+// prices are held BEFORE anything is invoiced — so it, not an issued bill, is the right source
+// for a contract. Retyping it invites drift and takes an afternoon per customer. This pulls it
+// straight in, guesses each line's document section, and links the two together so a later push
+// back to the rate card updates the same rows instead of appending duplicates.
+//
+// A customer with no rate card yet is refused rather than fudged: for those, build the contract
+// from the service list and push it to the rate card, which creates it. Contract first, then
+// billing — the direction this business actually works in.
 
 const SECTION_RULES: { section: string; re: RegExp }[] = [
   { section: 'Backup', re: /backup|acronis|veeam|replicat/i },
@@ -117,7 +121,7 @@ export function guessSection(description: string): string {
 
 export interface BuildResult { contractId: number | null; lines: number; monthly: number; reason?: string; }
 
-export async function buildContractFromBilling(
+export async function buildContractFromRateCard(
   customerId: number, userId: number | null, nextNumber: () => Promise<string>,
 ): Promise<BuildResult> {
   const cust = (await pool.query(
@@ -127,7 +131,7 @@ export async function buildContractFromBilling(
   const templateId = await customerTemplateId(customerId);
   if (!templateId) {
     return { contractId: null, lines: 0, monthly: 0,
-      reason: 'This customer has no recurring IT & Cloud template, so there is no monthly bill to build from.' };
+      reason: 'This customer has no rate card yet. Build the contract from the service list instead, then use Send to rate card to create one.' };
   }
 
   // One-offs are excluded: they are not part of a recurring commitment and would misstate the
@@ -139,7 +143,7 @@ export async function buildContractFromBilling(
       ORDER BY sort_order, id`, [templateId])).rows;
   if (!src.length) {
     return { contractId: null, lines: 0, monthly: 0,
-      reason: 'That customer\'s monthly bill has no recurring lines to build a contract from.' };
+      reason: 'That customer\'s rate card has no recurring lines to build a contract from.' };
   }
 
   const client = await pool.connect();
@@ -161,7 +165,7 @@ export async function buildContractFromBilling(
                               term_months, notice_days, auto_renew, renewal_mode, payment_method, notes, created_by)
        VALUES ($1,$2,$3,'draft','IT',$4,$5,12,30,true,'auto','direct_debit',$6,$7) RETURNING id`,
       [customerId, number, 'Multi Service Agreement', startIso, end.toISOString().slice(0, 10),
-       'Drafted from the recurring monthly bill on ' + new Date().toISOString().slice(0, 10) +
+       'Drafted from the customer rate card on ' + new Date().toISOString().slice(0, 10) +
        '. Check quantities and prices before sending.', userId]);
     const contractId = ins.rows[0].id;
 
@@ -182,8 +186,8 @@ export async function buildContractFromBilling(
         `UPDATE invoice_items SET contract_line_id=$1, source='contract' WHERE id=$2`, [cl.rows[0].id, l.id]);
     }
 
-    // Cover comes from whichever support product they are billed for — pulling the bill in
-    // therefore sets the document's hours automatically, with no separate step to forget.
+    // Cover comes from whichever support product is on the rate card — pulling it in therefore
+    // sets the document's hours automatically, with no separate step to forget.
     const derivedCover = coverFromLines(src.map((l: any) => String(l.description || '')));
     if (derivedCover) {
       await client.query('UPDATE contracts SET support_cover=$1 WHERE id=$2', [derivedCover, contractId]);
@@ -192,7 +196,7 @@ export async function buildContractFromBilling(
     // Term 1, so the contract can be extended without a backfill later.
     await client.query(
       `INSERT INTO contract_terms (contract_id, seq, start_date, end_date, months, source, notes)
-       VALUES ($1,1,$2,$3,12,'original','Drafted from the recurring monthly bill')`,
+       VALUES ($1,1,$2,$3,12,'original','Drafted from the customer rate card')`,
       [contractId, startIso, end.toISOString().slice(0, 10)]);
 
     await client.query('COMMIT');
