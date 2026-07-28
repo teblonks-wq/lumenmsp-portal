@@ -10,7 +10,7 @@ import { htmlToPdf } from '../lib/pdf';
 import { buildContractFromBilling, pushContractToTemplate } from '../lib/contract-billing';
 import { dueRenewals } from '../lib/contract-renewals';
 import { clientIp, documentFooterHtml, PDF_OPTS, renderContractHtml, snapshotContract, typedSignatureSvg } from '../lib/contract-sign';
-import { SUPPLIER as SUP } from '../lib/contract-template';
+import { coverFromLines, SUPPLIER as SUP } from '../lib/contract-template';
 import { config } from '../config';
 import { sendMail } from '../lib/mailer';
 import { contractEmailHtml, contractSignedEmailHtml } from '../lib/emails';
@@ -24,6 +24,7 @@ const SERVICE_TYPES = ['IT', 'Cloud', 'Comms', 'Hardware'];
 const PAY_METHODS = ['upfront', 'delivery', 'direct_debit'];
 const FREQS = ['monthly', 'annual', 'one_off'];
 const SECTIONS = ['IT', 'Cloud', 'Backup', 'Comms', 'Hardware'];
+const COVERS = ['business', 'extended', 'always'];
 const intOr = (v: any, d: number): number => { const x = parseInt(String(v ?? ''), 10); return isNaN(x) ? d : x; };
 
 const nz = (v: any): string | null => { const s = (v ?? '').toString().trim(); return s !== '' ? s : null; };
@@ -48,6 +49,15 @@ async function saveLines(client: any, contractId: number, body: any): Promise<vo
   const tStart = asArray(body['line_term_start']);
   const tEnd = asArray(body['line_term_end']);
   const tNotice = asArray(body['line_notice']);
+
+  // The support product on the contract decides the cover level, so the hours printed in the
+  // document always match what the customer is billed for. Null when no line names a cover
+  // tier, leaving any existing choice alone rather than resetting it to the default.
+  const derivedCover = coverFromLines(desc.map((d: any) => String(d || '')));
+  if (derivedCover) {
+    await client.query('UPDATE contracts SET support_cover=$1 WHERE id=$2', [derivedCover, contractId]);
+  }
+
   await client.query('DELETE FROM contract_lines WHERE contract_id = $1', [contractId]);
   let sort = 1;
   for (let i = 0; i < desc.length; i++) {
@@ -125,8 +135,8 @@ router.post('/contracts', requireAuth, async (req: Request, res: Response) => {
     await client.query('BEGIN');
     const cn = await nextContractNumber();
     const { rows } = await client.query(
-      `INSERT INTO contracts (customer_id, contract_number, title, status, service_type, start_date, end_date, term_months, notice_days, auto_renew, renewal_mode, payment_method, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+      `INSERT INTO contracts (customer_id, contract_number, title, status, service_type, start_date, end_date, term_months, notice_days, auto_renew, renewal_mode, payment_method, notes, created_by, support_cover)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
       [
         b.customer_id ? parseInt(b.customer_id, 10) : null, cn, title,
         STATUSES.includes(b.status) ? b.status : 'draft',
@@ -139,6 +149,7 @@ router.post('/contracts', requireAuth, async (req: Request, res: Response) => {
         b.renewal_mode === 'signed_extension' ? 'signed_extension' : 'auto',
         PAY_METHODS.includes(b.payment_method) ? b.payment_method : 'upfront',
         nz(b.notes), user.id,
+        COVERS.includes(b.support_cover) ? b.support_cover : 'business',
       ]
     );
     await saveLines(client, rows[0].id, b);
@@ -194,7 +205,7 @@ router.post('/contracts/:id', requireAuth, async (req: Request, res: Response) =
     await client.query(
       `UPDATE contracts SET customer_id=$1, title=$2, status=$3, service_type=$4, start_date=$5, end_date=$6,
          notice_days=$7, auto_renew=$8, payment_method=$9, notes=$10,
-         term_months=$12, renewal_mode=$13, updated_at=NOW()
+         term_months=$12, renewal_mode=$13, support_cover=$14, updated_at=NOW()
        WHERE id=$11 AND deleted_at IS NULL`,
       [
         b.customer_id ? parseInt(b.customer_id, 10) : null, (b.title || '').trim(),
@@ -206,6 +217,7 @@ router.post('/contracts/:id', requireAuth, async (req: Request, res: Response) =
         b.auto_renew === 'on' || b.auto_renew === '1', PAY_METHODS.includes(b.payment_method) ? b.payment_method : 'upfront',
         nz(b.notes), id,
         intOr(b.term_months, 12), b.renewal_mode === 'signed_extension' ? 'signed_extension' : 'auto',
+        COVERS.includes(b.support_cover) ? b.support_cover : 'business',
       ]
     );
     await saveLines(client, id, b);

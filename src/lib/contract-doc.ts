@@ -5,7 +5,8 @@ import * as path from 'path';
 import { pool } from '../db/pool';
 import {
   DEFAULT_MSA_SECTIONS, DEFAULT_SERVICE_BLURBS, EXTENSION_SECTIONS, MSA_TEMPLATE_CODE,
-  MSA_TEMPLATE_VERSION, SUPPLIER, TEMPLATE_CHANGELOG, TemplateChange, TemplateSection,
+  applyCoverTokens, coverOf, MSA_TEMPLATE_VERSION, SUPPLIER, SupportCover,
+  TEMPLATE_CHANGELOG, TemplateChange, TemplateSection,
 } from './contract-template';
 
 // Same logo the invoice PDFs use, inlined as a data URI so the print page needs no network.
@@ -37,6 +38,7 @@ export interface ContractDocContext {
   extensionSections: TemplateSection[];
   extension: { previousEnd: any; startDate: any; endDate: any; months: number } | null;
   wordingChanges: TemplateChange[];
+  cover: SupportCover;
   changedLines: any[];
   reviewFlags: TemplateSection[];
 }
@@ -104,8 +106,14 @@ export async function buildContractDoc(contractId: number): Promise<ContractDocC
     else oneOff += t;
   }
 
+  // Everything the customer reads about hours comes from the contract's own cover tier, so
+  // the inclusions and the Service Levels section cannot drift apart.
+  const cover = coverOf(contract.support_cover);
+  const sections = tpl.sections.map((sec) => ({ ...sec, body: applyCoverTokens(sec.body, cover) }));
+
   const groups = SECTION_ORDER.map((key) => {
-    const blurb = DEFAULT_SERVICE_BLURBS[key] || { title: key, bullets: [] };
+    const raw = DEFAULT_SERVICE_BLURBS[key] || { title: key, bullets: [] };
+    const blurb = { ...raw, bullets: (raw.bullets || []).map((b) => applyCoverTokens(b, cover)) };
     const gl = lines.filter((l: any) => (l.section || 'IT') === key);
     return {
       key, title: blurb.title, intro: blurb.intro, bullets: blurb.bullets, lines: gl,
@@ -131,14 +139,22 @@ export async function buildContractDoc(contractId: number): Promise<ContractDocC
 
   return {
     contract, customer: contract, serviceContacts: contactsRes.rows, groups,
-    docKind, extensionSections: EXTENSION_SECTIONS, extension, changedLines: [],
+    docKind, extensionSections: EXTENSION_SECTIONS, extension, changedLines: [], cover,
     // Only shown on an extension: what has changed in the standard wording since the original
-    // was issued. Empty on a new agreement — there is nothing to have changed from.
-    wordingChanges: docKind === 'extension' ? TEMPLATE_CHANGELOG : [],
-    sections: tpl.sections, changeControl, terms: termsRes.rows,
+    // was issued. Empty on a new agreement — there is nothing to have changed from. Items are
+    // filtered to the tiers they are actually true for before any tokens are substituted.
+    wordingChanges: docKind === 'extension'
+      ? TEMPLATE_CHANGELOG.map((c) => ({
+          ...c,
+          items: c.items
+            .filter((i) => !i.appliesTo || i.appliesTo.indexOf(cover.code) !== -1)
+            .map((i) => ({ ...i, detail: applyCoverTokens(i.detail, cover) })),
+        })).filter((c) => c.items.length)
+      : [],
+    sections, changeControl, terms: termsRes.rows,
     totals: { monthly, annual, oneOff, annualised: monthly * 12 + annual },
     supplier: SUPPLIER,
     logoUrl: logoDataUri(),
-    reviewFlags: tpl.sections.filter((s) => s.needsReview),
+    reviewFlags: sections.filter((s) => s.needsReview),
   };
 }

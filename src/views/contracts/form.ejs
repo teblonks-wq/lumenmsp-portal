@@ -29,6 +29,15 @@
       <div class="form-group"><label>End date <span class="muted" style="font-weight:400;">— follows the term unless you set it</span></label>
         <input class="input" type="date" name="end_date" id="endDate" value="<%= dateVal('end_date') %>">
       </div>
+      <div class="form-group"><label>Support cover</label>
+        <select class="input" name="support_cover">
+          <% [['business','Business hours — 09:00–17:00, Mon–Fri'],
+              ['extended','Extended hours — 08:00–18:00, Mon–Fri'],
+              ['always','24/7 — round the clock, every day']].forEach(function(o){ %>
+            <option value="<%= o[0] %>" <%= ((contract && contract.support_cover) || 'business') === o[0] ? 'selected' : '' %>><%= o[1] %></option>
+          <% }); %>
+        </select>
+      </div>
       <div class="form-group"><label>Renewal</label>
         <select class="input" name="renewal_mode">
           <option value="auto" <%= (!contract || contract.renewal_mode !== 'signed_extension') ? 'selected' : '' %>>Auto-renew unless notice is given</option>

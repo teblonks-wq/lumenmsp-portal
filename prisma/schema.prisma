@@ -1054,6 +1054,10 @@ model Contract {
   // Which document is currently in play. Once extended, the thing being signed is the
   // extension, not the original agreement — the renderer needs to know which to produce.
   currentDocKind  String    @default("agreement") @map("current_doc_kind") // agreement | extension
+  // Support cover is a tiered offering, not a house standard — business hours, extended
+  // hours or 24/7. It drives the helpdesk hours in the inclusions AND the Service Levels
+  // section, so the two can never again disagree the way the manual template did.
+  supportCover    String    @default("business") @map("support_cover") // business | extended | always
 
   // ── Signature state. The portal owns this end to end; no third-party e-sign service. ──
   signStatus      String    @default("unsigned") @map("sign_status") // unsigned|sent|viewed|signed|countersigned|declined

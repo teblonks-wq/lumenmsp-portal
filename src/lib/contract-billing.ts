@@ -6,6 +6,7 @@
 // removed from the template; anything the template holds that did not come from this contract
 // (manual entries, Giacom-synced lines) is never touched.
 import { pool } from '../db/pool';
+import { coverFromLines } from './contract-template';
 
 export interface PushResult { added: number; updated: number; removed: number; templateId: number | null; reason?: string; }
 
@@ -179,6 +180,13 @@ export async function buildContractFromBilling(
       // to billing updates this row rather than adding a second copy of the same service.
       await client.query(
         `UPDATE invoice_items SET contract_line_id=$1, source='contract' WHERE id=$2`, [cl.rows[0].id, l.id]);
+    }
+
+    // Cover comes from whichever support product they are billed for — pulling the bill in
+    // therefore sets the document's hours automatically, with no separate step to forget.
+    const derivedCover = coverFromLines(src.map((l: any) => String(l.description || '')));
+    if (derivedCover) {
+      await client.query('UPDATE contracts SET support_cover=$1 WHERE id=$2', [derivedCover, contractId]);
     }
 
     // Term 1, so the contract can be extended without a backfill later.

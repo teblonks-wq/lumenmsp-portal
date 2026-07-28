@@ -22,11 +22,59 @@ export interface TemplateSection {
 
 export const MSA_TEMPLATE_CODE = 'msa';
 
+// ── Support cover tiers ──────────────────────────────────────────────────────
+// Not every customer buys the same cover, so hours cannot live in the boilerplate. The
+// selected tier is substituted into both the IT Services inclusions and the Service Levels
+// section at render time, which is what stops those two contradicting each other.
+export type SupportCoverCode = 'business' | 'extended' | 'always';
+export interface SupportCover { code: SupportCoverCode; label: string; hours: string; days: string; note: string; }
+
+export const SUPPORT_COVER: Record<SupportCoverCode, SupportCover> = {
+  business: { code: 'business', label: 'Business hours', hours: '09:00–17:00', days: 'Monday to Friday',
+              note: 'excluding public holidays' },
+  extended: { code: 'extended', label: 'Extended hours', hours: '08:00–18:00', days: 'Monday to Friday',
+              note: 'excluding public holidays' },
+  always:   { code: 'always',   label: '24/7',           hours: '24 hours a day', days: 'every day',
+              note: 'including weekends and public holidays' },
+};
+
+export function coverOf(code: any): SupportCover {
+  return SUPPORT_COVER[(String(code || 'business') as SupportCoverCode)] || SUPPORT_COVER.business;
+}
+
+// Work out the cover tier from what the customer is actually SOLD. Cover is a priced
+// product — "Managed IT Support (Extended Hours)" — so the line on the contract is the
+// authority, not a separate dropdown someone forgot to change. This is what stops us
+// billing 24/7 and printing 09:00–17:00.
+const COVER_PATTERNS: { code: SupportCoverCode; re: RegExp }[] = [
+  { code: 'always',   re: /24\s*[\/x×-]?\s*7|24\s*hour|around the clock/i },
+  { code: 'extended', re: /extended\s*hours?/i },
+  { code: 'business', re: /business\s*hours?/i },
+];
+
+// Returns null when no line names a cover level, so an existing choice is left alone
+// rather than being silently reset to the default.
+export function coverFromLines(descriptions: string[]): SupportCoverCode | null {
+  for (const p of COVER_PATTERNS) {
+    if (descriptions.some((d) => p.re.test(String(d || '')))) return p.code;
+  }
+  return null;
+}
+
+// Tokens substituted at render time from the contract's chosen cover.
+export function applyCoverTokens(text: string, cover: SupportCover): string {
+  return String(text || '')
+    .replace(/\{\{SUPPORT_HOURS\}\}/g, cover.hours)
+    .replace(/\{\{SUPPORT_DAYS\}\}/g, cover.days)
+    .replace(/\{\{SUPPORT_NOTE\}\}/g, cover.note)
+    .replace(/\{\{SUPPORT_LABEL\}\}/g, cover.label);
+}
+
 // Bump whenever DEFAULT_MSA_SECTIONS changes. The template is stored in the database once
 // seeded, so without this a wording fix would sit in the code and never reach production.
 // loadTemplate() refreshes a stored template whose version is behind this number.
 //   1 — initial
-//   2 — Service Levels section added; phone hours corrected to 08:00–18:00; Client
+//   2 — Service Levels section added; support hours driven by the contract's cover tier; Client
 //       Responsibilities reworded to address the client (all three review flags resolved)
 export const MSA_TEMPLATE_VERSION = 2;
 
@@ -54,7 +102,8 @@ export const DEFAULT_MSA_SECTIONS: TemplateSection[] = [
     key: 'service_levels',
     heading: 'Service Levels',
     body:
-      'Support is available on every contracted channel from 08:00 to 18:00, Monday to Friday, excluding public holidays. ' +
+      'Support is available on every contracted channel {{SUPPORT_HOURS}}, {{SUPPORT_DAYS}}, {{SUPPORT_NOTE}} ' +
+      '(cover level: {{SUPPORT_LABEL}}). ' +
       'The targets below are response times — the time within which a request is acknowledged and work begins. They are ' +
       'not resolution times, which vary with the nature of the fault.\n\n' +
       '- Telephone (0333 335 0170) — response within 15–60 minutes\n' +
@@ -113,7 +162,7 @@ export const DEFAULT_MSA_SECTIONS: TemplateSection[] = [
     body:
       'The following support channels are included in your service agreement and should be used for all support-related ' +
       'communication. Use of these methods ensures proper ticket tracking and SLA coverage.\n\n' +
-      '- Phone: 08:00–18:00 — 0333 335 0170 — response 15–60 minutes\n' +
+      '- Phone: {{SUPPORT_HOURS}} — 0333 335 0170 — response 15–60 minutes\n' +
       '- Email: sp@lumensolutions.co.uk — response 1 hour\n' +
       '- WhatsApp / Microsoft Teams: general queries or minor issues — response 15–60 minutes\n' +
       '- Support Portal: https://sp.lumensolutions.co.uk — submit and track support requests online\n\n' +
@@ -156,7 +205,7 @@ export const DEFAULT_SERVICE_BLURBS: Record<string, { title: string; intro?: str
     intro: 'Business Managed Support: All-Inclusive Proactive IT Management',
     bullets: [
       '24/7 smart monitoring with auto-healing for critical systems',
-      'Unlimited Helpdesk (08:00–18:00)',
+      'Unlimited Helpdesk ({{SUPPORT_HOURS}})',
       'Unlimited onsite support (Call-out: £0.60/mile)',
       'Fully managed antivirus and threat detection',
       'Microsoft 365 & Cloud Services Support',
@@ -258,10 +307,14 @@ export const EXTENSION_SECTIONS: TemplateSection[] = [
 // Add an entry whenever MSA_TEMPLATE_VERSION is bumped. Entries render on extension documents
 // under "Wording changes since your original agreement".
 // ─────────────────────────────────────────────────────────────────────────────
-export interface TemplateChange {
-  version: number; date: string;
-  items: { heading: string; detail: string; kind: 'improvement' | 'clarification' }[];
+export interface TemplateChangeItem {
+  heading: string; detail: string; kind: 'improvement' | 'clarification';
+  // Which cover tiers this item is true for. Omitted = true for everyone. A customer on
+  // business hours has NOT gained two hours of cover, so claiming it in their contract
+  // would be a false statement — not merely bad copy.
+  appliesTo?: SupportCoverCode[];
 }
+export interface TemplateChange { version: number; date: string; items: TemplateChangeItem[]; }
 
 export const TEMPLATE_CHANGELOG: TemplateChange[] = [
   {
@@ -269,14 +322,22 @@ export const TEMPLATE_CHANGELOG: TemplateChange[] = [
     date: '2026-07-28',
     items: [
       {
-        // The one that genuinely increases what the customer gets — two extra hours of phone
-        // cover per day, at no extra cost. Led with, and labelled as such.
         kind: 'improvement',
-        heading: 'Longer telephone support hours',
+        appliesTo: ['extended', 'always'],
+        heading: 'Your full support hours now apply across every channel',
         detail:
-          'Telephone support now runs 08:00–18:00, two hours longer each day than the 09:00–17:00 previously ' +
-          'stated, bringing it in line with the unlimited helpdesk hours already listed in your inclusions. ' +
-          'There is no change to your monthly cost.',
+          'Telephone support is stated as {{SUPPORT_HOURS}}, {{SUPPORT_DAYS}}, matching the {{SUPPORT_LABEL}} ' +
+          'cover on your agreement. The previous wording gave shorter telephone hours in one section than the ' +
+          'inclusions advertised in another; the longer hours are the ones that apply. There is no change to ' +
+          'your monthly cost.',
+      },
+      {
+        kind: 'clarification',
+        appliesTo: ['business'],
+        heading: 'Support hours stated once, clearly',
+        detail:
+          'Your agreement now states your cover in one place — {{SUPPORT_LABEL}}, {{SUPPORT_HOURS}}, ' +
+          '{{SUPPORT_DAYS}}. The previous wording carried two different sets of hours in different sections.',
       },
       {
         kind: 'improvement',
