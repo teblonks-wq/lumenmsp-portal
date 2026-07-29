@@ -438,9 +438,17 @@ router.get('/contracts/:id/send', requireAuth, async (req: Request, res: Respons
   if (!r.rows.length) { res.status(404).render('error', { message: 'Contract not found.' }); return; }
   const contract = r.rows[0];
   const contacts = contract.customer_id ? (await pool.query(
-    `SELECT full_name, job_title, email FROM customer_contacts
-      WHERE customer_id=$1 AND archived=false AND (is_service_contact=true OR is_primary=true) AND email IS NOT NULL
-      ORDER BY is_service_contact DESC, is_primary DESC, full_name`, [contract.customer_id])).rows : [];
+    `SELECT ct.full_name, ct.job_title, ct.email
+       FROM customer_contacts ct
+       JOIN customers c ON c.id = ct.customer_id
+      WHERE ct.customer_id=$1 AND ct.archived=false AND ct.email IS NOT NULL
+        AND (ct.id = c.service_contact_id
+          OR ct.id = c.principal_contact_id
+          OR ct.is_service_contact = true
+          OR ct.is_primary = true)
+      ORDER BY (ct.id = c.service_contact_id) DESC, ct.is_service_contact DESC,
+               (ct.id = c.principal_contact_id) DESC, ct.is_primary DESC, ct.full_name`,
+    [contract.customer_id])).rows : [];
   const ctx = await buildContractDoc(id);
   res.render('contracts/send', {
     user, contract, contacts, appUrl: config.APP_URL,

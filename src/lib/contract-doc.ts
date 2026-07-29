@@ -87,10 +87,25 @@ export async function buildContractDoc(contractId: number): Promise<ContractDocC
   const [linesRes, contactsRes, docsRes, termsRes, tpl] = await Promise.all([
     pool.query('SELECT * FROM contract_lines WHERE contract_id=$1 ORDER BY sort_order, id', [contractId]),
     contract.customer_id
+      // Who the key contacts are is held on the CUSTOMER record (service_contact_id /
+      // principal_contact_id) — that is how the rest of the app resolves them, and how they
+      // are set in the UI. The per-contact booleans are honoured too, but on their own they
+      // default to false, which is why an agreement could print "Not yet nominated" for a
+      // customer that plainly had a service contact.
       ? pool.query(
-          `SELECT full_name, job_title, email, is_primary, is_service_contact FROM customer_contacts
-            WHERE customer_id=$1 AND archived=false AND (is_service_contact=true OR is_primary=true)
-            ORDER BY is_service_contact DESC, is_primary DESC, full_name`, [contract.customer_id])
+          `SELECT ct.full_name, ct.job_title, ct.email,
+                  (ct.id = c.service_contact_id)   AS is_service_contact,
+                  (ct.id = c.principal_contact_id) AS is_primary
+             FROM customer_contacts ct
+             JOIN customers c ON c.id = ct.customer_id
+            WHERE ct.customer_id=$1 AND ct.archived=false
+              AND (ct.id = c.service_contact_id
+                OR ct.id = c.principal_contact_id
+                OR ct.is_service_contact = true
+                OR ct.is_primary = true)
+            ORDER BY (ct.id = c.service_contact_id) DESC, ct.is_service_contact DESC,
+                     (ct.id = c.principal_contact_id) DESC, ct.is_primary DESC, ct.full_name`,
+          [contract.customer_id])
       : Promise.resolve({ rows: [] } as any),
     pool.query('SELECT version, kind, title, change_summary, generated_at, signed_at FROM contract_documents WHERE contract_id=$1 ORDER BY version', [contractId]),
     pool.query('SELECT * FROM contract_terms WHERE contract_id=$1 ORDER BY seq', [contractId]),
