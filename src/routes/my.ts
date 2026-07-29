@@ -385,17 +385,22 @@ router.get('/my/services', need('services'), (req: Request, res: Response) =>
 router.get('/my/insights', need('insights'), async (req: Request, res: Response) => {
   const u = req.session.user!;
   const c = cid(req);
-  const tab = req.query.tab === 'reports' ? 'reports' : req.query.tab === 'reverse' ? 'reverse' : 'home';
+  const tab = req.query.tab === 'reports' ? 'reports'
+            : req.query.tab === 'reverse' ? 'reverse'
+            : req.query.tab === 'outbound' ? 'outbound' : 'home';
   const q = String(req.query.q || '').trim();
   const base: any = {
     // Number Lookup and Answered by have their own sidebar entries, so the active nav
     // item follows the tab rather than always being 'insights'.
-    active: tab === 'home' ? 'number-lookup' : tab === 'reverse' ? 'answered-by' : 'insights',
+    active: tab === 'home' ? 'number-lookup' : tab === 'reverse' ? 'answered-by'
+          : tab === 'outbound' ? 'outbound-calls' : 'insights',
     user: u,
-    title: tab === 'home' ? 'Find a call' : tab === 'reverse' ? 'Who answered it' : 'Call Reports',
+    title: tab === 'home' ? 'Find a call' : tab === 'reverse' ? 'Who answered it'
+         : tab === 'outbound' ? 'Who called them' : 'Call Reports',
     tab, q,
     journeys: [], stats: null, templates: [], sites: [], reports: [], emails: [], insName: '',
     ext: '', fromDate: '', toDate: '', fromTime: '00:00', toTime: '23:59', extensions: [], calls: [], rstats: null,
+    outCalls: [], ostats: null, outNum: '',
     msg: req.query.msg || null, err: req.query.err || null, state: 'ok',
   };
   try {
@@ -412,7 +417,7 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
     // extensions this contact may even see, so it must never be tab-specific).
     const normX = (x: any) => String(x || '').replace(/@.*$/, '').trim().toLowerCase();
     let staffAllowed: Set<string> | null = null;
-    if (tab === 'home' || tab === 'reverse') {
+    if (tab === 'home' || tab === 'reverse' || tab === 'outbound') {
       base.extensions = (await getGroupsAndExtensions(ins.id)).extensions;
       if (allowed?.length) {
         staffAllowed = new Set((await siteLogicsByIds(ins.id, allowed)).flatMap((l) => l.staff_extensions || []).map(normX));
@@ -447,6 +452,91 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
       const avgWait = total ? Math.round(journeys.reduce((s, j) => s + j.wait_secs, 0) / total) : 0;
       base.journeys = journeys;
       base.stats = { total, answered, missed, ansRate: total ? Math.round(answered / total * 100) : 0, avgWait };
+    }
+
+    // ── "Who called them" (outbound lookup) ──────────────────────────────────────
+    // The mirror of the two inbound tools: put in a number WE rang and see which of your
+    // people rang it, when, for how long, and whether it connected.
+    //
+    // Read from tollring_calls (the raw leg table) rather than call_events, because an
+    // outbound call is not a journey — there is no group routing to reconstruct — and the
+    // raw table is the only place carrying duration and the unanswered flag, which is what
+    // "outcome" means for a call we placed.
+    if (tab === 'outbound') {
+      const outNum = String(req.query.num || '').trim().slice(0, 40);
+      base.outNum = outNum;
+      const todayO = new Date().toISOString().slice(0, 10);
+      const weekAgoO = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+      base.fromDate = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || '')) ? String(req.query.from) : weekAgoO;
+      base.toDate   = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to   || '')) ? String(req.query.to)   : todayO;
+      base.fromTime = /^\d{2}:\d{2}$/.test(String(req.query.from_time || '')) ? String(req.query.from_time) : '00:00';
+      base.toTime   = /^\d{2}:\d{2}$/.test(String(req.query.to_time   || '')) ? String(req.query.to_time)   : '23:59';
+
+      if (outNum.length >= 3) {
+        if (base.toDate < base.fromDate) { base.err = 'The end date is before the start date.'; res.render('my/insights', base); return; }
+        const spanDaysO = Math.round((new Date(base.toDate).getTime() - new Date(base.fromDate).getTime()) / 86400000) + 1;
+        if (spanDaysO > 92) { base.err = 'Date range is too wide — pick 92 days or fewer.'; res.render('my/insights', base); return; }
+
+        const normO = outNum.replace(/[\s\-()]/g, '').replace(/^\+44/, '0');
+        // Direction comes straight from the carrier feed, where outbound is spelled variously
+        // ("O", "Out", "Outbound"). Matching on the leading letter covers every form of it.
+        const raw = (await insightsPool.query(
+          `SELECT call_id, call_date, extno, number_raw, duration, total_duration, unanswer, direction
+             FROM tollring_calls
+            WHERE customer_id = $1
+              AND UPPER(COALESCE(direction, '')) LIKE 'O%'
+              AND regexp_replace(COALESCE(number_raw, ''), '[^0-9+]', '', 'g') LIKE $2
+              AND call_date >= $3 AND call_date <= $4
+            ORDER BY call_date ASC
+            LIMIT 20000`,
+          [ins.id, '%' + normO.replace(/^0/, '') + '%', base.fromDate + ' 00:00:00', base.toDate + ' 23:59:59'])).rows;
+
+        // One row per leg; collapse to one row per call so a redial through two trunks is
+        // not counted twice. Longest leg wins — that is the one that actually connected.
+        const byCall = new Map<string, any>();
+        for (const r of raw) {
+          const key = String(r.call_id || (String(r.call_date) + '|' + (r.extno || '')));
+          const dur = Number(r.total_duration || r.duration || 0);
+          const prev = byCall.get(key);
+          if (!prev || dur > Number(prev.dur || 0)) {
+            byCall.set(key, {
+              datetime: r.call_date, extno: r.extno || null, number: r.number_raw || outNum,
+              dur, connected: dur > 0 && !/^(y|1|true)$/i.test(String(r.unanswer || '')),
+            });
+          }
+        }
+
+        const normX2 = (x: any) => String(x || '').replace(/@.*$/, '').trim().toLowerCase();
+        // Wall-clock in Europe/London — same clock the page displays.
+        const ldnO = (iso: any) => {
+          const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+          }).formatToParts(new Date(iso));
+          const g = (t: string) => parts.find((p) => p.type === t)?.value || '00';
+          return parseInt(g('hour'), 10) * 60 + parseInt(g('minute'), 10);
+        };
+        const [ofh, ofm] = base.fromTime.split(':').map(Number);
+        const [oth, otm] = base.toTime.split(':').map(Number);
+        const loO = ofh * 60 + ofm, hiO = oth * 60 + otm;
+
+        let list = [...byCall.values()]
+          .filter((c) => { const m = ldnO(c.datetime); return m >= loO && m <= hiO; })
+          // Site layer: a contact may only see the staff extensions their sites cover.
+          .filter((c) => !staffAllowed || (c.extno && staffAllowed.has(normX2(c.extno))))
+          .sort((a, b) => new Date(b.datetime).getTime() - new Date(a.datetime).getTime());
+
+        const connected = list.filter((c) => c.connected).length;
+        const talk = list.reduce((s, c) => s + (c.connected ? c.dur : 0), 0);
+        const callers = new Set(list.map((c) => normX2(c.extno)).filter(Boolean));
+        base.outCalls = list.slice(0, 2000);
+        base.ostats = {
+          total: list.length, connected, noAnswer: list.length - connected,
+          connRate: list.length ? Math.round(connected / list.length * 100) : 0,
+          callers: callers.size,
+          avgTalk: connected ? Math.round(talk / connected) : 0,
+          totalTalk: talk,
+        };
+      }
     }
 
     // "Answered by" (reverse lookup) tab — every call a chosen extension/user ANSWERED in a

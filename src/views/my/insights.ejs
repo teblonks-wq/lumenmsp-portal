@@ -73,6 +73,7 @@
   <div class="my-tabs">
     <a class="my-tab <%= tab === 'home' ? 'active' : '' %>" href="/my/insights?tab=home">Find a call</a>
     <a class="my-tab <%= tab === 'reverse' ? 'active' : '' %>" href="/my/insights?tab=reverse">Who answered it</a>
+    <a class="my-tab <%= tab === 'outbound' ? 'active' : '' %>" href="/my/insights?tab=outbound">Who called them</a>
     <a class="my-tab <%= tab === 'reports' ? 'active' : '' %>" href="/my/insights?tab=reports">Reports</a>
   </div>
 
@@ -106,6 +107,62 @@
         </div>
       <% } else { %>
         <div class="card"><div class="empty">No calls found for &ldquo;<%= q %>&rdquo; in the last 28 days.</div></div>
+      <% } %>
+    <% } %>
+
+  <% } else if (tab === 'outbound') { %>
+
+    <div class="card">
+      <p class="muted" style="margin:0 0 12px;font-size:13px;">Put in a number you rang and see who called it, when, and whether it connected.</p>
+      <form method="get" action="/my/insights" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+        <input type="hidden" name="tab" value="outbound">
+        <div class="form-group" style="margin:0;min-width:210px;">
+          <label>Number called</label>
+          <input class="input" name="num" value="<%= outNum %>" placeholder="e.g. 07700 900123" style="width:100%;" autocomplete="off">
+        </div>
+        <div class="form-group" style="margin:0;"><label>From</label><input class="input" type="date" name="from" value="<%= fromDate %>"></div>
+        <div class="form-group" style="margin:0;"><label>To</label><input class="input" type="date" name="to" value="<%= toDate %>"></div>
+        <div class="form-group" style="margin:0;"><label>Between</label><input class="input" type="time" name="from_time" value="<%= fromTime %>"></div>
+        <div class="form-group" style="margin:0;"><label>And</label><input class="input" type="time" name="to_time" value="<%= toTime %>"></div>
+        <button class="btn btn-primary" type="submit">Search</button>
+      </form>
+      <p class="ins-hint">Click a caller to see everything they answered, or the number to see its full history both ways.</p>
+    </div>
+
+    <% if (outNum) { %>
+      <% if (ostats && ostats.total) { %>
+        <div class="grid">
+          <div class="stat"><div class="n"><%= ostats.total %></div><div class="l">Calls out</div></div>
+          <div class="stat"><div class="n"><%= ostats.connected %></div><div class="l">Connected (<%= ostats.connRate %>%)</div></div>
+          <div class="stat"><div class="n"><%= ostats.noAnswer %></div><div class="l">No answer</div></div>
+          <div class="stat"><div class="n"><%= ostats.callers %></div><div class="l">People who called</div></div>
+          <div class="stat"><div class="n"><%= fmtWait(ostats.avgTalk) %></div><div class="l">Avg talk time</div></div>
+        </div>
+        <div class="card" style="padding:0;">
+          <div class="table-wrap"><table class="table" style="margin:0;">
+            <thead><tr><th>Date / time</th><th>Called by</th><th>Number</th><th>Outcome</th><th>Talk time</th></tr></thead>
+            <tbody>
+              <% outCalls.forEach(function(c){ %>
+                <tr>
+                  <td class="muted" style="white-space:nowrap;"><%= fmtT(c.datetime) %></td>
+                  <td style="font-family:monospace;font-size:13px;">
+                    <% if (c.extno) { %><a href="/my/insights?tab=reverse&ext=<%= encodeURIComponent(c.extno) %>" title="See all calls <%= c.extno %> answered"><%= c.extno %></a><% } else { %><span class="muted">&mdash;</span><% } %>
+                  </td>
+                  <td style="font-family:monospace;font-size:13px;">
+                    <a href="/my/insights?tab=home&q=<%= encodeURIComponent(c.number) %>" title="Track this number"><%= c.number %></a>
+                  </td>
+                  <td>
+                    <% if (c.connected) { %><span style="color:#166534;font-weight:600;font-size:13px;">Connected</span>
+                    <% } else { %><span style="color:#b45309;font-weight:600;font-size:13px;">No answer</span><% } %>
+                  </td>
+                  <td class="num" style="white-space:nowrap;"><%= c.connected ? fmtWait(c.dur) : '—' %></td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table></div>
+        </div>
+      <% } else { %>
+        <div class="card"><div class="empty">No outbound calls to &ldquo;<%= outNum %>&rdquo; in this window.</div></div>
       <% } %>
     <% } %>
 
