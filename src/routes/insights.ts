@@ -234,6 +234,11 @@ async function sendLookupPdf(
   columns: string[], rows: { cells: string[]; tone?: any }[], stats: any[],
   extra: { summary?: string | null; requestedBy?: string | null; preparedBy?: string | null } = {},
 ): Promise<void> {
+  // "Make Report" passes the requester and the sender through on the query string, so one
+  // code path produces the plain PDF and the reported version.
+  const q: any = (res.req as any).query || {};
+  if (!extra.requestedBy && q.requested_by) extra.requestedBy = String(q.requested_by).slice(0, 120);
+  if (!extra.preparedBy && q.prepared_by) extra.preparedBy = String(q.prepared_by).slice(0, 120);
   const customerName = (base.customers || []).find((c: any) => c.id === base.cid)?.name || '';
   const input: CallReportInput = {
     kind, heading, subject: reportSubject(kind, heading), customerName,
@@ -253,6 +258,62 @@ async function sendLookupPdf(
   res.setHeader('Content-Disposition', `inline; filename="${kind}-${safe}-${base.fromDate}.pdf"`);
   res.send(pdf);
 }
+
+
+// ── Make Report ───────────────────────────────────────────────────────────────
+// Contacts for the customer behind an Insights customer id, for the "who asked for this"
+// picker. The bridge is customers.lumenmsp_id on the Insights side.
+router.get('/insights/report-contacts', requireAuth, async (req: Request, res: Response) => {
+  const cid = parseInt(String(req.query.customer || ''), 10) || 0;
+  if (!insightsPool || !cid) { res.json({ contacts: [] }); return; }
+  try {
+    const link = (await insightsPool.query('SELECT lumenmsp_id, name FROM customers WHERE id=$1', [cid])).rows[0];
+    if (!link?.lumenmsp_id) { res.json({ contacts: [], reason: 'This Insights customer is not linked to a portal customer.' }); return; }
+    const { rows } = await pool.query(
+      `SELECT full_name, job_title, email FROM customer_contacts
+        WHERE customer_id=$1 AND archived=false
+        ORDER BY is_primary DESC, is_service_contact DESC, full_name`, [link.lumenmsp_id]);
+    res.json({ contacts: rows, customerName: link.name });
+  } catch (e: any) { res.json({ contacts: [], reason: e.message }); }
+});
+
+// Email a produced report to the contact who asked for it. Deliberately a separate, explicit
+// action AFTER the preview — the preview is the whole point, and nothing reaches a customer
+// without someone having looked at it first.
+router.post('/insights/report-send', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const to = String(req.body.to || '').trim();
+  const name = String(req.body.name || '').trim();
+  const url = String(req.body.url || '');
+  const note = String(req.body.note || '').trim();
+  if (!to || !/^[^@\s]+@[^@\s]+$/.test(to)) { res.status(400).json({ ok: false, error: 'That email address does not look right.' }); return; }
+  // Only ever re-render one of our own report URLs — never an arbitrary address.
+  if (!/^\/insights\/(number|reverse|outbound)\?/.test(url)) { res.status(400).json({ ok: false, error: 'Unrecognised report.' }); return; }
+  try {
+    const origin = `${req.protocol}://${req.get('host')}`;
+    const r = await fetch(origin + url + '&format=pdf', { headers: { cookie: req.headers.cookie || '' } });
+    if (!r.ok) throw new Error('Report could not be produced (' + r.status + ').');
+    const pdf = Buffer.from(await r.arrayBuffer());
+    const first = (name || '').split(/\s+/)[0] || 'there';
+    await sendMail({
+      to,
+      subject: 'Your call report',
+      html:
+        `<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.6;">` +
+        `<p style="margin:0 0 14px;">Hi ${first.replace(/</g, '&lt;')},</p>` +
+        (note ? `<p style="margin:0 0 16px;">${note.replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>` : '') +
+        `<p style="margin:0 0 16px;">Please find your call report attached. It covers the period shown on the ` +
+        `report itself, and lists every call in that window along with the outcome.</p>` +
+        `<p style="margin:0;color:#6b7280;font-size:13px;">Any questions about it, just reply to this email.</p></div>`,
+      signatureName: user.displayName,
+      attachments: [{ filename: 'call-report.pdf', contentType: 'application/pdf', base64: pdf.toString('base64') }],
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error('[report-send] failed:', e);
+    res.status(400).json({ ok: false, error: e.message || 'Could not send the report.' });
+  }
+});
 
 // Number lookup — autocomplete (JSON). Searches the cached call_events for a customer.
 router.get('/insights/number-search', requireAuth, async (req: Request, res: Response) => {

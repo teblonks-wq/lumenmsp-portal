@@ -42,10 +42,36 @@ const customerOptions = customers.map(c => `<option value="${c.id}" ${cid === c.
     <div class="fg"><label>And</label><input type="time" name="to_time" value="${esc(toTime)}" class="input"></div>
     <button type="submit" class="btn-primary">Search</button>
     <div class="ins-actions">
-      ${searched && stats && stats.total ? `<a href="/insights/outbound?customer=${cid}&num=${encodeURIComponent(num)}&from=${esc(fromDate)}&to=${esc(toDate)}&from_time=${esc(fromTime)}&to_time=${esc(toTime)}&format=pdf" target="_blank" class="btn-secondary" style="padding:9px 16px;font-size:13px;border-radius:8px;text-decoration:none;">&#128438; PDF report</a>` : ''}
+      ${searched && stats && stats.total ? `<a href="/insights/outbound?customer=${cid}&num=${encodeURIComponent(num)}&from=${esc(fromDate)}&to=${esc(toDate)}&from_time=${esc(fromTime)}&to_time=${esc(toTime)}&format=pdf" target="_blank" class="btn-secondary" style="padding:9px 16px;font-size:13px;border-radius:8px;text-decoration:none;">&#128438; PDF report</a>
+      <button type="button" id="mrMake" class="btn-primary" style="padding:9px 16px;font-size:13px;border-radius:8px;">&#10024; Make report</button>` : ''}
     </div>
   </form>
   <p class="hint">Click a caller to see everything they answered, or the number to see its full history both ways.</p>
+</div>
+
+<div class="mr-panel" id="mrPanel" data-cid="${cid}" data-url="/insights/outbound?customer=${cid}&num=${encodeURIComponent(num)}&from=${esc(fromDate)}&to=${esc(toDate)}&from_time=${esc(fromTime)}&to_time=${esc(toTime)}">
+  <div class="mr-head">
+    <h2>Make report</h2>
+    <button type="button" class="btn-secondary" id="mrClose" style="padding:5px 12px;font-size:12.5px;border-radius:8px;">Close</button>
+  </div>
+  <div class="mr-body">
+    <div><iframe id="mrPreview" title="Report preview"></iframe></div>
+    <div class="mr-side">
+      <div class="fg">
+        <label>Who asked for this report?</label>
+        <select id="mrContact"><option value="">- choose a contact -</option></select>
+        <p class="mr-note" id="mrContactNote">Their name appears on the report as the requester.</p>
+      </div>
+      <div class="fg">
+        <label>Note to include <span style="font-weight:400;color:#94a3b8;">(optional)</span></label>
+        <textarea id="mrNote" rows="4" placeholder="Anything you want to say alongside it..."></textarea>
+      </div>
+      <button type="button" class="btn-primary" id="mrSend" style="width:100%;padding:10px;border-radius:8px;">Email this report</button>
+      <a class="btn-secondary" id="mrOpen" href="#" target="_blank" style="display:block;text-align:center;margin-top:8px;padding:9px;border-radius:8px;text-decoration:none;font-size:13.5px;">Open / download instead</a>
+      <p class="mr-msg" id="mrMsg"></p>
+      <p class="mr-note">Nothing is sent until you press Email. The preview above is exactly what they receive.</p>
+    </div>
+  </div>
 </div>
 
 ${error ? `<div class="alert alert-error">${esc(error)}</div>` : ''}
@@ -118,4 +144,65 @@ ${!isConnected ? `
   </div>
 </div>
 `}
+
+<script>
+// Make Report: build the same document the PDF button produces, preview it, then send it
+// only if someone presses Email. The preview IS the sent file - same URL, same render.
+(function(){
+  var panel=document.getElementById('mrPanel'); if(!panel) return;
+  var btn=document.getElementById('mrMake'), frame=document.getElementById('mrPreview');
+  var sel=document.getElementById('mrContact'), note=document.getElementById('mrNote');
+  var send=document.getElementById('mrSend'), msg=document.getElementById('mrMsg');
+  var open=document.getElementById('mrOpen'), close=document.getElementById('mrClose');
+  var csrf=(document.querySelector('meta[name="csrf-token"]')||{}).content||'';
+  var baseUrl=panel.getAttribute('data-url')||'', cid=panel.getAttribute('data-cid')||'';
+
+  function reportUrl(){
+    var u=baseUrl;
+    var opt=sel.options[sel.selectedIndex];
+    var who=(opt&&opt.getAttribute('data-name'))||'';
+    if(who) u+='&requested_by='+encodeURIComponent(who);
+    return u;
+  }
+  function refresh(){ var u=reportUrl(); frame.src=u+'&format=pdf'; open.href=u+'&format=pdf'; }
+
+  if(btn) btn.addEventListener('click', function(){
+    panel.classList.add('on');
+    panel.scrollIntoView({behavior:'smooth', block:'start'});
+    refresh();
+    if(sel.options.length<=1 && cid){
+      fetch('/insights/report-contacts?customer='+encodeURIComponent(cid))
+        .then(function(r){return r.json();}).then(function(j){
+          (j.contacts||[]).forEach(function(c){
+            if(!c.email) return;
+            var o=document.createElement('option');
+            o.value=c.email; o.setAttribute('data-name', c.full_name||'');
+            o.textContent=c.full_name+(c.job_title?' - '+c.job_title:'')+' ('+c.email+')';
+            sel.appendChild(o);
+          });
+          if(!(j.contacts||[]).filter(function(c){return c.email;}).length){
+            document.getElementById('mrContactNote').textContent =
+              j.reason || 'No contacts with an email address on this customer.';
+          }
+        }).catch(function(){});
+    }
+  });
+  if(close) close.addEventListener('click', function(){ panel.classList.remove('on'); });
+  sel.addEventListener('change', refresh);
+
+  send.addEventListener('click', function(){
+    var to=sel.value, opt=sel.options[sel.selectedIndex];
+    if(!to){ msg.style.color='#b45309'; msg.textContent='Choose who asked for it first.'; return; }
+    send.disabled=true; msg.style.color=''; msg.textContent='Sending...';
+    fetch('/insights/report-send',{method:'POST',
+      headers:{'Content-Type':'application/json','x-csrf-token':csrf},
+      body:JSON.stringify({to:to, name:(opt&&opt.getAttribute('data-name'))||'', url:reportUrl(), note:note.value})})
+      .then(function(r){return r.json();}).then(function(j){
+        send.disabled=false;
+        if(!j||!j.ok){ msg.style.color='#dc2626'; msg.textContent=(j&&j.error)||'Could not send.'; return; }
+        msg.style.color='#166534'; msg.textContent='Sent to '+to+'.';
+      }).catch(function(){ send.disabled=false; msg.style.color='#dc2626'; msg.textContent='Could not send.'; });
+  });
+})();
+</script>
 ` }) %>
