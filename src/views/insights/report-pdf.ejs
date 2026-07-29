@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title><%= title %> — <%= heading %></title>
+<style>
+  @page { size: A4; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:Arial,Helvetica,sans-serif; font-size:11.5px; color:#374151; background:#fff; line-height:1.55; }
+  .brandbar { width:100%; border-bottom:2px solid #0f766e; padding-bottom:10px; margin-bottom:18px; }
+  .brandbar td { border:0; padding:0; vertical-align:top; }
+  .brandbar img { display:block; max-width:150px; height:auto; border:0; }
+  .brandbar .co { text-align:right; font-size:9.5px; color:#6b7280; line-height:1.6; }
+  .brandbar .co strong { font-size:11.5px; color:#111827; display:block; margin-bottom:2px; }
+  h1 { font-size:20px; color:#111827; font-weight:700; letter-spacing:-.2px; }
+  h2 { font-size:14px; color:#0f766e; font-weight:700; margin:20px 0 8px; padding-bottom:4px;
+       border-bottom:1.5px solid #99f6e4; break-after:avoid; page-break-after:avoid; }
+  p { margin:0 0 8px; orphans:3; widows:3; }
+  .sub { font-size:12px; color:#6b7280; margin-top:3px; }
+  .meta { background:#f8fafc; border:1px solid #e5e7eb; border-radius:7px; padding:11px 14px; margin:14px 0 4px; font-size:11.5px; }
+  .meta strong { color:#111827; }
+  .stats { width:100%; table-layout:fixed; border-collapse:separate; border-spacing:8px 0; margin:14px 0 4px; }
+  .stats td { border:1px solid #e5e7eb; border-radius:9px; padding:11px 12px; text-align:center; background:#fff; }
+  .stats .v { font-size:20px; font-weight:800; color:#0f766e; line-height:1.2; }
+  .stats .v.good { color:#16a34a; } .stats .v.warn { color:#b45309; } .stats .v.bad { color:#b91c1c; }
+  .stats .v.plain { color:#334155; }
+  .stats .l { font-size:9px; text-transform:uppercase; letter-spacing:.05em; color:#94a3b8; margin-top:4px; }
+  table.data { border-collapse:collapse; width:100%; margin:8px 0 12px; font-size:10.5px; break-inside:auto; }
+  table.data thead { display:table-header-group; }
+  table.data tr { break-inside:avoid; page-break-inside:avoid; }
+  table.data th { background:#f0fdfa; color:#115e59; text-align:left; font-size:9px; text-transform:uppercase;
+                  letter-spacing:.05em; padding:6px 8px; border:1px solid #ccfbf1; }
+  table.data td { padding:5px 8px; border:1px solid #e5e7eb; vertical-align:top; }
+  .t-good { color:#166534; font-weight:600; } .t-warn { color:#b45309; font-weight:600; }
+  .t-bad { color:#b91c1c; font-weight:600; }
+  .summary { background:#f0fdfa; border:1px solid #ccfbf1; border-radius:8px; padding:13px 15px; margin:6px 0 4px; }
+  .summary p:last-child { margin-bottom:0; }
+  .note { font-size:10px; color:#94a3b8; margin-top:14px; padding-top:9px; border-top:1px solid #f1f5f9; }
+</style></head><body>
+<%
+  function esc(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function dl(x){ return x ? new Date(x).toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'}) : '—'; }
+  var allDay = (!fromTime || fromTime === '00:00') && (!toTime || toTime === '23:59');
+%>
+<table class="brandbar"><tbody><tr>
+  <td style="width:50%;">
+    <% if (logoUrl) { %><img src="<%= logoUrl %>" alt="<%= supplier.brand %>">
+    <% } else { %><strong style="font-size:18px;color:#0f766e;"><%= supplier.brand %></strong><% } %>
+  </td>
+  <td class="co">
+    <strong><%= supplier.legalName %></strong>
+    <%= supplier.postcode %> · <%= supplier.phone %><br>
+    <%= supplier.web %>
+  </td>
+</tr></tbody></table>
+
+<h1><%= title %></h1>
+<div class="sub"><%= subject %></div>
+
+<div class="meta">
+  <strong>Customer:</strong> <%= customerName || '—' %><br>
+  <strong>Period:</strong> <%= dl(fromDate) %> to <%= dl(toDate) %><% if (!allDay) { %>, between <%= fromTime %> and <%= toTime %> each day<% } %><br>
+  <% if (requestedBy) { %><strong>Requested by:</strong> <%= requestedBy %><br><% } %>
+  <strong>Produced:</strong> <%= new Date(generatedAt).toLocaleString('en-GB', { day:'numeric', month:'long', year:'numeric', hour:'2-digit', minute:'2-digit' }) %><% if (preparedBy) { %> by <%= preparedBy %><% } %>
+</div>
+
+<% if (summary) { %>
+  <h2>Summary</h2>
+  <div class="summary">
+    <% String(summary).split(/\n\s*\n/).forEach(function(para){ if (para.trim()) { %><p><%= para.trim() %></p><% } }); %>
+  </div>
+<% } %>
+
+<% if (stats && stats.length) { %>
+  <h2>At a glance</h2>
+  <table class="stats"><tbody><tr>
+    <% stats.forEach(function(s){ %>
+      <td><div class="v <%= s.tone || '' %>"><%= s.value %></div><div class="l"><%= s.label %></div></td>
+    <% }); %>
+  </tr></tbody></table>
+<% } %>
+
+<h2><%= rows.length %> call<%= rows.length === 1 ? '' : 's' %></h2>
+<% if (!rows.length) { %>
+  <p class="sub">No calls matched this search in the period above.</p>
+<% } else { %>
+  <table class="data">
+    <thead><tr><% columns.forEach(function(c){ %><th><%= c %></th><% }); %></tr></thead>
+    <tbody>
+      <% rows.forEach(function(r){ %>
+        <tr><% r.cells.forEach(function(cell, i){ %>
+          <td<%= (i === r.cells.length - 1 && r.tone) ? ' class="t-' + r.tone + '"' : '' %>><%= cell %></td>
+        <% }); %></tr>
+      <% }); %>
+    </tbody>
+  </table>
+<% } %>
+
+<p class="note">
+  Call data is drawn from the telephony platform and updates every 10 minutes. Times shown are UK local
+  (GMT/BST). Response and wait times describe how the call was routed and answered; they are not a
+  statement of service levels.
+</p>
+</body></html>

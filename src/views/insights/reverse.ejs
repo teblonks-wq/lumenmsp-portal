@@ -46,7 +46,7 @@ const customerOptions = customers.map(c => `<option value="${c.id}" ${cid === c.
     <div class="fg"><label>And</label><input type="time" name="to_time" value="${esc(toTime)}" class="input"></div>
     <button type="submit" class="btn-primary">Search</button>
     <div class="ins-actions">
-      ${searched && stats && stats.total ? '<button type="button" onclick="window.print()" class="btn-secondary" style="padding:9px 16px;font-size:13px;border-radius:8px;">&#128438; PDF</button>' : ''}
+      ${searched && stats && stats.total ? `<a href="/insights/reverse?customer=${cid}&ext=${encodeURIComponent(ext)}&from=${esc(fromDate)}&to=${esc(toDate)}&from_time=${esc(fromTime)}&to_time=${esc(toTime)}&format=pdf" target="_blank" class="btn-secondary" style="padding:9px 16px;font-size:13px;border-radius:8px;text-decoration:none;">&#128438; PDF report</a>` : ''}
     </div>
   </form>
   <p class="hint">Click any caller's number in the results to follow that number's full history.</p>

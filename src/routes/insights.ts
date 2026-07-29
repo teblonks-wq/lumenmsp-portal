@@ -3,6 +3,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool, insightsPool } from '../db/pool';
 import { sendMail } from '../lib/mailer';
 import { buildJourneys, formatRoute, type CallEventRow } from '../lib/insights-journeys';
+import { CallReportInput, fmtSecs as rfSecs, renderCallReportPdf, ReportKind } from '../lib/call-report';
 import { generateWeekly, generateDaily, generateSitePerformance, generateFromTemplate } from '../lib/insights/report-generator';
 import { moduleList } from '../lib/insights/reports/modules';
 import { clientFromCustomer } from '../lib/insights/tollring-client';
@@ -214,6 +215,38 @@ router.post('/insights/reports/generate', requireAuth, async (req: Request, res:
   }
 });
 
+
+// ── Lookup results as a laid-out PDF ───────────────────────────────────────────
+// Shared by all three call tools. The old PDF button called window.print(), which hands the
+// customer a screenshot of a web page - nav, buttons and all. This produces an actual
+// document with the same branding as the agreements.
+function reportSubject(kind: ReportKind, heading: string): string {
+  return kind === 'number'  ? `Every call to and from ${heading}, and how each one went.`
+       : kind === 'reverse' ? `Every call answered by ${heading}, and who was calling.`
+       :                      `Every call placed to ${heading}, and whether it connected.`;
+}
+
+async function sendLookupPdf(
+  res: Response, kind: ReportKind, heading: string, base: any,
+  columns: string[], rows: { cells: string[]; tone?: any }[], stats: any[],
+  extra: { summary?: string | null; requestedBy?: string | null; preparedBy?: string | null } = {},
+): Promise<void> {
+  const customerName = (base.customers || []).find((c: any) => c.id === base.cid)?.name || '';
+  const input: CallReportInput = {
+    kind, heading, subject: reportSubject(kind, heading), customerName,
+    fromDate: base.fromDate, toDate: base.toDate, fromTime: base.fromTime, toTime: base.toTime,
+    stats, columns, rows,
+    summary: extra.summary ?? null,
+    requestedBy: extra.requestedBy ?? null,
+    preparedBy: extra.preparedBy ?? null,
+  };
+  const pdf = await renderCallReportPdf(input);
+  const safe = String(heading).replace(/[^A-Za-z0-9._-]/g, '') || 'report';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${kind}-${safe}-${base.fromDate}.pdf"`);
+  res.send(pdf);
+}
+
 // Number lookup — autocomplete (JSON). Searches the cached call_events for a customer.
 router.get('/insights/number-search', requireAuth, async (req: Request, res: Response) => {
   if (!insightsPool) { res.json([]); return; }
@@ -271,6 +304,25 @@ router.get('/insights/number', requireAuth, async (req: Request, res: Response) 
     const avgWait = total ? Math.round(journeys.reduce((s, j) => s + j.wait_secs, 0) / total) : 0;
     base.journeys = journeys;
     base.stats = { total, answered, missed, ansRate: total ? Math.round(answered / total * 100) : 0, avgWait };
+
+    if (String(req.query.format) === 'pdf') {
+      await sendLookupPdf(res, 'number', number, base,
+        ['Date / time', 'Status', 'Wait', 'Answered by', 'Journey'],
+        journeys.map((j: any) => ({
+          cells: [
+            new Date(j.datetime).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            j.status, j.wait, j.answered_by || '—', j.route || '',
+          ],
+        })),
+        [
+          { label: 'Total calls', value: String(total), tone: 'plain' },
+          { label: 'Answered', value: String(answered), tone: 'good' },
+          { label: 'Missed', value: String(missed), tone: missed ? 'bad' : 'plain' },
+          { label: 'Answer rate', value: (total ? Math.round(answered / total * 100) : 0) + '%', tone: 'plain' },
+          { label: 'Avg wait', value: rfSecs(avgWait), tone: 'plain' },
+        ]);
+      return;
+    }
   } catch (e: any) { base.error = e.message; }
   res.render('insights/number', base);
 });
@@ -337,6 +389,23 @@ router.get('/insights/reverse', requireAuth, async (req: Request, res: Response)
     base.calls = calls;
     base.stats = { total: calls.length, uniqueCallers, avgWait, busiestDay, busiestN };
     base.searched = true;
+
+    if (String(req.query.format) === 'pdf') {
+      await sendLookupPdf(res, 'reverse', ext, base,
+        ['Date / time', 'Caller', 'Wait', 'Journey'],
+        calls.map((j: any) => ({
+          cells: [
+            new Date(j.datetime).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            j.number || 'Withheld', j.wait, j.route || '',
+          ],
+        })),
+        [
+          { label: 'Calls answered', value: String(calls.length), tone: 'good' },
+          { label: 'Unique callers', value: String(uniqueCallers), tone: 'plain' },
+          { label: 'Avg caller wait', value: rfSecs(avgWait), tone: 'plain' },
+        ]);
+      return;
+    }
   } catch (e: any) { base.error = e.message; }
   res.render('insights/reverse', base);
 });
@@ -428,6 +497,27 @@ router.get('/insights/outbound', requireAuth, async (req: Request, res: Response
       callers: callers.size, avgTalk: connected ? Math.round(talk / connected) : 0,
     };
     base.searched = true;
+
+    if (String(req.query.format) === 'pdf') {
+      await sendLookupPdf(res, 'outbound', num, base,
+        ['Date / time', 'Called by', 'Number', 'Outcome', 'Talk time'],
+        calls.map((c: any) => ({
+          cells: [
+            new Date(c.datetime).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            c.extno || '—', c.number, c.connected ? 'Connected' : 'No answer',
+            c.connected ? rfSecs(c.dur) : '—',
+          ],
+          tone: c.connected ? 'good' : 'warn',
+        })),
+        [
+          { label: 'Calls out', value: String(calls.length), tone: 'plain' },
+          { label: 'Connected', value: String(connected), tone: 'good' },
+          { label: 'No answer', value: String(calls.length - connected), tone: (calls.length - connected) ? 'warn' : 'plain' },
+          { label: 'People who called', value: String(callers.size), tone: 'plain' },
+          { label: 'Avg talk time', value: rfSecs(connected ? Math.round(talk / connected) : 0), tone: 'plain' },
+        ]);
+      return;
+    }
   } catch (e: any) { base.error = e.message; }
   res.render('insights/outbound', base);
 });
