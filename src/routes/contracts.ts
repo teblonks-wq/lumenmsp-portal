@@ -366,12 +366,19 @@ router.get('/contracts/:id/extend', requireAuth, async (req: Request, res: Respo
   if (!r.rows.length) { res.status(404).render('error', { message: 'Contract not found.' }); return; }
   const contract = r.rows[0];
   const terms = (await pool.query('SELECT * FROM contract_terms WHERE contract_id=$1 ORDER BY seq', [id])).rows;
+  // An extension already prepared but not yet signed. Extending again would silently stack a
+  // second term on top of it — which is how CON-0002 ended up with four.
+  const latest = terms.length ? terms[terms.length - 1] : null;
+  const pendingExt = !!latest && latest.source === 'signed_extension' && !latest.signed_at
+    && contract.current_doc_kind === 'extension'
+    && contract.sign_status !== 'signed' && contract.sign_status !== 'countersigned';
+
   const currentEnd = contract.end_date ? new Date(contract.end_date).toISOString().slice(0, 10) : null;
   const suggestedStart = currentEnd
     ? new Date(new Date(currentEnd + 'T00:00:00Z').getTime() + 86400000).toISOString().slice(0, 10)
     : new Date().toISOString().slice(0, 10);
   res.render('contracts/extend', {
-    user, contract, terms, suggestedStart,
+    user, contract, terms, suggestedStart, pendingExt,
     defaultMonths: contract.term_months || 12,
     err: req.query.err ? String(req.query.err) : null,
   });
@@ -390,10 +397,27 @@ router.post('/contracts/:id/extend', requireAuth, async (req: Request, res: Resp
   if (!start) { res.redirect('/contracts/' + id + '/extend?err=' + encodeURIComponent('Enter a valid start date for the extension.')); return; }
   const end = iso(req.body.end_date) || addMonths(start, months);
 
+  // Guard: an unsigned extension is already prepared. Stacking another silently is how a
+  // contract ends up with four overlapping terms and no idea which one is real.
+  const existing = (await pool.query(
+    `SELECT id, seq, source, signed_at FROM contract_terms WHERE contract_id=$1 ORDER BY seq DESC LIMIT 1`, [id])).rows[0];
+  const inFlight = existing && existing.source === 'signed_extension' && !existing.signed_at;
+  if (inFlight && String(req.body.replace_pending) !== '1') {
+    res.redirect('/contracts/' + id + '/extend?err=' + encodeURIComponent(
+      'An extension is already prepared for this contract and has not been signed yet. Tick "replace it" to discard that one and start again.'));
+    return;
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await ensureFirstTerm(client, id);
+    if (inFlight && String(req.body.replace_pending) === '1') {
+      // Only ever removes an UNSIGNED extension term — a signed one is a record, not a draft.
+      await client.query(
+        `DELETE FROM contract_terms WHERE contract_id=$1 AND seq=$2 AND source='signed_extension' AND signed_at IS NULL`,
+        [id, existing.seq]);
+    }
     const seq = (((await client.query('SELECT COALESCE(MAX(seq),0) s FROM contract_terms WHERE contract_id=$1', [id])).rows[0].s) || 0) + 1;
     await client.query(
       `INSERT INTO contract_terms (contract_id, seq, start_date, end_date, months, source, notes)

@@ -341,6 +341,97 @@ router.get('/insights/reverse', requireAuth, async (req: Request, res: Response)
   res.render('insights/reverse', base);
 });
 
+// ── Outbound lookup: who called a given number ─────────────────────────────────
+// Staff pair of the customer portal's "Who called them". Reads tollring_calls (the raw leg
+// table) rather than call_events: an outbound call has no group routing to reconstruct, and
+// the raw table is the only place carrying duration and the unanswered flag — which is what
+// "outcome" means for a call we placed.
+router.get('/insights/outbound', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const today = new Date().toISOString().slice(0, 10);
+  const weekAgo = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+  const base: any = {
+    user, connected: !!insightsPool, customers: [], cid: 0, num: '',
+    fromDate: weekAgo, toDate: today, fromTime: '00:00', toTime: '23:59',
+    calls: [], stats: null, error: null, searched: false,
+  };
+  if (!insightsPool) { res.render('insights/outbound', base); return; }
+  try {
+    base.customers = (await insightsPool.query('SELECT id, name FROM customers WHERE is_active=true ORDER BY name')).rows;
+  } catch (e: any) { base.error = e.message; res.render('insights/outbound', base); return; }
+
+  const cid = parseInt(String(req.query.customer || ''), 10) || 0;
+  const num = String(req.query.num || '').trim().slice(0, 40);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || ''))) base.fromDate = String(req.query.from);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || '')))   base.toDate   = String(req.query.to);
+  if (/^\d{2}:\d{2}$/.test(String(req.query.from_time || '')))  base.fromTime = String(req.query.from_time);
+  if (/^\d{2}:\d{2}$/.test(String(req.query.to_time || '')))    base.toTime   = String(req.query.to_time);
+  base.cid = cid; base.num = num;
+  if (!cid || num.length < 3) { res.render('insights/outbound', base); return; }
+
+  if (base.toDate < base.fromDate) { base.error = 'The end date is before the start date.'; res.render('insights/outbound', base); return; }
+  const spanDays = Math.round((new Date(base.toDate).getTime() - new Date(base.fromDate).getTime()) / 86400000) + 1;
+  if (spanDays > 92) { base.error = 'Date range is too wide — pick 92 days or fewer.'; res.render('insights/outbound', base); return; }
+
+  try {
+    const norm = num.replace(/[\s\-()]/g, '').replace(/^\+44/, '0');
+    // Direction is spelled variously by the carrier feed (O / Out / Outbound), so match the
+    // leading letter rather than any one spelling.
+    const raw = (await insightsPool.query(
+      `SELECT call_id, call_date, extno, number_raw, duration, total_duration, unanswer
+         FROM tollring_calls
+        WHERE customer_id = $1
+          AND UPPER(COALESCE(direction, '')) LIKE 'O%'
+          AND regexp_replace(COALESCE(number_raw, ''), '[^0-9+]', '', 'g') LIKE $2
+          AND call_date >= $3 AND call_date <= $4
+        ORDER BY call_date ASC
+        LIMIT 20000`,
+      [cid, '%' + norm.replace(/^0/, '') + '%', base.fromDate + ' 00:00:00', base.toDate + ' 23:59:59'])).rows;
+
+    // Collapse legs to one row per call, longest leg winning — a redial through two trunks
+    // is one call, not two.
+    const byCall = new Map<string, any>();
+    for (const r of raw) {
+      const key = String(r.call_id || (String(r.call_date) + '|' + (r.extno || '')));
+      const dur = Number(r.total_duration || r.duration || 0);
+      const prev = byCall.get(key);
+      if (!prev || dur > Number(prev.dur || 0)) {
+        byCall.set(key, {
+          datetime: r.call_date, extno: r.extno || null, number: r.number_raw || num,
+          dur, connected: dur > 0 && !/^(y|1|true)$/i.test(String(r.unanswer || '')),
+        });
+      }
+    }
+
+    const ldn = (iso: any) => {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      }).formatToParts(new Date(iso));
+      const g = (t: string) => parts.find((p) => p.type === t)?.value || '00';
+      return parseInt(g('hour'), 10) * 60 + parseInt(g('minute'), 10);
+    };
+    const [fh, fm] = String(base.fromTime).split(':').map(Number);
+    const [th, tm] = String(base.toTime).split(':').map(Number);
+    const lo = fh * 60 + fm, hi = th * 60 + tm;
+
+    const calls = [...byCall.values()]
+      .filter((c) => { const m = ldn(c.datetime); return m >= lo && m <= hi; })
+      .sort((a, b) => new Date(b.datetime).getTime() - new Date(a.datetime).getTime());
+
+    const connected = calls.filter((c) => c.connected).length;
+    const talk = calls.reduce((s, c) => s + (c.connected ? c.dur : 0), 0);
+    const callers = new Set(calls.map((c) => String(c.extno || '').replace(/@.*$/, '').trim().toLowerCase()).filter(Boolean));
+    base.calls = calls.slice(0, 2000);
+    base.stats = {
+      total: calls.length, connected, noAnswer: calls.length - connected,
+      connRate: calls.length ? Math.round(connected / calls.length * 100) : 0,
+      callers: callers.size, avgTalk: connected ? Math.round(talk / connected) : 0,
+    };
+    base.searched = true;
+  } catch (e: any) { base.error = e.message; }
+  res.render('insights/outbound', base);
+});
+
 // Report config page — the editable visual builder + generate panel, exactly like the
 // standalone /admin/report-configs/:id (the config IS the builder; there's no thin detail page).
 router.get('/insights/report-config/:id', requireAuth, requireAdmin, async (req: Request, res: Response, next) => {

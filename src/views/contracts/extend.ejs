@@ -9,7 +9,21 @@
 
 <% if (err) { %><div class="alert alert-error" style="max-width:820px;margin-bottom:14px;"><%= err %></div><% } %>
 
-<form method="post" action="/contracts/<%= contract.id %>/extend" style="max-width:820px;">
+<% if (typeof pendingExt !== 'undefined' && pendingExt) { %>
+  <div class="alert alert-error" style="max-width:820px;margin-bottom:14px;">
+    <strong>An extension is already prepared and unsigned.</strong>
+    <p style="margin:6px 0 0;">Term <%= terms[terms.length-1].seq %> runs
+      <%= new Date(terms[terms.length-1].start_date).toLocaleDateString('en-GB') %> to
+      <%= new Date(terms[terms.length-1].end_date).toLocaleDateString('en-GB') %>.
+      Extending again would add a second term on top of it.</p>
+    <label style="display:flex;gap:8px;align-items:flex-start;margin-top:9px;font-weight:500;">
+      <input type="checkbox" name="replace_pending" value="1" form="extendForm" style="margin-top:3px;">
+      <span>Discard that unsigned extension and replace it with the one below.</span>
+    </label>
+  </div>
+<% } %>
+
+<form method="post" id="extendForm" action="/contracts/<%= contract.id %>/extend" style="max-width:820px;">
   <div class="card">
     <div class="card-header"><h2>Current term</h2></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;font-size:13px;">
