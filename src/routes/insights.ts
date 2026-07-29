@@ -3,7 +3,10 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool, insightsPool } from '../db/pool';
 import { sendMail } from '../lib/mailer';
 import { buildJourneys, formatRoute, type CallEventRow } from '../lib/insights-journeys';
-import { CallReportInput, fmtSecs as rfSecs, renderCallReportPdf, ReportKind } from '../lib/call-report';
+import {
+  CallReportInput, fmtSecs as rfSecs, renderCallReportPdf, ReportKind,
+  scopeStatement, writeExecutiveSummary,
+} from '../lib/call-report';
 import { generateWeekly, generateDaily, generateSitePerformance, generateFromTemplate } from '../lib/insights/report-generator';
 import { moduleList } from '../lib/insights/reports/modules';
 import { clientFromCustomer } from '../lib/insights/tollring-client';
@@ -240,6 +243,10 @@ async function sendLookupPdf(
     requestedBy: extra.requestedBy ?? null,
     preparedBy: extra.preparedBy ?? null,
   };
+  input.scope = scopeStatement(kind, heading, base.fromDate, base.toDate, base.fromTime, base.toTime);
+  // Written from the totals above; null if Claude is unconfigured, slow or errors — the
+  // report still goes out, just without the summary paragraph.
+  if (!input.summary) input.summary = await writeExecutiveSummary(input);
   const pdf = await renderCallReportPdf(input);
   const safe = String(heading).replace(/[^A-Za-z0-9._-]/g, '') || 'report';
   res.setHeader('Content-Type', 'application/pdf');
