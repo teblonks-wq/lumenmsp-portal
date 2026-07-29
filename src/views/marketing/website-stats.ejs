@@ -10,7 +10,7 @@
   <div class="alert alert-error" style="max-width:760px;">Couldn't load stats: <%= stats.error %></div>
 <% } else { %>
   <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:18px;">
-    <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">On site now</div><div style="font-size:30px;font-weight:800;color:#16a34a;"><%= stats.liveNow %></div></div>
+    <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">On site now</div><div style="font-size:30px;font-weight:800;color:var(--ok);"><%= stats.liveNow %></div></div>
     <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Views today</div><div style="font-size:30px;font-weight:800;"><%= stats.today %></div></div>
     <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Last 7 days</div><div style="font-size:30px;font-weight:800;"><%= stats.last7 %></div></div>
     <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Last 30 days</div><div style="font-size:30px;font-weight:800;"><%= stats.last30 %></div></div>
@@ -23,9 +23,9 @@
     <div style="display:flex;align-items:flex-end;gap:6px;height:160px;margin-top:14px;">
       <% stats.byDay.forEach(function(d){ var h = Math.round((d.n/max)*140); %>
         <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;" title="<%= d.label %>: <%= d.n %> views">
-          <div style="font-size:11px;color:#64748b;"><%= d.n %></div>
-          <div style="width:100%;height:<%= h %>px;background:linear-gradient(180deg,#2563eb,#10b981);border-radius:4px 4px 0 0;min-height:2px;"></div>
-          <div style="font-size:10px;color:#94a3b8;white-space:nowrap;transform:rotate(-30deg);transform-origin:center;"><%= d.label %></div>
+          <div style="font-size:11px;color:var(--muted);"><%= d.n %></div>
+          <div style="width:100%;height:<%= h %>px;background:linear-gradient(180deg,var(--blue),var(--green-bright));border-radius:4px 4px 0 0;min-height:2px;"></div>
+          <div style="font-size:10px;color:var(--faint);white-space:nowrap;transform:rotate(-30deg);transform-origin:center;"><%= d.label %></div>
         </div>
       <% }); %>
     </div>

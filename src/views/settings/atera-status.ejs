@@ -32,7 +32,7 @@
             </tr>
           <% }); %>
           <!-- Add a new mapping -->
-          <tr style="background:#f9fafb;">
+          <tr style="background:var(--surface-2);">
             <td><input class="input" name="new_atera" placeholder="+ new Atera status…" style="min-width:200px;"></td>
             <td><select class="input" name="new_status" style="width:auto;"><% statuses.forEach(function(s){ %><option value="<%= s %>"><%= cap(s) %></option><% }); %></select></td>
             <td><input class="input" name="new_stage" value="in_progress" style="width:auto;min-width:150px;"></td>

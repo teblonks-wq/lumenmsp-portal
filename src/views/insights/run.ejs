@@ -20,16 +20,16 @@
   })();
 %>
 <%- include('_layout', { title: 'Run report', user, csrfToken: (typeof csrfToken !== 'undefined' ? csrfToken : ''), body: `
-  <div class="page-header"><h1>Run a report</h1><p style="color:#6b7280;margin:4px 0 0;">Pick a customer, site and report from the pool, then run it. Opens in a new tab.</p></div>
-  ${err ? '<div style="background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;padding:10px 14px;border-radius:8px;margin-bottom:14px;">' + esc(err) + '</div>' : ''}
+  <div class="page-header"><h1>Run a report</h1><p style="color:var(--muted);margin:4px 0 0;">Pick a customer, site and report from the pool, then run it. Opens in a new tab.</p></div>
+  ${err ? '<div style="background:var(--tint-bad);border:1px solid var(--bad-line);color:var(--bad-fg);padding:10px 14px;border-radius:8px;margin-bottom:14px;">' + esc(err) + '</div>' : ''}
   <div class="card" style="max-width:760px;">
     <form method="post" action="/insights/run" target="_blank" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
-      <div><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Customer</label><select class="input" id="runCust" style="min-width:200px;"><option value="">— choose —</option>${custOpts}</select></div>
-      <div><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Site</label><select class="input" id="runSite" name="site_id" required style="min-width:180px;"><option value="">— choose a customer —</option></select></div>
-      <div><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Report</label><select class="input" id="runTpl" name="template_id" required style="min-width:200px;" onchange="onTpl()">${tplOpts}</select></div>
-      <div id="weekWrap" style="display:none;"><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Week</label><select class="input" id="runWeek" onchange="syncWeek()" style="min-width:190px;">${weekOpts}</select></div>
-      <div id="fromWrap"><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">From</label><input class="input" type="date" name="date_from" id="runFrom" value="${today}"></div>
-      <div id="toWrap"><label style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">To</label><input class="input" type="date" name="date_to" id="runTo" value="${today}"></div>
+      <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Customer</label><select class="input" id="runCust" style="min-width:200px;"><option value="">— choose —</option>${custOpts}</select></div>
+      <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Site</label><select class="input" id="runSite" name="site_id" required style="min-width:180px;"><option value="">— choose a customer —</option></select></div>
+      <div><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Report</label><select class="input" id="runTpl" name="template_id" required style="min-width:200px;" onchange="onTpl()">${tplOpts}</select></div>
+      <div id="weekWrap" style="display:none;"><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">Week</label><select class="input" id="runWeek" onchange="syncWeek()" style="min-width:190px;">${weekOpts}</select></div>
+      <div id="fromWrap"><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">From</label><input class="input" type="date" name="date_from" id="runFrom" value="${today}"></div>
+      <div id="toWrap"><label style="display:block;font-size:12px;color:var(--muted);margin-bottom:4px;">To</label><input class="input" type="date" name="date_to" id="runTo" value="${today}"></div>
       <div><button class="btn-primary" type="submit" style="padding:10px 22px;">Run report ↗</button></div>
     </form>
   </div>

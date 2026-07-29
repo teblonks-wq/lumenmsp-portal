@@ -13,24 +13,24 @@
   .email-body td, .email-body th { word-break:break-word; }
   .email-body p { margin:0 0 10px; }
   .email-body a { word-break:break-word; }
-  .email-body blockquote { margin:8px 0; padding-left:10px; border-left:3px solid #e2e8f0; color:#475569; }
+  .email-body blockquote { margin:8px 0; padding-left:10px; border-left:3px solid var(--line); color:var(--text-soft); }
   /* Strip giant inline font-sizes some signatures use */
   .email-body font[size] { font-size:14px !important; }
   /* Composer mode pills — tinted to match each entry's colour in the conversation feed. */
   .mode-pill { display:flex; gap:6px; align-items:center; border:1.5px solid var(--line); border-radius:8px; padding:6px 12px; cursor:pointer; font-size:13px; font-weight:600; transition:background .12s, box-shadow .12s; }
   .mode-pill input { margin:0; }
-  .mode-public { border-color:#bbf7d0; color:#166534; }
-  .mode-side { border-color:#ddd6fe; color:#6d28d9; }
-  .mode-internal { border-color:#fde68a; color:#92400e; }
-  .mode-public:has(input:checked) { background:#f0fdf4; box-shadow:0 0 0 2px #bbf7d0; }
-  .mode-side:has(input:checked) { background:#f5f3ff; box-shadow:0 0 0 2px #ddd6fe; }
-  .mode-internal:has(input:checked) { background:#fefce8; box-shadow:0 0 0 2px #fde68a; }
+  .mode-public { border-color:var(--ok-line); color:var(--ok-fg); }
+  .mode-side { border-color:var(--violet-line); color:#6d28d9; }
+  .mode-internal { border-color:var(--warn-line); color:var(--warn-deep); }
+  .mode-public:has(input:checked) { background:var(--tint-ok); box-shadow:0 0 0 2px var(--ok-line); }
+  .mode-side:has(input:checked) { background:#f5f3ff; box-shadow:0 0 0 2px var(--violet-line); }
+  .mode-internal:has(input:checked) { background:var(--tint-yellow); box-shadow:0 0 0 2px var(--warn-line); }
   /* Channel pills */
   .chan-pill { display:inline-flex; gap:5px; align-items:center; border:1.5px solid var(--line); border-radius:8px; padding:4px 10px; cursor:pointer; font-size:12px; font-weight:600; }
   .chan-pill input { margin:0; }
-  .chan-email:has(input:checked) { border-color:#93c5fd; background:#eff6ff; }
-  .chan-teams:has(input:checked) { border-color:#a5b4fc; background:#eef2ff; }
-  .chan-wa:has(input:checked) { border-color:#86efac; background:#f0fdf4; }
+  .chan-email:has(input:checked) { border-color:#93c5fd; background:var(--tint-info); }
+  .chan-teams:has(input:checked) { border-color:#a5b4fc; background:var(--tint-indigo); }
+  .chan-wa:has(input:checked) { border-color:#86efac; background:var(--tint-ok); }
 </style>
 
 <% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" style="max-width:1100px;"><%= error %></div><% } %>
@@ -42,9 +42,9 @@
     <h1 style="margin:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><%= ticket.ticket_number %> <span class="badge <%= sbadge(ticket.status) %>"><%= cap(ticket.status) %></span><% if (ticket.escalated_at) { %> <span class="badge badge-failed">Escalated</span><% } %></h1>
     <p class="muted" style="margin:4px 0 0;"><%= ticket.subject %><% if (ticket.customer_name) { %> · <a class="row-link" href="/customers/<%= ticket.customer_id %>"><%= ticket.customer_name %></a><% } %></p>
     <% if (ticket.contact_name || ticket.contact_email || ticket.contact_phone || ticket.contact_mobile) { %>
-    <p style="margin:6px 0 0;font-size:13px;color:#475569;">
+    <p style="margin:6px 0 0;font-size:13px;color:var(--text-soft);">
       <span class="muted" style="text-transform:uppercase;font-size:11px;letter-spacing:.04em;">Requester</span>
-      <% if (ticket.contact_name) { %> <% if (ticket.contact_id) { %><a class="row-link" href="/contacts/<%= ticket.contact_id %>"><strong style="color:#2563eb;"><%= ticket.contact_name %></strong></a><% } else { %><strong style="color:#374151;"><%= ticket.contact_name %></strong><% } %><% } %>
+      <% if (ticket.contact_name) { %> <% if (ticket.contact_id) { %><a class="row-link" href="/contacts/<%= ticket.contact_id %>"><strong style="color:var(--blue);"><%= ticket.contact_name %></strong></a><% } else { %><strong style="color:var(--text-strong);"><%= ticket.contact_name %></strong><% } %><% } %>
       <% if (ticket.contact_email) { %> · <a class="row-link" href="mailto:<%= ticket.contact_email %>"><%= ticket.contact_email %></a><% } %>
       <% if (ticket.contact_phone) { %> · 📞 <a class="row-link" href="tel:<%= ticket.contact_phone %>"><%= ticket.contact_phone %></a><% } %>
       <% if (ticket.contact_mobile) { %> · 📱 <a class="row-link" href="tel:<%= ticket.contact_mobile %>"><%= ticket.contact_mobile %></a><% } %>
@@ -54,7 +54,7 @@
     <% } %>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;">
-    <button class="btn" type="button" onclick="askOpen()" style="color:#0e6377;border-color:#a5dbe6;" title="Ask Claude anything about this case — it reads every message, note and hidden email text">&#10024; Ask Claude</button>
+    <button class="btn" type="button" onclick="askOpen()" style="color:var(--accent-deep);border-color:var(--accent-line);" title="Ask Claude anything about this case — it reads every message, note and hidden email text">&#10024; Ask Claude</button>
     <form method="post" action="/tickets/<%= ticket.id %>/convert-to-lead" onsubmit="return confirm('Transfer this ticket to sales as a draft lead?');" style="margin:0;"><button class="btn" type="submit">→ Draft Lead</button></form>
     <form method="post" action="/tickets/<%= ticket.id %>/convert-to-quote" onsubmit="return confirm('Create a draft quote from this ticket?');" style="margin:0;"><button class="btn" type="submit">→ Draft Quote</button></form>
     <button class="btn" type="button" onclick="var p=document.getElementById('escalatePanel');p.style.display=p.style.display==='none'?'block':'none';">Escalate</button>
@@ -62,8 +62,8 @@
     <form method="post" action="/tickets/<%= ticket.id %>/close-no-contact" onsubmit="return confirm('Close this ticket with no contact? No emails are sent.');" style="margin:0;"><button class="btn" type="submit">Close — no contact</button></form>
     <form method="post" action="/tickets/<%= ticket.id %>/spam" id="spamForm" style="margin:0;position:relative;" onsubmit="return confirm('Mark this case as spam? It will be hidden and future mail from this ' + (document.getElementById('spamScope').value==='domain'?'domain':'sender') + ' will be blocked.');">
       <input type="hidden" name="scope" id="spamScope" value="email">
-      <button class="btn" type="button" id="spamBtn" style="color:#9f1239;" onclick="var m=document.getElementById('spamMenu');m.style.display=m.style.display==='none'?'block':'none';">Mark spam ▾</button>
-      <div id="spamMenu" style="display:none;position:absolute;z-index:20;margin-top:4px;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 22px rgba(2,6,23,.16);min-width:230px;">
+      <button class="btn" type="button" id="spamBtn" style="color:var(--rose);" onclick="var m=document.getElementById('spamMenu');m.style.display=m.style.display==='none'?'block':'none';">Mark spam ▾</button>
+      <div id="spamMenu" style="display:none;position:absolute;z-index:20;margin-top:4px;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 22px rgba(2,6,23,.16);min-width:230px;">
         <button class="btn" type="submit" style="display:block;width:100%;text-align:left;border:0;border-radius:0;" onclick="document.getElementById('spamScope').value='email';">Block this sender</button>
         <button class="btn" type="submit" style="display:block;width:100%;text-align:left;border:0;border-top:1px solid var(--line);border-radius:0;" onclick="document.getElementById('spamScope').value='domain';">Block the whole domain</button>
       </div>
@@ -94,7 +94,7 @@
 </div>
 
 <% if (!ticket.customer_id) { %>
-<div class="card" style="border:1.5px solid #f59e0b;background:#fffbeb;margin-bottom:16px;">
+<div class="card" style="border:1.5px solid var(--amber);background:var(--tint-warn);margin-bottom:16px;">
   <div class="card-header" style="padding-bottom:8px;"><h2 style="margin:0;">⚠ Unknown sender — not linked to a customer</h2></div>
   <p style="margin:0 0 14px;">From <strong><%= requesterName || '—' %></strong><% if (requesterEmail) { %> · <a class="row-link" href="mailto:<%= requesterEmail %>"><%= requesterEmail %></a><% } %>. Link this case to an existing customer, or create a new one.</p>
   <div style="display:flex;gap:28px;flex-wrap:wrap;">
@@ -104,7 +104,7 @@
       <input type="hidden" name="customer_id" id="linkCustomerId">
       <label style="font-weight:600;font-size:13px;">Link to an existing customer</label>
       <input class="input" id="linkCustSearch" autocomplete="off" placeholder="Start typing a customer name…" style="width:100%;margin-top:4px;">
-      <div id="linkCustResults" style="display:none;border:1px solid var(--line);border-radius:8px;margin-top:6px;max-height:200px;overflow:auto;background:#fff;"></div>
+      <div id="linkCustResults" style="display:none;border:1px solid var(--line);border-radius:8px;margin-top:6px;max-height:200px;overflow:auto;background:var(--surface);"></div>
       <div id="linkChosen" style="display:none;margin-top:10px;flex-direction:column;gap:8px;">
         <span style="font-weight:600;" id="linkChosenName"></span>
         <label style="display:flex;gap:6px;align-items:center;font-size:12px;"><input type="checkbox" name="protect"> Preserve this requester (directory sync won't change it)</label>
@@ -178,7 +178,7 @@
         <div class="form-group" style="margin-bottom:10px;">
           <label>Description</label>
           <input type="hidden" name="description" id="caseDescBody">
-          <div id="caseDescEditor" style="height:180px;background:#fff;"></div>
+          <div id="caseDescEditor" style="height:180px;background:var(--surface);"></div>
         </div>
         <div style="display:flex;gap:8px;">
           <button class="btn btn-primary" type="submit">Save changes</button>
@@ -219,12 +219,12 @@
             #ticketNoteEditor.ql-container{height:auto;}
             #ticketNoteEditor .ql-editor{min-height:300px;max-height:55vh;overflow-y:auto;}
           </style>
-          <div id="ticketNoteEditor" style="background:#fff;"></div>
-          <div id="waLock" style="display:none;margin-top:10px;padding:14px 16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;text-align:center;">
-            <div style="font-size:14px;color:#9a3412;margin-bottom:8px;">This WhatsApp chat is outside the 24-hour window — free-form replies can't be delivered. Send an approved template to reach the customer.</div>
+          <div id="ticketNoteEditor" style="background:var(--surface);"></div>
+          <div id="waLock" style="display:none;margin-top:10px;padding:14px 16px;background:var(--tint-orange);border:1px solid #fed7aa;border-radius:10px;text-align:center;">
+            <div style="font-size:14px;color:var(--orange-deep);margin-bottom:8px;">This WhatsApp chat is outside the 24-hour window — free-form replies can't be delivered. Send an approved template to reach the customer.</div>
             <a class="btn btn-primary" id="waLockBtn" href="#">Use a template to message</a>
           </div>
-          <div id="catLock" style="display:none;margin-top:10px;padding:12px 16px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;font-size:14px;color:#b91c1c;">Choose a <strong>support category</strong> above before starting work on this ticket.</div>
+          <div id="catLock" style="display:none;margin-top:10px;padding:12px 16px;background:var(--tint-bad);border:1px solid var(--bad-line);border-radius:10px;font-size:14px;color:var(--bad-fg);">Choose a <strong>support category</strong> above before starting work on this ticket.</div>
         </div>
         <div class="form-group" style="margin-bottom:10px;"><label>Attachments <span class="muted">(up to 5, 10MB each)</span></label><input class="input" type="file" name="attachments" multiple></div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
@@ -286,7 +286,7 @@
       </script>
 
       <!-- Claude dictate + polish for the reply composer -->
-      <style>.ai-btn.rec{background:#b91c1c;color:#fff;border-color:#b91c1c;}</style>
+      <style>.ai-btn.rec{background:var(--bad-fg);color:#fff;border-color:var(--bad-fg);}</style>
       <script src="/static/js/ai-compose.js"></script>
       <script>
       (function(){
@@ -348,19 +348,19 @@
           <div class="muted" id="tl-n-<%= e.id %>" style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--line);"><%= e.body %> · <%= dt(e.at) %></div>
         <% } else {
              var bg = '#fff', label = '', bd = 'var(--line)';
-             if (e.kind==='message') { if (e.direction==='outbound'){bg='#eff6ff';label='Sent';} else {label='From '+e.author;} }
-             else if (e.noteType==='public_reply') { bg='#f0fdf4'; bd='#bbf7d0'; label='Reply by '+e.author; }
-             else if (e.noteType==='side_convo') { bg='#f5f3ff'; bd='#ddd6fe'; label='🔒 Side conversation · '+e.author; }
-             else if (e.noteType==='bot') { bg='#f8fafc'; label='Bot'; }
-             else { bg='#fefce8'; bd='#fde68a'; label='Internal note · '+e.author; }
+             if (e.kind==='message') { if (e.direction==='outbound'){bg='var(--tint-info)';label='Sent';} else {label='From '+e.author;} }
+             else if (e.noteType==='public_reply') { bg='var(--tint-ok)'; bd='var(--ok-line)'; label='Reply by '+e.author; }
+             else if (e.noteType==='side_convo') { bg='#f5f3ff'; bd='var(--violet-line)'; label='🔒 Side conversation · '+e.author; }
+             else if (e.noteType==='bot') { bg='var(--surface-2)'; label='Bot'; }
+             else { bg='var(--tint-yellow)'; bd='var(--warn-line)'; label='Internal note · '+e.author; }
         %>
           <div id="tl-<%= e.kind==='message' ? 'm' : 'n' %>-<%= e.id %>" style="border:1px solid <%= bd %>;background:<%= bg %>;border-radius:10px;padding:14px 16px;margin:12px 0;">
             <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:8px;font-size:12px;align-items:center;">
               <span><strong><%= label %></strong>
               <% if (e.channel==='teams' && typeof teamsChatId!=='undefined' && teamsChatId && e.teamsMessageId) { %>
-                <a href="https://teams.microsoft.com/l/message/<%= encodeURIComponent(teamsChatId) %>/<%= encodeURIComponent(e.teamsMessageId) %>?context=%7B%22contextType%22%3A%22chat%22%7D" target="_blank" rel="noopener" title="Open this message in Microsoft Teams" style="text-decoration:none;font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;background:#eef2ff;color:#4338ca;">👥 Teams ↗</a>
+                <a href="https://teams.microsoft.com/l/message/<%= encodeURIComponent(teamsChatId) %>/<%= encodeURIComponent(e.teamsMessageId) %>?context=%7B%22contextType%22%3A%22chat%22%7D" target="_blank" rel="noopener" title="Open this message in Microsoft Teams" style="text-decoration:none;font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;background:var(--tint-indigo);color:#4338ca;">👥 Teams ↗</a>
               <% } else if (e.channel==='teams' || e.channel==='whatsapp') { %>
-                <span style="font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;<%= e.channel==='teams' ? 'background:#eef2ff;color:#4338ca;' : 'background:#f0fdf4;color:#15803d;' %>"><%= e.channel==='teams' ? '👥 Teams' : '🟢 WhatsApp' %></span>
+                <span style="font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;<%= e.channel==='teams' ? 'background:var(--tint-indigo);color:#4338ca;' : 'background:var(--tint-ok);color:var(--ok-fg);' %>"><%= e.channel==='teams' ? '👥 Teams' : '🟢 WhatsApp' %></span>
               <% } %></span>
               <span class="muted" style="display:flex;gap:8px;align-items:center;">
                 <% if (e.kind==='note' && (e.noteType==='public_reply' || e.noteType==='private_note')) { %>
@@ -381,7 +381,7 @@
             <% } %>
             <div class="email-body" style="font-size:14px;line-height:1.6;overflow-wrap:anywhere;"><%- e.body %></div>
             <% if (e.kind==='message' && (e.channel==='teams' || e.channel==='whatsapp')) { %>
-            <div id="movemsg-<%= e.id %>" style="display:none;margin-top:10px;padding:12px;border:1px dashed var(--line);border-radius:8px;background:#fff;">
+            <div id="movemsg-<%= e.id %>" style="display:none;margin-top:10px;padding:12px;border:1px dashed var(--line);border-radius:8px;background:var(--surface);">
               <form method="post" action="/tickets/<%= ticket.id %>/message/<%= e.id %>/move" style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:0;">
                 <div style="font-size:12px;">
                   <label style="display:block;margin-bottom:3px;color:var(--muted);">Move this message to</label>
@@ -413,12 +413,12 @@
       <div class="form-group" style="margin-bottom:12px;"><label>Status</label><select class="input" id="statusSel" name="status" style="width:100%;"><% STATUSES.forEach(function(s){ %><option value="<%= s %>" <%= ticket.status===s?'selected':'' %>><%= cap(s) %></option><% }); %></select></div>
       <% function dtLocal(d){ if(!d) return ''; var x=new Date(d); var p=function(n){return String(n).padStart(2,'0');}; return x.getFullYear()+'-'+p(x.getMonth()+1)+'-'+p(x.getDate())+'T'+p(x.getHours())+':'+p(x.getMinutes()); } %>
       <input type="hidden" name="postponed_until" id="postponedUntil" value="<%= dtLocal(ticket.postponed_until) %>">
-      <div id="postponeWrap" style="margin-bottom:12px;display:<%= (ticket.status==='postponed'||ticket.status==='awaiting_installation')?'block':'none' %>;font-size:13px;color:#7c3aed;">
+      <div id="postponeWrap" style="margin-bottom:12px;display:<%= (ticket.status==='postponed'||ticket.status==='awaiting_installation')?'block':'none' %>;font-size:13px;color:var(--violet-deep);">
         📅 <span id="postponeLabel"><%= ticket.status==='awaiting_installation'?'Installation date':'Postpone until' %></span> <strong id="postponeShow"></strong> · <a href="#" id="postponeChange" class="row-link">change</a>
       </div>
       <input type="hidden" name="department" value="support">
       <% var _catReq = (typeof aiCatOn !== 'undefined' && aiCatOn && !ticket.category); %>
-      <div class="form-group" style="margin-bottom:12px;"><label>Category<% if(_catReq){ %> <span style="color:#dc2626;font-weight:700;">— required</span><% } %></label><select class="input" name="category" id="ticketCategory" style="width:100%;<%= _catReq ? 'border-color:#dc2626;' : '' %>"><option value="" disabled <%= !ticket.category ? 'selected' : '' %>>— choose a category —</option><% CATEGORIES.forEach(function(c){ %><option value="<%= c %>" <%= ticket.category===c?'selected':'' %>><%= cap(c) %></option><% }); %></select></div>
+      <div class="form-group" style="margin-bottom:12px;"><label>Category<% if(_catReq){ %> <span style="color:var(--bad);font-weight:700;">— required</span><% } %></label><select class="input" name="category" id="ticketCategory" style="width:100%;<%= _catReq ? 'border-color:var(--bad);' : '' %>"><option value="" disabled <%= !ticket.category ? 'selected' : '' %>>— choose a category —</option><% CATEGORIES.forEach(function(c){ %><option value="<%= c %>" <%= ticket.category===c?'selected':'' %>><%= cap(c) %></option><% }); %></select></div>
       <div class="form-group" style="margin-bottom:14px;"><label>Assigned to</label><select class="input" name="assigned_user_id" style="width:100%;"><option value="">— unassigned —</option><% users.forEach(function(u){ %><option value="<%= u.id %>" <%= ticket.assigned_user_id===u.id?'selected':'' %>><%= u.display_name %></option><% }); %></select></div>
       <div class="form-group" style="margin-bottom:14px;">
         <label>Requester</label>
@@ -436,7 +436,7 @@
     </form>
 
     <div id="ppModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(15,23,42,.5);align-items:center;justify-content:center;padding:20px;">
-      <div style="background:#fff;border-radius:14px;padding:22px;max-width:400px;width:100%;">
+      <div style="background:var(--surface);border-radius:14px;padding:22px;max-width:400px;width:100%;">
         <h2 id="ppModalTitle" style="font-size:17px;margin:0 0 4px;">Postpone case</h2>
         <p id="ppModalSub" class="muted" style="font-size:13px;margin:0 0 14px;">When should this case come back to Awaiting engineer?</p>
         <input id="ppModalInput" class="input" type="datetime-local" style="width:100%;margin-bottom:12px;font-size:16px;">
@@ -454,7 +454,7 @@
     </div>
 
     <div id="reqModal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(15,23,42,.5);align-items:center;justify-content:center;padding:20px;">
-      <div style="background:#fff;border-radius:14px;padding:22px;max-width:480px;width:100%;">
+      <div style="background:var(--surface);border-radius:14px;padding:22px;max-width:480px;width:100%;">
         <h2 style="font-size:17px;margin:0 0 4px;">Set requester</h2>
         <p class="muted" style="font-size:13px;margin:0 0 12px;">Search all contacts. Choosing one updates the requester and company on this case.</p>
         <input id="reqSearch" class="input" type="search" placeholder="Search name or email…" style="width:100%;margin-bottom:10px;" autocomplete="off">
@@ -749,7 +749,7 @@ function chooseReq(id){ document.getElementById('reqContactId').value=id; docume
     t=setTimeout(function(){
       fetch('/contacts/search.json?q='+encodeURIComponent(q)).then(function(r){return r.json();}).then(function(rows){
         out.innerHTML = (rows && rows.length) ? rows.map(function(c){
-          return '<button type="button" onclick="chooseReq('+c.id+')" style="display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:#fff;padding:9px 12px;cursor:pointer;font-size:13px;"><strong>'+esc(c.full_name)+'</strong>'+(c.email?' <span class="muted">· '+esc(c.email)+'</span>':'')+(c.customer_name?'<br><span class="muted" style="font-size:12px;">'+esc(c.customer_name)+'</span>':'')+'</button>';
+          return '<button type="button" onclick="chooseReq('+c.id+')" style="display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:var(--surface);padding:9px 12px;cursor:pointer;font-size:13px;"><strong>'+esc(c.full_name)+'</strong>'+(c.email?' <span class="muted">· '+esc(c.email)+'</span>':'')+(c.customer_name?'<br><span class="muted" style="font-size:12px;">'+esc(c.customer_name)+'</span>':'')+'</button>';
         }).join('') : '<div class="muted" style="padding:10px;font-size:13px;">No contacts match.</div>';
       }).catch(function(){ out.innerHTML='<div class="muted" style="padding:10px;">Search failed.</div>'; });
     }, 250);
@@ -761,7 +761,7 @@ function chooseReq(id){ document.getElementById('reqContactId').value=id; docume
 
 <!-- Ask Claude lightbox -->
 <div id="askOverlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:1000;" onclick="if(event.target===this)askClose()">
-  <div style="max-width:700px;margin:5vh auto;background:#fff;border-radius:14px;box-shadow:0 24px 60px rgba(2,6,23,.35);max-height:88vh;display:flex;flex-direction:column;">
+  <div style="max-width:700px;margin:5vh auto;background:var(--surface);border-radius:14px;box-shadow:0 24px 60px rgba(2,6,23,.35);max-height:88vh;display:flex;flex-direction:column;">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line);">
       <h2 style="margin:0;font-size:17px;">&#10024; Ask Claude about this case</h2>
       <button class="btn" type="button" onclick="askClose()" style="padding:2px 10px;">&#10005;</button>
@@ -774,7 +774,7 @@ function chooseReq(id){ document.getElementById('reqContactId').value=id; docume
       </form>
       <div id="askOut"></div>
       <div id="askHistWrap" style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:10px;">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin-bottom:6px;">Previously asked on this case</div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:6px;">Previously asked on this case</div>
         <div id="askHist"></div>
       </div>
     </div>
@@ -799,7 +799,7 @@ function chooseReq(id){ document.getElementById('reqContactId').value=id; docume
       d.queries.forEach(function(q){
         var row = el('div', 'padding:7px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px;');
         var top = el('div', 'font-weight:600;', q.question);
-        var meta = el('div', 'font-size:11px;color:#94a3b8;margin-top:2px;', (q.asked_by || 'someone') + ' · ' + new Date(q.created_at).toLocaleString('en-GB'));
+        var meta = el('div', 'font-size:11px;color:var(--faint);margin-top:2px;', (q.asked_by || 'someone') + ' · ' + new Date(q.created_at).toLocaleString('en-GB'));
         row.appendChild(top); row.appendChild(meta);
         row.onclick = function(){ renderAnswer(q.question, q.answer || { answer: '(no answer stored)', findings: [] }); window.scrollTo(0,0); };
         list.appendChild(row);
@@ -831,7 +831,7 @@ function chooseReq(id){ document.getElementById('reqContactId').value=id; docume
       };
       rec.onend = stopUi;
       rec.onerror = function(e){ stopUi(); if (e && e.error === 'not-allowed') alert('Microphone access is blocked — allow the mic for this site in the browser to dictate.'); };
-      try { rec.start(); listening = true; mic.style.background = '#fee2e2'; mic.style.borderColor = '#fca5a5'; mic.title = 'Listening… click to stop'; q.focus(); } catch(e){ stopUi(); }
+      try { rec.start(); listening = true; mic.style.background = 'var(--bad-bg)'; mic.style.borderColor = 'var(--bad-line2)'; mic.title = 'Listening… click to stop'; q.focus(); } catch(e){ stopUi(); }
     });
   })();
 
@@ -843,24 +843,24 @@ function chooseReq(id){ document.getElementById('reqContactId').value=id; docume
     if (!target) return;
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     var prev = target.style.boxShadow;
-    target.style.boxShadow = '0 0 0 3px #0ea5b7';
+    target.style.boxShadow = '0 0 0 3px var(--accent)';
     setTimeout(function(){ target.style.boxShadow = prev; }, 2600);
   }
 
   function renderAnswer(question, a){
     var out = document.getElementById('askOut');
     out.innerHTML = '';
-    var qEl = el('div', 'font-size:12px;color:#64748b;margin-bottom:6px;'); qEl.textContent = 'Q: ' + question;
-    var ans = el('div', 'font-size:14px;line-height:1.6;background:#ecfeff;border:1px solid #a5dbe6;border-radius:10px;padding:12px 14px;', a.answer || '');
+    var qEl = el('div', 'font-size:12px;color:var(--muted);margin-bottom:6px;'); qEl.textContent = 'Q: ' + question;
+    var ans = el('div', 'font-size:14px;line-height:1.6;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:10px;padding:12px 14px;', a.answer || '');
     out.appendChild(qEl); out.appendChild(ans);
     if (a.findings && a.findings.length) {
-      var lbl = el('div', 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin:10px 0 6px;', 'Found in — click to jump there');
+      var lbl = el('div', 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin:10px 0 6px;', 'Found in — click to jump there');
       out.appendChild(lbl);
       a.findings.forEach(function(f){
         var ok = /^[MN]\d+$/.test(String(f.ref || '').trim());
-        var chip = el('div', 'padding:7px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;font-size:13px;' + (ok ? 'cursor:pointer;' : 'opacity:.7;'));
-        var refEl = el('span', 'font-weight:700;color:#0e6377;margin-right:8px;', ok ? '\u2192 ' + f.ref : f.ref || 'CASE');
-        var quote = el('span', 'color:#334155;', '\u201C' + (f.quote || '') + '\u201D');
+        var chip = el('div', 'padding:7px 10px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;font-size:13px;' + (ok ? 'cursor:pointer;' : 'opacity:.7;'));
+        var refEl = el('span', 'font-weight:700;color:var(--accent-deep);margin-right:8px;', ok ? '\u2192 ' + f.ref : f.ref || 'CASE');
+        var quote = el('span', 'color:var(--text-strong);', '\u201C' + (f.quote || '') + '\u201D');
         chip.appendChild(refEl); chip.appendChild(quote);
         if (ok) chip.onclick = function(){ jumpTo(f.ref); };
         out.appendChild(chip);
@@ -878,9 +878,9 @@ function chooseReq(id){ document.getElementById('reqContactId').value=id; docume
       .then(function(r){ return r.json(); })
       .then(function(d){
         if (d.ok) { renderAnswer(d.question, d.answer); document.getElementById('askQ').value = ''; askOpen(); }
-        else document.getElementById('askOut').innerHTML = '<div style="color:#dc2626;font-size:13px;">' + (d.error || 'Ask failed.') + '</div>';
+        else document.getElementById('askOut').innerHTML = '<div style="color:var(--bad);font-size:13px;">' + (d.error || 'Ask failed.') + '</div>';
       })
-      .catch(function(){ document.getElementById('askOut').innerHTML = '<div style="color:#dc2626;font-size:13px;">Network error \u2014 try again.</div>'; })
+      .catch(function(){ document.getElementById('askOut').innerHTML = '<div style="color:var(--bad);font-size:13px;">Network error \u2014 try again.</div>'; })
       .finally(function(){ btn.disabled = false; btn.textContent = 'Ask'; });
     return false;
   };

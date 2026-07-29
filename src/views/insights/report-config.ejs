@@ -34,17 +34,17 @@ const repRows = reports.map(r => `
 ${flashMsg ? `<div class="alert alert-success">${flashMsg}</div>` : ''}
 ${errMsg ? `<div class="alert alert-error">${errMsg}</div>` : ''}
 
-<div class="card" style="background:linear-gradient(135deg,#0f172a,#1e293b);border:none;color:#fff;">
+<div class="card" style="background:linear-gradient(135deg,var(--ink),var(--lumen-navy));border:none;color:#fff;">
   <h2 style="margin:0 0 4px;color:#fff;">⚡ Generate report</h2>
-  <p style="margin:0 0 14px;color:#cbd5e1;font-size:13px;">${isWeekly ? 'Pick any date in the target week — the report always runs Mon–Sun for that week.' : 'Pick the day to report on.'}</p>
+  <p style="margin:0 0 14px;color:var(--line-strong);font-size:13px;">${isWeekly ? 'Pick any date in the target week — the report always runs Mon–Sun for that week.' : 'Pick the day to report on.'}</p>
   <form method="POST" action="/insights/report-config/${cfg.id}/generate" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin:0;">
     <input type="hidden" name="report_type" value="${isWeekly ? 'weekly' : 'daily'}">
     <div>
-      <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#94a3b8;margin-bottom:4px;">${isWeekly ? 'Week of' : 'Date'}</label>
+      <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);margin-bottom:4px;">${isWeekly ? 'Week of' : 'Date'}</label>
       <input class="input" type="date" name="report_date" required style="min-width:180px;">
     </div>
     <button class="btn-primary" type="submit" style="padding:9px 18px;">Generate &amp; email</button>
-    <button class="btn-secondary" type="submit" name="no_email" value="true" style="padding:9px 18px;background:#334155;color:#fff;border-color:#475569;">Generate only</button>
+    <button class="btn-secondary" type="submit" name="no_email" value="true" style="padding:9px 18px;background:var(--text-strong);color:#fff;border-color:var(--text-soft);">Generate only</button>
   </form>
 </div>
 

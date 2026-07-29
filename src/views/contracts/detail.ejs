@@ -6,23 +6,23 @@
   .cd-head h1{margin:0;display:flex;align-items:center;gap:11px;flex-wrap:wrap;font-size:23px;}
   .st{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:999px;white-space:nowrap;}
   .st i{width:6px;height:6px;border-radius:50%;background:currentColor;}
-  .st.active{background:#dcfce7;color:#166534;} .st.draft{background:#f1f5f9;color:#475569;}
-  .st.expired,.st.cancelled{background:#fee2e2;color:#b91c1c;}
-  .st.signed{background:#dcfce7;color:#166534;} .st.out{background:#e0e7ff;color:#3730a3;}
-  .st.none{background:#f1f5f9;color:#475569;} .st.bad{background:#fee2e2;color:#b91c1c;}
+  .st.active{background:var(--ok-bg);color:var(--ok-fg);} .st.draft{background:var(--surface-3);color:var(--text-soft);}
+  .st.expired,.st.cancelled{background:var(--bad-bg);color:var(--bad-fg);}
+  .st.signed{background:var(--ok-bg);color:var(--ok-fg);} .st.out{background:var(--tint-indigo);color:var(--indigo-deep);}
+  .st.none{background:var(--surface-3);color:var(--text-soft);} .st.bad{background:var(--bad-bg);color:var(--bad-fg);}
   .cd-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px;}
-  .cd-stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 17px;}
-  .cd-stat span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:4px;}
+  .cd-stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:15px 17px;}
+  .cd-stat span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:4px;}
   .cd-stat strong{font-size:16px;color:var(--lumen-dark);font-weight:700;display:block;line-height:1.35;}
-  .cd-stat small{color:#64748b;font-weight:500;font-size:12px;}
-  .cd-stat.value{background:linear-gradient(135deg,#f0fdfa,#ecfeff);border-color:#ccfbf1;}
-  .cd-stat.value strong{font-size:22px;color:#0f766e;}
-  .cd-sig{background:#fff;border:1px solid var(--line);border-radius:12px;padding:0;margin-bottom:14px;overflow:hidden;}
+  .cd-stat small{color:var(--muted);font-weight:500;font-size:12px;}
+  .cd-stat.value{background:linear-gradient(135deg,var(--tint-teal),var(--accent-soft));border-color:var(--teal-bg);}
+  .cd-stat.value strong{font-size:22px;color:var(--teal-deep);}
+  .cd-sig{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:0;margin-bottom:14px;overflow:hidden;}
   .cd-sig-h{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:15px 18px;border-bottom:1px solid var(--line);}
   .cd-sig-h h2{margin:0;font-size:15px;display:flex;align-items:center;gap:9px;}
   .cd-sig-b{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:15px;padding:16px 18px;font-size:13px;}
-  .cd-sig-b span.k{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:3px;}
-  .table tbody tr{transition:background .12s;} .table tbody tr:hover{background:#f8fafc;}
+  .cd-sig-b span.k{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:3px;}
+  .table tbody tr{transition:background .12s;} .table tbody tr:hover{background:var(--surface-2);}
 </style>
 
 <% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
@@ -96,7 +96,7 @@
   </div>
   <% if (contract.sign_token) { %>
     <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">
-      <span class="k" style="display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;">Signing link (no login required)</span>
+      <span class="k" style="display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);">Signing link (no login required)</span>
       <input class="input" readonly onclick="this.select();" style="width:100%;font-size:12px;margin-top:4px;"
              value="<%= (typeof appUrl !== 'undefined' && appUrl ? appUrl : '') %>/c/<%= contract.sign_token %>">
     </div>

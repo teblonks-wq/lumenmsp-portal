@@ -12,7 +12,7 @@
     <tr><th style="width:120px;">To</th><td><%= m.to_email || '—' %></td></tr>
     <tr><th>From</th><td><%= m.from_email || '—' %></td></tr>
     <tr><th>Sent</th><td><%= new Date(m.created_at).toLocaleString('en-GB') %></td></tr>
-    <% if (m.error) { %><tr><th>Error</th><td style="color:#b91c1c;"><%= m.error %></td></tr><% } %>
+    <% if (m.error) { %><tr><th>Error</th><td style="color:var(--bad-fg);"><%= m.error %></td></tr><% } %>
     <% if (atts.length) { %><tr><th>Attachments</th><td><% atts.forEach(function(a){ %><span class="badge" style="margin-right:6px;">&#128206; <%= a %></span><% }); %></td></tr><% } %>
   </tbody></table>
 

@@ -46,10 +46,10 @@
 
 <div class="card" style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:16px;">
   <div><div class="muted" style="font-size:12px;">Priced lines</div><div style="font-size:20px;font-weight:700;"><%= priced.length %></div></div>
-  <div><div class="muted" style="font-size:12px;">Uncosted</div><div style="font-size:20px;font-weight:700;color:<%= uncosted.length?'#b45309':'inherit' %>;"><%= uncosted.length %></div></div>
+  <div><div class="muted" style="font-size:12px;">Uncosted</div><div style="font-size:20px;font-weight:700;color:<%= uncosted.length?'var(--warn-fg)':'inherit' %>;"><%= uncosted.length %></div></div>
   <div><div class="muted" style="font-size:12px;">Monthly buy</div><div style="font-size:20px;font-weight:700;"><%= money(totBuy) %></div></div>
   <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:700;"><%= money(totSale) %></div></div>
-  <div><div class="muted" style="font-size:12px;">Monthly profit</div><div style="font-size:20px;font-weight:700;color:#166534;"><%= money(totProfit) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Monthly profit</div><div style="font-size:20px;font-weight:700;color:var(--ok-fg);"><%= money(totProfit) %></div></div>
 </div>
 
 <!-- Filter + batch toolbar -->
@@ -62,15 +62,15 @@
     </div>
     <button class="btn" type="button" id="pxReset" style="font-size:12px;padding:6px 10px;">Reset</button>
   </div>
-  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px;padding-top:12px;border-top:1px solid var(--border,#e5e7eb);">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:12px;padding-top:12px;border-top:1px solid var(--border,var(--line));">
     <div><label class="muted" style="font-size:11px;display:block;margin-bottom:2px;">Set checked to £</label><input id="pxSetPrice" class="input" type="text" inputmode="decimal" placeholder="16.50" style="font-size:13px;padding:5px 8px;width:90px;"></div>
     <button class="btn" type="button" id="pxApplyPrice" style="font-size:12px;padding:6px 10px;">Apply price</button>
-    <div style="border-left:1px solid var(--border,#e5e7eb);padding-left:10px;"><label class="muted" style="font-size:11px;display:block;margin-bottom:2px;">…or markup %</label><input id="pxMarkup" class="input" type="text" inputmode="decimal" placeholder="50" style="font-size:13px;padding:5px 8px;width:80px;"></div>
+    <div style="border-left:1px solid var(--border,var(--line));padding-left:10px;"><label class="muted" style="font-size:11px;display:block;margin-bottom:2px;">…or markup %</label><input id="pxMarkup" class="input" type="text" inputmode="decimal" placeholder="50" style="font-size:13px;padding:5px 8px;width:80px;"></div>
     <button class="btn" type="button" id="pxApplyMarkup" style="font-size:12px;padding:6px 10px;">Apply markup</button>
     <button class="btn" type="button" id="pxCheckVisible" style="font-size:12px;padding:6px 10px;margin-left:auto;">Check all shown</button>
   </div>
   <!-- live what-if summary -->
-  <div id="pxImpact" style="display:flex;gap:24px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border,#e5e7eb);font-size:13px;">
+  <div id="pxImpact" style="display:flex;gap:24px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border,var(--line));font-size:13px;">
     <div><span class="muted">Changed rows</span> <strong id="pxNChanged">0</strong></div>
     <div><span class="muted">Current profit (changed)</span> <strong id="pxCurProfit">£0.00</strong></div>
     <div><span class="muted">Proposed profit (changed)</span> <strong id="pxNewProfit">£0.00</strong></div>
@@ -99,11 +99,11 @@
         <td><input type="checkbox" class="px-check"></td>
         <td><%= l.customer_name || '—' %></td>
         <td><%= l.description || l.product_reference || '(unnamed)' %> <span class="muted" style="font-size:11px;"><%= l.source %></span>
-          <% if (!r.hasSale) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;">uncosted</span><% } %></td>
+          <% if (!r.hasSale) { %><span class="badge" style="font-size:10px;background:var(--warn-bg);color:var(--warn-deep);">uncosted</span><% } %></td>
         <td style="text-align:right;"><%= r.qty %></td>
         <td style="text-align:right;"><%= money(r.buy) %></td>
         <td style="text-align:right;" class="px-cursale"><%= r.hasSale ? money(r.sale) : '—' %></td>
-        <td style="text-align:right;color:<%= r.hasSale ? (r.profit>=0?'#166534':'#b91c1c') : '' %>;" class="px-curprofit"><%= r.hasSale ? money(r.profit) : '—' %></td>
+        <td style="text-align:right;color:<%= r.hasSale ? (r.profit>=0?'var(--ok-fg)':'var(--bad-fg)') : '' %>;" class="px-curprofit"><%= r.hasSale ? money(r.profit) : '—' %></td>
         <td style="text-align:right;">
           <input type="hidden" name="row_source" value="<%= l.source %>">
           <input type="hidden" name="row_customer_id" value="<%= l.customer_id %>">
@@ -146,7 +146,7 @@
     if(v===''){pp.textContent='—';pp.style.color='';pp.classList.add('muted');return null;}
     var sale=parseFloat(v); if(isNaN(sale)){pp.textContent='—';pp.style.color='';return null;}
     var prof=(sale-buy)*qty; pp.classList.remove('muted'); pp.textContent=gbp(prof);
-    pp.style.color=prof>=0?'#166534':'#b91c1c'; return prof;
+    pp.style.color=prof>=0?'var(--ok-fg)':'var(--bad-fg)'; return prof;
   }
   function recalcImpact(){
     var nCh=0,curP=0,newP=0;
@@ -163,7 +163,7 @@
     document.getElementById('pxCurProfit').textContent=gbp(curP);
     document.getElementById('pxNewProfit').textContent=gbp(newP);
     var d=document.getElementById('pxDelta'); var delta=newP-curP;
-    d.textContent=(delta>=0?'+':'')+gbp(delta); d.style.color=delta>=0?'#166534':'#b91c1c';
+    d.textContent=(delta>=0?'+':'')+gbp(delta); d.style.color=delta>=0?'var(--ok-fg)':'var(--bad-fg)';
     document.getElementById('pxSaveNote').textContent=nCh?(nCh+' change'+(nCh===1?'':'s')+' to save'):'No changes yet';
     var sv=document.getElementById('pxSave'); sv.textContent=nCh?('Save '+nCh+' price change'+(nCh===1?'':'s')):'Save changes'; sv.disabled=!nCh; sv.style.opacity=nCh?'1':'.5';
   }
@@ -189,7 +189,7 @@
     var t=targetRows(); t.forEach(function(r){var buy=parseFloat(r.getAttribute('data-buy'))||0;r.querySelector('.px-new').value=(buy*(1+m/100)).toFixed(2);});
     recalcImpact(); flash(t.length+' row'+(t.length===1?'':'s')+' set to cost +'+m+'% — review the impact, then Save changes');
   });
-  function flash(msg){var n=document.getElementById('pxSaveNote');n.textContent=msg;n.style.color='#b45309';}
+  function flash(msg){var n=document.getElementById('pxSaveNote');n.textContent=msg;n.style.color='var(--warn-fg)';}
   document.getElementById('pxCheckVisible').addEventListener('click',function(){visibleRows().forEach(function(r){r.querySelector('.px-check').checked=true;});});
   document.getElementById('pxHead').addEventListener('change',function(e){visibleRows().forEach(function(r){r.querySelector('.px-check').checked=e.target.checked;});});
   form.addEventListener('input',function(e){if(e.target.classList.contains('px-new'))recalcImpact();});
@@ -225,7 +225,7 @@
         if(!d||!d.ok){throw new Error('save failed');}
         var prof=(sale-buy)*qty;
         r.querySelector('.px-cursale').textContent=gbp(sale);
-        var cp=r.querySelector('.px-curprofit'); cp.textContent=gbp(prof); cp.style.color=prof>=0?'#166534':'#b91c1c';
+        var cp=r.querySelector('.px-curprofit'); cp.textContent=gbp(prof); cp.style.color=prof>=0?'var(--ok-fg)':'var(--bad-fg)';
         r.setAttribute('data-cursale',sale.toFixed(4)); r.setAttribute('data-curprofit',prof.toFixed(4));
         r.querySelector('input[name="row_cur_sale"]').value=sale.toFixed(4);
         r.setAttribute('data-status','priced');

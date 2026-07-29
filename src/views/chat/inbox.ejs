@@ -7,10 +7,10 @@
 
 <div class="page-header"><h1>Messages</h1><p class="muted">Tag each message to a case. Untagged messages can't be replied to until they're tagged.</p></div>
 
-<div style="display:flex;gap:6px;border-bottom:2px solid #e5e7eb;margin-bottom:18px;">
-  <a href="/chat" style="padding:10px 18px;text-decoration:none;font-weight:600;color:#6b7280;border-bottom:2px solid transparent;margin-bottom:-2px;">Website</a>
-  <a href="/chat/channel/whatsapp" style="padding:10px 18px;text-decoration:none;font-weight:600;margin-bottom:-2px;<%= channel==='whatsapp' ? 'color:#0891b2;border-bottom:2px solid #0891b2;' : 'color:#6b7280;border-bottom:2px solid transparent;' %>">WhatsApp<%if(waU){%> <span class="badge badge-failed"><%= waU %></span><%}%></a>
-  <a href="/chat/channel/teams" style="padding:10px 18px;text-decoration:none;font-weight:600;margin-bottom:-2px;<%= channel==='teams' ? 'color:#0891b2;border-bottom:2px solid #0891b2;' : 'color:#6b7280;border-bottom:2px solid transparent;' %>">Teams<%if(tmU){%> <span class="badge badge-failed"><%= tmU %></span><%}%></a>
+<div style="display:flex;gap:6px;border-bottom:2px solid var(--line);margin-bottom:18px;">
+  <a href="/chat" style="padding:10px 18px;text-decoration:none;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-2px;">Website</a>
+  <a href="/chat/channel/whatsapp" style="padding:10px 18px;text-decoration:none;font-weight:600;margin-bottom:-2px;<%= channel==='whatsapp' ? 'color:var(--accent-dark);border-bottom:2px solid var(--accent-dark);' : 'color:var(--muted);border-bottom:2px solid transparent;' %>">WhatsApp<%if(waU){%> <span class="badge badge-failed"><%= waU %></span><%}%></a>
+  <a href="/chat/channel/teams" style="padding:10px 18px;text-decoration:none;font-weight:600;margin-bottom:-2px;<%= channel==='teams' ? 'color:var(--accent-dark);border-bottom:2px solid var(--accent-dark);' : 'color:var(--muted);border-bottom:2px solid transparent;' %>">Teams<%if(tmU){%> <span class="badge badge-failed"><%= tmU %></span><%}%></a>
 </div>
 
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
@@ -26,10 +26,10 @@
   <div class="table-wrap"><table class="table" style="margin:0;">
     <thead><tr><th></th><th>Contact</th><th>From</th><th>Message</th><th>When</th><th>Case</th><th></th></tr></thead>
     <tbody>
-      <% if(!msgs.length){ %><tr><td colspan="7" class="empty" style="padding:24px;text-align:center;color:#9ca3af;">No messages.</td></tr><% } %>
+      <% if(!msgs.length){ %><tr><td colspan="7" class="empty" style="padding:24px;text-align:center;color:var(--faint);">No messages.</td></tr><% } %>
       <% msgs.forEach(function(m){ %>
       <tr>
-        <td title="<%= m.message_direction %>" style="color:#9ca3af;"><%= m.message_direction==='outbound' ? '↗' : '↘' %></td>
+        <td title="<%= m.message_direction %>" style="color:var(--faint);"><%= m.message_direction==='outbound' ? '↗' : '↘' %></td>
         <td><strong><%= esc(m.from_name || '—') %></strong></td>
         <td class="muted" style="font-family:monospace;font-size:13px;"><%= esc(m.from_email || '') %></td>
         <td style="max-width:360px;"><a class="row-link" href="/chat/msg/<%= m.id %>" style="color:inherit;"><%= esc((m.body_text||'').slice(0,140)) || '(open message)' %></a><% if(m.hasAttachment){ %> <span class="badge badge-primary">Attachment</span><% } %></td>
@@ -41,7 +41,7 @@
         <td style="text-align:right;white-space:nowrap;">
           <% if(m.ticket_id && m.message_direction!=='outbound'){ %><button class="btn btn-primary" style="padding:3px 10px;font-size:13px;" onclick="openReply(<%= m.id %>, '<%= esc((m.from_name||'').replace(/'/g,'')) %>')">Reply</button><% } %>
           <button class="btn" style="padding:3px 10px;font-size:13px;" onclick="openTag(<%= m.id %>, '<%= m.ticket_id ? esc((m.ticket_number||('#'+m.ticket_id))) : '' %>')"><%= m.ticket_id ? 'Re-tag' : 'Tag' %></button>
-          <% if (user.role==='admin') { %><button class="btn" style="padding:3px 10px;font-size:13px;color:#dc2626;" onclick="delMsg(<%= m.id %>, <%= m.ticket_id ? 'true' : 'false' %>)">Delete</button><% } %>
+          <% if (user.role==='admin') { %><button class="btn" style="padding:3px 10px;font-size:13px;color:var(--bad);" onclick="delMsg(<%= m.id %>, <%= m.ticket_id ? 'true' : 'false' %>)">Delete</button><% } %>
         </td>
       </tr>
       <% }); %>
@@ -50,7 +50,7 @@
 </div>
 
 <div id="tagModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:2000;align-items:flex-start;justify-content:center;">
-  <div style="background:#fff;border-radius:12px;max-width:560px;width:92%;margin-top:8vh;padding:20px 22px;box-shadow:0 20px 50px rgba(0,0,0,.3);">
+  <div style="background:var(--surface);border-radius:12px;max-width:560px;width:92%;margin-top:8vh;padding:20px 22px;box-shadow:0 20px 50px rgba(0,0,0,.3);">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <h2 style="margin:0;font-size:18px;">Tag message to a case</h2>
       <button class="btn" style="padding:2px 10px;" onclick="closeTag()">✕</button>
@@ -58,7 +58,7 @@
     <p id="tagCurrent" class="muted" style="margin:0 0 10px;font-size:13px;display:none;"></p>
     <input id="tagSearch" class="input" style="width:100%;" placeholder="Case number, case name, or person…" oninput="searchCases(this.value)" autocomplete="off">
     <div id="tagResults" style="margin-top:12px;max-height:280px;overflow-y:auto;"></div>
-    <div style="border-top:1px solid #e5e7eb;margin-top:12px;padding-top:12px;text-align:center;">
+    <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px;text-align:center;">
       <button class="btn" onclick="newCase()">＋ Create a new case from this message</button>
       <div class="muted" style="font-size:12px;margin-top:4px;">Claude picks the category (you'll confirm it before replying).</div>
     </div>
@@ -66,7 +66,7 @@
 </div>
 
 <div id="replyModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:2000;align-items:flex-start;justify-content:center;">
-  <div style="background:#fff;border-radius:12px;max-width:560px;width:92%;margin-top:8vh;padding:20px 22px;box-shadow:0 20px 50px rgba(0,0,0,.3);">
+  <div style="background:var(--surface);border-radius:12px;max-width:560px;width:92%;margin-top:8vh;padding:20px 22px;box-shadow:0 20px 50px rgba(0,0,0,.3);">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <h2 style="margin:0;font-size:18px;">Reply <span id="replyWho" class="muted" style="font-weight:400;font-size:14px;"></span></h2>
       <button class="btn" style="padding:2px 10px;" onclick="closeReply()">✕</button>
@@ -112,7 +112,7 @@ function searchCases(q){
     fetch('/chat/msg/case-search?q='+encodeURIComponent(q)).then(function(r){return r.json();}).then(function(rows){
       if(!rows.length){ document.getElementById('tagResults').innerHTML='<p class="muted">No matching cases.</p>'; return; }
       document.getElementById('tagResults').innerHTML = rows.map(function(c){
-        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px;">'
+        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;">'
           + '<div><strong>'+esc(c.ticket_number)+'</strong> — '+esc(c.subject||'(no subject)')+'<br><span class="muted" style="font-size:12px;">'+esc(c.customer_name||'')+'</span></div>'
           + '<button class="btn btn-primary" style="padding:4px 12px;" onclick="assign('+c.id+')">Tag</button></div>';
       }).join('');

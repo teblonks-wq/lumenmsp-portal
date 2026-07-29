@@ -22,15 +22,15 @@ function remoteHref(a){
     <% if (typeof user!=='undefined' && user.role==='admin') { %>
     <form method="post" action="/assets/sync"><button class="btn btn-primary" type="submit">↻ Sync from Atera</button></form>
     <% } %>
-    <% if (unmatchedCount > 0) { %><a class="btn" href="/assets/unmatched" style="border-color:#f59e0b;color:#b45309;">⚠ <%= unmatchedCount %> unmatched</a><% } %>
+    <% if (unmatchedCount > 0) { %><a class="btn" href="/assets/unmatched" style="border-color:var(--amber);color:var(--warn-fg);">⚠ <%= unmatchedCount %> unmatched</a><% } %>
   </div>
 </div>
 
 <% if (notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
 <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
 
-<div class="card" style="background:#f0f9ff;border-color:#bae6fd;">
-  <p style="margin:0;font-size:13px;color:#0369a1;">
+<div class="card" style="background:var(--tint-accent);border-color:var(--info-line);">
+  <p style="margin:0;font-size:13px;color:var(--info-deep);">
     <strong>Read-only for now.</strong> Everything here comes straight from Atera — details are locked until we confirm Atera's API will
     accept changes written back from the Portal. Once a "next RMM" replaces Atera (expected in 6–10 months), this sync will point there instead.
   </p>
@@ -61,7 +61,7 @@ function remoteHref(a){
         <% if (rows.length===0) { %><tr><td colspan="8"><div class="empty-state">No devices match. Try "↻ Sync from Atera" if this is the first run.</div></td></tr><% } %>
         <% rows.forEach(function(a){ %>
           <tr>
-            <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? '#16a34a' : '#cbd5e1' %>;"></span></td>
+            <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
             <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/assets') %>"><%= a.hostname || '(unnamed device)' %></a></td>
             <td class="muted"><% if (a.customer_id) { %><a class="row-link" href="/customers/<%= a.customer_id %>#assets"><%= a.customer_name %></a><% } else { %>—<% } %></td>
             <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span></td>

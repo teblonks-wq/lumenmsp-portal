@@ -25,33 +25,33 @@
   /* The three call tools are one group — separated from the reporting tabs so the strip
      reads as two sets rather than nine equal items. */
   #insightsTabs { align-items:center; }
-  .tab-sep { width:1px; height:20px; background:var(--line,#e2e8f0); margin:0 8px; display:inline-block; }
+  .tab-sep { width:1px; height:20px; background:var(--line,var(--line)); margin:0 8px; display:inline-block; }
 
   /* Search panel — the treatment from the customer portal, where the fields are labelled
      in plain English at a readable size instead of 11px uppercase in the page header. */
-  .ins-search { background:#fff; border:1px solid var(--line,#e2e8f0); border-radius:12px; padding:18px 20px; margin-bottom:18px; }
-  .ins-search .lead { margin:0 0 13px; font-size:13.5px; color:#64748b; }
+  .ins-search { background:var(--surface); border:1px solid var(--line,var(--line)); border-radius:12px; padding:18px 20px; margin-bottom:18px; }
+  .ins-search .lead { margin:0 0 13px; font-size:13.5px; color:var(--muted); }
   .ins-search form { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin:0; }
   .ins-search .fg { margin:0; }
-  .ins-search label { display:block; font-size:12px; font-weight:600; color:#475569; margin:0 0 5px; letter-spacing:0; text-transform:none; }
+  .ins-search label { display:block; font-size:12px; font-weight:600; color:var(--text-soft); margin:0 0 5px; letter-spacing:0; text-transform:none; }
   .ins-search .input { padding:9px 11px; font-size:14px; border-radius:8px; }
-  .ins-search .input:focus { outline:2px solid #99f6e4; border-color:var(--accent,#0ea5b7); }
+  .ins-search .input:focus { outline:2px solid #99f6e4; border-color:var(--accent,var(--accent)); }
   .ins-search .btn-primary { padding:9px 20px; font-size:14px; border-radius:8px; }
-  .ins-search .hint { margin:12px 0 0; font-size:12.5px; color:#94a3b8; }
+  .ins-search .hint { margin:12px 0 0; font-size:12.5px; color:var(--faint); }
   .ins-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-left:auto; }
   @media print { .ins-search { display:none !important; } }
   /* Make Report — preview first, send second. */
-  .mr-panel { background:#fff; border:1px solid var(--line,#e2e8f0); border-radius:12px; padding:0; margin-bottom:18px; overflow:hidden; display:none; }
+  .mr-panel { background:var(--surface); border:1px solid var(--line,var(--line)); border-radius:12px; padding:0; margin-bottom:18px; overflow:hidden; display:none; }
   .mr-panel.on { display:block; }
-  .mr-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 18px; border-bottom:1px solid var(--line,#e2e8f0); }
+  .mr-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 18px; border-bottom:1px solid var(--line,var(--line)); }
   .mr-head h2 { margin:0; font-size:15px; }
   .mr-body { padding:16px 18px; display:grid; grid-template-columns:minmax(0,1fr) minmax(280px,340px); gap:18px; align-items:start; }
   @media (max-width:900px){ .mr-body { grid-template-columns:1fr; } }
-  .mr-body iframe { width:100%; height:620px; border:1px solid var(--line,#e2e8f0); border-radius:8px; background:#f8fafc; }
-  .mr-side label { display:block; font-size:12px; font-weight:600; color:#475569; margin:0 0 5px; }
+  .mr-body iframe { width:100%; height:620px; border:1px solid var(--line,var(--line)); border-radius:8px; background:var(--surface-2); }
+  .mr-side label { display:block; font-size:12px; font-weight:600; color:var(--text-soft); margin:0 0 5px; }
   .mr-side .fg { margin-bottom:13px; }
-  .mr-side input, .mr-side textarea, .mr-side select { width:100%; border:1px solid #cbd5e1; border-radius:8px; padding:9px 11px; font-size:14px; font-family:inherit; }
-  .mr-note { font-size:12px; color:#64748b; margin:10px 0 0; }
+  .mr-side input, .mr-side textarea, .mr-side select { width:100%; border:1px solid var(--line-strong); border-radius:8px; padding:9px 11px; font-size:14px; font-family:inherit; }
+  .mr-note { font-size:12px; color:var(--muted); margin:10px 0 0; }
   .mr-msg { font-size:12.5px; margin:9px 0 0; min-height:16px; }
 </style>
 

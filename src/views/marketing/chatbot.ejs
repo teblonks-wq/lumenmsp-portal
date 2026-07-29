@@ -22,19 +22,19 @@
 
   <div style="margin-top:18px;display:flex;gap:16px;flex-wrap:wrap;">
     <div>
-      <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:4px;">Open from</label>
+      <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:4px;">Open from</label>
       <input class="input" type="time" name="open_time" value="<%= openT %>">
     </div>
     <div>
-      <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin-bottom:4px;">Open until</label>
+      <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:4px;">Open until</label>
       <input class="input" type="time" name="close_time" value="<%= closeT %>">
     </div>
   </div>
 
-  <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b;margin:18px 0 6px;">Available days</label>
+  <label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:18px 0 6px;">Available days</label>
   <div style="display:flex;gap:6px;flex-wrap:wrap;">
     <% DAYS.forEach(function(d){ %>
-      <label style="display:inline-flex;align-items:center;gap:6px;border:1px solid #cbd5e1;border-radius:8px;padding:7px 12px;cursor:pointer;">
+      <label style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-strong);border-radius:8px;padding:7px 12px;cursor:pointer;">
         <input type="checkbox" name="day_<%= d[0] %>" <%= days.indexOf(d[0]) >= 0 ? 'checked' : '' %>> <%= d[1] %>
       </label>
     <% }); %>

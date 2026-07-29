@@ -16,7 +16,7 @@
 </div>
 
 <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">
-  <div class="card" style="background:#f0fdf9;"><div class="card-header"><h2>Conversion rate</h2></div><div class="stat" style="font-size:30px;color:#166534;"><%= stats.conversion %>%</div><p class="muted" style="margin:4px 0 0;"><%= stats.won %> won · <%= stats.lost %> lost</p></div>
+  <div class="card" style="background:var(--tint-teal);"><div class="card-header"><h2>Conversion rate</h2></div><div class="stat" style="font-size:30px;color:var(--ok-fg);"><%= stats.conversion %>%</div><p class="muted" style="margin:4px 0 0;"><%= stats.won %> won · <%= stats.lost %> lost</p></div>
   <div class="card"><div class="card-header"><h2>Open pipeline</h2></div><div class="stat" style="font-size:30px;"><%= stats.open %></div><p class="muted" style="margin:4px 0 0;">new / open / proposed</p></div>
   <div class="card"><div class="card-header"><h2>Pipeline value</h2></div><div class="stat" style="font-size:24px;color:var(--accent);"><%= money(stats.pipelineValue) %></div><p class="muted" style="margin:4px 0 0;">est. value of open leads</p></div>
 </div>

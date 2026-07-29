@@ -11,10 +11,10 @@
   .step-num { display:inline-flex;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700;align-items:center;justify-content:center;margin-right:8px; }
   .cust-results { border:1px solid var(--line);border-radius:8px;margin-top:6px;max-height:240px;overflow:auto; }
   .cust-result { padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:12px; }
-  .cust-result:last-child { border-bottom:0; } .cust-result:hover { background:#f9fafb; }
-  .chip { display:inline-flex;align-items:center;gap:10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;font-weight:600; }
+  .cust-result:last-child { border-bottom:0; } .cust-result:hover { background:var(--surface-2); }
+  .chip { display:inline-flex;align-items:center;gap:10px;background:var(--tint-info);border:1px solid var(--info-line);border-radius:8px;padding:8px 12px;font-weight:600; }
   .pillrow { display:flex;gap:10px;flex-wrap:wrap;margin-top:4px; }
-  .pill { border:1px solid var(--line);border-radius:20px;padding:7px 14px;cursor:pointer;font-size:13px;font-weight:600;color:#374151; }
+  .pill { border:1px solid var(--line);border-radius:20px;padding:7px 14px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-strong); }
   .pill input { position:absolute;opacity:0;pointer-events:none; }
   .pill:has(input:checked) { border-color:var(--accent);background:var(--accent);color:#fff; }
 </style>
@@ -77,10 +77,10 @@
       <label style="display:flex;align-items:center;gap:7px;">Case type
         <span role="button" tabindex="0" aria-label="What each case type means (ITIL)"
               onclick="var h=document.getElementById('caseTypeHelp');h.style.display=h.style.display==='block'?'none':'block';"
-              style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid #94a3b8;color:#475569;font-size:12px;font-weight:700;font-style:italic;cursor:pointer;user-select:none;">i</span>
+              style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid var(--faint);color:var(--text-soft);font-size:12px;font-weight:700;font-style:italic;cursor:pointer;user-select:none;">i</span>
         <span class="muted" style="font-weight:400;font-size:12px;">choose one</span>
       </label>
-      <div id="caseTypeHelp" style="display:none;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:13px;line-height:1.55;">
+      <div id="caseTypeHelp" style="display:none;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;font-size:13px;line-height:1.55;">
         <strong style="display:block;margin-bottom:6px;">What each type means (ITIL)</strong>
         <div><b>Incident</b> — an unplanned interruption to a service, or a drop in its quality (something is broken).</div>
         <div><b>Service request</b> — a standard, pre-approved request for something to be provided (new account, access, info, password reset).</div>
@@ -100,7 +100,7 @@
     <div class="form-group">
       <label>Description</label>
       <input type="hidden" name="description" id="ticketDescBody">
-      <div id="ticketDescEditor" style="height:180px;background:#fff;"></div>
+      <div id="ticketDescEditor" style="height:180px;background:var(--surface);"></div>
     </div>
 
     <div class="form-group" style="margin-bottom:0;">

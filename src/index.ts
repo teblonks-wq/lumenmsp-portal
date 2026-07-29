@@ -266,6 +266,35 @@ app.use(async (req, res, next) => {
   next();
 });
 
+// ── Portal theme (V4 visual refresh, 2026-07-29) ──────────────────────────────
+// Per-user colour theme: aurora (default) | carbon | solstice. Cached in the session
+// after one lookup so the header render costs nothing per request; POST /me/theme
+// updates both the session and the users row. The users.theme column arrives with the
+// next `prisma db push` — until then the catches keep every page rendering normally.
+app.use(async (req, res, next) => {
+  const s = req.session as any;
+  if (req.session.user && s.portalTheme === undefined) {
+    try {
+      const r = await pool.query('SELECT theme FROM users WHERE id=$1', [req.session.user.id]);
+      s.portalTheme = r.rows[0]?.theme || null;
+    } catch { s.portalTheme = null; }
+  }
+  res.locals.portalTheme = (req.session.user && s.portalTheme) || 'aurora';
+  // True once the user has explicitly picked a theme — gates the one-time "pick your theme" nudge.
+  res.locals.portalThemeSet = !!(req.session.user && s.portalTheme);
+  next();
+});
+app.post('/me/theme', async (req, res) => {
+  const u = req.session.user;
+  const t = String((req.body && req.body.theme) || '');
+  if (!u) { res.status(401).json({ ok: false }); return; }
+  if (!['aurora', 'carbon', 'solstice'].includes(t)) { res.status(400).json({ ok: false }); return; }
+  (req.session as any).portalTheme = t;
+  try { await pool.query('UPDATE users SET theme=$1 WHERE id=$2', [t, u.id]); }
+  catch { /* column arrives with the next prisma db push; session carries it until then */ }
+  res.json({ ok: true, theme: t });
+});
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 // Public inbound webhooks (WhatsApp) MUST be registered before any router that applies
 // auth/finance gates — Meta calls them unauthenticated.

@@ -7,7 +7,7 @@
   <div>
     <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/invoices/<%= inv.id %>">← <%= inv.invoice_number %></a></p>
     <h1 style="margin:0;">Cloud licences — <%= customerName %></h1>
-    <p class="muted" style="margin:4px 0 0;">Giacom licences held vs what's billed on this invoice.<% if (notBilled) { %> <strong style="color:#b91c1c;"><%= notBilled %> not being billed.</strong><% } else if (!issues) { %> All in sync. ✓<% } %></p>
+    <p class="muted" style="margin:4px 0 0;">Giacom licences held vs what's billed on this invoice.<% if (notBilled) { %> <strong style="color:var(--bad-fg);"><%= notBilled %> not being billed.</strong><% } else if (!issues) { %> All in sync. ✓<% } %></p>
   </div>
   <% if (issues) { %>
   <form method="post" action="/invoices/<%= inv.id %>/pull-giacom" onsubmit="return confirm('Sync all Giacom licences onto this invoice (adds missing, fixes quantities)?');" style="margin:0;">
@@ -26,7 +26,7 @@
     <tbody>
       <% if (!rows.length) { %><tr><td colspan="5"><div class="empty-state">No Giacom cloud services on this customer. Link a Giacom account on the <a class="row-link" href="/settings/giacom/match">matching screen</a>.</div></td></tr><% } %>
       <% rows.forEach(function(r){ %>
-        <tr style="<%= r.status==='not_billed' ? 'background:#fef2f2;' : '' %>">
+        <tr style="<%= r.status==='not_billed' ? 'background:var(--tint-bad);' : '' %>">
           <td><%= r.description %></td>
           <td style="text-align:right;"><%= r.giacomQty %></td>
           <td style="text-align:right;"><%= r.billedQty %></td>

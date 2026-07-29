@@ -9,6 +9,7 @@ import { htmlToPdf } from '../lib/pdf';
 import { emailInvoiceAction, pushInvoiceToQBAction, submitInvoiceToGCAction, remindInvoiceAction } from './integrations';
 import { sendMail } from '../lib/mailer';
 import { invoiceEmailHtml } from '../lib/emails';
+import { invoiceViewUrl } from '../lib/invoice-link';
 import { QuickBooks } from '../lib/quickbooks';
 import { generateFromTemplate, refreshGiacomLines, refreshCallCharges, regenerateInvoice } from '../lib/recurring-billing';
 import { syncItCloudInvoice, resyncItCloudLine, promoteItCloudToTemplate } from '../lib/it-cloud-sync';
@@ -17,7 +18,7 @@ import { getSetting } from '../lib/settings';
 import { config } from '../config';
 
 import {
-  getDocEvents, logDocEvent, newPixelToken, pixelImg,
+  clientIp as evIp, getDocEvents, logDocEvent, newPixelToken, pixelImg, userAgent as evUa,
 } from '../lib/doc-events';
 
 const router = Router();
@@ -570,10 +571,11 @@ router.post('/invoices/:id/resend-finance', requireAuth, async (req: Request, re
 
   const total = '£' + (Number(inv.total) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const dueDate = inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
-  const body = invoiceEmailHtml({ contactName: toName, invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate, directDebit: !!inv.gocardless_mandate_id });
+  const body = invoiceEmailHtml({ contactName: toName, invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate,
+    directDebit: !!inv.gocardless_mandate_id, viewLink: await invoiceViewUrl(id) });
   try {
-    // Invoices go out as an attachment with no landing page, so the only signal available
-    // is the tracking pixel — recorded as indicative, never presented as delivery.
+    // The pixel stays — it is the only signal for someone who never clicks — but it is the
+    // weaker one. An open of the hosted copy is served by us, so that is the evidence.
     const pixelToken = newPixelToken();
     const sentEventId = await logDocEvent('invoice', inv.id, 'sent', {
       customerId: inv.customer_id, actor: to, pixelToken,
@@ -786,6 +788,70 @@ router.post('/invoices/:id/delete', requireAuth, async (req: Request, res: Respo
   await pool.query('UPDATE invoices SET deleted_at=NOW(), deleted_by_user_id=$1 WHERE id=$2', [user.id, id]);
   await logActivity(user.id, 'deleted', 'invoices', id, 'Deleted invoice #' + id);
   res.redirect('/invoices');
+});
+
+// ── PUBLIC invoice view (no login — the link IS the credential) ────────────────
+// Mounted outside the /invoices prefix, so the finance gate above does not apply. Everything
+// here is read-only and keyed on a 48-character random token.
+async function invoiceByToken(token: string) {
+  const r = await pool.query(
+    `SELECT i.id, i.invoice_number, i.title, i.total, i.status, i.payment_status,
+            i.due_date, i.invoice_date, i.customer_id, c.name AS customer_name, c.gocardless_mandate_id
+       FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id
+      WHERE i.view_token = $1 AND i.deleted_at IS NULL LIMIT 1`, [token]);
+  return r.rows[0] || null;
+}
+
+const gbDate = (d: any): string => (d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+
+router.get('/i/:token', async (req: Request, res: Response) => {
+  const token = String(req.params.token);
+  const invoice = await invoiceByToken(token);
+  if (!invoice) { res.status(404).render('error', { message: 'This invoice link is not valid. Please contact us and we will send a fresh one.' }); return; }
+  // Served by us, so this is evidence rather than a pixel's inference.
+  await logDocEvent('invoice', invoice.id, 'opened', {
+    customerId: invoice.customer_id, ip: evIp(req), userAgent: evUa(req),
+    meta: { via: 'view link' },
+  });
+  const unpaid = invoice.payment_status !== 'paid' && invoice.status !== 'paid';
+  res.render('invoices/public', {
+    invoice, token, appUrl: config.APP_URL,
+    dueDate: gbDate(invoice.due_date), issueDate: gbDate(invoice.invoice_date),
+    overdue: !!(unpaid && invoice.due_date && new Date(invoice.due_date) < new Date()),
+    money: (v: any) => '£' + (Number(v) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+  });
+});
+
+router.get('/i/:token/invoice.pdf', async (req: Request, res: Response) => {
+  const token = String(req.params.token);
+  const invoice = await invoiceByToken(token);
+  if (!invoice) { res.status(404).render('error', { message: 'This invoice link is not valid.' }); return; }
+  if (req.query.dl) {
+    await logDocEvent('invoice', invoice.id, 'downloaded', {
+      customerId: invoice.customer_id, ip: evIp(req), userAgent: evUa(req),
+    });
+  }
+  try {
+    const pdf = await renderInvoicePdf(invoice.id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', (req.query.dl ? 'attachment' : 'inline') + `; filename="${invoice.invoice_number}.pdf"`);
+    res.send(pdf);
+  } catch (e) {
+    console.error('[invoice-public] pdf failed:', e);
+    res.status(500).render('error', { message: 'The invoice could not be produced. Please contact us and we will email it across.' });
+  }
+});
+
+// Print happens entirely in the browser, so the page reports it back.
+router.post('/i/:token/event', async (req: Request, res: Response) => {
+  const invoice = await invoiceByToken(String(req.params.token));
+  const ev = String(req.body?.event || '');
+  if (invoice && (ev === 'printed' || ev === 'downloaded')) {
+    await logDocEvent('invoice', invoice.id, ev as any, {
+      customerId: invoice.customer_id, ip: evIp(req), userAgent: evUa(req),
+    });
+  }
+  res.status(204).end();
 });
 
 export default router;

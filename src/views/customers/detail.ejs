@@ -3,8 +3,8 @@
 
 <style>
   .cust-tabs { display:flex; flex-wrap:wrap; gap:2px; border-bottom:2px solid var(--line); margin:10px 0 18px; }
-  .cust-tabs button { background:none; border:none; padding:10px 16px; font-size:14px; font-weight:600; color:#64748b; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; }
-  .cust-tabs button:hover { color:#0f172a; }
+  .cust-tabs button { background:none; border:none; padding:10px 16px; font-size:14px; font-weight:600; color:var(--muted); cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; }
+  .cust-tabs button:hover { color:var(--ink); }
   .cust-tabs button.active { color:var(--accent); border-bottom-color:var(--accent); }
   .tab-panel { display:none; }
   .tab-panel.active { display:block; }
@@ -271,10 +271,10 @@
       <!-- headline numbers -->
       <div style="display:flex;gap:30px;flex-wrap:wrap;margin-bottom:18px;">
         <div><div class="muted" style="font-size:12px;">Monthly charge</div><div style="font-size:24px;font-weight:800;"><%= money(pkg.totals.sell) %></div></div>
-        <div><div class="muted" style="font-size:12px;">Our cost</div><div style="font-size:24px;font-weight:800;color:#64748b;"><%= money(pkg.totals.cost) %></div></div>
-        <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:24px;font-weight:800;color:<%= pkg.totals.margin>=0?'#166534':'#b91c1c' %>;"><%= money(pkg.totals.margin) %></div></div>
+        <div><div class="muted" style="font-size:12px;">Our cost</div><div style="font-size:24px;font-weight:800;color:var(--muted);"><%= money(pkg.totals.cost) %></div></div>
+        <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:24px;font-weight:800;color:<%= pkg.totals.margin>=0?'var(--ok-fg)':'var(--bad-fg)' %>;"><%= money(pkg.totals.margin) %></div></div>
         <% var ccp = (typeof commsCallPeriod!=='undefined'?commsCallPeriod:null); if (ccp) { %>
-        <div style="border-left:1px solid var(--border,#e5e7eb);padding-left:30px;"><div class="muted" style="font-size:12px;">Call charges<% if (ccp.period) { %> · <%= ccp.period %><% } %></div><div style="font-size:24px;font-weight:800;"><%= money(ccp.sell) %></div><div class="muted" style="font-size:11px;">cost <%= money(ccp.cost) %> · <%= ccp.calls.toLocaleString() %> calls</div></div>
+        <div style="border-left:1px solid var(--border,var(--line));padding-left:30px;"><div class="muted" style="font-size:12px;">Call charges<% if (ccp.period) { %> · <%= ccp.period %><% } %></div><div style="font-size:24px;font-weight:800;"><%= money(ccp.sell) %></div><div class="muted" style="font-size:11px;">cost <%= money(ccp.cost) %> · <%= ccp.calls.toLocaleString() %> calls</div></div>
         <% } %>
       </div>
       <!-- Simply VoIP seats + add-ons -->
@@ -302,7 +302,7 @@
               <td class="muted" style="font-size:12px;"><%- locCell(b.cli, b.location) %></td>
               <td style="text-align:right;" class="muted"><%= money(b.buy) %></td>
               <td style="text-align:right;"><%- pfCell(b.cli, b.buy, b.sale, b.service) %></td>
-              <td style="text-align:right;color:<%= b.margin===null?'':(b.margin>=0?'#166534':'#b91c1c') %>;"><%= b.margin===null?'—':money(b.margin) %></td>
+              <td style="text-align:right;color:<%= b.margin===null?'':(b.margin>=0?'var(--ok-fg)':'var(--bad-fg)') %>;"><%= b.margin===null?'—':money(b.margin) %></td>
             </tr>
           <% }); %>
         </tbody>
@@ -321,7 +321,7 @@
               <td class="muted" style="font-size:12px;"><%- locCell(b.cli, b.location) %></td>
               <td style="text-align:right;" class="muted"><%= money(b.buy) %></td>
               <td style="text-align:right;"><%- pfCell('LR:'+b.cli, 0, b.sale, 'Line Rental') %></td>
-              <td style="text-align:right;color:<%= b.margin===null?'':(b.margin>=0?'#166534':'#b91c1c') %>;"><%= b.margin===null?'—':money(b.margin) %></td>
+              <td style="text-align:right;color:<%= b.margin===null?'':(b.margin>=0?'var(--ok-fg)':'var(--bad-fg)') %>;"><%= b.margin===null?'—':money(b.margin) %></td>
             </tr>
           <% }); %>
         </tbody>
@@ -356,7 +356,7 @@
             <td style="font-family:monospace;"><%= r.range_from %></td>
             <td style="font-family:monospace;"><%= r.range_to %></td>
             <td class="muted" style="font-size:12px;"><%= r.location || '—' %></td>
-            <td style="text-align:right;"><form method="post" action="/customers/<%= customer.id %>/number-ranges/<%= r.id %>/delete" style="margin:0;" onsubmit="return confirm('Remove this range? Existing allocations stay.');"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:#b91c1c;">Remove</button></form></td>
+            <td style="text-align:right;"><form method="post" action="/customers/<%= customer.id %>/number-ranges/<%= r.id %>/delete" style="margin:0;" onsubmit="return confirm('Remove this range? Existing allocations stay.');"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);">Remove</button></form></td>
           </tr>
         <% }); %>
       </tbody>
@@ -412,7 +412,7 @@
                 <a class="btn" href="/bureau/cli-report?cli=<%= encodeURIComponent(c.cli) %>" target="_blank" style="font-size:11px;padding:3px 7px;">Report</a>
                 <form method="post" action="/customers/<%= customer.id %>/cli-release" style="display:inline;margin:0;" onsubmit="return confirm('Release <%= c.cli %> from this customer? It will move to the Bureau as unallocated.');">
                   <input type="hidden" name="cli" value="<%= c.cli %>">
-                  <button class="btn" type="submit" style="font-size:11px;padding:3px 7px;color:#b91c1c;">Release</button>
+                  <button class="btn" type="submit" style="font-size:11px;padding:3px 7px;color:var(--bad-fg);">Release</button>
                 </form>
               </td>
             </tr>
@@ -493,7 +493,7 @@
               <td style="text-align:right;"><%= mins.toLocaleString() %></td>
               <td style="text-align:right;"><%= money(cost) %></td>
               <td style="text-align:right;"><%= money(sell) %></td>
-              <td style="text-align:right;color:#166534;"><%= money(sell-cost) %></td>
+              <td style="text-align:right;color:var(--ok-fg);"><%= money(sell-cost) %></td>
               <td style="text-align:right;"><a class="row-link" href="/customers/<%= customer.id %>/calls?period=<%= r.billing_period %>" style="font-size:12px;">View</a></td>
             </tr>
           <% }); %>
@@ -504,7 +504,7 @@
           <td></td>
           <td style="text-align:right;font-weight:700;" data-tot="cost"></td>
           <td style="text-align:right;font-weight:700;" data-tot="sell"></td>
-          <td style="text-align:right;font-weight:700;color:#166534;" data-tot="margin"></td>
+          <td style="text-align:right;font-weight:700;color:var(--ok-fg);" data-tot="margin"></td>
           <td></td>
         </tr></tfoot>
       </table></div>
@@ -581,7 +581,7 @@
 <section class="tab-panel" data-key="invoices">
   <div class="card" style="padding:0;">
     <%
-      var off='#d1d5db';
+      var off='var(--line-strong)';
       function pstate(i){
         if (i.status==='void') return { label:'Void', cls:'badge-inactive' };
         if (i.payment_status==='paid') return { label:'Paid', cls:'badge-sent' };
@@ -593,13 +593,13 @@
       var custOutstanding = invoices.reduce(function(a,i){return a+Number(i.balance||0);},0);
     %>
     <div class="card-header" style="padding:20px 24px 0;display:flex;justify-content:space-between;align-items:center;">
-      <h2>Invoices <span class="muted">(<%= invoices.length %>)</span><% if (custOutstanding>0) { %> <span style="font-size:13px;font-weight:600;color:#b45309;">· <%= money(custOutstanding) %> outstanding</span><% } %><% if (typeof creditBalance!=='undefined' && creditBalance>0) { %> <span style="font-size:13px;font-weight:600;color:#166534;">· <%= money(creditBalance) %> credit</span><% } %></h2>
+      <h2>Invoices <span class="muted">(<%= invoices.length %>)</span><% if (custOutstanding>0) { %> <span style="font-size:13px;font-weight:600;color:var(--warn-fg);">· <%= money(custOutstanding) %> outstanding</span><% } %><% if (typeof creditBalance!=='undefined' && creditBalance>0) { %> <span style="font-size:13px;font-weight:600;color:var(--ok-fg);">· <%= money(creditBalance) %> credit</span><% } %></h2>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <% if (typeof canFinance !== 'undefined' && canFinance) { %>
         <div style="position:relative;">
           <button type="button" class="btn" onclick="var f=document.getElementById('ddInviteForm');f.style.display=f.style.display==='none'?'block':'none';">💳 Direct Debit invite</button>
-          <form id="ddInviteForm" method="post" action="/customers/<%= customer.id %>/dd-invite" style="display:none;position:absolute;right:0;top:42px;z-index:30;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 26px rgba(2,6,23,.18);padding:14px;min-width:300px;text-align:left;">
-            <label style="font-size:12px;color:#475569;display:block;margin-bottom:6px;">Email the Direct Debit setup link to:</label>
+          <form id="ddInviteForm" method="post" action="/customers/<%= customer.id %>/dd-invite" style="display:none;position:absolute;right:0;top:42px;z-index:30;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 26px rgba(2,6,23,.18);padding:14px;min-width:300px;text-align:left;">
+            <label style="font-size:12px;color:var(--text-soft);display:block;margin-bottom:6px;">Email the Direct Debit setup link to:</label>
             <input class="input" type="email" name="email" value="<%= customer.email || '' %>" placeholder="customer@example.com" style="width:100%;margin-bottom:10px;box-sizing:border-box;" required>
             <button class="btn btn-primary btn-block" type="submit">Send invite</button>
             <p class="muted" style="font-size:11px;margin:8px 0 0;">Sends a secure GoCardless link for the customer to set up Direct Debit.</p>
@@ -636,12 +636,12 @@
               <td><%= i.title %></td>
               <td><span class="badge <%= ps.cls %>"><%= ps.label %></span><% if (i.gocardless_mandate_id) { %><br><span class="muted" style="font-size:11px;">Direct Debit</span><% } %></td>
               <td style="text-align:right;"><%= money(i.total) %></td>
-              <td style="text-align:right;"><% if (Number(i.balance)>0) { %><span style="color:#b45309;font-weight:600;"><%= money(i.balance) %></span><% } else if (i.payment_status==='paid') { %><span class="muted">—</span><% } else { %><span class="muted"><%= money(i.total) %></span><% } %></td>
+              <td style="text-align:right;"><% if (Number(i.balance)>0) { %><span style="color:var(--warn-fg);font-weight:600;"><%= money(i.balance) %></span><% } else if (i.payment_status==='paid') { %><span class="muted">—</span><% } else { %><span class="muted"><%= money(i.total) %></span><% } %></td>
               <td class="muted"><%= i.issue_date ? new Date(i.issue_date).toLocaleDateString('en-GB') : '—' %></td>
               <td style="text-align:center;white-space:nowrap;">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.emailed ? '#2563eb' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title>Emailed to customer</title><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.gocardless_payment_id ? '#166534' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title>Submitted for payment (GoCardless)</title><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.quickbooks_invoice_id ? '#b45309' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= i.payment_synced_at ? 'In QuickBooks · synced ' + new Date(i.payment_synced_at).toLocaleString('en-GB') : 'In QuickBooks' %></title><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.emailed ? 'var(--blue)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title>Emailed to customer</title><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.gocardless_payment_id ? 'var(--ok-fg)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title>Submitted for payment (GoCardless)</title><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.quickbooks_invoice_id ? 'var(--warn-fg)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= i.payment_synced_at ? 'In QuickBooks · synced ' + new Date(i.payment_synced_at).toLocaleString('en-GB') : 'In QuickBooks' %></title><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
               </td>
             </tr>
           <% }); %>
@@ -739,7 +739,7 @@
           <% if (custAssets.length===0) { %><tr><td colspan="7"><div class="empty-state">No devices synced for this customer yet.</div></td></tr><% } %>
           <% custAssets.forEach(function(a){ %>
             <tr>
-              <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? '#16a34a' : '#cbd5e1' %>;"></span></td>
+              <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
               <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/customers/' + customer.id + '#assets') %>"><%= a.hostname || '(unnamed device)' %></a></td>
               <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span></td>
               <td class="muted"><%= a.os || '—' %></td>
@@ -771,18 +771,18 @@
     </div>
   <% } else { %>
     <div class="card" style="margin-bottom:14px;display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
-      <div><div class="muted" style="font-size:12px;">Monthly sell (ex VAT)</div><div style="font-size:22px;font-weight:800;color:#166534;"><%= money(baseSell + giacomSell) %></div></div>
-      <div><div class="muted" style="font-size:12px;">Giacom cost (ex VAT)</div><div style="font-size:16px;font-weight:700;color:#64748b;"><%= money(itc.totals.cost) %></div></div>
-      <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:16px;font-weight:700;color:#166534;"><%= money(baseSell + giacomSell - itc.totals.cost) %></div></div>
+      <div><div class="muted" style="font-size:12px;">Monthly sell (ex VAT)</div><div style="font-size:22px;font-weight:800;color:var(--ok-fg);"><%= money(baseSell + giacomSell) %></div></div>
+      <div><div class="muted" style="font-size:12px;">Giacom cost (ex VAT)</div><div style="font-size:16px;font-weight:700;color:var(--muted);"><%= money(itc.totals.cost) %></div></div>
+      <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:16px;font-weight:700;color:var(--ok-fg);"><%= money(baseSell + giacomSell - itc.totals.cost) %></div></div>
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
-        <% if (itc.unmatched) { %><span class="badge" style="background:#fee2e2;color:#b91c1c;font-size:11px;">⚠ <%= itc.unmatched %> not in product list</span><% } %>
-        <% if (itc.unpriced) { %><span class="badge" style="background:#fef3c7;color:#92400e;font-size:11px;"><%= itc.unpriced %> Giacom unpriced</span><% } %>
+        <% if (itc.unmatched) { %><span class="badge" style="background:var(--bad-bg);color:var(--bad-fg);font-size:11px;">⚠ <%= itc.unmatched %> not in product list</span><% } %>
+        <% if (itc.unpriced) { %><span class="badge" style="background:var(--warn-bg);color:var(--warn-deep);font-size:11px;"><%= itc.unpriced %> Giacom unpriced</span><% } %>
         <a class="btn" href="/products" style="font-size:12px;padding:4px 10px;">Product list</a>
         <a class="btn" href="/invoices/<%= tpl.id %>/edit" style="font-size:12px;padding:4px 10px;">Full editor</a>
         <% var _giacomCount = (itc.cloudLines||[]).length; %>
         <form method="post" action="/customers/<%= customer.id %>/cloud-template/delete" style="display:inline;margin:0;"
               onsubmit="return confirm(<%= _giacomCount ? "'⚠ This customer has " + _giacomCount + " synced Giacom service(s). Deleting the template stops those cloud lines rolling onto a consolidated bill. The template will be recycled (restorable). Continue?'" : "'Delete this IT & Cloud template? It will be recycled (restorable from the recycle bin). Continue?'" %>);">
-          <button class="btn" type="submit" style="font-size:12px;padding:4px 10px;color:#b91c1c;border-color:#fca5a5;">Delete template</button>
+          <button class="btn" type="submit" style="font-size:12px;padding:4px 10px;color:var(--bad-fg);border-color:var(--bad-line2);">Delete template</button>
         </form>
       </div>
     </div>
@@ -804,7 +804,7 @@
                 <td style="text-align:right;white-space:nowrap;"><button class="btn" type="submit" style="font-size:12px;padding:3px 8px;">Save</button></td>
               </form>
             </tr>
-            <tr style="border:0;"><td colspan="5" style="text-align:right;padding:0 12px 8px;border:0;"><form method="post" action="/customers/<%= customer.id %>/cloud-line/delete" onsubmit="return confirm('Remove this line?');" style="margin:0;display:inline;"><input type="hidden" name="item_id" value="<%= it.id %>"><button class="btn" type="submit" style="font-size:11px;padding:1px 7px;color:#b91c1c;">✕ remove</button></form></td></tr>
+            <tr style="border:0;"><td colspan="5" style="text-align:right;padding:0 12px 8px;border:0;"><form method="post" action="/customers/<%= customer.id %>/cloud-line/delete" onsubmit="return confirm('Remove this line?');" style="margin:0;display:inline;"><input type="hidden" name="item_id" value="<%= it.id %>"><button class="btn" type="submit" style="font-size:11px;padding:1px 7px;color:var(--bad-fg);">✕ remove</button></form></td></tr>
           <% }); %>
         </tbody>
       </table></div>
@@ -843,19 +843,19 @@
           <% if (!(itc.cloudLines||[]).length) { %><tr><td colspan="6"><div class="empty-state">No Giacom services for this customer.</div></td></tr><% } %>
           <% (itc.cloudLines||[]).forEach(function(l){ %>
             <tr>
-              <td><%= l.description %> <% if (l.inCatalogue===false) { %><span class="badge" style="background:#fee2e2;color:#b91c1c;font-size:9px;" title="This Giacom product (<%= l.ref %>) is not in the product list — add it so it can be priced and mapped to QuickBooks">⚠ not in product list</span><% } else if (l.customerOverride) { %><span class="badge" style="background:#ede9fe;color:#6d28d9;font-size:9px;">◆ override</span><% } else if (l.salePriceEach!=null) { %><span class="badge" style="background:#dbeafe;color:#1e40af;font-size:9px;">✓ standard</span><% } %></td>
+              <td><%= l.description %> <% if (l.inCatalogue===false) { %><span class="badge" style="background:var(--bad-bg);color:var(--bad-fg);font-size:9px;" title="This Giacom product (<%= l.ref %>) is not in the product list — add it so it can be priced and mapped to QuickBooks">⚠ not in product list</span><% } else if (l.customerOverride) { %><span class="badge" style="background:#ede9fe;color:#6d28d9;font-size:9px;">◆ override</span><% } else if (l.salePriceEach!=null) { %><span class="badge" style="background:var(--tint-info-2);color:var(--blue-deep);font-size:9px;">✓ standard</span><% } %></td>
               <td style="text-align:right;"><%= Number(l.qty) %></td>
-              <td style="text-align:right;color:#64748b;"><%= money(l.unitCost) %></td>
+              <td style="text-align:right;color:var(--muted);"><%= money(l.unitCost) %></td>
               <td style="text-align:right;">
                 <form method="post" action="/customers/<%= customer.id %>/cloud-price" style="display:inline-flex;align-items:center;gap:4px;justify-content:flex-end;margin:0;">
                   <input type="hidden" name="ref" value="<%= l.ref || '' %>"><input type="hidden" name="unit_cost" value="<%= l.unitCost %>"><input type="hidden" name="description" value="<%= l.description %>">
-                  <span class="muted">£</span><input class="input" name="sale_price" value="<%= l.salePriceEach==null?'':Number(l.salePriceEach).toFixed(2) %>" placeholder="set…" style="width:70px;text-align:right;padding:3px 6px;font-size:13px;<%= l.salePriceEach==null?'background:#fffbeb;border-color:#fcd34d;':'' %>">
+                  <span class="muted">£</span><input class="input" name="sale_price" value="<%= l.salePriceEach==null?'':Number(l.salePriceEach).toFixed(2) %>" placeholder="set…" style="width:70px;text-align:right;padding:3px 6px;font-size:13px;<%= l.salePriceEach==null?'background:var(--tint-warn);border-color:#fcd34d;':'' %>">
                   <label class="muted" style="font-size:10px;white-space:nowrap;" title="Set as the standard price for ALL customers"><input type="checkbox" name="scope" value="global" style="vertical-align:middle;"> std</label>
                   <button class="btn" type="submit" style="font-size:12px;padding:3px 8px;">Save</button>
                 </form>
               </td>
               <td style="text-align:right;font-weight:600;"><%= l.sale==null?'—':money(l.sale) %></td>
-              <td style="text-align:right;color:#166534;"><%= l.sale==null?'—':money(l.sale - Number(l.cost||0)) %></td>
+              <td style="text-align:right;color:var(--ok-fg);"><%= l.sale==null?'—':money(l.sale - Number(l.cost||0)) %></td>
             </tr>
           <% }); %>
         </tbody>
@@ -873,7 +873,7 @@
         <div class="table-wrap"><table class="table">
           <thead><tr><th>When</th><th>Change</th><th>Service</th><th style="text-align:right;">Was → Now</th></tr></thead>
           <tbody>
-            <% history.forEach(function(h){ var c=h.change_type; var col=c==='removed'?'#b91c1c':(c==='added'?'#166534':(c==='prorata'?'#1e40af':'#92400e')); var lbl=c==='added'?'+ added':(c==='removed'?'✕ removed':(c==='prorata'?'◴ part-month':(c==='qty_up'?'▲ qty up':'▼ qty down'))); %>
+            <% history.forEach(function(h){ var c=h.change_type; var col=c==='removed'?'var(--bad-fg)':(c==='added'?'var(--ok-fg)':(c==='prorata'?'var(--blue-deep)':'var(--warn-deep)')); var lbl=c==='added'?'+ added':(c==='removed'?'✕ removed':(c==='prorata'?'◴ part-month':(c==='qty_up'?'▲ qty up':'▼ qty down'))); %>
               <tr>
                 <td class="muted" style="white-space:nowrap;font-size:12px;"><%= new Date(h.detected_at).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) %></td>
                 <td><span style="color:<%= col %>;font-weight:600;font-size:12px;"><%= lbl %></span></td>
@@ -940,7 +940,7 @@
           <h3 style="font-size:14px;margin:0 0 6px;"><%= s[1] %></h3>
           <% items.forEach(function(r){ %>
             <div class="<%= r.status==='done' ? 'az-done' : '' %>" style="<%= r.status==='done' ? 'display:none;' : '' %>border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-bottom:5px;font-size:13px;display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
-              <span style="<%= r.status==='done' ? 'text-decoration:line-through;color:#9ca3af;' : '' %>"><%= r.body %><% if (r.due_date) { %> <span class="badge badge-failed" style="font-size:10px;">due <%= new Date(r.due_date).toLocaleDateString('en-GB') %></span><% } %></span>
+              <span style="<%= r.status==='done' ? 'text-decoration:line-through;color:var(--faint);' : '' %>"><%= r.body %><% if (r.due_date) { %> <span class="badge badge-failed" style="font-size:10px;">due <%= new Date(r.due_date).toLocaleDateString('en-GB') %></span><% } %></span>
               <span style="white-space:nowrap;display:flex;gap:4px;">
                 <form method="post" action="/review-items/<%= r.id %>/toggle" style="margin:0;"><button class="btn" type="submit" style="padding:0 7px;font-size:11px;" title="<%= r.status==='done' ? 'Reopen' : 'Done' %>"><%= r.status==='done' ? '↺' : '✓' %></button></form>
                 <form method="post" action="/review-items/<%= r.id %>/delete" style="margin:0;" onsubmit="return confirm('Delete this item?');"><button class="btn" type="submit" style="padding:0 7px;font-size:11px;">✕</button></form>
@@ -987,7 +987,7 @@
               <td class="muted" style="white-space:nowrap;"><%= d.created_at ? new Date(d.created_at).toLocaleDateString('en-GB') : '' %><% if (d.uploaded_by) { %><br><span style="font-size:11px;"><%= d.uploaded_by %></span><% } %></td>
               <td class="row-actions" style="white-space:nowrap;">
                 <button type="button" class="row-link" style="background:none;border:none;cursor:pointer;" onclick="document.getElementById('doc-edit-<%= d.id %>').style.display='block';">Edit</button>
-                <form method="post" action="/customers/<%= customer.id %>/documents/<%= d.id %>/delete" style="display:inline;margin:0;" onsubmit="return confirm('Delete this document and all its files?');"><button type="submit" class="row-link" style="background:none;border:none;cursor:pointer;color:#b91c1c;">Delete</button></form>
+                <form method="post" action="/customers/<%= customer.id %>/documents/<%= d.id %>/delete" style="display:inline;margin:0;" onsubmit="return confirm('Delete this document and all its files?');"><button type="submit" class="row-link" style="background:none;border:none;cursor:pointer;color:var(--bad-fg);">Delete</button></form>
               </td>
             </tr>
           <% }); %>
@@ -998,7 +998,7 @@
 
   <!-- Upload drawer (new document) -->
   <div id="doc-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:1000;">
-    <div style="position:absolute;top:0;right:0;bottom:0;width:min(460px,94vw);background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow:auto;padding:24px 28px;">
+    <div style="position:absolute;top:0;right:0;bottom:0;width:min(460px,94vw);background:var(--surface);box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow:auto;padding:24px 28px;">
       <h2 style="margin:0 0 16px;">Upload document</h2>
       <form method="post" action="/customers/<%= customer.id %>/documents" enctype="multipart/form-data">
         <div class="form-group"><label>Title *</label><input class="input" name="title" required placeholder="e.g. Network diagrams"></div>
@@ -1015,7 +1015,7 @@
   <!-- Edit drawers (one per document) -->
   <% docList.forEach(function(d){ var files=d.files||[]; %>
   <div id="doc-edit-<%= d.id %>" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:1000;">
-    <div style="position:absolute;top:0;right:0;bottom:0;width:min(460px,94vw);background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow:auto;padding:24px 28px;">
+    <div style="position:absolute;top:0;right:0;bottom:0;width:min(460px,94vw);background:var(--surface);box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow:auto;padding:24px 28px;">
       <h2 style="margin:0 0 16px;">Edit document</h2>
       <div class="form-group"><label>Files</label>
         <% if (!files.length) { %><div class="muted" style="font-size:13px;">No files.</div><% } %>
@@ -1023,7 +1023,7 @@
           <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line);">
             <a class="row-link" href="<%= docFileUrl(customer.id,d.id,f.id) %>" target="_blank" rel="noopener" style="flex:1;"><%= f.file_name %></a>
             <span class="muted" style="font-size:11px;"><%= fmtDocBytes(f.file_size) %></span>
-            <form method="post" action="/customers/<%= customer.id %>/documents/<%= d.id %>/files/<%= f.id %>/delete" style="margin:0;" onsubmit="return confirm('Remove this file?');"><button type="submit" class="row-link" style="background:none;border:none;cursor:pointer;color:#b91c1c;">Remove</button></form>
+            <form method="post" action="/customers/<%= customer.id %>/documents/<%= d.id %>/files/<%= f.id %>/delete" style="margin:0;" onsubmit="return confirm('Remove this file?');"><button type="submit" class="row-link" style="background:none;border:none;cursor:pointer;color:var(--bad-fg);">Remove</button></form>
           </div>
         <% }); %>
       </div>
@@ -1079,7 +1079,7 @@
               <td><% if (cr.category) { %><span class="badge badge-inactive"><%= cr.category %></span><% } else { %><span class="muted">—</span><% } %></td>
               <td class="row-actions" style="white-space:nowrap;">
                 <button type="button" class="row-link" style="background:none;border:none;cursor:pointer;" onclick="pwEdit(this)">Edit</button>
-                <form method="post" action="/credentials/<%= cr.id %>/delete" style="display:inline;margin:0;" onsubmit="return confirm('Delete this password?');"><button type="submit" class="row-link" style="background:none;border:none;cursor:pointer;color:#b91c1c;">Delete</button></form>
+                <form method="post" action="/credentials/<%= cr.id %>/delete" style="display:inline;margin:0;" onsubmit="return confirm('Delete this password?');"><button type="submit" class="row-link" style="background:none;border:none;cursor:pointer;color:var(--bad-fg);">Delete</button></form>
               </td>
             </tr>
           <% }); %>
@@ -1090,7 +1090,7 @@
 
   <!-- Add/edit drawer -->
   <div id="pw-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:1000;">
-    <div style="position:absolute;top:0;right:0;bottom:0;width:min(460px,94vw);background:#fff;box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow:auto;padding:24px 28px;">
+    <div style="position:absolute;top:0;right:0;bottom:0;width:min(460px,94vw);background:var(--surface);box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow:auto;padding:24px 28px;">
       <h2 id="pw-modal-title" style="margin:0 0 16px;">New password</h2>
       <form id="pw-form" method="post" action="">
         <div class="form-group"><label>Name *</label><input class="input" name="name" id="pw-name" required></div>
@@ -1178,7 +1178,7 @@
       <div class="form-group" style="margin-bottom:8px;"><label>Entra / M365 Tenant ID</label><input class="input" name="entra_tenant_id" value="<%= customer.entra_tenant_id || '' %>" placeholder="xxxxxxxx-xxxx-…" style="width:100%;"></div>
       <button class="btn" type="submit">Save tenant</button>
     </form>
-    <form method="post" action="/customers/<%= customer.id %>/portal-access" style="margin:0 0 10px;padding:10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+    <form method="post" action="/customers/<%= customer.id %>/portal-access" style="margin:0 0 10px;padding:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;">
       <label style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;">
         <input type="checkbox" name="portal_enabled" <%= customer.portal_enabled ? 'checked' : '' %>>
         Enable customer portal login for this company

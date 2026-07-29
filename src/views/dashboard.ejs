@@ -11,8 +11,8 @@
   <a class="btn" href="https://backup.msp360.com" target="_blank" rel="noopener">MSP360</a>
   <a class="btn" href="https://claude.ai" target="_blank" rel="noopener">Claude</a>
   <div style="position:relative;display:inline-block;">
-    <button type="button" class="btn" id="dashBmBtn" style="border-color:#0ea5b7;color:#0e7490;">🔖 Bookmarks <span style="font-size:10px;">▾</span></button>
-    <div id="dashBmMenu" style="display:none;position:absolute;left:0;top:110%;background:#fff;border:1px solid #e2e8f0;border-radius:10px;box-shadow:0 14px 34px rgba(2,6,23,.18);min-width:260px;z-index:1300;padding:6px;">
+    <button type="button" class="btn" id="dashBmBtn" style="border-color:var(--accent);color:var(--accent-deep);">🔖 Bookmarks <span style="font-size:10px;">▾</span></button>
+    <div id="dashBmMenu" style="display:none;position:absolute;left:0;top:110%;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 14px 34px rgba(2,6,23,.18);min-width:260px;z-index:1300;padding:6px;">
       <div class="muted" style="padding:8px 10px;font-size:13px;">Loading…</div>
     </div>
   </div>
@@ -34,10 +34,10 @@
     fetch('/bookmarks.json').then(function(r){ return r.json(); }).then(function(rows){
       var html = (rows || []).map(function(b){
         var u = String(b.url || ''); if (!/^https?:\/\//i.test(u)) return '';
-        return '<a href="' + escQ(u) + '" target="_blank" rel="noopener" style="display:block;padding:9px 12px;border-radius:8px;color:#0f172a;text-decoration:none;font-size:14.5px;" onmouseover="this.style.background=\'#f0fdff\'" onmouseout="this.style.background=\'\'">🔗 ' + escQ(b.label) + '</a>';
+        return '<a href="' + escQ(u) + '" target="_blank" rel="noopener" style="display:block;padding:9px 12px;border-radius:8px;color:var(--ink);text-decoration:none;font-size:14.5px;" onmouseover="this.style.background=\'var(--tint-accent)\'" onmouseout="this.style.background=\'\'">🔗 ' + escQ(b.label) + '</a>';
       }).join('');
       if (!html) html = '<div class="muted" style="padding:8px 10px;font-size:13px;">No bookmarks yet.</div>';
-      html += '<div style="border-top:1px solid #eef1f6;margin:4px 0;"></div><a href="/settings/bookmarks" style="display:block;padding:8px 12px;border-radius:8px;color:#64748b;text-decoration:none;font-size:13px;">⚙ Manage bookmarks</a>';
+      html += '<div style="border-top:1px solid var(--card-border);margin:4px 0;"></div><a href="/settings/bookmarks" style="display:block;padding:8px 12px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:13px;">⚙ Manage bookmarks</a>';
       menu.innerHTML = html;
     }).catch(function(){ menu.innerHTML = '<div class="muted" style="padding:8px 10px;">Could not load.</div>'; });
   });
@@ -48,17 +48,17 @@
 <div class="page-header"><h1>Dashboard</h1><p class="muted">Good to see you, <%= user.displayName %>.</p></div>
 
 <style>
-  .dash-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; align-items:start; }
+  .dash-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:16px; align-items:start; }
   .stat-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px 8px; margin:4px 0 16px; }
-  .stat-cell { background:#f8fafc; border:1px solid #eef2f7; border-radius:8px; padding:9px 11px; }
+  .stat-cell { background:var(--surface-2); border:1px solid var(--line-soft); border-radius:8px; padding:9px 11px; }
   .stat-cell .n { font-size:24px; font-weight:800; line-height:1; letter-spacing:-.5px; }
   .stat-cell .l { font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-top:4px; }
-  .stat-cell .n.green { color:#166534; } .stat-cell .n.blue { color:var(--accent); } .stat-cell .n.amber { color:#b45309; }
+  .stat-cell .n.green { color:var(--ok-fg); } .stat-cell .n.blue { color:var(--accent); } .stat-cell .n.amber { color:var(--warn-fg); }
   .dash-grid .card { border-top:3px solid var(--accent); }
-  .dash-grid .card.acc-cases     { border-top-color:#3b82f6; }
-  .dash-grid .card.acc-quotes    { border-top-color:#8b5cf6; }
-  .dash-grid .card.acc-invoices  { border-top-color:#16a34a; }
-  .dash-grid .card.acc-customers { border-top-color:#06b6d4; }
+  .dash-grid .card.acc-cases     { border-top-color:var(--blue-bright); }
+  .dash-grid .card.acc-quotes    { border-top-color:var(--violet); }
+  .dash-grid .card.acc-invoices  { border-top-color:var(--ok); }
+  .dash-grid .card.acc-customers { border-top-color:var(--accent); }
 </style>
 
 <div class="dash-grid">

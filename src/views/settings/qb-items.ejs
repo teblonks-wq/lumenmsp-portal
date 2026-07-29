@@ -17,7 +17,7 @@
         <% rows.forEach(function(r){ %><option value="<%= r.qbId %>" <%= String(cur)===String(r.qbId)?'selected':'' %>><%= r.qbName %></option><% }); %>
       </select>
     <% } %>
-    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:10px 12px;">
+    <div style="background:var(--tint-ok);border:1px solid var(--ok-line);border-radius:6px;padding:10px 12px;">
       <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Comms category → QuickBooks item</div>
       <p class="muted" style="font-size:12px;margin:0 0 8px;">Each comms invoice line posts under the QB item for its category. <strong>Don't have Simply VoIP / Simply Mobile in QB yet?</strong>
         <form method="post" action="/settings/quickbooks/create-comms-items" style="display:inline;"><button class="btn btn-primary" type="submit" style="font-size:12px;padding:3px 9px;">Create them in QuickBooks</button></form>
@@ -41,12 +41,12 @@
     <div><button class="btn btn-primary" type="submit">Save defaults</button></div>
   </form>
 </details>
-<% if (stats.autoLinked > 0) { %><div class="alert" style="background:#f0fdf4;border:1px solid #bbf7d0;max-width:760px;">Auto-linked <strong><%= stats.autoLinked %></strong> exact name match<%= stats.autoLinked===1?'':'es' %>.</div><% } %>
+<% if (stats.autoLinked > 0) { %><div class="alert" style="background:var(--tint-ok);border:1px solid var(--ok-line);max-width:760px;">Auto-linked <strong><%= stats.autoLinked %></strong> exact name match<%= stats.autoLinked===1?'':'es' %>.</div><% } %>
 
 <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
   <div class="card"><div class="card-header"><h2>QB items</h2></div><div class="stat"><%= stats.total %></div></div>
-  <div class="card"><div class="card-header"><h2>Linked</h2></div><div class="stat" style="color:#166534;"><%= stats.linked %></div></div>
-  <div class="card"><div class="card-header"><h2>No match</h2></div><div class="stat" style="color:#b45309;"><%= stats.unmatched %></div></div>
+  <div class="card"><div class="card-header"><h2>Linked</h2></div><div class="stat" style="color:var(--ok-fg);"><%= stats.linked %></div></div>
+  <div class="card"><div class="card-header"><h2>No match</h2></div><div class="stat" style="color:var(--warn-fg);"><%= stats.unmatched %></div></div>
   <div class="card"><div class="card-header"><h2>Ignored</h2></div><div class="stat" style="color:var(--muted);"><%= stats.ignored %></div></div>
 </div>
 

@@ -38,7 +38,7 @@
             <td style="text-align:right;"><%= money(p.cost_price) %></td>
             <td style="text-align:right;"><%= money(p.unit_price) %></td>
             <td style="text-align:right;"><%= Number(p.vat_rate) %>%</td>
-            <td style="text-align:right;color:<%= mp>=20?'#166534':mp>0?'#b45309':'#b91c1c' %>;"><%= mp.toFixed(0) %>%</td>
+            <td style="text-align:right;color:<%= mp>=20?'var(--ok-fg)':mp>0?'var(--warn-fg)':'var(--bad-fg)' %>;"><%= mp.toFixed(0) %>%</td>
             <td style="text-align:right;white-space:nowrap;">
               <a class="btn" href="/products/<%= p.id %>/edit">Edit</a>
               <% if (p.is_active) { %><form method="post" action="/products/<%= p.id %>/delete" onsubmit="return confirm('Deactivate this product?');" style="display:inline;"><button class="btn" type="submit">✕</button></form><% } %>

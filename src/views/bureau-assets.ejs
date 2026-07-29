@@ -15,9 +15,9 @@
 <div class="card" style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
   <div><div class="muted" style="font-size:12px;">Assets</div><div style="font-size:20px;font-weight:800;"><%= clis.length %></div></div>
   <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:800;"><%= money(totals.sale) %></div></div>
-  <div><div class="muted" style="font-size:12px;">Cost</div><div style="font-size:20px;font-weight:800;color:#64748b;"><%= money(totals.cost) %></div></div>
-  <div><div class="muted" style="font-size:12px;">Profit</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(totals.profit) %></div></div>
-  <div><div class="muted" style="font-size:12px;">Duplicates</div><div style="font-size:20px;font-weight:800;color:<%= duplicates.length?'#b45309':'inherit' %>;"><%= duplicates.length %></div></div>
+  <div><div class="muted" style="font-size:12px;">Cost</div><div style="font-size:20px;font-weight:800;color:var(--muted);"><%= money(totals.cost) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Profit</div><div style="font-size:20px;font-weight:800;color:var(--ok-fg);"><%= money(totals.profit) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Duplicates</div><div style="font-size:20px;font-weight:800;color:<%= duplicates.length?'var(--warn-fg)':'inherit' %>;"><%= duplicates.length %></div></div>
 </div>
 
 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
@@ -25,11 +25,11 @@
 </div>
 
 <% if (duplicates.length || conflicts.length) { %>
-<details class="card" style="margin-bottom:14px;border-left:3px solid #f59e0b;">
+<details class="card" style="margin-bottom:14px;border-left:3px solid var(--amber);">
   <summary style="cursor:pointer;font-weight:600;">⚠ Duplicate finder (<%= duplicates.length %> dup · <%= conflicts.length %> conflicts)</summary>
   <% if (duplicates.length) { %><div style="margin-top:10px;"><strong style="font-size:13px;">Same product appears more than once on a CLI/period:</strong>
     <div class="table-wrap"><table class="table"><thead><tr><th>CLI</th><th>Product</th><th>Period</th><th style="text-align:right;">Times</th></tr></thead><tbody>
-      <% duplicates.forEach(function(d){ %><tr><td><%= d.cli %></td><td><%= d.description %></td><td><%= d.period||'—' %></td><td style="text-align:right;"><span class="badge" style="background:#fef3c7;color:#92400e;"><%= d.count %></span></td></tr><% }); %>
+      <% duplicates.forEach(function(d){ %><tr><td><%= d.cli %></td><td><%= d.description %></td><td><%= d.period||'—' %></td><td style="text-align:right;"><span class="badge" style="background:var(--warn-bg);color:var(--warn-deep);"><%= d.count %></span></td></tr><% }); %>
     </tbody></table></div></div><% } %>
   <% if (conflicts.length) { %><div style="margin-top:10px;"><strong style="font-size:13px;">CLI allocated to more than one customer:</strong>
     <ul style="margin:6px 0 0;font-size:13px;"><% conflicts.forEach(function(c){ %><li><strong><%= c.cli %></strong> → <%= c.customers.join(', ') %></li><% }); %></ul></div><% } %>
@@ -47,7 +47,7 @@
         <tr data-search="<%= ((h.mac||'')+' '+(h.model||'')+' '+(h.customer||'')).toLowerCase() %>">
           <td><strong style="font-family:monospace;font-size:12px;"><%= h.mac %></strong></td>
           <td><%= h.model || '—' %></td>
-          <td><% if (h.customer_id) { %><a class="row-link" href="/customers/<%= h.customer_id %>#comms"><%= h.customer %></a><% } else { %><span class="badge" style="background:#fee2e2;color:#b91c1c;font-size:10px;">unallocated</span><% } %></td>
+          <td><% if (h.customer_id) { %><a class="row-link" href="/customers/<%= h.customer_id %>#comms"><%= h.customer %></a><% } else { %><span class="badge" style="background:var(--bad-bg);color:var(--bad-fg);font-size:10px;">unallocated</span><% } %></td>
           <td class="muted" style="font-size:12px;"><%= h.location || '—' %></td>
         </tr>
       <% }); %>
@@ -77,14 +77,14 @@
     <summary style="cursor:pointer;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
       <span><strong><%= g.cli %></strong>
         <span class="badge <%= g.domain==='cloud'?'badge-inactive':(g.type==='voice'?'badge-sent':'badge-primary') %>" style="font-size:10px;"><%= g.domain==='cloud'?'Cloud':(g.type==='voice'?'Number':'Circuit') %></span>
-        <% if (g.manual) { %><span class="badge" style="font-size:10px;background:#dbeafe;color:#1e40af;">manual</span><% } %>
-        <% if (!g.allocated) { %><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;">unallocated</span><% } %>
+        <% if (g.manual) { %><span class="badge" style="font-size:10px;background:var(--tint-info-2);color:var(--blue-deep);">manual</span><% } %>
+        <% if (!g.allocated) { %><span class="badge" style="font-size:10px;background:var(--bad-bg);color:var(--bad-fg);">unallocated</span><% } %>
         <span class="muted" style="font-size:13px;">· <%= g.customer || '—' %> · <%= g.lines.length %> product(s)</span>
       </span>
-      <span class="muted" style="font-size:13px;">cost <%= money(g.cost) %> · sale <%= money(g.sale) %> · <span style="color:<%= g.profit>=0?'#166534':'#b91c1c' %>;">profit <%= money(g.profit) %></span></span>
+      <span class="muted" style="font-size:13px;">cost <%= money(g.cost) %> · sale <%= money(g.sale) %> · <span style="color:<%= g.profit>=0?'var(--ok-fg)':'var(--bad-fg)' %>;">profit <%= money(g.profit) %></span></span>
     </summary>
     <% if (g.domain!=='cloud') { %>
-    <div style="padding:10px 18px;border-top:1px solid var(--line,#eef2f7);background:#f8fafc;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <div style="padding:10px 18px;border-top:1px solid var(--line,var(--line-soft));background:var(--surface-2);display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <form method="post" action="/bureau/cli/allocate" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0;" onsubmit="return this.customer_id.value && confirm('Reassign <%= g.cli %> to the selected customer? Its lines and call records move across and the CLI mapping is corrected.');">
         <input type="hidden" name="cli" value="<%= g.cli %>">
         <input type="hidden" name="back" value="/bureau/assets">
@@ -95,7 +95,7 @@
       </form>
     </div>
     <% } %>
-    <div class="table-wrap" style="border-top:1px solid var(--line,#eef2f7);"><table class="table">
+    <div class="table-wrap" style="border-top:1px solid var(--line,var(--line-soft));"><table class="table">
       <thead><tr><th>Product</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit cost</th><th style="text-align:right;">Total cost</th><th>Location</th><th style="text-align:right;">Sale</th><th style="text-align:right;">Profit</th><th>Period</th><th></th></tr></thead>
       <tbody>
         <% g.lines.forEach(function(l){ %>
@@ -107,11 +107,11 @@
             <td style="text-align:right;"><input class="input" name="total_cost" value="<%= n2(l.total_cost) %>" style="width:85px;text-align:right;font-size:12px;padding:4px 6px;"></td>
             <td><input class="input" name="location" value="<%= l.location || '' %>" placeholder="—" style="width:110px;font-size:12px;padding:4px 6px;"></td>
             <td style="text-align:right;"><input class="input" name="sale_price" value="<%= l.sale_price!=null?Number(l.sale_price).toFixed(2):'' %>" placeholder="—" style="width:75px;text-align:right;font-size:12px;padding:4px 6px;"></td>
-            <td style="text-align:right;font-size:12px;color:<%= l._lineProfit==null?'#94a3b8':(l._lineProfit>=0?'#166534':'#b91c1c') %>;"><%= l._lineProfit==null?'—':money(l._lineProfit) %></td>
-            <td class="muted" style="font-size:11px;white-space:nowrap;"><%= l.billing_period || '—' %><% if (l.is_prorata) { %> <span class="badge" style="font-size:9px;background:#fef3c7;color:#92400e;">part</span><% } %><% if (l.is_one_off) { %> <span class="badge" style="font-size:9px;">one-off</span><% } %></td>
+            <td style="text-align:right;font-size:12px;color:<%= l._lineProfit==null?'var(--faint)':(l._lineProfit>=0?'var(--ok-fg)':'var(--bad-fg)') %>;"><%= l._lineProfit==null?'—':money(l._lineProfit) %></td>
+            <td class="muted" style="font-size:11px;white-space:nowrap;"><%= l.billing_period || '—' %><% if (l.is_prorata) { %> <span class="badge" style="font-size:9px;background:var(--warn-bg);color:var(--warn-deep);">part</span><% } %><% if (l.is_one_off) { %> <span class="badge" style="font-size:9px;">one-off</span><% } %></td>
             <td style="white-space:nowrap;"><button class="btn btn-primary" type="submit" style="font-size:11px;padding:3px 8px;">Save</button></td>
           </form>
-          <td style="padding-left:0;"><form method="post" action="/bureau/assets/line/<%= l.id %>/delete" onsubmit="return confirm('Delete this line?');" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:#b91c1c;">✕</button></form></td>
+          <td style="padding-left:0;"><form method="post" action="/bureau/assets/line/<%= l.id %>/delete" onsubmit="return confirm('Delete this line?');" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);">✕</button></form></td>
         </tr>
         <% }); %>
       </tbody>

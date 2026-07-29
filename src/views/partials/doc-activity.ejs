@@ -6,9 +6,9 @@
     countersigned:'Counter-signed', accepted:'Accepted', declined:'Declined'
   };
   var DOT = {
-    sent:'#0ea5b7', reminder_sent:'#0ea5b7', email_opened:'#cbd5e1', opened:'#6366f1',
-    downloaded:'#6366f1', printed:'#6366f1', signed:'#16a34a', countersigned:'#16a34a',
-    accepted:'#16a34a', declined:'#dc2626'
+    sent:'var(--accent)', reminder_sent:'var(--accent)', email_opened:'var(--line-strong)', opened:'var(--indigo)',
+    downloaded:'var(--indigo)', printed:'var(--indigo)', signed:'var(--ok)', countersigned:'var(--ok)',
+    accepted:'var(--ok)', declined:'var(--bad)'
   };
   function evTime(d){ return new Date(d).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); }
 %>
@@ -25,8 +25,8 @@
              var meta = e.meta || {};
              var prefetch = e.event === 'email_opened' && meta.prefetch; %>
           <li style="display:flex;gap:12px;padding:9px 0;<%= i ? 'border-top:1px solid var(--line);' : '' %>">
-            <span style="flex:none;width:9px;height:9px;border-radius:50%;margin-top:6px;background:<%= DOT[e.event] || '#94a3b8' %>;
-                         <%= e.confidence === 'indicative' ? 'box-shadow:0 0 0 2px #fff, 0 0 0 3px ' + (DOT[e.event]||'#94a3b8') + ';background:#fff;' : '' %>"></span>
+            <span style="flex:none;width:9px;height:9px;border-radius:50%;margin-top:6px;background:<%= DOT[e.event] || 'var(--faint)' %>;
+                         <%= e.confidence === 'indicative' ? 'box-shadow:0 0 0 2px #fff, 0 0 0 3px ' + (DOT[e.event]||'var(--faint)') + ';background:var(--surface);' : '' %>"></span>
             <div style="flex:1;min-width:0;">
               <div style="font-size:13.5px;font-weight:600;color:var(--lumen-dark);">
                 <%= LABEL[e.event] || e.event %>

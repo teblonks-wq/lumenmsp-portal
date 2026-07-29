@@ -81,10 +81,10 @@
       </div>
       <div style="text-align:right;">
         <div class="muted" style="font-size:13px;">Subtotal <span id="sumSub" style="font-variant-numeric:tabular-nums;">£0.00</span> &nbsp;·&nbsp; VAT <span id="sumTax" style="font-variant-numeric:tabular-nums;">£0.00</span></div>
-        <div style="margin-top:4px;"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#0ea5b7;">Total</span>
-          <span id="sumTotal" style="font-size:26px;font-weight:800;color:#0f172a;font-variant-numeric:tabular-nums;margin-left:8px;">£0.00</span></div>
+        <div style="margin-top:4px;"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--accent);">Total</span>
+          <span id="sumTotal" style="font-size:26px;font-weight:800;color:var(--ink);font-variant-numeric:tabular-nums;margin-left:8px;">£0.00</span></div>
         <div style="margin-top:6px;"><span class="muted" style="font-size:12px;">Cost <span id="sumCost" style="font-variant-numeric:tabular-nums;">£0.00</span></span>
-          <span id="profitPill" style="display:inline-block;margin-left:8px;font-size:12px;font-weight:700;padding:2px 10px;border-radius:999px;background:#dcfce7;color:#16a34a;">Profit <span id="sumProfit" style="font-variant-numeric:tabular-nums;">£0.00</span> · <span id="sumMargin">0%</span></span></div>
+          <span id="profitPill" style="display:inline-block;margin-left:8px;font-size:12px;font-weight:700;padding:2px 10px;border-radius:999px;background:var(--ok-bg);color:var(--ok);">Profit <span id="sumProfit" style="font-variant-numeric:tabular-nums;">£0.00</span> · <span id="sumMargin">0%</span></span></div>
       </div>
     </div>
   </div>
@@ -124,7 +124,7 @@
       document.getElementById('sumProfit').textContent = money(profit);
       document.getElementById('sumMargin').textContent = (sub>0 ? (profit/sub*100).toFixed(1) : '0') + '%';
       var pill = document.getElementById('profitPill');
-      if (pill) { var bad = profit < 0; pill.style.background = bad ? '#fee2e2' : '#dcfce7'; pill.style.color = bad ? '#dc2626' : '#16a34a'; }
+      if (pill) { var bad = profit < 0; pill.style.background = bad ? 'var(--bad-bg)' : 'var(--ok-bg)'; pill.style.color = bad ? 'var(--bad)' : 'var(--ok)'; }
     }
     function addRow(){
       var first = body.querySelector('.item-row');

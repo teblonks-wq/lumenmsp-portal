@@ -13,7 +13,8 @@ import { clientIp, documentFooterHtml, PDF_OPTS, renderContractHtml, snapshotCon
 import { coverFromLines, SUPPLIER as SUP } from '../lib/contract-template';
 import { config } from '../config';
 import { sendMail } from '../lib/mailer';
-import { contractEmailHtml, contractSignedEmailHtml } from '../lib/emails';
+import { contractEmailHtml, contractExecutedEmailHtml, contractSignedEmailHtml } from '../lib/emails';
+import { alertGroup } from '../lib/notifications';
 import {
   clientIp as evIp, getDocEvents, logDocEvent, newPixelToken, pixelImg, userAgent as evUa,
 } from '../lib/doc-events';
@@ -548,25 +549,67 @@ router.post('/contracts/:id/send', requireAuth, async (req: Request, res: Respon
 router.post('/contracts/:id/countersign', requireAuth, async (req: Request, res: Response) => {
   const user = req.session.user!;
   const id = parseInt(String(req.params.id), 10);
-  const c = (await pool.query('SELECT sign_status FROM contracts WHERE id=$1 AND deleted_at IS NULL', [id])).rows[0];
+  const c = (await pool.query(
+    `SELECT ct.*, cu.name AS customer_name FROM contracts ct
+       LEFT JOIN customers cu ON cu.id = ct.customer_id
+      WHERE ct.id=$1 AND ct.deleted_at IS NULL`, [id])).rows[0];
   if (!c) { res.status(404).render('error', { message: 'Contract not found.' }); return; }
   if (c.sign_status !== 'signed') {
     res.redirect('/contracts/' + id + '?err=' + encodeURIComponent('The customer has not signed this yet.'));
     return;
   }
+  const signer = nz(req.body.name) || SUP.serviceContact.split('—')[0].trim();
   await pool.query(
     `UPDATE contracts SET sign_status='countersigned', status='active',
        supplier_sign_name=$1, supplier_sign_position=$2, supplier_signed_at=NOW(),
        supplier_signature_svg=$3 WHERE id=$4`,
-    [nz(req.body.name) || SUP.serviceContact.split('—')[0].trim(), nz(req.body.position) || 'Managing Director',
-     typedSignatureSvg(nz(req.body.name) || SUP.serviceContact.split('—')[0].trim()), id]);
+    [signer, nz(req.body.position) || 'Managing Director', typedSignatureSvg(signer), id]);
   await logDocEvent('contract', id, 'countersigned', {
     actor: nz(req.body.name) || user.displayName, ip: evIp(req), userAgent: evUa(req),
   });
-  try { await snapshotContract(id, 'agreement', 'Counter-signed by ' + (nz(req.body.name) || 'Lumen'), user.id); }
+  const isExt = c.current_doc_kind === 'extension';
+  let snap: { version: number; sha256: string; filePath: string } | null = null;
+  // Snapshot AFTER the update above, so the frozen copy carries both signatures — this is the
+  // executed document, and it is what gets emailed.
+  try { snap = await snapshotContract(id, isExt ? 'extension' : 'agreement', 'Counter-signed by ' + signer, user.id); }
   catch (e) { console.error('[contract-sign] countersign snapshot failed:', e); }
+
+  // Send the executed copy automatically. The signing receipt already promises it ("we will
+  // countersign and you will receive the fully executed copy shortly") — leaving that to a
+  // human meant it sometimes never went.
+  let mailed = '';
+  const to = c.client_sign_email || c.sent_to;
+  if (to) {
+    try {
+      const pdf = snap && fs.existsSync(snap.filePath) ? fs.readFileSync(snap.filePath) : null;
+      const stamp = (d: any) => (d ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
+      await sendMail({
+        to,
+        subject: `${c.contract_number} — fully executed ${isExt ? 'extension' : 'agreement'}`,
+        html: contractExecutedEmailHtml({
+          contactName: c.client_sign_name || '', contractNumber: c.contract_number, title: c.title,
+          isExtension: isExt, clientSignedAt: stamp(c.client_signed_at), supplierSignedAt: stamp(new Date()),
+          portalUrl: config.APP_URL + '/my',
+        }),
+        signatureName: user.displayName,
+        attachments: pdf
+          ? [{ filename: c.contract_number + '-executed.pdf', contentType: 'application/pdf', base64: pdf.toString('base64') }]
+          : undefined,
+      });
+      await logDocEvent('contract', id, 'sent', {
+        customerId: c.customer_id, actor: to,
+        meta: { kind: 'executed copy', attached: !!pdf, by: user.displayName },
+      });
+      mailed = ' The executed copy has been emailed to ' + to + '.';
+    } catch (e) {
+      console.error('[contract-sign] executed copy mail failed:', e);
+      mailed = ' The executed copy could NOT be emailed — send it from the contract page.';
+    }
+  } else {
+    mailed = ' No signer email on record, so no executed copy was sent.';
+  }
   await logActivity(user.id, 'updated', 'contracts', id, 'Counter-signed contract #' + id);
-  res.redirect('/contracts/' + id + '?msg=' + encodeURIComponent('Counter-signed. The agreement is now active.'));
+  res.redirect('/contracts/' + id + '?msg=' + encodeURIComponent('Counter-signed. The agreement is now active.' + mailed));
 });
 
 // ── PUBLIC signing page (no login — the link IS the credential) ────────────────
@@ -657,8 +700,17 @@ router.post('/c/:token/sign', async (req: Request, res: Response) => {
 
   // Freeze what was signed. Without this the signature points at a document that could later
   // be regenerated differently.
-  try { await snapshotContract(contract.id, 'agreement', 'Signed by ' + name + (position ? ', ' + position : '')); }
+  try { await snapshotContract(contract.id, contract.current_doc_kind === 'extension' ? 'extension' : 'agreement', 'Signed by ' + name + (position ? ', ' + position : '')); }
   catch (e) { console.error('[contract-sign] snapshot failed:', e); }
+
+  // Tell the sales group. A signature used to land silently — the only way to find out was for
+  // somebody to open the contract and look, so a countersignature could sit waiting for days.
+  await alertGroup('sales',
+    'Contract signed — ' + contract.contract_number,
+    name + (position ? ', ' + position : '') + ' has signed '
+      + (contract.current_doc_kind === 'extension' ? 'the extension' : 'the agreement')
+      + ' for ' + (contract.customer_name || 'the customer') + '. It now needs counter-signing.',
+    '/contracts/' + contract.id);
 
   try {
     await sendMail({

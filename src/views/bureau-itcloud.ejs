@@ -10,24 +10,24 @@
      cur = Number(cur) || 0; last = Number(last) || 0;
      if (!last && !cur) return '';
      var inner;
-     if (!last) inner = '<span style="color:#2563eb;font-weight:600;">new</span>';
+     if (!last) inner = '<span style="color:var(--blue);font-weight:600;">new</span>';
      else {
        var pct = (cur - last) / last * 100;
-       if (Math.abs(pct) < 0.05) inner = money(last) + ' <span style="color:#94a3b8;font-weight:600;">=</span>';
-       else if (pct > 0) inner = money(last) + ' <span style="color:#166534;font-weight:600;">▲ +' + pct.toFixed(1) + '%</span>';
-       else inner = money(last) + ' <span style="color:#b91c1c;font-weight:600;">▼ ' + pct.toFixed(1) + '%</span>';
+       if (Math.abs(pct) < 0.05) inner = money(last) + ' <span style="color:var(--faint);font-weight:600;">=</span>';
+       else if (pct > 0) inner = money(last) + ' <span style="color:var(--ok-fg);font-weight:600;">▲ +' + pct.toFixed(1) + '%</span>';
+       else inner = money(last) + ' <span style="color:var(--bad-fg);font-weight:600;">▼ ' + pct.toFixed(1) + '%</span>';
      }
-     return '<div class="cmp" style="display:none;font-size:11px;color:#64748b;white-space:nowrap;">' + inner + '</div>';
+     return '<div class="cmp" style="display:none;font-size:11px;color:var(--muted);white-space:nowrap;">' + inner + '</div>';
    }
    // Same idea for plain counts (customers): last month's count + up/down difference.
    function cmpCount(cur, last){
      cur = Number(cur) || 0; last = Number(last) || 0;
      if (!last && !cur) return '';
      var d = cur - last;
-     var inner = last + (d === 0 ? ' <span style="color:#94a3b8;font-weight:600;">=</span>'
-       : d > 0 ? ' <span style="color:#166534;font-weight:600;">▲ +' + d + '</span>'
-       : ' <span style="color:#b91c1c;font-weight:600;">▼ ' + d + '</span>');
-     return '<div class="cmp" style="display:none;font-size:11px;color:#64748b;white-space:nowrap;">' + inner + '</div>';
+     var inner = last + (d === 0 ? ' <span style="color:var(--faint);font-weight:600;">=</span>'
+       : d > 0 ? ' <span style="color:var(--ok-fg);font-weight:600;">▲ +' + d + '</span>'
+       : ' <span style="color:var(--bad-fg);font-weight:600;">▼ ' + d + '</span>');
+     return '<div class="cmp" style="display:none;font-size:11px;color:var(--muted);white-space:nowrap;">' + inner + '</div>';
    }
 %>
 
@@ -42,10 +42,10 @@
   <div><div class="muted" style="font-size:12px;">Customers</div><div style="font-size:20px;font-weight:800;"><%= rows.length %> <span class="muted" style="font-size:12px;font-weight:400;"><%= nBilledNow %> built</span></div><%- cmpCount(nBilledNow, gl.custs) %></div>
   <div><div class="muted" style="font-size:12px;">IT &amp; base (ex VAT)</div><div style="font-size:20px;font-weight:800;"><%= money(grand.it) %></div><%- cmpHtml(grand.it, gl.it) %></div>
   <div><div class="muted" style="font-size:12px;">Cloud / M365 (ex VAT)</div><div style="font-size:20px;font-weight:800;"><%= money(grand.cloud) %></div><%- cmpHtml(grand.cloud, gl.cloud) %></div>
-  <div><div class="muted" style="font-size:12px;">Invoiced (ex VAT)</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(grand.net) %></div><%- cmpHtml(grand.net, gl.net) %></div>
-  <div><div class="muted" style="font-size:12px;">Giacom cost (ex VAT)</div><div style="font-size:20px;font-weight:800;color:#64748b;"><%= money(grand.cost) %></div></div>
-  <div><div class="muted" style="font-size:12px;">Margin (ex VAT)</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(grand.net - grand.cost) %></div></div>
-  <div><div class="muted" style="font-size:12px;">Gross (inc VAT)</div><div style="font-size:16px;font-weight:700;color:#94a3b8;"><%= money(grand.billed) %></div><%- cmpHtml(grand.billed, gl.billed) %></div>
+  <div><div class="muted" style="font-size:12px;">Invoiced (ex VAT)</div><div style="font-size:20px;font-weight:800;color:var(--ok-fg);"><%= money(grand.net) %></div><%- cmpHtml(grand.net, gl.net) %></div>
+  <div><div class="muted" style="font-size:12px;">Giacom cost (ex VAT)</div><div style="font-size:20px;font-weight:800;color:var(--muted);"><%= money(grand.cost) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Margin (ex VAT)</div><div style="font-size:20px;font-weight:800;color:var(--ok-fg);"><%= money(grand.net - grand.cost) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Gross (inc VAT)</div><div style="font-size:16px;font-weight:700;color:var(--faint);"><%= money(grand.billed) %></div><%- cmpHtml(grand.billed, gl.billed) %></div>
   <% if (hasLM) { %>
   <label style="margin-left:auto;display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap;">
     <input type="checkbox" id="cmpLast"> Compare to last month <span class="muted">(<%= prevP %> — as billed)</span>
@@ -64,30 +64,30 @@
       <% rows.forEach(function(r){ var lm = LM[r.id] || null; %>
         <tr>
           <td><a class="row-link" href="/customers/<%= r.id %>#cloud"><strong><%= r.name %></strong></a></td>
-          <td style="text-align:right;<%= r.it?'':'color:#cbd5e1;' %>"><%= r.it ? money(r.it) : '—' %><%- cmpHtml(r.it, lm ? lm.it : 0) %></td>
-          <td style="text-align:right;<%= r.cloud?'':'color:#cbd5e1;' %>"><%= r.cloud ? money(r.cloud) : '—' %><%- cmpHtml(r.cloud, lm ? lm.cloud : 0) %></td>
-          <td style="text-align:right;font-weight:700;<%= (r.net==null)?'color:#cbd5e1;':'' %>"><%= r.net==null ? '—' : money(r.net) %><% if (r.billed!=null) { %><br><span class="muted" style="font-size:10px;font-weight:400;"><%= money(r.billed) %> inc</span><% } %><% if (r.predictedBilled!=null && Math.abs(r.predictedBilled - r.billed) > 0.005) { %><br><span style="font-size:10px;font-weight:600;color:#0e7490;" title="Predicted next run — recurring only (drops this period's one-offs &amp; part-month catch-ups)">↻ next ~<%= money(r.predictedBilled) %></span><% } %><%- cmpHtml(r.net, lm ? lm.net : 0) %></td>
+          <td style="text-align:right;<%= r.it?'':'color:var(--line-strong);' %>"><%= r.it ? money(r.it) : '—' %><%- cmpHtml(r.it, lm ? lm.it : 0) %></td>
+          <td style="text-align:right;<%= r.cloud?'':'color:var(--line-strong);' %>"><%= r.cloud ? money(r.cloud) : '—' %><%- cmpHtml(r.cloud, lm ? lm.cloud : 0) %></td>
+          <td style="text-align:right;font-weight:700;<%= (r.net==null)?'color:var(--line-strong);':'' %>"><%= r.net==null ? '—' : money(r.net) %><% if (r.billed!=null) { %><br><span class="muted" style="font-size:10px;font-weight:400;"><%= money(r.billed) %> inc</span><% } %><% if (r.predictedBilled!=null && Math.abs(r.predictedBilled - r.billed) > 0.005) { %><br><span style="font-size:10px;font-weight:600;color:var(--accent-deep);" title="Predicted next run — recurring only (drops this period's one-offs &amp; part-month catch-ups)">↻ next ~<%= money(r.predictedBilled) %></span><% } %><%- cmpHtml(r.net, lm ? lm.net : 0) %></td>
           <td style="font-size:12px;">
-            <% if (!r.templateId) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;">no template</span>
+            <% if (!r.templateId) { %><span class="badge" style="font-size:10px;background:var(--warn-bg);color:var(--warn-deep);">no template</span>
             <% } else if (!r.periodInvoiceId) { %><span class="badge badge-inactive" style="font-size:10px;">template ✓ · not synced</span>
             <% } else { %>
               <a class="row-link" href="/invoices/<%= r.periodInvoiceId %>">
-                <% if (r.syncedAt) { %><span class="badge" style="font-size:10px;background:#dcfce7;color:#166534;">🔄 synced <%= ago(r.syncedAt) %></span><% } else { %><span class="badge badge-inactive" style="font-size:10px;">built · not synced</span><% } %></a>
-              <% if (r.drift) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;">⚠ <%= r.drift %> drift</span><% } %>
+                <% if (r.syncedAt) { %><span class="badge" style="font-size:10px;background:var(--ok-bg);color:var(--ok-fg);">🔄 synced <%= ago(r.syncedAt) %></span><% } else { %><span class="badge badge-inactive" style="font-size:10px;">built · not synced</span><% } %></a>
+              <% if (r.drift) { %><span class="badge" style="font-size:10px;background:var(--warn-bg);color:var(--warn-deep);">⚠ <%= r.drift %> drift</span><% } %>
             <% } %>
           </td>
           <td>
-            <% if (!r.hasBillingContact) { %><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;">no billing contact</span><% } %>
+            <% if (!r.hasBillingContact) { %><span class="badge" style="font-size:10px;background:var(--bad-bg);color:var(--bad-fg);">no billing contact</span><% } %>
             <% if (!r.giacomLinked) { %><span class="badge badge-inactive" style="font-size:10px;">not Giacom-paired</span><% } %>
-            <% if (r.unmatched) { %><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;">⚠ <%= r.unmatched %> not in product list</span><% } %>
-            <% if (r.audit && r.audit.notInDb.length) { %><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;" title="On the invoice: <%= r.audit.notInDb.join('; ') %>">⛔ <%= r.audit.notInDb.length %> line(s) not in DB/QB</span><% } %>
-            <% if (r.audit && r.audit.noQbItem.length) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;" title="<%= r.audit.noQbItem.join('; ') %>">⚠ <%= r.audit.noQbItem.length %> no QB item</span><% } %>
-            <% if (r.unpriced) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;"><%= r.unpriced %> unpriced</span><% } %>
+            <% if (r.unmatched) { %><span class="badge" style="font-size:10px;background:var(--bad-bg);color:var(--bad-fg);">⚠ <%= r.unmatched %> not in product list</span><% } %>
+            <% if (r.audit && r.audit.notInDb.length) { %><span class="badge" style="font-size:10px;background:var(--bad-bg);color:var(--bad-fg);" title="On the invoice: <%= r.audit.notInDb.join('; ') %>">⛔ <%= r.audit.notInDb.length %> line(s) not in DB/QB</span><% } %>
+            <% if (r.audit && r.audit.noQbItem.length) { %><span class="badge" style="font-size:10px;background:var(--warn-bg);color:var(--warn-deep);" title="<%= r.audit.noQbItem.join('; ') %>">⚠ <%= r.audit.noQbItem.length %> no QB item</span><% } %>
+            <% if (r.unpriced) { %><span class="badge" style="font-size:10px;background:var(--warn-bg);color:var(--warn-deep);"><%= r.unpriced %> unpriced</span><% } %>
             <% if (r.audit && (r.audit.notInDb.length || r.audit.noQbItem.length)) { %>
               <form method="post" action="/bureau/itcloud/fix-flags" style="display:inline;margin:0;" onsubmit="return confirm('Fix the flags for <%= (r.name||'').replace(/'/g,'') %>? Adds the missing services to the product list (name + billed price + Giacom cost) and creates/links their QuickBooks items.');">
                 <input type="hidden" name="period" value="<%= period || '' %>">
                 <input type="hidden" name="invoice_id" value="<%= r.periodInvoiceId %>">
-                <button class="btn" type="submit" style="font-size:11px;padding:2px 8px;background:#0e7490;border-color:#0e7490;color:#fff;" title="One click: create the missing product-list entries and QuickBooks items for this customer's flagged lines">⚡ Fix flags</button>
+                <button class="btn" type="submit" style="font-size:11px;padding:2px 8px;background:var(--accent-deep);border-color:var(--accent-deep);color:#fff;" title="One click: create the missing product-list entries and QuickBooks items for this customer's flagged lines">⚡ Fix flags</button>
               </form>
             <% } %>
           </td>
@@ -107,11 +107,11 @@
            var seen = rows.some(function(r){ return String(r.id) === String(cid); });
            if (seen) return; %>
         <!-- Billed last month, not even a candidate this month — a vanished customer should be a decision. -->
-        <tr class="cmp" style="display:none;background:#fff7ed;">
-          <td><strong><%= LM[cid].name || ('#' + cid) %></strong> <span class="badge" style="font-size:10px;background:#ffedd5;color:#9a3412;">billed <%= prevP %>, absent this month</span> <a class="row-link" href="/customers/<%= cid %>#cloud" style="font-size:12px;">View</a></td>
-          <td style="text-align:right;color:#94a3b8;font-size:12px;"><%= LM[cid].it ? money(LM[cid].it) : '—' %></td>
-          <td style="text-align:right;color:#94a3b8;font-size:12px;"><%= LM[cid].cloud ? money(LM[cid].cloud) : '—' %></td>
-          <td style="text-align:right;color:#b91c1c;font-weight:700;">▼ <%= money(LM[cid].net) %></td>
+        <tr class="cmp" style="display:none;background:var(--tint-orange);">
+          <td><strong><%= LM[cid].name || ('#' + cid) %></strong> <span class="badge" style="font-size:10px;background:#ffedd5;color:var(--orange-deep);">billed <%= prevP %>, absent this month</span> <a class="row-link" href="/customers/<%= cid %>#cloud" style="font-size:12px;">View</a></td>
+          <td style="text-align:right;color:var(--faint);font-size:12px;"><%= LM[cid].it ? money(LM[cid].it) : '—' %></td>
+          <td style="text-align:right;color:var(--faint);font-size:12px;"><%= LM[cid].cloud ? money(LM[cid].cloud) : '—' %></td>
+          <td style="text-align:right;color:var(--bad-fg);font-weight:700;">▼ <%= money(LM[cid].net) %></td>
           <td></td><td></td><td></td>
         </tr>
       <% }); } %>
@@ -123,7 +123,7 @@
       These lines won't map to a QB item or reporting category.
       <form method="post" action="/bureau/itcloud/fix-flags" style="display:inline;margin:0 4px;" onsubmit="return confirm('Fix ALL flags for <%= period %>? Adds every missing service to the product list (name + billed price + Giacom cost) and creates/links QuickBooks items for anything unmapped.');">
         <input type="hidden" name="period" value="<%= period || '' %>">
-        <button class="btn" type="submit" style="font-size:12px;padding:4px 12px;background:#0e7490;border-color:#0e7490;color:#fff;">⚡ Fix all flags</button>
+        <button class="btn" type="submit" style="font-size:12px;padding:4px 12px;background:var(--accent-deep);border-color:var(--accent-deep);color:#fff;">⚡ Fix all flags</button>
       </form>
       or add them by hand on the <a href="/products">product list</a>, or tick <em>complete anyway</em> below to post them under the default Giacom item.
       <ul style="margin:8px 0 0;padding-left:18px;font-size:13px;">
@@ -133,7 +133,7 @@
       </ul>
     </div>
   <% } %>
-  <div style="padding:16px 20px;border-top:1px solid var(--border,#e5e7eb);display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
+  <div style="padding:16px 20px;border-top:1px solid var(--border,var(--line));display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;">
     <form method="post" action="/bureau/itcloud/run-sync" onsubmit="return confirm('Run sync for <%= period %>? Builds each customer\'s invoice from their template + layers live Giacom lines. Your manual lines and locked overrides are preserved.');">
       <input type="hidden" name="period" value="<%= period || '' %>">
       <button class="btn btn-primary" type="submit" style="font-size:15px;padding:10px 18px;">↻ Run Sync — all templates</button>
@@ -146,9 +146,9 @@
         <div class="form-group" style="margin:0;"><label style="font-size:11px;">Invoice date</label><input class="input" type="date" name="issue_date" value="<%= todayStr %>" style="font-size:12px;"></div>
         <div class="form-group" style="margin:0;"><label style="font-size:11px;">Due date</label><input class="input" type="date" name="due_date" value="<%= nextFirst %>" style="font-size:12px;"></div>
       </div>
-      <button class="btn" type="submit" style="font-size:15px;padding:10px 18px;background:#166534;border-color:#166534;color:#fff;">Complete run - number, email, QB and DD</button>
+      <button class="btn" type="submit" style="font-size:15px;padding:10px 18px;background:var(--ok-fg);border-color:var(--ok-fg);color:#fff;">Complete run - number, email, QB and DD</button>
       <% if (typeof audit !== 'undefined' && audit && audit.length) { %>
-        <label class="muted" style="display:block;font-size:12px;margin-top:8px;color:#b91c1c;"><input type="checkbox" name="override_unmatched" value="1" style="vertical-align:middle;"> Complete anyway — I accept <%= audit.length %> invoice(s) have unmatched services (they'll post under the default Giacom item)</label>
+        <label class="muted" style="display:block;font-size:12px;margin-top:8px;color:var(--bad-fg);"><input type="checkbox" name="override_unmatched" value="1" style="vertical-align:middle;"> Complete anyway — I accept <%= audit.length %> invoice(s) have unmatched services (they'll post under the default Giacom item)</label>
       <% } %>
       <p class="muted" style="font-size:12px;margin:6px 0 0;max-width:400px;">Numbers the staged drafts with the dates above, emails finance the PDF, pushes to QuickBooks and submits for Direct Debit.</p>
     </form>

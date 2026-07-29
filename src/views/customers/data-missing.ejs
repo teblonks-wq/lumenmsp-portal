@@ -21,10 +21,10 @@
   .dm-table td{padding:6px 8px;vertical-align:middle;}
   .dm-table input.input, .dm-table select.input{width:100%;min-width:90px;padding:5px 8px;font-size:13px;}
   .dm-table select.input{min-width:130px;}
-  .dm-missing{background:#fef2f2;border-color:#fca5a5 !important;}
-  tr.dm-changed{background:#fffbeb;}
-  .dm-flag{display:inline-block;width:9px;height:9px;border-radius:50%;background:#ef4444;margin-right:5px;}
-  .dm-ok{background:#10b981;}
+  .dm-missing{background:var(--tint-bad);border-color:var(--bad-line2) !important;}
+  tr.dm-changed{background:var(--tint-warn);}
+  .dm-flag{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--bad-bright);margin-right:5px;}
+  .dm-ok{background:var(--green-bright);}
 </style>
 
 <div class="card" style="padding:0;">
@@ -132,7 +132,7 @@
       .then(function (r) { return r.json(); })
       .then(function (j) {
         if (j.ok) {
-          state.textContent = '✓ saved'; state.style.color = '#10b981';
+          state.textContent = '✓ saved'; state.style.color = 'var(--green-bright)';
           tr.classList.remove('dm-changed');
           // Re-evaluate missing highlights in place.
           var missing = false;
@@ -144,10 +144,10 @@
           });
           tr.setAttribute('data-missing', missing ? '1' : '0');
           tr.querySelector('.dm-flag').classList.toggle('dm-ok', !missing);
-        } else { state.textContent = j.error || 'failed'; state.style.color = '#dc2626'; }
+        } else { state.textContent = j.error || 'failed'; state.style.color = 'var(--bad)'; }
         return j.ok;
       })
-      .catch(function () { state.textContent = 'failed'; state.style.color = '#dc2626'; return false; });
+      .catch(function () { state.textContent = 'failed'; state.style.color = 'var(--bad)'; return false; });
   }
 
   function saveAllChanged() {

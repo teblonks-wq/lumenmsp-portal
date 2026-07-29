@@ -16,7 +16,7 @@
     <input type="hidden" name="from_ticket" value="<%= fromTicket %>">
     <input type="hidden" name="requester_email" value="<%= typeof requesterEmail !== 'undefined' ? requesterEmail : '' %>">
     <input type="hidden" name="requester_name" value="<%= typeof requesterName !== 'undefined' ? requesterName : '' %>">
-    <div class="alert" style="background:#fffbeb;border:1px solid #f59e0b;max-width:760px;margin-bottom:14px;">
+    <div class="alert" style="background:var(--tint-warn);border:1px solid var(--amber);max-width:760px;margin-bottom:14px;">
       Creating this customer will link it to the ticket and return you there. The sender will be added as the primary contact.
       <label style="display:flex;gap:6px;align-items:center;margin-top:8px;font-weight:600;"><input type="checkbox" name="protect" checked> Preserve this contact (directory sync won't change it)</label>
     </div>

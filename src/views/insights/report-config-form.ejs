@@ -121,11 +121,11 @@ ${noticeMsg ? `<div class="alert alert-success">${noticeMsg}</div>` : ''}
           <label>Source of Truth <span class="muted" style="font-size:10px;text-transform:none;">the user extension(s) carrying the business DDI that forward to the auto attendant — the first place each call is logged</span></label>
         </div>
         <input type="text" id="ext-search" placeholder="Search extensions..." class="input" style="margin-bottom:6px;width:100%;max-width:300px;" oninput="filterCheckboxes('ext-checkboxes', this.value)">
-        <div id="ext-checkboxes" style="display:flex;flex-direction:column;gap:4px;max-height:150px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:#f9fafb;">
+        <div id="ext-checkboxes" style="display:flex;flex-direction:column;gap:4px;max-height:150px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--surface-2);">
           <p class="muted" style="font-size:13px;margin:0;">Select a site to load extensions.</p>
         </div>
 
-        <div id="sot-panel" style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;">
+        <div id="sot-panel" style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
             <div id="sot-title" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Source of truth — selected extensions</div>
             <button type="button" id="sot-confirm-btn" onclick="confirmSourceOfTruth()" class="btn-secondary" style="font-size:12px;padding:5px 12px;">Confirm source of truth</button>
@@ -144,9 +144,9 @@ ${noticeMsg ? `<div class="alert alert-success">${noticeMsg}</div>` : ''}
           </label>
         </div>
         <input type="text" id="group-search" placeholder="Search groups..." class="input" style="margin-bottom:6px;width:100%;max-width:300px;" oninput="filterCheckboxes('group-checkboxes', this.value)">
-        <div id="group-checkboxes" style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:#f9fafb;">
+        <div id="group-checkboxes" style="display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--surface-2);">
         </div>
-        <div id="group-panel" style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;">
+        <div id="group-panel" style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);">
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Hunt groups — selected</div>
           <div id="group-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
             <span class="muted" style="font-size:13px;">Nothing selected yet — tick one or more groups above.</span>
@@ -159,10 +159,10 @@ ${noticeMsg ? `<div class="alert alert-success">${noticeMsg}</div>` : ''}
           <label>Staff <span class="muted" style="font-size:10px;text-transform:none;">the team who answer — shown in the daily Staff Performance table only (who answered, missed, ring times)</span></label>
         </div>
         <input type="text" id="staff-search" placeholder="Search extensions..." class="input" style="margin-bottom:6px;width:100%;max-width:300px;" oninput="filterCheckboxes('staff-checkboxes', this.value)">
-        <div id="staff-checkboxes" style="display:flex;flex-direction:column;gap:4px;max-height:150px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:#f9fafb;">
+        <div id="staff-checkboxes" style="display:flex;flex-direction:column;gap:4px;max-height:150px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--surface-2);">
           <p class="muted" style="font-size:13px;margin:0;">Select a site to load extensions.</p>
         </div>
-        <div id="staff-panel" style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;">
+        <div id="staff-panel" style="margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);">
           <div id="staff-title" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);">Staff — selected extensions</div>
           <div id="staff-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
             <span class="muted" style="font-size:13px;">Nothing selected yet — tick the staff handsets above.</span>
@@ -215,9 +215,9 @@ ${noticeMsg ? `<div class="alert alert-success">${noticeMsg}</div>` : ''}
 
     <input type="hidden" name="logic_config" id="logic-config-hidden">
 
-    <div style="margin-top:16px;padding:12px;background:#f9fafb;border-radius:6px;border:1px solid var(--line);">
+    <div style="margin-top:16px;padding:12px;background:var(--surface-2);border-radius:6px;border:1px solid var(--line);">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:6px;">Logic Config Preview</div>
-      <pre id="logic-preview" style="font-size:11px;margin:0;color:#374151;white-space:pre-wrap;"></pre>
+      <pre id="logic-preview" style="font-size:11px;margin:0;color:var(--text-strong);white-space:pre-wrap;"></pre>
     </div>
   </div>
 
@@ -232,7 +232,7 @@ ${!isNew && !_slm ? `
 <form method="post" action="/insights/report-config/${config.id}/delete" style="margin-top:10px;text-align:right;"
       onsubmit="return confirm('Delete this report schedule?\\n\\nIt will stop sending immediately. Generated report history is kept.');">
   <input type="hidden" name="_csrf" value="${typeof csrfToken !== 'undefined' ? csrfToken : ''}">
-  <button type="submit" class="btn-secondary" style="color:#dc2626;border-color:#fecaca;">🗑 Delete this schedule</button>
+  <button type="submit" class="btn-secondary" style="color:var(--bad);border-color:var(--bad-line);">🗑 Delete this schedule</button>
 </form>
 ` : ''}
 
@@ -284,7 +284,7 @@ ${!isNew ? `
     <button type="button" onclick="toggleAllDays(false)" class="btn-secondary" style="font-size:12px;padding:4px 10px;">Clear</button>
     <span id="day-count" class="muted" style="font-size:12px;align-self:center;"></span>
   </div>
-  <div id="day-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:#f9fafb;"></div>
+  <div id="day-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;max-height:280px;overflow-y:auto;border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--surface-2);"></div>
   <form method="POST" action="/insights/report-config/${config.id}/generate" id="gen-form" onsubmit="return confirmGenerate()">
     <input type="hidden" name="report_type" value="daily">
     <div id="day-inputs"></div>
@@ -398,7 +398,7 @@ function loadGroups(custId, { preserve }) {
       updatePreview();
     })
     .catch(() => {
-      if (groupBox) groupBox.innerHTML = '<p class="muted" style="font-size:13px;margin:0;color:#dc2626;">Could not load groups — try again.</p>';
+      if (groupBox) groupBox.innerHTML = '<p class="muted" style="font-size:13px;margin:0;color:var(--bad);">Could not load groups — try again.</p>';
     });
 }
 
@@ -448,11 +448,11 @@ function renderSotPanel() {
   }
   chips.innerHTML = picks.map(e => {
     const safe = e.replace(/"/g, '&quot;');
-    return '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;'
-      + 'border:1px solid #c7d2fe;border-radius:999px;font-size:13px;color:#3730a3;font-weight:600;">'
+    return '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--tint-indigo);'
+      + 'border:1px solid var(--indigo-line);border-radius:999px;font-size:13px;color:var(--indigo-deep);font-weight:600;">'
       + e
       + '<button type="button" data-ext="' + safe + '" onclick="removeSotExt(this.dataset.ext)" title="Remove" '
-      + 'style="background:none;border:none;cursor:pointer;color:#6366f1;font-size:15px;line-height:1;padding:0;">&times;</button>'
+      + 'style="background:none;border:none;cursor:pointer;color:var(--indigo);font-size:15px;line-height:1;padding:0;">&times;</button>'
       + '</span>';
   }).join('');
 }
@@ -497,11 +497,11 @@ function renderStaffChips() {
   }
   chips.innerHTML = picks.map(e => {
     const safe = e.replace(/"/g, '&quot;');
-    return '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;'
-      + 'border:1px solid #c7d2fe;border-radius:999px;font-size:13px;color:#3730a3;font-weight:600;">'
+    return '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--tint-indigo);'
+      + 'border:1px solid var(--indigo-line);border-radius:999px;font-size:13px;color:var(--indigo-deep);font-weight:600;">'
       + e
       + '<button type="button" data-ext="' + safe + '" onclick="removeStaffExt(this.dataset.ext)" title="Remove" '
-      + 'style="background:none;border:none;cursor:pointer;color:#6366f1;font-size:15px;line-height:1;padding:0;">&times;</button>'
+      + 'style="background:none;border:none;cursor:pointer;color:var(--indigo);font-size:15px;line-height:1;padding:0;">&times;</button>'
       + '</span>';
   }).join('');
 }
@@ -532,8 +532,8 @@ function confirmSourceOfTruth() {
   const panel = document.getElementById('sot-panel');
   const btn   = document.getElementById('sot-confirm-btn');
   if (panel) {
-    panel.style.borderColor = '#16a34a';
-    panel.style.background   = '#f0fdf4';
+    panel.style.borderColor = 'var(--ok)';
+    panel.style.background   = 'var(--tint-ok)';
   }
   if (btn) btn.textContent = '✓ Source of truth confirmed';
 }
@@ -605,11 +605,11 @@ function renderGroupChips() {
   }
   chips.innerHTML = picks.map(g => {
     const safe = g.replace(/"/g, '&quot;');
-    return '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:#eef2ff;'
-      + 'border:1px solid #c7d2fe;border-radius:999px;font-size:13px;color:#3730a3;font-weight:600;">'
+    return '<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--tint-indigo);'
+      + 'border:1px solid var(--indigo-line);border-radius:999px;font-size:13px;color:var(--indigo-deep);font-weight:600;">'
       + g
       + '<button type="button" data-grp="' + safe + '" onclick="removeGroupChip(this.dataset.grp)" title="Remove" '
-      + 'style="background:none;border:none;cursor:pointer;color:#6366f1;font-size:15px;line-height:1;padding:0;">&times;</button>'
+      + 'style="background:none;border:none;cursor:pointer;color:var(--indigo);font-size:15px;line-height:1;padding:0;">&times;</button>'
       + '</span>';
   }).join('');
 }
@@ -635,15 +635,15 @@ function renderCallFlow() {
   list.innerHTML = callFlow.map((item, idx) => {
     const safe = item.group.replace(/"/g, '&quot;');
     const shortName = item.group.replace('Hunt Group ', '');
-    return '<div ondragover="flowDragOver(event)" ondrop="flowDrop(' + idx + ', event)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fff;border:1px solid var(--line);border-radius:6px;">'
-      + '<span draggable="true" ondragstart="flowDragStart(' + idx + ', event)" ondragend="flowDragEnd()" title="Drag to reorder" style="cursor:grab;color:#9ca3af;font-size:16px;">&#9776;</span>'
+    return '<div ondragover="flowDragOver(event)" ondrop="flowDrop(' + idx + ', event)" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border:1px solid var(--line);border-radius:6px;">'
+      + '<span draggable="true" ondragstart="flowDragStart(' + idx + ', event)" ondragend="flowDragEnd()" title="Drag to reorder" style="cursor:grab;color:var(--faint);font-size:16px;">&#9776;</span>'
       + '<span style="flex:1;font-size:13px;">' + shortName + '</span>'
       + '<input type="text" placeholder="Label (e.g. Reception)" value="' + (item.label || '') + '" '
       + 'onchange="updateLabel(' + idx + ', this.value)" '
       + 'class="input" style="width:180px;font-size:13px;">'
       + '<button type="button" onclick="moveUp(' + idx + ')" style="background:none;border:none;cursor:pointer;padding:2px 6px;color:var(--muted);">↑</button>'
       + '<button type="button" onclick="moveDown(' + idx + ')" style="background:none;border:none;cursor:pointer;padding:2px 6px;color:var(--muted);">↓</button>'
-      + '<button type="button" onclick="removeFlowItem(' + idx + ')" title="Remove from report" style="background:none;border:none;cursor:pointer;padding:2px 6px;color:#dc2626;font-size:16px;line-height:1;">&times;</button>'
+      + '<button type="button" onclick="removeFlowItem(' + idx + ')" title="Remove from report" style="background:none;border:none;cursor:pointer;padding:2px 6px;color:var(--bad);font-size:16px;line-height:1;">&times;</button>'
       + '</div>';
   }).join('');
 }
@@ -726,7 +726,7 @@ function renderIvrOptions() {
       + 'data-idx="' + i + '" data-key="label" oninput="ivrFieldChange(this)" '
       + 'class="input" style="flex:1;font-size:13px;">'
       + '<button type="button" data-idx="' + i + '" onclick="removeIvrOption(+this.dataset.idx)" '
-      + 'style="background:none;border:none;cursor:pointer;color:#dc2626;font-size:18px;padding:0 4px;">x</button>'
+      + 'style="background:none;border:none;cursor:pointer;color:var(--bad);font-size:18px;padding:0 4px;">x</button>'
       + '</div>';
   }).join('');
 }

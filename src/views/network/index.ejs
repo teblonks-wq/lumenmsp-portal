@@ -2,13 +2,13 @@
 <%
   function rel(s){ if(!s) return ''; var d=new Date(s),n=new Date(); var t=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
     return d.toDateString()===n.toDateString() ? 'Today '+t : d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' '+t; }
-  function sevColour(s){ return s==='critical'?'#ef4444':(s==='info'?'#2563eb':'#f59e0b'); }
+  function sevColour(s){ return s==='critical'?'var(--bad-bright)':(s==='info'?'var(--blue)':'var(--amber)'); }
   function srcLabel(s){ return s==='giacom'?'Giacom (comms)':(s==='unifi'?'UniFi':s); }
   var open = alerts.filter(function(a){ return a.status==='open'; });
 %>
 <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div>
-    <h1 style="margin:0;"><span style="font-weight:800;background:linear-gradient(90deg,#6366f1,#06b6d4);-webkit-background-clip:text;background-clip:text;color:transparent;">N3twrx</span></h1>
+    <h1 style="margin:0;"><span style="font-weight:800;background:linear-gradient(90deg,var(--indigo),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent;">N3twrx</span></h1>
     <p class="muted" style="margin:4px 0 0;">Network monitoring — UniFi devices &amp; Giacom comms outages. More to come (Azure, etc.).</p>
   </div>
   <div style="display:flex;gap:8px;">
@@ -21,7 +21,7 @@
 
 <!-- Tool tiles -->
 <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:18px;">
-  <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Open alerts</div><div style="font-size:30px;font-weight:800;color:<%= open.length?'#ef4444':'#16a34a' %>;"><%= open.length %></div></div>
+  <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Open alerts</div><div style="font-size:30px;font-weight:800;color:<%= open.length?'var(--bad-bright)':'var(--ok)' %>;"><%= open.length %></div></div>
   <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">UniFi</div><div style="font-size:30px;font-weight:800;"><%= open.filter(function(a){return a.source==='unifi';}).length %></div><div class="muted" style="font-size:12px;">device alerts open</div></div>
   <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Giacom / comms</div><div style="font-size:30px;font-weight:800;"><%= open.filter(function(a){return a.source==='giacom';}).length %></div><div class="muted" style="font-size:12px;">incidents open</div></div>
   <div class="card" style="opacity:.6;"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Azure</div><div style="font-size:16px;font-weight:700;margin-top:8px;">Coming soon</div></div>

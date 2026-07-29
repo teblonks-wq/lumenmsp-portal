@@ -16,13 +16,13 @@
 </div>
 
 <% if (!mailboxConfigured) { %>
-<div class="card" style="border-left:4px solid #d97706;">
+<div class="card" style="border-left:4px solid var(--warn);">
   <strong>Collector not fully configured.</strong>
   <p class="muted" style="margin:6px 0 0;">Set <code>DMARC_MAILBOX</code> in the server .env (and ensure Graph credentials are present), create the shared mailbox, and publish the report-authorisation DNS record — see the go-live runbook in <code>02 Projects</code>.</p>
 </div>
 <% } %>
-<% if (ran) { %><div class="card" style="border-left:4px solid #16a34a;">Ingest run started — refresh in a minute to see new reports.</div><% } %>
-<% if (err) { %><div class="card" style="border-left:4px solid #dc2626;"><%= err %></div><% } %>
+<% if (ran) { %><div class="card" style="border-left:4px solid var(--ok);">Ingest run started — refresh in a minute to see new reports.</div><% } %>
+<% if (err) { %><div class="card" style="border-left:4px solid var(--bad);"><%= err %></div><% } %>
 
 <div class="card">
   <div class="card-header"><h2>Monitored domains</h2></div>
@@ -47,7 +47,7 @@
         </td>
         <td><%= d.score == null ? '—' : d.score + '/100' %></td>
         <td><%= d.volume_30d %></td>
-        <td><% if (pct === null) { %><span class="muted">no data yet</span><% } else { %><strong style="color:<%= pct >= 98 ? '#16a34a' : pct >= 90 ? '#d97706' : '#dc2626' %>;"><%= pct %>%</strong><% } %></td>
+        <td><% if (pct === null) { %><span class="muted">no data yet</span><% } else { %><strong style="color:<%= pct >= 98 ? 'var(--ok)' : pct >= 90 ? 'var(--warn)' : 'var(--bad)' %>;"><%= pct %>%</strong><% } %></td>
         <td class="muted" style="font-size:15px;"><%= d.last_report_at ? new Date(d.last_report_at).toLocaleDateString('en-GB') : 'none yet' %></td>
         <td style="text-align:right;"><a class="btn btn-primary" href="/dmarc/<%= d.id %>">Open</a></td>
       </tr>

@@ -14,7 +14,7 @@
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;">
     <a class="btn" href="/quotes/new?customer=<%= customerId %>">+ Quote</a>
-    <form method="post" action="/leads/<%= lead.id %>/delete" onsubmit="return confirm('Delete this lead? You can restore it from the recycle bin.');" style="margin:0;"><button class="btn" type="submit" style="color:#b91c1c;">Delete</button></form>
+    <form method="post" action="/leads/<%= lead.id %>/delete" onsubmit="return confirm('Delete this lead? You can restore it from the recycle bin.');" style="margin:0;"><button class="btn" type="submit" style="color:var(--bad-fg);">Delete</button></form>
   </div>
 </div>
 

@@ -24,7 +24,7 @@
       <tr><th style="width:42%;">Last run</th><td><%= dt(status.lastRun) %><% if (status.lastTrigger) { %> <span class="muted">(<%= status.lastTrigger %>)</span><% } %></td></tr>
       <tr><th>Result</th><td><% if (status.lastStatus==='ok') { %><span class="badge badge-sent">OK</span><% } else if (status.lastStatus==='failed') { %><span class="badge badge-failed">Failed</span><% } else { %>—<% } %></td></tr>
       <% if (status.lastStatus==='ok') { %><tr><th>Size</th><td><%= bytes(status.lastSize) %></td></tr><tr><th>File</th><td style="word-break:break-all;font-size:12px;"><%= status.lastFile %></td></tr><% } %>
-      <% if (status.lastError) { %><tr><th>Error</th><td style="color:#b91c1c;font-size:12px;"><%= status.lastError %></td></tr><% } %>
+      <% if (status.lastError) { %><tr><th>Error</th><td style="color:var(--bad-fg);font-size:12px;"><%= status.lastError %></td></tr><% } %>
     </tbody></table>
     <form method="post" action="/admin/backups/run" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Backing up… (may take a minute)';">
       <button class="btn btn-primary" type="submit" <%= status.configured ? '' : 'disabled' %>>⤓ Back up now</button>

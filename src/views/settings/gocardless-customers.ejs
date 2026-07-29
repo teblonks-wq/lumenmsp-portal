@@ -14,14 +14,14 @@
 </div>
 
 <% if (notice) { %><div class="alert alert-success" style="max-width:760px;"><%= notice %></div><% } %>
-<% if (stats.autoLinked > 0) { %><div class="alert" style="background:#f0fdf4;border:1px solid #bbf7d0;max-width:760px;">Auto-linked <strong><%= stats.autoLinked %></strong> exact match<%= stats.autoLinked===1?'':'es' %> this load.</div><% } %>
+<% if (stats.autoLinked > 0) { %><div class="alert" style="background:var(--tint-ok);border:1px solid var(--ok-line);max-width:760px;">Auto-linked <strong><%= stats.autoLinked %></strong> exact match<%= stats.autoLinked===1?'':'es' %> this load.</div><% } %>
 
 <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));">
   <div class="card"><div class="card-header"><h2>GC customers</h2></div><div class="stat"><%= stats.total %></div></div>
   <div class="card"><div class="card-header"><h2>With mandate</h2></div><div class="stat"><%= stats.withMandate %></div></div>
-  <div class="card"><div class="card-header"><h2>Matched</h2></div><div class="stat" style="color:#166534;"><%= stats.linked %></div></div>
-  <div class="card"><div class="card-header"><h2>Suggested</h2></div><div class="stat" style="color:#2563eb;"><%= stats.suggested %></div></div>
-  <div class="card"><div class="card-header"><h2>No match</h2></div><div class="stat" style="color:#b45309;"><%= stats.unmatched %></div></div>
+  <div class="card"><div class="card-header"><h2>Matched</h2></div><div class="stat" style="color:var(--ok-fg);"><%= stats.linked %></div></div>
+  <div class="card"><div class="card-header"><h2>Suggested</h2></div><div class="stat" style="color:var(--blue);"><%= stats.suggested %></div></div>
+  <div class="card"><div class="card-header"><h2>No match</h2></div><div class="stat" style="color:var(--warn-fg);"><%= stats.unmatched %></div></div>
 </div>
 
 <div class="card" style="padding:0;">

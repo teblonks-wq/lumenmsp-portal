@@ -19,24 +19,24 @@
     <label>To
       <% if (_contacts.length > 1) { %>
       <button type="button" class="rcpt-all" title="Fill To with every contact on this customer — for bulk notices (e.g. service appointments)"
-              style="border:1px solid #cbd5e1;background:#f8fafc;color:#0f172a;border-radius:5px;padding:1px 8px;font-size:11px;font-weight:600;cursor:pointer;margin-left:6px;">
+              style="border:1px solid var(--line-strong);background:var(--surface-2);color:var(--ink);border-radius:5px;padding:1px 8px;font-size:11px;font-weight:600;cursor:pointer;margin-left:6px;">
         👥 All contacts (<%= _contacts.length %>)
       </button>
       <% } %>
     </label>
     <input class="input rcpt-f rcpt-to" name="to" list="<%= _rid %>-contacts" autocomplete="off" placeholder="name@customer.com (start typing to pick a contact)" value="<%= _to %>">
-    <div class="rcpt-warn" style="display:none;font-size:12px;color:#b45309;margin-top:3px;"></div>
+    <div class="rcpt-warn" style="display:none;font-size:12px;color:var(--warn-fg);margin-top:3px;"></div>
   </div>
   <div style="display:flex;gap:10px;flex-wrap:wrap;">
     <div class="form-group" style="flex:1;min-width:200px;margin-bottom:8px;">
       <label>CC</label>
       <input class="input rcpt-f rcpt-cc" name="cc" list="<%= _rid %>-contacts" autocomplete="off" placeholder="optional, comma-separated" value="<%= _cc %>">
-      <div class="rcpt-warn" style="display:none;font-size:12px;color:#b45309;margin-top:3px;"></div>
+      <div class="rcpt-warn" style="display:none;font-size:12px;color:var(--warn-fg);margin-top:3px;"></div>
     </div>
     <div class="form-group" style="flex:1;min-width:200px;margin-bottom:8px;">
       <label>BCC</label>
       <input class="input rcpt-f rcpt-bcc" name="bcc" list="<%= _rid %>-contacts" autocomplete="off" placeholder="optional, comma-separated" value="<%= _bcc %>">
-      <div class="rcpt-warn" style="display:none;font-size:12px;color:#b45309;margin-top:3px;"></div>
+      <div class="rcpt-warn" style="display:none;font-size:12px;color:var(--warn-fg);margin-top:3px;"></div>
     </div>
   </div>
   <% if (_showPersist) { %>
@@ -63,7 +63,7 @@ if (!window.__rcptInit) { window.__rcptInit = true;
         var d = (le.split('@')[1]||''); return d && (!domain || d !== domain);
       });
       if (bad.length){
-        var addBtn = custId ? ' <button type="button" class="rcpt-add" data-addr="' + rcptEsc(bad.join(',')) + '" style="border:1px solid #b45309;background:#fffbeb;color:#92400e;border-radius:5px;padding:1px 8px;font-size:11px;font-weight:600;cursor:pointer;margin-left:4px;">+ Add to ' + rcptEsc(cust) + '</button>' : '';
+        var addBtn = custId ? ' <button type="button" class="rcpt-add" data-addr="' + rcptEsc(bad.join(',')) + '" style="border:1px solid var(--warn-fg);background:var(--tint-warn);color:var(--warn-deep);border-radius:5px;padding:1px 8px;font-size:11px;font-weight:600;cursor:pointer;margin-left:4px;">+ Add to ' + rcptEsc(cust) + '</button>' : '';
         warn.innerHTML = '⚠ ' + rcptEsc(bad.join(', ')) + ' — not a ' + rcptEsc(cust) + ' contact.' + addBtn;
         warn.style.display='block';
         var ab = warn.querySelector('.rcpt-add');

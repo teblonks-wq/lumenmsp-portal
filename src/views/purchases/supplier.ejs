@@ -50,7 +50,7 @@
           <form method="post" action="/supplier-logins/<%= l.id %>/delete" style="display:inline;margin:0;" onsubmit="return confirm('Delete this login?');"><button class="btn" style="padding:2px 8px;font-size:12px;">✕</button></form>
         </td>
       </tr>
-      <tr id="edit<%= l.id %>" style="display:none;background:#f9fafb;">
+      <tr id="edit<%= l.id %>" style="display:none;background:var(--surface-2);">
         <td colspan="5">
           <form method="post" action="/supplier-logins/<%= l.id %>/edit" style="display:grid;grid-template-columns:repeat(4,1fr) auto;gap:8px;align-items:end;">
             <div class="form-group"><label>Name</label><input class="input" name="name" value="<%= esc(l.name) %>"></div>
@@ -66,7 +66,7 @@
   </table></div>
   <% } else { %><p class="muted">No logins yet.</p><% } %>
 
-  <div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:14px;">
+  <div style="border-top:1px solid var(--line);margin-top:16px;padding-top:14px;">
     <h3 style="margin:0 0 10px;font-size:15px;">Add a login</h3>
     <form method="post" action="/purchases/suppliers/<%= s.id %>/logins" style="display:grid;grid-template-columns:repeat(4,1fr) auto;gap:8px;align-items:end;">
       <div class="form-group"><label>Name / portal</label><input class="input" name="name" placeholder="e.g. Giacom Cloud Market" required></div>

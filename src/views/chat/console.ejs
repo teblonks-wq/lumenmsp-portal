@@ -2,10 +2,10 @@
 <% function rel(s){ if(!s) return ''; var d=new Date(s),n=new Date(); var t=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
    return d.toDateString()===n.toDateString()?'Today '+t:d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' '+t; } %>
 
-<div style="display:flex;gap:6px;border-bottom:2px solid #e5e7eb;margin-bottom:18px;">
-  <a href="/chat" style="padding:10px 18px;text-decoration:none;font-weight:600;color:#0891b2;border-bottom:2px solid #0891b2;margin-bottom:-2px;">Website</a>
-  <a href="/chat/channel/whatsapp" style="padding:10px 18px;text-decoration:none;font-weight:600;color:#6b7280;border-bottom:2px solid transparent;margin-bottom:-2px;">WhatsApp</a>
-  <a href="/chat/channel/teams" style="padding:10px 18px;text-decoration:none;font-weight:600;color:#6b7280;border-bottom:2px solid transparent;margin-bottom:-2px;">Teams</a>
+<div style="display:flex;gap:6px;border-bottom:2px solid var(--line);margin-bottom:18px;">
+  <a href="/chat" style="padding:10px 18px;text-decoration:none;font-weight:600;color:var(--accent-dark);border-bottom:2px solid var(--accent-dark);margin-bottom:-2px;">Website</a>
+  <a href="/chat/channel/whatsapp" style="padding:10px 18px;text-decoration:none;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-2px;">WhatsApp</a>
+  <a href="/chat/channel/teams" style="padding:10px 18px;text-decoration:none;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-2px;">Teams</a>
 </div>
 
 <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
@@ -23,7 +23,7 @@
 <% if (typeof qerr !== 'undefined' && qerr) { %><div class="alert alert-error" style="max-width:900px;"><%= qerr %></div><% } %>
 
 <!-- Live website visitors -->
-<div class="card" style="padding:0;margin-bottom:18px;border-color:#bbf7d0;">
+<div class="card" style="padding:0;margin-bottom:18px;border-color:var(--ok-line);">
   <div class="card-header" style="padding:14px 18px;display:flex;align-items:center;gap:8px;">
     <span style="width:9px;height:9px;border-radius:50%;background:#22c55e;display:inline-block;box-shadow:0 0 0 3px rgba(34,197,94,.25);"></span>
     <h2 style="margin:0;">On the site now <span class="muted" style="font-weight:400;font-size:14px;">(<span id="lvCount"><%= visitors.length %></span>)</span></h2>
@@ -55,7 +55,7 @@
             <td><span class="badge <%= s.department==='sales'?'badge-sent':'badge-primary' %>"><%= s.department || 'support' %></span></td>
             <td class="muted" style="font-size:13px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><%= s.last_body || '' %></td>
             <td class="muted" style="font-size:12px;white-space:nowrap;"><%= rel(s.updated_at) %></td>
-            <td style="text-align:right;white-space:nowrap;"><a class="row-link" href="/chat/<%= s.id %>">open →</a><% if (user.role==='admin') { %><form method="post" action="/chat/<%= s.id %>/delete" style="display:inline;margin:0 0 0 10px;" onclick="event.stopPropagation();" onsubmit="return confirm('Delete this chat and its messages? It moves to the recycle bin.');"><button class="btn" type="submit" style="padding:2px 8px;font-size:12px;color:#dc2626;">Delete</button></form><% } %></td>
+            <td style="text-align:right;white-space:nowrap;"><a class="row-link" href="/chat/<%= s.id %>">open →</a><% if (user.role==='admin') { %><form method="post" action="/chat/<%= s.id %>/delete" style="display:inline;margin:0 0 0 10px;" onclick="event.stopPropagation();" onsubmit="return confirm('Delete this chat and its messages? It moves to the recycle bin.');"><button class="btn" type="submit" style="padding:2px 8px;font-size:12px;color:var(--bad);">Delete</button></form><% } %></td>
           </tr>
         <% }); %>
       </tbody>

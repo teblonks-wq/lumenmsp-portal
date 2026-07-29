@@ -25,7 +25,7 @@
     <form method="post" action="/invoices/<%= invoice.id %>/complete" onsubmit="return confirm('Complete this invoice — email the finance contact, push to QuickBooks and submit for Direct Debit?');" style="margin:0;"><button class="btn btn-primary" type="submit">Complete</button></form>
     <% if (!invoice.recurring_parent_id) { %><button class="btn" type="button" onclick="invModal('recurring')">♻ <%= invoice.is_recurring ? 'Recurring' : 'Make recurring' %></button><% } %>
     <button class="btn" type="button" onclick="invModal('credit')">Log overpayment</button>
-    <button class="btn" type="button" onclick="invModal('cancel')" style="color:#b91c1c;">Cancel</button>
+    <button class="btn" type="button" onclick="invModal('cancel')" style="color:var(--bad-fg);">Cancel</button>
     <details class="dd">
       <summary class="btn">⋯</summary>
       <div class="dd-pop">
@@ -35,10 +35,10 @@
         <form method="post" action="/invoices/<%= invoice.id %>/sync-itcloud" onsubmit="return confirm('Sync the Giacom (Microsoft 365) lines from current data? Your manual base lines and locked overrides are kept; drift is flagged.');"><button type="submit">🔄 Sync Giacom lines</button></form>
         <form method="post" action="/invoices/<%= invoice.id %>/promote-template" onsubmit="return confirm('Promote this invoice to next month\'s template? One-offs are stripped and it becomes the recurring base for this customer.');"><button type="submit">⭑ Promote to next template</button></form>
         <% } %>
-        <% if (invoice.quickbooks_invoice_id) { %><div style="padding:9px 12px;font-size:13px;color:#166534;">✓ In QuickBooks</div>
+        <% if (invoice.quickbooks_invoice_id) { %><div style="padding:9px 12px;font-size:13px;color:var(--ok-fg);">✓ In QuickBooks</div>
         <% } else { %><form method="post" action="/invoices/<%= invoice.id %>/push-to-qb"><button type="submit">Push to QuickBooks</button></form><% } %>
         <form method="post" action="/invoices/<%= invoice.id %>/submit-for-payment" onsubmit="return confirm('Submit this invoice for Direct Debit collection?');"><button type="submit">Submit for payment</button></form>
-        <form method="post" action="/invoices/<%= invoice.id %>/delete" onsubmit="return confirm('Move this invoice to the recycle bin?');"><button type="submit" style="color:#b91c1c;">Delete invoice</button></form>
+        <form method="post" action="/invoices/<%= invoice.id %>/delete" onsubmit="return confirm('Move this invoice to the recycle bin?');"><button type="submit" style="color:var(--bad-fg);">Delete invoice</button></form>
       </div>
     </details>
   </div>
@@ -51,7 +51,7 @@
     <p class="muted" style="margin:0 0 14px;">Voids <%= invoice.invoice_number %> and emails the customer your message.</p>
     <form method="post" action="/invoices/<%= invoice.id %>/cancel" onsubmit="return confirm('Cancel (void) this invoice and email the customer?');">
       <div class="form-group"><label>Message to customer</label><textarea class="input" name="message" rows="4" placeholder="Reason for cancellation…"></textarea></div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;"><button type="button" class="btn" onclick="invClose()">Cancel</button><button type="submit" class="btn btn-primary" style="background:#b91c1c;border-color:#b91c1c;">Cancel invoice &amp; email</button></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;"><button type="button" class="btn" onclick="invClose()">Cancel</button><button type="submit" class="btn btn-primary" style="background:var(--bad-fg);border-color:var(--bad-fg);">Cancel invoice &amp; email</button></div>
     </form>
   </div>
 </div>
@@ -116,7 +116,7 @@
 <style>
   .inv-modal { display:none; position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:1000; align-items:flex-start; justify-content:center; padding:6vh 16px; }
   .inv-modal.open { display:flex; }
-  .inv-box { background:#fff; border-radius:12px; padding:22px 24px; width:100%; max-width:440px; box-shadow:0 20px 50px rgba(0,0,0,.25); }
+  .inv-box { background:var(--surface); border-radius:12px; padding:22px 24px; width:100%; max-width:440px; box-shadow:0 20px 50px rgba(0,0,0,.25); }
 </style>
 <script>
   function invModal(k){ var m=document.getElementById('invm-'+k); if(m) m.classList.add('open'); }
@@ -128,7 +128,7 @@
 <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
 
 <% if (typeof openCredits !== 'undefined' && openCredits.length) { %>
-<div class="card" style="border-left:3px solid #b45309;padding:0;">
+<div class="card" style="border-left:3px solid var(--warn-fg);padding:0;">
   <div class="card-header" style="padding:16px 20px;"><h2 style="margin:0;">Customer credit available <span class="muted" style="font-weight:400;">(<%= openCredits.length %>)</span></h2></div>
   <div class="table-wrap"><table class="table">
     <thead><tr><th>Amount</th><th>Reason</th><th>Logged</th><th>QuickBooks</th><th></th></tr></thead>
@@ -177,11 +177,11 @@
 <div class="card">
   <div class="card-header"><h2>Payment &amp; references</h2></div>
   <table class="table"><tbody>
-    <tr><th style="width:40%;">Method</th><td><% if (invoice.gocardless_mandate_id) { %><span style="color:#b45309;font-weight:600;">Direct Debit (GoCardless)</span><% } else { %>Bank transfer<% } %></td></tr>
+    <tr><th style="width:40%;">Method</th><td><% if (invoice.gocardless_mandate_id) { %><span style="color:var(--warn-fg);font-weight:600;">Direct Debit (GoCardless)</span><% } else { %>Bank transfer<% } %></td></tr>
     <% if (invoice.gocardless_mandate_id) { %><tr><th>Direct Debit mandate</th><td class="muted"><%= invoice.gocardless_mandate_id %></td></tr><% } %>
-    <tr><th>GoCardless payment ref</th><td><% if (invoice.gocardless_payment_id) { %><span style="color:#166534;font-weight:600;"><%= invoice.gocardless_payment_id %></span><% } else { %><span class="muted">not submitted</span><% } %></td></tr>
-    <tr><th>GoCardless payout ref</th><td><% if (invoice.gocardless_payout_ref) { %><span style="color:#166534;font-weight:600;"><%= invoice.gocardless_payout_ref %></span><% if (invoice.gocardless_paid_out_at) { %> <span class="muted">— paid out <%= new Date(invoice.gocardless_paid_out_at).toLocaleDateString('en-GB') %></span><% } %><% } else { %><span class="muted">not paid out yet</span><% } %></td></tr>
-    <tr><th>QuickBooks invoice</th><td><% if (invoice.quickbooks_invoice_id) { %><span style="color:#b45309;font-weight:600;">#<%= invoice.quickbooks_invoice_id %></span><% } else { %><span class="muted">not pushed</span><% } %></td></tr>
+    <tr><th>GoCardless payment ref</th><td><% if (invoice.gocardless_payment_id) { %><span style="color:var(--ok-fg);font-weight:600;"><%= invoice.gocardless_payment_id %></span><% } else { %><span class="muted">not submitted</span><% } %></td></tr>
+    <tr><th>GoCardless payout ref</th><td><% if (invoice.gocardless_payout_ref) { %><span style="color:var(--ok-fg);font-weight:600;"><%= invoice.gocardless_payout_ref %></span><% if (invoice.gocardless_paid_out_at) { %> <span class="muted">— paid out <%= new Date(invoice.gocardless_paid_out_at).toLocaleDateString('en-GB') %></span><% } %><% } else { %><span class="muted">not paid out yet</span><% } %></td></tr>
+    <tr><th>QuickBooks invoice</th><td><% if (invoice.quickbooks_invoice_id) { %><span style="color:var(--warn-fg);font-weight:600;">#<%= invoice.quickbooks_invoice_id %></span><% } else { %><span class="muted">not pushed</span><% } %></td></tr>
     <tr><th>Emailed</th><td><% if (invoice.emailed_at) { %><%= new Date(invoice.emailed_at).toLocaleString('en-GB') %><% } else { %><span class="muted">not yet</span><% } %></td></tr>
   </tbody></table>
 </div>

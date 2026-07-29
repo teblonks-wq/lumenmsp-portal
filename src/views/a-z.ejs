@@ -21,7 +21,7 @@
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;">
         <% SECT.forEach(function(s){ var si = items.filter(function(r){return r.section===s[0];}); if (!si.length) return; %>
           <div>
-            <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:4px;"><%= s[1] %></div>
+            <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px;"><%= s[1] %></div>
             <% si.forEach(function(r){ %>
               <div style="font-size:13px;padding:3px 0;border-bottom:1px solid var(--line);"><%= r.body %><% if (r.due_date) { %> <span class="badge badge-failed" style="font-size:10px;">due <%= dt(r.due_date) %></span><% } %></div>
             <% }); %>

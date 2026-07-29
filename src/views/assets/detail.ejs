@@ -4,13 +4,13 @@
 
 <style>
   .dev-tabs { display:flex; flex-wrap:wrap; gap:2px; border-bottom:2px solid var(--line); margin:0 0 18px; }
-  .dev-tabs button { background:none; border:none; padding:10px 16px; font-size:14px; font-weight:600; color:#64748b; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; }
-  .dev-tabs button:hover { color:#0f172a; }
+  .dev-tabs button { background:none; border:none; padding:10px 16px; font-size:14px; font-weight:600; color:var(--muted); cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; }
+  .dev-tabs button:hover { color:var(--ink); }
   .dev-tabs button.active { color:var(--accent); border-bottom-color:var(--accent); }
   .dev-tab-panel { display:none; }
   .dev-tab-panel.active { display:block; }
   .dev-info-cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:0 32px; }
-  .dev-field-row { display:grid; grid-template-columns:150px 1fr; gap:10px; padding:9px 0; border-bottom:1px solid #f1f5f9; font-size:13px; }
+  .dev-field-row { display:grid; grid-template-columns:150px 1fr; gap:10px; padding:9px 0; border-bottom:1px solid var(--surface-3); font-size:13px; }
   .dev-field-row:last-child { border-bottom:none; }
   .dev-field-row .k { color:var(--muted); }
   .dev-field-row .v { font-weight:500; }
@@ -24,8 +24,8 @@
       <%= asset.hostname || '(unnamed device)' %>
     </h1>
     <p class="muted" style="margin:6px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;color:<%= asset.online_status ? '#16a34a' : '#94a3b8' %>;">
-        <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= asset.online_status ? '#16a34a' : '#cbd5e1' %>;"></span>
+      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;color:<%= asset.online_status ? 'var(--ok)' : 'var(--faint)' %>;">
+        <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= asset.online_status ? 'var(--ok)' : 'var(--line-strong)' %>;"></span>
         <%= asset.online_status ? 'Online' : 'Offline' %>
       </span>
       <span class="badge badge-inactive"><%= asset.device_type || 'Device' %></span>
@@ -36,8 +36,8 @@
   <% if (remoteUrl) { %><a class="btn btn-primary" target="_blank" rel="noopener" href="<%= remoteUrl %>">🖥 Remote control</a><% } %>
 </div>
 
-<div class="card" style="background:#f0f9ff;border-color:#bae6fd;">
-  <p style="margin:0;font-size:13px;color:#0369a1;">
+<div class="card" style="background:var(--tint-accent);border-color:var(--info-line);">
+  <p style="margin:0;font-size:13px;color:var(--info-deep);">
     <strong>Synced from Atera</strong> — last refreshed <%= dt(asset.synced_at) %>. Locked from editing until we confirm Atera accepts changes written back from here.
   </p>
 </div>
@@ -109,7 +109,7 @@
 <div class="card">
   <details>
     <summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--muted);">🔧 Raw Atera payload (debug — admin only, ?debug=1)</summary>
-    <pre style="margin-top:10px;font-size:11px;line-height:1.5;overflow:auto;max-height:500px;background:#0f172a;color:#e2e8f0;padding:14px;border-radius:8px;"><%= rawJson %></pre>
+    <pre style="margin-top:10px;font-size:11px;line-height:1.5;overflow:auto;max-height:500px;background:var(--ink-chip);color:var(--line);padding:14px;border-radius:8px;"><%= rawJson %></pre>
   </details>
 </div>
 <% } %>

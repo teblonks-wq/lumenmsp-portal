@@ -11,12 +11,12 @@ const fmtD  = s => s ? new Date(s).toLocaleDateString('en-GB',{day:'numeric',mon
 const fmtSecs = s => s >= 60 ? `${Math.floor(s/60)}m ${s%60}s` : `${s}s`;
 
 const statusColour = s => ({
-  'Answered':  'color:#16a34a;background:#f0fdf4;border-color:#bbf7d0',
-  'Missed':    'color:#dc2626;background:#fef2f2;border-color:#fecaca',
-  'Abandoned': 'color:#f59e0b;background:#fffbeb;border-color:#fde68a',
-  'Voicemail': 'color:#7c3aed;background:#faf5ff;border-color:#ddd6fe',
-  'Overflowed':'color:#0891b2;background:#f0f9ff;border-color:#bae6fd',
-}[s] || 'color:#6b7280;background:#f9fafb;border-color:#e5e7eb');
+  'Answered':  'color:var(--ok);background:var(--tint-ok);border-color:var(--ok-line)',
+  'Missed':    'color:var(--bad);background:var(--tint-bad);border-color:var(--bad-line)',
+  'Abandoned': 'color:var(--amber);background:var(--tint-warn);border-color:var(--warn-line)',
+  'Voicemail': 'color:var(--violet-deep);background:#faf5ff;border-color:var(--violet-line)',
+  'Overflowed':'color:var(--accent-dark);background:var(--tint-accent);border-color:var(--info-line)',
+}[s] || 'color:var(--muted);background:var(--surface-2);border-color:var(--line)');
 
 const total = stats ? stats.total : 0;
 
@@ -61,7 +61,7 @@ const customerOptions = customers.map(c => `<option value="${c.id}" ${cid === c.
     </div>
     <button type="submit" class="btn-primary">Search</button>
     <div class="ins-actions">
-      ${number ? `<a href="/insights/number?customer=${cid}&q=${encodeURIComponent(number)}&format=pdf" target="_blank" class="btn-secondary" style="padding:9px 16px;font-size:13px;border-radius:8px;text-decoration:none;">&#128438; PDF report</a>
+      ${number ? `<a href="/insights/number?customer=${cid}&q=${encodeURIComponent(number)}&format=pdf" target="_blank" class="btn-secondary" style="padding:9px 16px;font-size:13px;border-radius:8px;text-decoration:none;">&var(--ok); PDF report</a>
       <button type="button" id="mrMake" class="btn-primary" style="padding:9px 16px;font-size:13px;border-radius:8px;">&#10024; Make report</button>` : ''}
     </div>
   </form>
@@ -90,7 +90,7 @@ ${qerr ? `<div class="alert alert-error">${esc(qerr)}</div>` : ''}
         <p class="mr-note" id="mrContactNote">Their name appears on the report as the requester.</p>
       </div>
       <div class="fg">
-        <label>Note to include <span style="font-weight:400;color:#94a3b8;">(optional)</span></label>
+        <label>Note to include <span style="font-weight:400;color:var(--faint);">(optional)</span></label>
         <textarea id="mrNote" rows="4" placeholder="Anything you want to say alongside it..."></textarea>
       </div>
       <button type="button" class="btn-primary" id="mrSend" style="width:100%;padding:10px;border-radius:8px;">Email this report</button>
@@ -113,23 +113,23 @@ ${!isConnected ? `
 ` : `
 
 <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px;">
-  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+  <div style="text-align:center;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;">
     <div style="font-size:26px;font-weight:800;color:var(--accent);">${stats.total}</div>
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Total Calls</div>
   </div>
-  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
-    <div style="font-size:26px;font-weight:800;color:#16a34a;">${stats.answered}</div>
+  <div style="text-align:center;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:26px;font-weight:800;color:var(--ok);">${stats.answered}</div>
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Answered</div>
   </div>
-  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
-    <div style="font-size:26px;font-weight:800;color:#dc2626;">${stats.missed}</div>
+  <div style="text-align:center;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:26px;font-weight:800;color:var(--bad);">${stats.missed}</div>
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Missed</div>
   </div>
-  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+  <div style="text-align:center;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;">
     <div style="font-size:26px;font-weight:800;color:var(--accent);">${stats.ansRate}%</div>
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Answer Rate</div>
   </div>
-  <div style="text-align:center;padding:14px;background:#fff;border:1px solid var(--border);border-radius:10px;">
+  <div style="text-align:center;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;">
     <div style="font-size:26px;font-weight:800;color:var(--accent);">${fmtSecs(stats.avgWait)}</div>
     <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:3px;">Avg Wait</div>
   </div>
@@ -154,7 +154,7 @@ ${!isConnected ? `
       </thead>
       <tbody>
         ${journeys.map((j, idx) => `
-        <tr style="border-bottom:1px solid var(--border);${idx % 2 === 1 ? 'background:#fafafa;' : ''}">
+        <tr style="border-bottom:1px solid var(--border);${idx % 2 === 1 ? 'background:var(--surface-2);' : ''}">
           <td style="padding:10px 12px;white-space:nowrap;font-weight:500;">${fmtDt(j.datetime)}</td>
           <td style="padding:10px 12px;">
             <span style="display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;border:1px solid;${statusColour(j.is_voicemail ? 'Voicemail' : j.status)}">
@@ -163,7 +163,7 @@ ${!isConnected ? `
           </td>
           <td style="padding:10px 12px;font-family:monospace;font-size:12px;">${j.wait || ''}</td>
           <td style="padding:10px 12px;font-size:12px;color:var(--muted);">${j.route || ''}</td>
-          <td style="padding:10px 12px;font-size:12px;font-family:monospace;color:#111827;">${j.answered_by ? `<a href="/insights/reverse?customer=${cid}&ext=${encodeURIComponent(j.answered_by)}" title="Who answered it - every call ${j.answered_by} picked up" style="color:inherit;text-decoration:underline dotted;">${j.answered_by}</a>` : '—'}</td>
+          <td style="padding:10px 12px;font-size:12px;font-family:monospace;color:var(--ink);">${j.answered_by ? `<a href="/insights/reverse?customer=${cid}&ext=${encodeURIComponent(j.answered_by)}" title="Who answered it - every call ${j.answered_by} picked up" style="color:inherit;text-decoration:underline dotted;">${j.answered_by}</a>` : '—'}</td>
           <td style="padding:10px 12px;font-size:12px;color:var(--muted);">${j.ddi || ''}</td>
         </tr>
         `).join('')}
@@ -251,16 +251,16 @@ ${!isConnected ? `
 
   send.addEventListener('click', function(){
     var to=sel.value, opt=sel.options[sel.selectedIndex];
-    if(!to){ msg.style.color='#b45309'; msg.textContent='Choose who asked for it first.'; return; }
+    if(!to){ msg.style.color='var(--warn-fg)'; msg.textContent='Choose who asked for it first.'; return; }
     send.disabled=true; msg.style.color=''; msg.textContent='Sending...';
     fetch('/insights/report-send',{method:'POST',
       headers:{'Content-Type':'application/json','x-csrf-token':csrf},
       body:JSON.stringify({to:to, name:(opt&&opt.getAttribute('data-name'))||'', url:reportUrl(), note:note.value})})
       .then(function(r){return r.json();}).then(function(j){
         send.disabled=false;
-        if(!j||!j.ok){ msg.style.color='#dc2626'; msg.textContent=(j&&j.error)||'Could not send.'; return; }
-        msg.style.color='#166534'; msg.textContent='Sent to '+to+'.';
-      }).catch(function(){ send.disabled=false; msg.style.color='#dc2626'; msg.textContent='Could not send.'; });
+        if(!j||!j.ok){ msg.style.color='var(--bad)'; msg.textContent=(j&&j.error)||'Could not send.'; return; }
+        msg.style.color='var(--ok-fg)'; msg.textContent='Sent to '+to+'.';
+      }).catch(function(){ send.disabled=false; msg.style.color='var(--bad)'; msg.textContent='Could not send.'; });
   });
 })();
 </script>

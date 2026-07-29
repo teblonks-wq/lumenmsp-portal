@@ -22,6 +22,7 @@ model User {
   hiddenFromLookups Boolean @default(false) @map("hidden_from_lookups") // break-glass/login accounts: hide from engineer + assignee pickers
   lastLoginAt    DateTime? @map("last_login_at")
   oneboardPrefs  Json?     @map("oneboard_prefs") // OneBoard: per-user saved site selection {"sites":[ids]}
+  theme          String?   // V4 portal colour theme: aurora | carbon | solstice (null = aurora default)
   createdAt    DateTime  @default(now()) @map("created_at")
 
   customer     Customer? @relation(fields: [customerId], references: [id])
@@ -806,6 +807,10 @@ model QuoteItem {
 // ── Invoices ────────────────────────────────────────────────────────────────────
 model Invoice {
   id                  Int       @id @default(autoincrement())
+  // Public per-invoice view link. Without a page of our own to land on, an invoice "open"
+  // could only ever be a tracking-pixel guess; this makes it evidence, as it already is
+  // for quotes and contracts.
+  viewToken           String?   @unique @map("view_token")
   customerId          Int?      @map("customer_id")
   quoteId             Int?      @map("quote_id")
   quickbooksInvoiceId String?   @map("quickbooks_invoice_id")

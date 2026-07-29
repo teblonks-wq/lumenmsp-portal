@@ -22,10 +22,10 @@
       <button class="btn btn-primary" id="newCaseBtn" onclick="newCase()">➕ Create case from this</button>
       <% } %>
       <button class="btn" onclick="openTag()"><%= m.ticket_id ? 'Re-tag / move' : 'Tag to existing case' %></button>
-      <% if (user.role==='admin') { %><button class="btn" style="color:#dc2626;" onclick="delMsg()">🗑 Delete</button><% } %>
+      <% if (user.role==='admin') { %><button class="btn" style="color:var(--bad);" onclick="delMsg()">🗑 Delete</button><% } %>
     </div>
   </div>
-  <div style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;background:#fafafa;">
+  <div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:var(--surface-2);">
     <%- m.body_html || ('<div style="white-space:pre-wrap;">' + esc(m.body_text||'(no content)') + '</div>') %>
   </div>
 
@@ -42,8 +42,8 @@
   <div class="card-header"><h2>Conversation with <%= esc(m.from_name || m.from_email) %></h2></div>
   <table class="table"><tbody>
     <% thread.forEach(function(x){ %>
-    <tr<%= x.id===m.id ? ' style="background:#f0f9ff;"' : '' %>>
-      <td style="color:#9ca3af;width:24px;"><%= x.message_direction==='outbound' ? '↗' : '↘' %></td>
+    <tr<%= x.id===m.id ? ' style="background:var(--tint-accent);"' : '' %>>
+      <td style="color:var(--faint);width:24px;"><%= x.message_direction==='outbound' ? '↗' : '↘' %></td>
       <td><a class="row-link" href="/chat/msg/<%= x.id %>"><%= esc((x.body_text||'').slice(0,90)) || '(attachment)' %></a></td>
       <td class="muted" style="white-space:nowrap;"><%= d(x.at) %></td>
       <td><% if(x.ticket_id){ %><span class="badge badge-sent"><%= x.ticket_number || ('#'+x.ticket_id) %></span><% } else { %><span class="badge badge-failed">Untagged</span><% } %></td>
@@ -53,7 +53,7 @@
 </div>
 
 <div id="tagModal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:2000;align-items:flex-start;justify-content:center;">
-  <div style="background:#fff;border-radius:12px;max-width:560px;width:92%;margin-top:8vh;padding:20px 22px;box-shadow:0 20px 50px rgba(0,0,0,.3);">
+  <div style="background:var(--surface);border-radius:12px;max-width:560px;width:92%;margin-top:8vh;padding:20px 22px;box-shadow:0 20px 50px rgba(0,0,0,.3);">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
       <h2 style="margin:0;font-size:18px;">Tag message to a case</h2>
       <button class="btn" style="padding:2px 10px;" onclick="closeTag()">✕</button>
@@ -73,7 +73,7 @@ var _t;
 function searchCases(q){ clearTimeout(_t); q=(q||'').trim(); if(!q){ document.getElementById('tagResults').innerHTML='<p class="muted">Type to search cases…</p>'; return; }
   _t=setTimeout(function(){ fetch('/chat/msg/case-search?q='+encodeURIComponent(q)).then(function(r){return r.json();}).then(function(rows){
     if(!rows.length){ document.getElementById('tagResults').innerHTML='<p class="muted">No matching cases.</p>'; return; }
-    document.getElementById('tagResults').innerHTML = rows.map(function(c){ return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px;"><div><strong>'+esc(c.ticket_number)+'</strong> — '+esc(c.subject||'(no subject)')+'<br><span class="muted" style="font-size:12px;">'+esc(c.customer_name||'')+'</span></div><button class="btn btn-primary" style="padding:4px 12px;" onclick="assign('+c.id+')">Tag</button></div>'; }).join('');
+    document.getElementById('tagResults').innerHTML = rows.map(function(c){ return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;"><div><strong>'+esc(c.ticket_number)+'</strong> — '+esc(c.subject||'(no subject)')+'<br><span class="muted" style="font-size:12px;">'+esc(c.customer_name||'')+'</span></div><button class="btn btn-primary" style="padding:4px 12px;" onclick="assign('+c.id+')">Tag</button></div>'; }).join('');
   }); }, 200);
 }
 function assign(ticketId){ fetch('/chat/msg/'+MSG_ID+'/tag',{method:'POST',headers:{'Content-Type':'application/json','x-csrf-token':csrf()},body:JSON.stringify({ticketId:ticketId})}).then(function(r){return r.json();}).then(function(j){ if(j.ok){ location.reload(); } else { alert(j.error||'Could not tag.'); } }); }

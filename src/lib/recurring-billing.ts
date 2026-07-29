@@ -5,6 +5,7 @@ import { GoCardless, chargeDateFor } from './gocardless';
 import { sendMail } from './mailer';
 import { renderInvoicePdf } from './invoice-pdf';
 import { invoiceEmailHtml } from './emails';
+import { invoiceViewUrl } from './invoice-link';
 import { logActivity } from './activity';
 import { notify } from './notifications';
 import { getSetting } from './settings';
@@ -176,7 +177,8 @@ async function autoEmail(inv: any): Promise<void> {
   if (!to) throw new Error('no finance email on customer');
   const total = '£' + (Number(inv.total) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const dueDate = inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
-  const html = invoiceEmailHtml({ contactName: '', invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate, directDebit: !!inv.gocardless_mandate_id });
+  const html = invoiceEmailHtml({ contactName: '', invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate,
+    directDebit: !!inv.gocardless_mandate_id, viewLink: await invoiceViewUrl(inv.id) });
   // Never auto-send a bare invoice: if the PDF render fails, throw so this is recorded as
   // 'email failed' on the bill-run result (staff can retry) rather than the customer
   // receiving an attachment-less invoice.
@@ -349,7 +351,8 @@ export async function finaliseCommsBillRun(period: string, userId: number | null
         if (!pdf || pdf.length < 1000) throw new Error('invoice PDF render produced an empty/invalid file — not sending a bare invoice');
         const total = '£' + (Number(inv.total) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const dueDate = inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
-        const body = invoiceEmailHtml({ contactName: name, invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate, directDebit: !!inv.gocardless_mandate_id });
+        const body = invoiceEmailHtml({ contactName: name, invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate,
+          directDebit: !!inv.gocardless_mandate_id, viewLink: await invoiceViewUrl(inv.id) });
         await sendMail({ to, subject: `Invoice ${inv.invoice_number} from Lumen IT Solutions`, html: body, signatureName: 'Accounts Department', attachments: [{ filename: inv.invoice_number + '.pdf', contentType: 'application/pdf', base64: pdf.toString('base64') }] });
         await pool.query("UPDATE invoices SET emailed_at=NOW(), status=CASE WHEN status='draft' THEN 'issued' ELSE status END WHERE id=$1", [inv.id]);
         // Record the send in communications too — the invoice list's "emailed" envelope (and

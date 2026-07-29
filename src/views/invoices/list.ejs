@@ -10,7 +10,7 @@
    } %>
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-  <div><h1>Invoices</h1><p class="muted"><%= invoices.length %> shown · <%= money(total) %><% if (Number(outstanding) > 0) { %> · <strong style="color:#b45309;"><%= money(outstanding) %> outstanding</strong><% } %><% if (period && period.from) { %> · <%= period.label %><% } %></p></div>
+  <div><h1>Invoices</h1><p class="muted"><%= invoices.length %> shown · <%= money(total) %><% if (Number(outstanding) > 0) { %> · <strong style="color:var(--warn-fg);"><%= money(outstanding) %> outstanding</strong><% } %><% if (period && period.from) { %> · <%= period.label %><% } %></p></div>
   <a class="btn btn-primary" href="/invoices/new">+ New invoice</a>
 </div>
 
@@ -96,7 +96,7 @@
   function invPeriodToggle(){ var v=document.getElementById('inv-period').value; document.querySelectorAll('.inv-custom').forEach(function(e){ e.style.display = v==='custom'?'':'none'; }); }
 </script>
 
-<div id="batchStatus" style="display:none;margin-bottom:10px;padding:10px 14px;border-radius:8px;border:1px solid #bfdbfe;background:#eff6ff;font-size:13px;"></div>
+<div id="batchStatus" style="display:none;margin-bottom:10px;padding:10px 14px;border-radius:8px;border:1px solid var(--info-line);background:var(--tint-info);font-size:13px;"></div>
 <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
   <span class="muted" style="font-size:13px;margin-right:auto;"><span id="batchCount">0</span> selected</span>
   <select class="input" id="bulkAction" style="width:auto;font-size:13px;">
@@ -150,14 +150,14 @@
       if (!s || (!s.running && (s.total||0) === 0)) { box.style.display='none'; return; }
       box.style.display='block';
       if (s.running) {
-        box.style.borderColor='#bfdbfe'; box.style.background='#eff6ff';
+        box.style.borderColor='var(--info-line)'; box.style.background='var(--tint-info)';
         box.innerHTML = '⏳ Completing invoices… <strong>' + s.done + ' / ' + s.total + '</strong> done (' + s.ok + ' ok)';
       } else {
         var bad = (s.errs||[]).length;
-        box.style.borderColor = bad ? '#fde68a' : '#bbf7d0';
-        box.style.background = bad ? '#fffbeb' : '#f0fdf4';
+        box.style.borderColor = bad ? 'var(--warn-line)' : 'var(--ok-line)';
+        box.style.background = bad ? 'var(--tint-warn)' : 'var(--tint-ok)';
         box.innerHTML = '✓ Batch finished — <strong>' + s.ok + ' of ' + s.total + '</strong> completed'
-          + (bad ? '. <span style="color:#92400e;">' + bad + ' issue(s): ' + s.errs.slice(0,5).join('; ') + '</span>' : '.')
+          + (bad ? '. <span style="color:var(--warn-deep);">' + bad + ' issue(s): ' + s.errs.slice(0,5).join('; ') + '</span>' : '.')
           + ' <a href="/invoices" style="margin-left:6px;">Refresh list</a>';
       }
     }
@@ -175,14 +175,14 @@
       if (!confirm('Complete ' + ids.length + ' invoice(s)? This emails the finance contact, pushes to QuickBooks and submits to GoCardless for each. It runs in the background.')) return;
       var body = new URLSearchParams(); ids.forEach(function(c){ body.append('ids', c.value); });
       if (btn) { btn.disabled = true; }
-      box.style.display='block'; box.style.borderColor='#bfdbfe'; box.style.background='#eff6ff'; box.innerHTML = '⏳ Starting…';
+      box.style.display='block'; box.style.borderColor='var(--info-line)'; box.style.background='var(--tint-info)'; box.innerHTML = '⏳ Starting…';
       fetch('/invoices/batch-complete', { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded', 'X-Requested-With':'XMLHttpRequest', 'Accept':'application/json' }, body: body.toString() })
         .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, j:j }; }); })
         .then(function(res){
-          if (!res.ok || !res.j.ok) { box.style.borderColor='#fca5a5'; box.style.background='#fef2f2'; box.innerHTML = '⚠ ' + (res.j.error || 'Could not start batch.'); if (btn) btn.disabled=false; return; }
+          if (!res.ok || !res.j.ok) { box.style.borderColor='var(--bad-line2)'; box.style.background='var(--tint-bad)'; box.innerHTML = '⚠ ' + (res.j.error || 'Could not start batch.'); if (btn) btn.disabled=false; return; }
           setTimeout(poll, 800);
         })
-        .catch(function(){ box.style.borderColor='#fca5a5'; box.style.background='#fef2f2'; box.innerHTML = '⚠ Network error starting batch.'; if (btn) btn.disabled=false; });
+        .catch(function(){ box.style.borderColor='var(--bad-line2)'; box.style.background='var(--tint-bad)'; box.innerHTML = '⚠ Network error starting batch.'; if (btn) btn.disabled=false; });
     });
     poll();
     if (started) setTimeout(poll, 1500);
@@ -195,7 +195,7 @@
       <thead><tr><th style="width:30px;"><input type="checkbox" id="batchAll" title="Select all"></th><th>Number</th><th>Title</th><th>Customer</th><th>Paid?</th><th style="text-align:right;">Total</th><th style="text-align:right;">Outstanding</th><th>Issued</th><th style="text-align:center;">Sync</th></tr></thead>
       <tbody>
         <% if (invoices.length===0) { %><tr><td colspan="9"><div class="empty-state">No invoices.</div></td></tr><% } %>
-        <% invoices.forEach(function(i){ var on='var(--accent)', off='#d1d5db'; %>
+        <% invoices.forEach(function(i){ var on='var(--accent)', off='var(--line-strong)'; %>
           <tr>
             <td style="text-align:center;"><input type="checkbox" class="batch-chk" name="ids" value="<%= i.id %>" form="batchForm"></td>
             <td><a class="row-link" href="/invoices/<%= i.id %>"><%= i.invoice_number %></a><% if (i.is_recurring) { %> <span title="Recurring template">♻</span><% } %><% if (i.is_legacy) { %> <span class="badge badge-inactive" title="Imported from QuickBooks" style="font-size:10px;">Legacy</span><% } %></td>
@@ -210,12 +210,12 @@
               <% if (i.gocardless_mandate_id) { %><br><span class="muted" style="font-size:11px;">Direct Debit</span><% } %>
             </td>
             <td style="text-align:right;"><%= money(i.total) %></td>
-            <td style="text-align:right;"><% if (Number(i.balance) > 0) { %><span style="color:#b45309;font-weight:600;"><%= money(i.balance) %></span><% } else if (i.payment_status==='paid') { %><span class="muted">—</span><% } else { %><span class="muted"><%= money(i.total) %></span><% } %></td>
+            <td style="text-align:right;"><% if (Number(i.balance) > 0) { %><span style="color:var(--warn-fg);font-weight:600;"><%= money(i.balance) %></span><% } else if (i.payment_status==='paid') { %><span class="muted">—</span><% } else { %><span class="muted"><%= money(i.total) %></span><% } %></td>
             <td class="muted"><%= i.issue_date ? new Date(i.issue_date).toLocaleDateString('en-GB') : '—' %></td>
             <td style="text-align:center;white-space:nowrap;">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.emailed ? '#2563eb' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title>Emailed to customer</title><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.gocardless_payment_id ? '#166534' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= i.gocardless_payment_id ? 'Submitted for payment (GoCardless)' : 'Not submitted for payment' %></title><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.quickbooks_invoice_id ? '#b45309' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= i.payment_synced_at ? 'In QuickBooks · payment synced ' + new Date(i.payment_synced_at).toLocaleString('en-GB') : 'In QuickBooks' %></title><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.emailed ? 'var(--blue)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title>Emailed to customer</title><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.gocardless_payment_id ? 'var(--ok-fg)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= i.gocardless_payment_id ? 'Submitted for payment (GoCardless)' : 'Not submitted for payment' %></title><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.quickbooks_invoice_id ? 'var(--warn-fg)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= i.payment_synced_at ? 'In QuickBooks · payment synced ' + new Date(i.payment_synced_at).toLocaleString('en-GB') : 'In QuickBooks' %></title><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
             </td>
           </tr>
         <% }); %>

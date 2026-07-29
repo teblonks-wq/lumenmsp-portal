@@ -34,7 +34,7 @@
             <td class="muted"><% if (t.related_customer_id) { %><a class="row-link" href="/customers/<%= t.related_customer_id %>"><%= t.customer_name %></a><% } else { %>—<% } %></td>
             <td><span class="badge <%= pbadge(t.priority) %>"><%= t.priority %></span></td>
             <td><span class="badge <%= sbadge(t.status) %>"><%= t.status.replace('_',' ') %></span></td>
-            <td class="<%= overdue(t.due_date) && t.status!=='done' ? '' : 'muted' %>" style="<%= overdue(t.due_date) && t.status!=='done' ? 'color:#b91c1c;font-weight:600;' : '' %>"><%= t.due_date ? new Date(t.due_date).toLocaleDateString('en-GB') : '—' %><% if (t.due_time) { %> <%= String(t.due_time).slice(0,5) %><% } %></td>
+            <td class="<%= overdue(t.due_date) && t.status!=='done' ? '' : 'muted' %>" style="<%= overdue(t.due_date) && t.status!=='done' ? 'color:var(--bad-fg);font-weight:600;' : '' %>"><%= t.due_date ? new Date(t.due_date).toLocaleDateString('en-GB') : '—' %><% if (t.due_time) { %> <%= String(t.due_time).slice(0,5) %><% } %></td>
             <td style="text-align:right;"><form method="post" action="/tasks/<%= t.id %>/delete" onsubmit="return confirm('Delete this task?');" style="display:inline;"><button class="btn" type="submit">✕</button></form></td>
           </tr>
         <% }); %>

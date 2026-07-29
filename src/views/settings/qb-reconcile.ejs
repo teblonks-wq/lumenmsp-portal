@@ -10,8 +10,8 @@
 
 <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr));">
   <div class="card"><div class="card-header"><h2>In QuickBooks</h2></div><div class="stat" style="font-size:30px;"><%= qbTotal %></div></div>
-  <div class="card" style="background:#f0fdf4;"><div class="card-header"><h2>In portal</h2></div><div class="stat" style="font-size:30px;color:#166534;"><%= matched %></div></div>
-  <div class="card" style="background:#fef2f2;"><div class="card-header"><h2>Missing</h2></div><div class="stat" style="font-size:30px;color:#b91c1c;"><%= (missing||[]).length %></div><p class="muted" style="margin:4px 0 0;"><%= money(missingTotal) %></p></div>
+  <div class="card" style="background:var(--tint-ok);"><div class="card-header"><h2>In portal</h2></div><div class="stat" style="font-size:30px;color:var(--ok-fg);"><%= matched %></div></div>
+  <div class="card" style="background:var(--tint-bad);"><div class="card-header"><h2>Missing</h2></div><div class="stat" style="font-size:30px;color:var(--bad-fg);"><%= (missing||[]).length %></div><p class="muted" style="margin:4px 0 0;"><%= money(missingTotal) %></p></div>
 </div>
 
 <% if ((missing||[]).length) { %>

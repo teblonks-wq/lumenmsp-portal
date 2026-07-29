@@ -20,11 +20,11 @@ function filterIntg(q){
 <% if (error) { %><div class="alert alert-error" style="max-width:900px;"><%= error %></div><% } %>
 
 <style>
-  .intg { border:1px solid var(--line); border-radius:10px; margin-bottom:10px; background:#fff; max-width:900px; }
+  .intg { border:1px solid var(--line); border-radius:10px; margin-bottom:10px; background:var(--surface); max-width:900px; }
   .intg > summary { list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 18px; font-weight:700; font-size:16px; }
   .intg > summary::-webkit-details-marker { display:none; }
   .intg-left { display:flex; align-items:center; gap:10px; }
-  .chev::before { content:'▸'; color:#6b7280; font-size:13px; }
+  .chev::before { content:'▸'; color:var(--muted); font-size:13px; }
   .intg[open] .chev::before { content:'▾'; }
   .intg-body { padding:2px 18px 18px; }
   .intg-body p:first-child { margin-top:0; }
@@ -117,7 +117,7 @@ function filterIntg(q){
   </summary>
   <div class="intg-body">
     <p class="muted">Connect your business WhatsApp via Meta's Cloud API. Inbound messages raise/append cases; replies send from the case (Send via → WhatsApp). Free-form replies only work within 24h of the customer's last message — outside that Meta needs an approved template.</p>
-    <div class="card" style="background:#f8fafc;margin-bottom:14px;">
+    <div class="card" style="background:var(--surface-2);margin-bottom:14px;">
       <p style="margin:0 0 6px;font-size:13px;"><strong>Webhook URL</strong> (set this in the Meta app → WhatsApp → Configuration):</p>
       <code style="font-size:13px;word-break:break-all;"><%= wa.webhookUrl %></code>
       <p class="muted" style="margin:8px 0 0;font-size:12px;">Use the same <em>Verify token</em> below in Meta. Messages received so far: <%= wa.messages %>.</p>
@@ -138,7 +138,7 @@ function filterIntg(q){
     <% if (teams.graphConnected) { %><span class="badge badge-sent">Connected</span><% } else if (teams.configured) { %><span class="badge badge-sent">Relay set</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
   </summary>
   <div class="intg-body">
-    <div class="card" style="background:#f0fdf4;margin-bottom:16px;">
+    <div class="card" style="background:var(--tint-ok);margin-bottom:16px;">
       <h3 style="margin:0 0 6px;">Recommended — connect via Graph (as the support account)</h3>
       <p class="muted" style="margin:0 0 10px;">Two-way Teams like WhatsApp: the portal signs in once as <strong>sp@lumensolutions.co.uk</strong>, picks up incoming chats (raising/appending cases), and replies straight back into the same chat. Works for external customers once they message first. No Power Automate or bot needed.</p>
       <% if (teams.graphConnected) { %>
@@ -153,7 +153,7 @@ function filterIntg(q){
     <details>
       <summary class="muted" style="cursor:pointer;font-size:13px;">Advanced — Power Automate / bot relay (only if not using Graph)</summary>
     <p class="muted" style="margin-top:10px;">Two-way Teams via an Azure Bot / Power Automate relay. Inbound Teams messages raise/append cases; replies send from the case (Send via → Teams). Replies only work once the customer has messaged you (we store the conversation reference).</p>
-    <div class="card" style="background:#f8fafc;margin-bottom:14px;">
+    <div class="card" style="background:var(--surface-2);margin-bottom:14px;">
       <p style="margin:0 0 6px;font-size:13px;"><strong>Inbound webhook URL</strong> (point your bot's messaging endpoint / Power Automate flow here):</p>
       <code style="font-size:13px;word-break:break-all;"><%= teams.webhookUrl %></code>
       <p class="muted" style="margin:8px 0 0;font-size:12px;">The relay must send header <code>X-Relay-Secret</code> matching the inbound secret below. Teams messages received so far: <%= teams.messages %>.</p>
@@ -202,7 +202,7 @@ function filterIntg(q){
   </summary>
   <div class="intg-body">
     <p class="muted">Powers <strong>Marketing → Socials</strong> — pushes posts to LinkedIn, Facebook &amp; Google Business via Buffer. Create a personal API key at <a href="https://developers.buffer.com" target="_blank" rel="noopener">developers.buffer.com</a> (Get an API Key). A key saved here <strong>overrides</strong> the server <code>.env</code> (<code>BUFFER_TOKEN</code>).</p>
-    <% if (buf.envSet && !buf.keySet) { %><p class="muted" style="color:#b45309;">A <code>BUFFER_TOKEN</code> is set in the server .env. Saving a key here takes precedence over it.</p><% } %>
+    <% if (buf.envSet && !buf.keySet) { %><p class="muted" style="color:var(--warn-fg);">A <code>BUFFER_TOKEN</code> is set in the server .env. Saving a key here takes precedence over it.</p><% } %>
     <form method="post" action="/settings/integrations/buffer" style="max-width:620px;">
       <div class="form-group" style="margin-bottom:14px;">
         <label>API key <% if (buf.keySet) { %><span class="muted">(set: <%= buf.keyMasked %> — leave blank to keep)</span><% } %></label>
@@ -223,7 +223,7 @@ function filterIntg(q){
   </summary>
   <div class="intg-body">
     <p class="muted">Powers <strong>Marketing → Socials → Create</strong> — lets Claude suggest and find matching free images for your posts. Get a free API key at <a href="https://www.pexels.com/api/" target="_blank" rel="noopener">pexels.com/api</a>. A key saved here overrides the server <code>.env</code> (<code>PEXELS_API_KEY</code>).</p>
-    <% if (pex.envSet && !pex.keySet) { %><p class="muted" style="color:#b45309;">A <code>PEXELS_API_KEY</code> is set in the server .env. Saving a key here takes precedence over it.</p><% } %>
+    <% if (pex.envSet && !pex.keySet) { %><p class="muted" style="color:var(--warn-fg);">A <code>PEXELS_API_KEY</code> is set in the server .env. Saving a key here takes precedence over it.</p><% } %>
     <form method="post" action="/settings/integrations/pexels" style="max-width:620px;">
       <div class="form-group" style="margin-bottom:14px;">
         <label>API key <% if (pex.keySet) { %><span class="muted">(set: <%= pex.keyMasked %> — leave blank to keep)</span><% } %></label>
@@ -244,7 +244,7 @@ function filterIntg(q){
   </summary>
   <div class="intg-body">
     <p class="muted">Powers <strong>Dictate &amp; Polish with Claude</strong> on the reply composer — turns rough dictated notes into a ready-to-send message. Get a key from <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> (Settings → API Keys; add billing + a spend cap). The API is billed separately from any Claude.ai plan, ~£4/month at typical volume. A key saved here <strong>overrides</strong> the server <code>.env</code>.</p>
-    <% if (anth.envSet && !anth.keySet) { %><p class="muted" style="color:#b45309;">An <code>ANTHROPIC_API_KEY</code> is set in the server .env. Saving a key here takes precedence over it.</p><% } %>
+    <% if (anth.envSet && !anth.keySet) { %><p class="muted" style="color:var(--warn-fg);">An <code>ANTHROPIC_API_KEY</code> is set in the server .env. Saving a key here takes precedence over it.</p><% } %>
     <form method="post" action="/settings/integrations/anthropic" style="max-width:620px;">
       <div class="form-group" style="margin-bottom:12px;">
         <label>API key <% if (anth.keySet) { %><span class="muted">(set: <%= anth.keyMasked %> — leave blank to keep)</span><% } %></label>

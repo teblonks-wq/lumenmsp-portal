@@ -43,7 +43,7 @@ const nSot = ((lc.source_of_truth_group || []).length) + ((lc.source_of_truth_ex
 const nGrp = ((lc.call_flow || []).length) || ((lc.ivr_options || []).length);
 const nStaff = (lc.staff_extensions || []).length;
 const logicSummary = (nSot + nGrp + nStaff) > 0
-  ? `<p style="font-size:13px;margin:0;color:#374151;">Source of truth: <strong>${nSot}</strong> &middot; Hunt groups: <strong>${nGrp}</strong> &middot; Staff: <strong>${nStaff}</strong>${lc.business_hours ? ' &middot; Business hours set' : ''}</p>`
+  ? `<p style="font-size:13px;margin:0;color:var(--text-strong);">Source of truth: <strong>${nSot}</strong> &middot; Hunt groups: <strong>${nGrp}</strong> &middot; Staff: <strong>${nStaff}</strong>${lc.business_hours ? ' &middot; Business hours set' : ''}</p>`
   : '<p class="muted" style="font-size:13px;margin:0;">No call-flow logic set yet — click <strong>Edit logic</strong> to build it.</p>';
 
 const dayGrid = days.map((d, i) => {
@@ -51,7 +51,7 @@ const dayGrid = days.map((d, i) => {
   const closed = day.closed || (!day.open && !day.close);
   const open  = day.open  || '08:00';
   const close = day.close || '18:30';
-  return `<div style="background:#f9fafb;border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
+  return `<div style="background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:6px;">${dayNames[i]}</div>
     <label style="display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;margin-bottom:6px;cursor:pointer;">
       <input type="checkbox" name="bh_closed_${d}" ${closed ? 'checked' : ''} onchange="toggleDay(this,'${d}')" style="width:auto;min-width:auto;">
@@ -138,11 +138,11 @@ ${errMsg ? `<div class="alert alert-error">${errMsg}</div>` : ''}
 </div>
 <div style="display:none;">${cfgTable}</div>
 
-<div class="card" style="border-color:#fecaca;">
-  <div class="card-header"><h2 style="color:#dc2626;">Danger Zone</h2></div>
+<div class="card" style="border-color:var(--bad-line);">
+  <div class="card-header"><h2 style="color:var(--bad);">Danger Zone</h2></div>
   <p class="muted" style="font-size:13px;margin-bottom:12px;">Deleting a site is permanent. It cannot be deleted if it has report configs attached.</p>
   <form method="POST" action="/insights/site/${site.id}/delete" onsubmit="return confirm('Delete ${site.site_label}? This cannot be undone.')">
-    <button type="submit" class="btn-primary" style="background:#dc2626;">Delete Site</button>
+    <button type="submit" class="btn-primary" style="background:var(--bad);">Delete Site</button>
   </form>
 </div>
 

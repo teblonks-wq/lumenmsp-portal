@@ -31,7 +31,7 @@
       </div>
     </div>
     <iframe src="/contracts/<%= contract.id %>/document.pdf#view=FitH" title="Agreement preview"
-            style="width:100%;height:760px;border:0;border-top:1px solid var(--line);display:block;background:#f8fafc;"></iframe>
+            style="width:100%;height:760px;border:0;border-top:1px solid var(--line);display:block;background:var(--surface-2);"></iframe>
   </div>
 
   <div>
@@ -131,7 +131,7 @@
 
     btn.addEventListener('click', function(){
       var text = box.value.trim();
-      if (!text) { note.style.color = '#b45309'; note.textContent = 'Type a message first.'; return; }
+      if (!text) { note.style.color = 'var(--warn-fg)'; note.textContent = 'Type a message first.'; return; }
       // Second press puts the original back, so an unwanted rewrite is never a dead end.
       if (undo !== null && btn.dataset.state === 'done') {
         box.value = undo; undo = null; btn.dataset.state = '';
@@ -148,15 +148,15 @@
         btn.disabled = false;
         if (!j || !j.ok) {
           btn.innerHTML = original;
-          note.style.color = '#dc2626'; note.textContent = (j && j.error) || 'Improve failed.';
+          note.style.color = 'var(--bad)'; note.textContent = (j && j.error) || 'Improve failed.';
           return;
         }
         undo = text; box.value = j.message;
         btn.dataset.state = 'done'; btn.innerHTML = '↩ Undo';
-        note.style.color = '#0f766e'; note.textContent = 'Improved — read it before sending.';
+        note.style.color = 'var(--teal-deep)'; note.textContent = 'Improved — read it before sending.';
       }).catch(function(){
         btn.disabled = false; btn.innerHTML = original;
-        note.style.color = '#dc2626'; note.textContent = 'Improve failed.';
+        note.style.color = 'var(--bad)'; note.textContent = 'Improve failed.';
       });
     });
 

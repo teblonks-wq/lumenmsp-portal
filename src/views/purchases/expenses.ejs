@@ -31,11 +31,11 @@
 <% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
 
 <!-- Tabs -->
-<div style="display:flex;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:16px;">
-  <a href="/purchases/expenses?period=<%= encodeURIComponent(period) %>" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='expenses'?'#2563eb':'transparent' %>;color:<%= view==='expenses'?'#2563eb':'#64748b' %>;font-weight:<%= view==='expenses'?'600':'400' %>;">Expenses</a>
-  <a href="/purchases/expenses?view=reconciled&period=<%= encodeURIComponent(period) %>" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='reconciled'?'#2563eb':'transparent' %>;color:<%= view==='reconciled'?'#2563eb':'#64748b' %>;font-weight:<%= view==='reconciled'?'600':'400' %>;">Reconciled <% if (reconCount) { %><span class="badge badge-sent" style="font-size:10px;"><%= reconCount %></span><% } %></a>
-  <a href="/purchases/expenses?view=inbox" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='inbox'?'#2563eb':'transparent' %>;color:<%= view==='inbox'?'#2563eb':'#64748b' %>;font-weight:<%= view==='inbox'?'600':'400' %>;">Invoice inbox <% if (inboxCount) { %><span class="badge badge-sent" style="font-size:10px;"><%= inboxCount %></span><% } %></a>
-  <a href="/purchases/expenses?view=suppliers" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='suppliers'?'#2563eb':'transparent' %>;color:<%= view==='suppliers'?'#2563eb':'#64748b' %>;font-weight:<%= view==='suppliers'?'600':'400' %>;">Suppliers <% if ((suppliers||[]).length) { %><span class="badge badge-sent" style="font-size:10px;"><%= suppliers.length %></span><% } %></a>
+<div style="display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px;">
+  <a href="/purchases/expenses?period=<%= encodeURIComponent(period) %>" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='expenses'?'var(--blue)':'transparent' %>;color:<%= view==='expenses'?'var(--blue)':'var(--muted)' %>;font-weight:<%= view==='expenses'?'600':'400' %>;">Expenses</a>
+  <a href="/purchases/expenses?view=reconciled&period=<%= encodeURIComponent(period) %>" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='reconciled'?'var(--blue)':'transparent' %>;color:<%= view==='reconciled'?'var(--blue)':'var(--muted)' %>;font-weight:<%= view==='reconciled'?'600':'400' %>;">Reconciled <% if (reconCount) { %><span class="badge badge-sent" style="font-size:10px;"><%= reconCount %></span><% } %></a>
+  <a href="/purchases/expenses?view=inbox" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='inbox'?'var(--blue)':'transparent' %>;color:<%= view==='inbox'?'var(--blue)':'var(--muted)' %>;font-weight:<%= view==='inbox'?'600':'400' %>;">Invoice inbox <% if (inboxCount) { %><span class="badge badge-sent" style="font-size:10px;"><%= inboxCount %></span><% } %></a>
+  <a href="/purchases/expenses?view=suppliers" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='suppliers'?'var(--blue)':'transparent' %>;color:<%= view==='suppliers'?'var(--blue)':'var(--muted)' %>;font-weight:<%= view==='suppliers'?'600':'400' %>;">Suppliers <% if ((suppliers||[]).length) { %><span class="badge badge-sent" style="font-size:10px;"><%= suppliers.length %></span><% } %></a>
 </div>
 
 <% if (view==='inbox') { %>
@@ -69,8 +69,8 @@
     <div class="px-doc-meta">
       <div class="px-doc-name" title="<%= d.file_name %>"><%= d.file_name %></div>
       <div class="muted" style="font-size:11px;"><%= d.from_name || d.from_email || (d.source==='upload'?'Manual upload':'—') %> · <%= dt(d.received_at || d.created_at) %></div>
-      <% if (d.parsed_amount || d.parsed_invoice_no) { %><div style="font-size:14px;color:#1e3a8a;margin-top:3px;font-weight:600;"><% if (d.parsed_amount) { %>£<%= Number(d.parsed_amount).toFixed(2) %><% } %><% if (d.parsed_invoice_no) { %> · Inv <%= d.parsed_invoice_no %><% } %></div><% } %>
-      <% if (d.status==='attached') { %><div style="font-size:11px;color:#16a34a;margin-top:3px;">✓ attached to <%= d.txn_payee || ('txn '+d.bank_transaction_id) %><% if (d.txn_amount) { %> (<%= money(d.txn_amount) %>)<% } %></div><% } %>
+      <% if (d.parsed_amount || d.parsed_invoice_no) { %><div style="font-size:14px;color:var(--navy);margin-top:3px;font-weight:600;"><% if (d.parsed_amount) { %>£<%= Number(d.parsed_amount).toFixed(2) %><% } %><% if (d.parsed_invoice_no) { %> · Inv <%= d.parsed_invoice_no %><% } %></div><% } %>
+      <% if (d.status==='attached') { %><div style="font-size:11px;color:var(--ok);margin-top:3px;">✓ attached to <%= d.txn_payee || ('txn '+d.bank_transaction_id) %><% if (d.txn_amount) { %> (<%= money(d.txn_amount) %>)<% } %></div><% } %>
       <div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap;">
         <a class="btn" href="/purchases/doc/<%= d.id %>/view" target="_blank" style="font-size:11px;padding:3px 8px;">Open</a>
         <% if (showArchived) { %>
@@ -78,7 +78,7 @@
         <% } else { %>
         <form method="post" action="/purchases/doc/<%= d.id %>/archive" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;" title="Hide from the inbox — still findable on the Archived tab">🗄 Archive</button></form>
         <% } %>
-        <form method="post" action="/purchases/doc/<%= d.id %>/delete" onsubmit="return confirm('Remove this invoice from the inbox?');" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:#b91c1c;">Delete</button></form>
+        <form method="post" action="/purchases/doc/<%= d.id %>/delete" onsubmit="return confirm('Remove this invoice from the inbox?');" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);">Delete</button></form>
       </div>
     </div>
   </div>
@@ -126,10 +126,10 @@
         <td style="white-space:nowrap;text-align:right;">
           <a class="btn btn-primary" href="/purchases/suppliers/<%= s.id %>" style="font-size:11px;padding:3px 8px;">Open &middot; Logins</a>
           <button type="button" class="btn" style="font-size:11px;padding:3px 8px;" onclick="document.getElementById('sup-edit-<%= s.id %>').style.display='table-row';this.closest('tr').style.display='none';">Edit</button>
-          <form method="post" action="/purchases/suppliers/<%= s.id %>/delete" onsubmit="return confirm('Remove <%= (s.name||'').replace(/'/g,'') %> from the supplier list?');" style="display:inline;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:#b91c1c;">Delete</button></form>
+          <form method="post" action="/purchases/suppliers/<%= s.id %>/delete" onsubmit="return confirm('Remove <%= (s.name||'').replace(/'/g,'') %> from the supplier list?');" style="display:inline;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);">Delete</button></form>
         </td>
       </tr>
-      <tr id="sup-edit-<%= s.id %>" class="px-supdetail" style="display:none;background:#f8fafc;">
+      <tr id="sup-edit-<%= s.id %>" class="px-supdetail" style="display:none;background:var(--surface-2);">
         <td colspan="7" style="padding:14px 18px;">
           <form method="post" action="/purchases/suppliers/<%= s.id %>" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-items:start;">
             <div><label class="muted" style="font-size:11px;display:block;">Supplier name *</label><input class="input" name="name" required value="<%= esc(s.name) %>" style="width:100%;font-size:13px;"></div>
@@ -198,10 +198,10 @@
         <td class="muted" style="font-size:12px;"><%= t.account_name || '—' %></td>
         <td><%= t.counterparty || '—' %></td>
         <td class="muted" style="font-size:12px;max-width:280px;"><%= t.description || '' %><% if (t.reference) { %> <span style="font-size:11px;">· <%= t.reference %></span><% } %></td>
-        <td style="text-align:right;font-weight:600;color:#b91c1c;"><%= money(t.amount) %></td>
+        <td style="text-align:right;font-weight:600;color:var(--bad-fg);"><%= money(t.amount) %></td>
         <% if (readonly) { %>
           <td class="muted" style="font-size:12px;"><% if (isSplit) { %><strong>Split</strong> · <%= splits.length %> categories<% } else { %><%= t.qb_account_name || '—' %><% } %></td>
-          <td class="muted" style="font-size:11px;"><% if (isSplit) { %><%= withInv %>/<%= splits.length %> with invoice<% } else if (t.attachment_name) { %>📎 <%= t.attachment_name %><% if (canEditAttach) { %> <button type="button" class="btn" onclick="pxUnlink(<%= t.id %>)" style="font-size:10px;padding:2px 6px;color:#b91c1c;">Unlink</button><% } %><% } else { %>—<% } %></td>
+          <td class="muted" style="font-size:11px;"><% if (isSplit) { %><%= withInv %>/<%= splits.length %> with invoice<% } else if (t.attachment_name) { %>📎 <%= t.attachment_name %><% if (canEditAttach) { %> <button type="button" class="btn" onclick="pxUnlink(<%= t.id %>)" style="font-size:10px;padding:2px 6px;color:var(--bad-fg);">Unlink</button><% } %><% } else { %>—<% } %></td>
           <td><span class="badge <%= pushed?'badge-sent':(locked?'badge-active':'badge-inactive') %>" style="font-size:10px;"><%= locked?'locked':t.status %></span>
             <% if (locked) { %> <form class="px-ajax" method="post" action="/purchases/txn/<%= t.id %>/unlock" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:10px;padding:2px 6px;">🔓 Unlock</button></form><% } %>
             <% if (ignored && !closed) { %> <form class="px-ajax" method="post" action="/purchases/txn/<%= t.id %>/ignore" style="display:inline;margin:0;"><input type="hidden" name="ignore" value="0"><button class="btn" type="submit" style="font-size:10px;padding:2px 6px;">Un-ignore</button></form><% } %>
@@ -209,10 +209,10 @@
         <% } else if (isSplit) { %>
           <td colspan="3">
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              <span style="font-size:13px;"><strong>Split</strong> · <%= splits.length %> categories · <%= money(allocated) %> of <%= money(total) %><% if (Math.abs(remaining)>=0.01) { %> <span style="color:#b91c1c;">(<%= money(remaining) %> unallocated)</span><% } %></span>
+              <span style="font-size:13px;"><strong>Split</strong> · <%= splits.length %> categories · <%= money(allocated) %> of <%= money(total) %><% if (Math.abs(remaining)>=0.01) { %> <span style="color:var(--bad-fg);">(<%= money(remaining) %> unallocated)</span><% } %></span>
               <button type="button" class="btn" onclick="pxToggleSplit(<%= t.id %>)" style="font-size:11px;padding:4px 8px;">Edit splits</button>
               <form class="px-ajax" method="post" action="/purchases/txn/<%= t.id %>/lock" style="display:inline;margin:0;"><button class="btn btn-primary" type="submit" style="font-size:11px;padding:4px 9px;">Save &amp; lock</button></form>
-              <form class="px-ajax" method="post" action="/purchases/txn/<%= t.id %>/unsplit" onsubmit="return confirm('Remove the split and go back to a single category?');" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:4px 8px;color:#b91c1c;">Unsplit</button></form>
+              <form class="px-ajax" method="post" action="/purchases/txn/<%= t.id %>/unsplit" onsubmit="return confirm('Remove the split and go back to a single category?');" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:4px 8px;color:var(--bad-fg);">Unsplit</button></form>
               <label class="muted" style="font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;margin-left:4px;"><input type="checkbox" onchange="pxIgnore(<%= t.id %>)"> ignore</label>
             </div>
           </td>
@@ -226,7 +226,7 @@
               </select>
               <input type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png" style="font-size:11px;width:140px;">
               <button type="button" class="btn" onclick="pxOpenPicker(<%= t.id %>,'<%= (t.counterparty||'').replace(/'/g,"\\'") %>',<%= total %>)" title="Pick an invoice from the inbox" style="font-size:11px;padding:4px 8px;">📁 Inbox<% if (unattached.length) { %> (<%= unattached.length %>)<% } %></button>
-              <% if (t.attachment_name) { %><span class="muted" style="font-size:11px;">📎 <%= t.attachment_name %></span> <button type="button" class="btn" onclick="pxUnlink(<%= t.id %>)" style="font-size:10px;padding:2px 6px;color:#b91c1c;">Unlink</button><% } %>
+              <% if (t.attachment_name) { %><span class="muted" style="font-size:11px;">📎 <%= t.attachment_name %></span> <button type="button" class="btn" onclick="pxUnlink(<%= t.id %>)" style="font-size:10px;padding:2px 6px;color:var(--bad-fg);">Unlink</button><% } %>
               <button class="btn btn-primary" type="submit" style="font-size:11px;padding:4px 9px;">Save &amp; lock</button>
               <button type="button" class="btn" onclick="pxToggleSplit(<%= t.id %>)" title="Split this payment across categories" style="font-size:11px;padding:4px 8px;">⇆ Split</button>
               <label class="muted" style="font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;margin-left:4px;" title="Ignore — kept out of the reconcile list and the QB push">
@@ -238,19 +238,19 @@
       </tr>
       <% if (!readonly) { %>
       <tr class="px-splitrow" id="splitrow-<%= t.id %>" style="display:<%= isSplit?'table-row':'none' %>;">
-        <td colspan="8" style="background:#f8fafc;padding:14px 18px;">
+        <td colspan="8" style="background:var(--surface-2);padding:14px 18px;">
           <div style="font-weight:600;margin-bottom:8px;font-size:13px;">Split “<%= t.counterparty || 'transaction' %>” — total <%= money(t.amount) %></div>
           <div class="px-splitlines" data-txn="<%= t.id %>" data-total="<%= total %>">
             <% splits.forEach(function(s){ %>
             <div class="px-splitline" data-split="<%= s.id %>" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
               <span>£</span><input type="number" step="0.01" class="input px-sl-amt" value="<%= Number(s.amount).toFixed(2) %>" style="width:110px;font-size:13px;">
               <select class="input px-sl-cat" style="min-width:200px;font-size:13px;"><option value="">— category —</option><% (cats||[]).forEach(function(c){ %><option value="<%= c.Id %>" <%= s.qb_account_id===c.Id?'selected':'' %>><%= c.Name %></option><% }); %></select>
-              <% if (s.attachment_name) { %><span class="muted" style="font-size:12px;">📎 <%= s.attachment_name %></span> <button type="button" class="btn" onclick="pxSplitUnlink(<%= s.id %>)" style="font-size:10px;padding:2px 6px;color:#b91c1c;">Unlink</button>
+              <% if (s.attachment_name) { %><span class="muted" style="font-size:12px;">📎 <%= s.attachment_name %></span> <button type="button" class="btn" onclick="pxSplitUnlink(<%= s.id %>)" style="font-size:10px;padding:2px 6px;color:var(--bad-fg);">Unlink</button>
               <% } else { %>
                 <form class="px-ajax" method="post" action="/purchases/split/<%= s.id %>/receipt" enctype="multipart/form-data" style="display:inline;margin:0;"><input type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png" onchange="this.form.requestSubmit()" style="font-size:11px;width:130px;"></form>
                 <button type="button" class="btn" onclick="pxOpenPickerSplit(<%= s.id %>,'<%= (t.counterparty||'').replace(/'/g,"\\'") %>',<%= Number(s.amount) %>)" style="font-size:11px;padding:4px 8px;">📁 Inbox</button>
               <% } %>
-              <button type="button" class="btn" onclick="pxRemoveSplitLine(this)" title="Remove line" style="font-size:11px;padding:4px 8px;color:#b91c1c;">✕</button>
+              <button type="button" class="btn" onclick="pxRemoveSplitLine(this)" title="Remove line" style="font-size:11px;padding:4px 8px;color:var(--bad-fg);">✕</button>
             </div>
             <% }); %>
           </div>
@@ -335,34 +335,34 @@
 <style>
   /* Invoice inbox cards — enlarged for easy reading */
   .px-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:22px;}
-  .px-doc{border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;background:#fff;display:flex;flex-direction:column;}
+  .px-doc{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--surface);display:flex;flex-direction:column;}
   .px-doc.is-attached{opacity:.6;}
-  .px-doc-prev{position:relative;height:300px;background:#f8fafc;cursor:pointer;overflow:hidden;display:flex;align-items:center;justify-content:center;}
+  .px-doc-prev{position:relative;height:300px;background:var(--surface-2);cursor:pointer;overflow:hidden;display:flex;align-items:center;justify-content:center;}
   .px-doc-prev img{width:100%;height:100%;object-fit:cover;}
   .px-doc-prev iframe{width:100%;height:100%;border:0;pointer-events:none;}
   .px-doc-shade{position:absolute;inset:0;}
-  .px-doc-file{font-size:80px;color:#94a3b8;}
+  .px-doc-file{font-size:80px;color:var(--faint);}
   .px-doc-meta{padding:16px 18px;}
   .px-doc-name{font-weight:600;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .px-doc-meta .muted{font-size:15px !important;}
   .px-doc-meta .btn{font-size:15px !important;padding:7px 14px !important;}
   /* Full-screen picker — enlarged */
   .px-lb{position:fixed;inset:0;z-index:9999;background:rgba(15,23,42,.55);backdrop-filter:blur(2px);display:flex;flex-direction:column;}
-  .px-lb-bar{display:flex;justify-content:space-between;align-items:center;padding:16px 22px;background:#fff;border-bottom:1px solid #e2e8f0;font-size:18px;}
+  .px-lb-bar{display:flex;justify-content:space-between;align-items:center;padding:16px 22px;background:var(--surface);border-bottom:1px solid var(--line);font-size:18px;}
   .px-lb-bar .muted{font-size:15px !important;}
   .px-lb-bar .btn{font-size:16px !important;padding:8px 16px !important;}
-  .px-lb-body{flex:1;display:flex;min-height:0;background:#fff;}
-  .px-lb-list{width:440px;border-right:1px solid #e2e8f0;overflow:auto;padding:12px;}
+  .px-lb-body{flex:1;display:flex;min-height:0;background:var(--surface);}
+  .px-lb-list{width:440px;border-right:1px solid var(--line);overflow:auto;padding:12px;}
   .px-lb-item{display:flex;gap:14px;align-items:center;padding:12px;border-radius:8px;cursor:pointer;border:1px solid transparent;}
-  .px-lb-item:hover{background:#f1f5f9;}
-  .px-lb-item.sel{background:#eff6ff;border-color:#bfdbfe;}
+  .px-lb-item:hover{background:var(--surface-3);}
+  .px-lb-item.sel{background:var(--tint-info);border-color:var(--info-line);}
   .px-lb-item .px-doc-name{font-size:16px !important;}
   .px-lb-item .muted{font-size:13px !important;}
-  .px-lb-thumb{width:84px;height:84px;flex:none;border-radius:6px;overflow:hidden;background:#f8fafc;display:flex;align-items:center;justify-content:center;}
+  .px-lb-thumb{width:84px;height:84px;flex:none;border-radius:6px;overflow:hidden;background:var(--surface-2);display:flex;align-items:center;justify-content:center;}
   .px-lb-thumb img{width:100%;height:100%;object-fit:cover;}
   .px-lb-preview{flex:1;display:flex;flex-direction:column;min-width:0;}
-  .px-lb-preview iframe{flex:1;width:100%;border:0;background:#f1f5f9;}
-  .px-lb-attach{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 20px;border-top:1px solid #e2e8f0;background:#fff;}
+  .px-lb-preview iframe{flex:1;width:100%;border:0;background:var(--surface-3);}
+  .px-lb-attach{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 20px;border-top:1px solid var(--line);background:var(--surface);}
   .px-lb-attach .muted{font-size:15px !important;}
   .px-lb-attach .btn{font-size:17px !important;padding:11px 20px !important;}
   /* Reconciliation table — enlarged for easy reading */
@@ -437,7 +437,7 @@
     line.innerHTML = '<span>£</span><input type="number" step="0.01" class="input px-sl-amt" value="' + (amount ? Number(amount).toFixed(2) : '') + '" style="width:110px;font-size:13px;">' +
       '<select class="input px-sl-cat" style="min-width:200px;font-size:13px;">' + cats + '</select>' +
       '<span class="muted" style="font-size:11px;">save to attach an invoice</span>' +
-      '<button type="button" class="btn" onclick="pxRemoveSplitLine(this)" style="font-size:11px;padding:4px 8px;color:#b91c1c;">✕</button>';
+      '<button type="button" class="btn" onclick="pxRemoveSplitLine(this)" style="font-size:11px;padding:4px 8px;color:var(--bad-fg);">✕</button>';
     box.appendChild(line);
     line.querySelector('.px-sl-amt').addEventListener('input', function(){ pxSplitRemaining(id); });
     pxSplitRemaining(id);
@@ -449,7 +449,7 @@
     box.querySelectorAll('.px-sl-amt').forEach(function(i){ sum += Number(i.value) || 0; });
     var el = document.querySelector('.px-sl-remaining[data-txn="' + id + '"]');
     var left = total - sum;
-    if (el){ el.textContent = 'Allocated £' + sum.toFixed(2) + ' of £' + total.toFixed(2) + (Math.abs(left) >= 0.01 ? ' · £' + left.toFixed(2) + ' left' : ' ✓'); el.style.color = Math.abs(left) >= 0.01 ? '#b91c1c' : '#16a34a'; }
+    if (el){ el.textContent = 'Allocated £' + sum.toFixed(2) + ' of £' + total.toFixed(2) + (Math.abs(left) >= 0.01 ? ' · £' + left.toFixed(2) + ' left' : ' ✓'); el.style.color = Math.abs(left) >= 0.01 ? 'var(--bad-fg)' : 'var(--ok)'; }
   }
   function pxSaveSplits(id){
     var box = document.querySelector('.px-splitlines[data-txn="' + id + '"]'); if (!box) return;

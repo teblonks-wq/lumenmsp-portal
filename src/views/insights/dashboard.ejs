@@ -28,18 +28,18 @@ ${!isConnected ? `
 <div class="alert alert-error">Couldn't read the Insights database: ${dbErr}</div>` : `
 
 ${unlinkedCount > 0 ? `
-<div class="card" style="background:#fffbeb;border-color:#fde68a;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+<div class="card" style="background:var(--tint-warn);border-color:var(--warn-line);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
   <div style="font-size:14px;"><strong>${unlinkedCount}</strong> Insights customer(s) aren't linked to a portal customer yet — their reports won't appear on the customer card until linked.</div>
   <form method="POST" action="/insights/auto-link" style="margin:0;" onsubmit="return confirm('Auto-link Insights customers to portal customers by matching name?');"><button class="btn-primary" type="submit">Auto-link by name</button></form>
 </div>` : ''}
 
 ${phonesUn.length ? `
-<div class="card" style="background:#f0f9ff;border-color:#bae6fd;">
+<div class="card" style="background:var(--tint-accent);border-color:var(--info-line);">
   <div class="card-header"><h2>Phones customers</h2><span class="muted" style="font-size:12px;">Ticked "Phones" in the portal · not yet set up in Insights</span></div>
   <div style="display:flex;flex-wrap:wrap;gap:8px;">${phonesUn.map(c => `<a class="btn-secondary" href="/customers/${c.id}" style="font-size:13px;">${c.name}</a>`).join('')}</div>
 </div>` : ''}
 
-<div class="card" style="border:2px solid var(--accent);background:linear-gradient(135deg,#f0fdf9 0%,#e0f2fe 100%);">
+<div class="card" style="border:2px solid var(--accent);background:linear-gradient(135deg,var(--tint-teal) 0%,var(--tint-info-2) 100%);">
   <div class="card-header">
     <h2>Find a call</h2>
     <span class="muted" style="font-size:12px;">Search a caller's journey — last 4 weeks</span>
@@ -56,7 +56,7 @@ ${phonesUn.length ? `
       <label>Number</label>
       <input type="text" id="dash-number" class="input" placeholder="e.g. 07911 123456" autocomplete="off"
              style="padding:10px 14px;font-size:15px;width:100%;box-sizing:border-box;">
-      <div id="dash-results" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:200;overflow:hidden;max-height:280px;overflow-y:auto;"></div>
+      <div id="dash-results" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:200;overflow:hidden;max-height:280px;overflow-y:auto;"></div>
     </div>
     <button id="dash-search-btn" class="btn-primary" style="padding:10px 20px;font-size:15px;" onclick="dashSearch()">Search</button>
   </div>
@@ -106,7 +106,7 @@ ${phonesUn.length ? `
     const num = a.getAttribute('data-number');
     if (cid && num) window.location.href = '/insights/number?customer=' + cid + '&q=' + encodeURIComponent(num);
   });
-  results.addEventListener('mouseover', function(e) { const a = e.target.closest('.np-result'); if (a) a.style.background = '#f9fafb'; });
+  results.addEventListener('mouseover', function(e) { const a = e.target.closest('.np-result'); if (a) a.style.background = 'var(--surface-2)'; });
   results.addEventListener('mouseout',  function(e) { const a = e.target.closest('.np-result'); if (a) a.style.background = ''; });
 
   numEl.addEventListener('keydown', function(e) {

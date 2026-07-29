@@ -29,7 +29,7 @@
         onsubmit="document.getElementById('replyBody').value = window.replyQuill.root.innerHTML;">
     <input type="hidden" name="body" id="replyBody">
     <div class="form-group"><label>To</label><input class="input" value="<%= m.from_email || '' %>" disabled style="width:100%;max-width:420px;"></div>
-    <div class="form-group"><label>Message</label><div id="replyEditor" style="height:170px;background:#fff;"></div></div>
+    <div class="form-group"><label>Message</label><div id="replyEditor" style="height:170px;background:var(--surface);"></div></div>
     <div class="form-group"><label>Attachments <span class="muted">(up to 5, 10MB each)</span></label><input class="input" type="file" name="attachments" multiple></div>
     <button class="btn btn-primary" type="submit"<%= m.from_email ? '' : ' disabled' %>>Send reply</button>
     <% if (!m.from_email) { %><span class="muted" style="margin-left:8px;">No sender address to reply to.</span><% } %>

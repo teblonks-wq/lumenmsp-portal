@@ -2,7 +2,7 @@
 <% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
 <% function badge(s){ return s==='accepted'?'badge-sent':s==='sent'?'badge-primary':s==='lost'?'badge-failed':'badge-inactive'; } %>
 <% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
-<% function mcol(p){ return p>=20 ? '#166534' : p>0 ? '#b45309' : '#b91c1c'; } %>
+<% function mcol(p){ return p>=20 ? 'var(--ok-fg)' : p>0 ? 'var(--warn-fg)' : 'var(--bad-fg)'; } %>
 
 <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div>
@@ -25,7 +25,7 @@
 </div>
 
 <% if (quote.accept_token) { %>
-<div class="alert" style="background:#f0fdf9;border:1px solid #bbf7d0;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;">
+<div class="alert" style="background:var(--tint-teal);border:1px solid var(--ok-line);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;">
   <span>Customer link: <a class="row-link" href="/q/<%= quote.accept_token %>" target="_blank">/q/<%= quote.accept_token %></a></span>
   <span class="muted">Viewed <%= quote.view_count %> time(s)</span>
 </div>
@@ -60,7 +60,7 @@
 <!-- Profit analysis (internal) -->
 <% var tBuy=0, tSell=0; %>
 <div class="card" style="padding:0;border-top:3px solid var(--accent);">
-  <div class="card-header" style="padding:20px 24px 0;"><h2>Profit analysis <span class="badge" style="background:#fef3c7;color:#92400e;">INTERNAL — not visible to customers</span></h2></div>
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Profit analysis <span class="badge" style="background:var(--warn-bg);color:var(--warn-deep);">INTERNAL — not visible to customers</span></h2></div>
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th>Description</th><th>Supplier</th><th style="text-align:right;">Buy</th><th style="text-align:right;">Sell</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Margin £</th><th style="text-align:right;">Margin %</th></tr></thead>
@@ -72,19 +72,19 @@
             <td style="text-align:right;"><%= money(buy) %></td>
             <td style="text-align:right;"><%= money(sell) %></td>
             <td style="text-align:right;"><%= q %></td>
-            <td style="text-align:right;color:<%= mg>=0?'#166534':'#b91c1c' %>;"><%= money(mg) %></td>
+            <td style="text-align:right;color:<%= mg>=0?'var(--ok-fg)':'var(--bad-fg)' %>;"><%= money(mg) %></td>
             <td style="text-align:right;color:<%= mcol(mp) %>;"><%= mp.toFixed(1) %>%</td>
           </tr>
         <% }); %>
       </tbody>
       <% var tMg=tSell-tBuy, tMp=tSell>0?(tMg/tSell*100):0; %>
       <tfoot>
-        <tr style="background:#fefce8;font-weight:700;">
+        <tr style="background:var(--tint-yellow);font-weight:700;">
           <td>Totals</td><td></td>
           <td style="text-align:right;"><%= money(tBuy) %></td>
           <td style="text-align:right;"><%= money(tSell) %></td>
           <td></td>
-          <td style="text-align:right;color:<%= tMg>=0?'#166534':'#b91c1c' %>;"><%= money(tMg) %></td>
+          <td style="text-align:right;color:<%= tMg>=0?'var(--ok-fg)':'var(--bad-fg)' %>;"><%= money(tMg) %></td>
           <td style="text-align:right;color:<%= mcol(tMp) %>;"><%= tMp.toFixed(1) %>%</td>
         </tr>
       </tfoot>
@@ -98,7 +98,7 @@
     <div style="margin-bottom:14px;"><div style="font-weight:600;">Created</div><div class="muted" style="font-size:13px;"><%= quote.created_by_name || '—' %> · <%= dt(quote.created_at) %></div></div>
     <div><div style="font-weight:600;">Updated</div><div class="muted" style="font-size:13px;"><%= dt(quote.updated_at) %></div></div>
     <% if (quote.status==='accepted' && quote.accepted_by_name) { %>
-    <div style="margin-top:14px;"><div style="font-weight:600;color:#166534;">Accepted</div><div class="muted" style="font-size:13px;"><%= quote.accepted_by_name %><% if (quote.accepted_at) { %> · <%= dt(quote.accepted_at) %><% } %><% if (quote.approve_note) { %><br>"<%= quote.approve_note %>"<% } %></div></div>
+    <div style="margin-top:14px;"><div style="font-weight:600;color:var(--ok-fg);">Accepted</div><div class="muted" style="font-size:13px;"><%= quote.accepted_by_name %><% if (quote.accepted_at) { %> · <%= dt(quote.accepted_at) %><% } %><% if (quote.approve_note) { %><br>"<%= quote.approve_note %>"<% } %></div></div>
     <% } %>
   </div>
 </div>

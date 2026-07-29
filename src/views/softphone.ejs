@@ -9,31 +9,31 @@
 
 <div class="page-header">
   <h1 style="margin:0;">
-    <span style="font-weight:800;background:linear-gradient(90deg,#10b981,#2563eb);-webkit-background-clip:text;background-clip:text;color:transparent;">Soft Phone</span>
+    <span style="font-weight:800;background:linear-gradient(90deg,var(--green-bright),var(--blue));-webkit-background-clip:text;background-clip:text;color:transparent;">Soft Phone</span>
   </h1>
   <p class="muted" style="margin:4px 0 0;">Dial out, call customers back, and see your WhatsApp call history.</p>
 </div>
 
 <div class="card-grid" style="grid-template-columns:300px 1fr;align-items:start;gap:18px;">
   <!-- Dialer -->
-  <div class="card" style="background:linear-gradient(135deg,#0f172a,#1e293b);border:none;color:#fff;">
+  <div class="card" style="background:linear-gradient(135deg,var(--ink),var(--lumen-navy));border:none;color:#fff;">
     <input id="dialNum" class="input" placeholder="07… or 01…" inputmode="tel" autocomplete="off"
-      style="width:100%;text-align:center;font-size:24px;letter-spacing:1px;background:#0b1220;border:1px solid #334155;color:#fff;padding:14px 10px;margin-bottom:14px;font-family:monospace;">
+      style="width:100%;text-align:center;font-size:24px;letter-spacing:1px;background:#0b1220;border:1px solid var(--text-strong);color:#fff;padding:14px 10px;margin-bottom:14px;font-family:monospace;">
     <div id="keypad" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
       <% ['1','2','3','4','5','6','7','8','9','*','0','#'].forEach(function(k){ %>
-        <button type="button" class="kp" data-k="<%= k %>" style="background:#1e293b;border:1px solid #334155;color:#fff;border-radius:12px;padding:16px 0;font-size:20px;cursor:pointer;"><%= k %></button>
+        <button type="button" class="kp" data-k="<%= k %>" style="background:var(--ink-chip);border:1px solid var(--text-strong);color:#fff;border-radius:12px;padding:16px 0;font-size:20px;cursor:pointer;"><%= k %></button>
       <% }); %>
     </div>
     <div style="display:flex;gap:10px;margin-top:14px;">
       <button id="callBtn" class="btn btn-primary" style="flex:1;padding:14px 0;font-size:16px;">📞 Call</button>
-      <button id="bsBtn" type="button" class="btn" style="background:#334155;color:#fff;border-color:#475569;padding:14px 18px;">⌫</button>
+      <button id="bsBtn" type="button" class="btn" style="background:var(--text-strong);color:#fff;border-color:var(--text-soft);padding:14px 18px;">⌫</button>
     </div>
-    <p class="muted" style="font-size:12px;margin:12px 0 0;color:#94a3b8;">Call-backs are only allowed within 24h of the customer's last message or call.</p>
+    <p class="muted" style="font-size:12px;margin:12px 0 0;color:var(--faint);">Call-backs are only allowed within 24h of the customer's last message or call.</p>
   </div>
 
   <div>
     <!-- Call-backs to make -->
-    <div class="card" style="padding:0;margin-bottom:18px;border-color:#fde68a;">
+    <div class="card" style="padding:0;margin-bottom:18px;border-color:var(--warn-line);">
       <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">Call-backs to make <span class="muted" style="font-weight:400;font-size:14px;">(<%= callbacks.length %>)</span></h2></div>
       <% if (!callbacks.length) { %>
         <p class="muted" style="padding:0 18px 14px;margin:0;">No outstanding call-backs. 🎉</p>

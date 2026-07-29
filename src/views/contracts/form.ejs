@@ -72,14 +72,14 @@
                 %>
                 <!-- A licence or backup block carries its own annual term, which need not line up
                      with the contract term (Staybrook: contract 01/08, licences 01/07). -->
-                <div class="line-extra" style="<%= hasExtra ? '' : 'display:none;' %>margin-top:7px;padding:9px 11px;background:#f8fafc;border:1px solid var(--line);border-radius:8px;">
+                <div class="line-extra" style="<%= hasExtra ? '' : 'display:none;' %>margin-top:7px;padding:9px 11px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;">
                   <input class="input" name="detail[]" value="<%= l.detail || '' %>" placeholder="Note shown under the item, e.g. 5 devices covered · unlimited storage" style="width:100%;font-size:12.5px;">
                   <div style="display:flex;gap:8px;margin-top:7px;flex-wrap:wrap;align-items:end;">
-                    <label style="font-size:11px;color:#64748b;flex:1;min-width:120px;">Licence term from
+                    <label style="font-size:11px;color:var(--muted);flex:1;min-width:120px;">Licence term from
                       <input class="input" type="date" name="line_term_start[]" value="<%= dv(l.term_start) %>" style="width:100%;font-size:12.5px;"></label>
-                    <label style="font-size:11px;color:#64748b;flex:1;min-width:120px;">to
+                    <label style="font-size:11px;color:var(--muted);flex:1;min-width:120px;">to
                       <input class="input" type="date" name="line_term_end[]" value="<%= dv(l.term_end) %>" style="width:100%;font-size:12.5px;"></label>
-                    <label style="font-size:11px;color:#64748b;width:104px;">Notice (days)
+                    <label style="font-size:11px;color:var(--muted);width:104px;">Notice (days)
                       <input class="input" type="number" name="line_notice[]" min="0" value="<%= l.notice_days != null ? l.notice_days : '' %>" style="width:100%;font-size:12.5px;"></label>
                   </div>
                 </div>

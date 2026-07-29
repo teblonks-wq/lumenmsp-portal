@@ -12,7 +12,7 @@ const picker = `
 <div class="card" style="margin-bottom:16px;">
   <form method="get" action="/insights/oneboard" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin:0;">
     <div>
-      <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#64748b;margin-bottom:4px;">Customer</label>
+      <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:4px;">Customer</label>
       <select class="input" name="customer" onchange="this.form.submit()" style="min-width:280px;">
         <option value="">Choose a customer&hellip;</option>
         ${custs.map(function(c){ return '<option value="' + c.lumenmsp_id + '"' + (String(c.lumenmsp_id) === String(sel) ? ' selected' : '') + '>' + escp(c.name) + '</option>'; }).join('')}

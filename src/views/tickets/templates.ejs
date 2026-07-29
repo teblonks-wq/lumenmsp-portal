@@ -6,7 +6,7 @@
   <p class="muted">Canned messages for the ticket composer ("Insert template…"). HTML allowed — links, bold, paragraphs.</p>
 </div>
 
-<% if (saved) { %><div class="card" style="border-left:4px solid #16a34a;">Saved.</div><% } %>
+<% if (saved) { %><div class="card" style="border-left:4px solid var(--ok);">Saved.</div><% } %>
 <% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
 <% if (typeof err !== 'undefined' && err) { %><div class="alert alert-error"><%= err %></div><% } %>
 
@@ -37,7 +37,7 @@
   <form method="post" action="/ticket-templates/<%= t.id %>/delete" style="margin-top:-30px;text-align:right;"
         onsubmit="return confirm('Delete template &quot;<%= t.name %>&quot;?');">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <button class="btn" type="submit" style="color:#dc2626;">Delete</button>
+    <button class="btn" type="submit" style="color:var(--bad);">Delete</button>
   </form>
 </div>
 <% }); %>

@@ -20,8 +20,8 @@
     <span id="mmStatusBadge">
       <% if (campaign.status === 'sent') { %><span class="badge badge-sent">Sent</span>
       <% } else if (campaign.status === 'sending') { %><span class="badge badge-primary">Sending…</span>
-      <% } else if (campaign.status === 'paused') { %><span class="badge" style="background:#fef3c7;color:#92400e;">Paused</span>
-      <% } else if (campaign.status === 'failed') { %><span class="badge" style="background:#fee2e2;color:#991b1b;">Failed</span>
+      <% } else if (campaign.status === 'paused') { %><span class="badge" style="background:var(--warn-bg);color:var(--warn-deep);">Paused</span>
+      <% } else if (campaign.status === 'failed') { %><span class="badge" style="background:var(--bad-bg);color:var(--bad-deep);">Failed</span>
       <% } else { %><span class="badge badge-inactive">Draft</span><% } %>
     </span>
     <% if (campaign.status === 'draft') { %>
@@ -32,23 +32,23 @@
     <button class="btn" id="mmPause" onclick="pauseSend()" <%- campaign.status === 'sending' ? '' : 'style="display:none;"' %>>Pause</button>
     <button class="btn" id="mmRetry" onclick="retryFailedSends()" <%- (nFailed > 0 && campaign.status !== 'sending') ? '' : 'style="display:none;"' %>>Retry failed</button>
     <form method="post" action="/marketing/mass-mailer/<%= campaign.id %>/delete" style="display:inline;" onsubmit="return confirm('Delete this campaign? (Already-sent emails are unaffected.)');">
-      <button class="btn" type="submit" style="color:#dc2626;">Delete</button>
+      <button class="btn" type="submit" style="color:var(--bad);">Delete</button>
     </form>
   </div>
 </div>
 
-<% if (notice) { %><div class="card" style="border-left:4px solid #10b981;margin-bottom:16px;padding:12px 16px;"><%= notice %></div><% } %>
-<div class="card" id="mmActionMsg" style="display:none;border-left:4px solid #2563eb;margin-bottom:16px;padding:12px 16px;"></div>
+<% if (notice) { %><div class="card" style="border-left:4px solid var(--green-bright);margin-bottom:16px;padding:12px 16px;"><%= notice %></div><% } %>
+<div class="card" id="mmActionMsg" style="display:none;border-left:4px solid var(--blue);margin-bottom:16px;padding:12px 16px;"></div>
 
 <div style="display:grid;grid-template-columns:minmax(380px,1fr) minmax(380px,1fr);gap:16px;align-items:start;">
 
   <div class="card" style="padding:20px 22px;">
     <h2 style="margin:0 0 10px;font-size:16px;">Message preview</h2>
     <p class="muted" style="font-size:12px;margin:0 0 12px;">Merge fields show as placeholders here and are filled in per recipient. The company signature and a per-recipient unsubscribe line are appended automatically — exactly as shown below.</p>
-    <div style="border:1px solid #e5e7eb;border-radius:8px;padding:18px 20px;background:#fff;font-size:14px;line-height:1.6;overflow:auto;max-height:520px;">
+    <div style="border:1px solid var(--line);border-radius:8px;padding:18px 20px;background:var(--surface);font-size:14px;line-height:1.6;overflow:auto;max-height:520px;">
       <%- campaign.body_html %>
       <%- signatureHtml %>
-      <p style="margin:28px 0 0;padding-top:14px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:12px;">You're receiving this because you're a contact of Lumen IT Solutions. <span style="text-decoration:underline;">Unsubscribe</span> from these updates.</p>
+      <p style="margin:28px 0 0;padding-top:14px;border-top:1px solid var(--line);color:var(--faint);font-size:12px;">You're receiving this because you're a contact of Lumen IT Solutions. <span style="text-decoration:underline;">Unsubscribe</span> from these updates.</p>
     </div>
   </div>
 
@@ -57,10 +57,10 @@
       <h2 style="margin:0;font-size:16px;">Recipients (<%= recipients.length %>)</h2>
       <span class="muted" id="mmProgressText" style="font-size:13px;"><%= nSent %> sent<%= nFailed ? ', ' + nFailed + ' failed' : '' %><%= nSkipped ? ', ' + nSkipped + ' skipped' : '' %> of <%= recipients.length %></span>
     </div>
-    <div style="background:#e5e7eb;border-radius:6px;height:8px;margin:12px 0;overflow:hidden;">
-      <div id="mmProgressBar" style="background:linear-gradient(90deg,#0ea5b7,#10b981);height:100%;width:<%= pct %>%;transition:width .4s;"></div>
+    <div style="background:var(--line);border-radius:6px;height:8px;margin:12px 0;overflow:hidden;">
+      <div id="mmProgressBar" style="background:linear-gradient(90deg,var(--accent),var(--green-bright));height:100%;width:<%= pct %>%;transition:width .4s;"></div>
     </div>
-    <div style="max-height:460px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;">
+    <div style="max-height:460px;overflow:auto;border:1px solid var(--line);border-radius:8px;">
       <table class="table" style="font-size:13px;">
         <thead><tr><th>Contact</th><th>Company</th><th>Status</th></tr></thead>
         <tbody>
@@ -70,8 +70,8 @@
               <td class="muted"><%= r.customer_name %></td>
               <td id="rec-<%= r.id %>">
                 <% if (r.status === 'sent') { %><span class="badge badge-sent">sent</span>
-                <% } else if (r.status === 'failed') { %><span class="badge" style="background:#fee2e2;color:#991b1b;" title="<%= r.error || '' %>">failed</span>
-                <% } else if (r.status === 'skipped') { %><span class="badge" style="background:#fef3c7;color:#92400e;">skipped</span>
+                <% } else if (r.status === 'failed') { %><span class="badge" style="background:var(--bad-bg);color:var(--bad-deep);" title="<%= r.error || '' %>">failed</span>
+                <% } else if (r.status === 'skipped') { %><span class="badge" style="background:var(--warn-bg);color:var(--warn-deep);">skipped</span>
                 <% } else { %><span class="badge badge-inactive">pending</span><% } %>
               </td>
             </tr>
@@ -88,16 +88,16 @@
 
   function badge(status, error) {
     if (status === 'sent')   return '<span class="badge badge-sent">sent</span>';
-    if (status === 'failed') return '<span class="badge" style="background:#fee2e2;color:#991b1b;" title="' + String(error || '').replace(/"/g, '&quot;') + '">failed</span>';
-    if (status === 'skipped')return '<span class="badge" style="background:#fef3c7;color:#92400e;">skipped</span>';
+    if (status === 'failed') return '<span class="badge" style="background:var(--bad-bg);color:var(--bad-deep);" title="' + String(error || '').replace(/"/g, '&quot;') + '">failed</span>';
+    if (status === 'skipped')return '<span class="badge" style="background:var(--warn-bg);color:var(--warn-deep);">skipped</span>';
     return '<span class="badge badge-inactive">pending</span>';
   }
 
   function campaignBadge(status) {
     if (status === 'sent')    return '<span class="badge badge-sent">Sent</span>';
     if (status === 'sending') return '<span class="badge badge-primary">Sending…</span>';
-    if (status === 'paused')  return '<span class="badge" style="background:#fef3c7;color:#92400e;">Paused</span>';
-    if (status === 'failed')  return '<span class="badge" style="background:#fee2e2;color:#991b1b;">Failed</span>';
+    if (status === 'paused')  return '<span class="badge" style="background:var(--warn-bg);color:var(--warn-deep);">Paused</span>';
+    if (status === 'failed')  return '<span class="badge" style="background:var(--bad-bg);color:var(--bad-deep);">Failed</span>';
     return '<span class="badge badge-inactive">Draft</span>';
   }
 
@@ -127,7 +127,7 @@
   function note(msg, isError) {
     var el = document.getElementById('mmActionMsg');
     el.style.display = ''; el.textContent = msg;
-    el.style.borderLeftColor = isError ? '#dc2626' : '#2563eb';
+    el.style.borderLeftColor = isError ? 'var(--bad)' : 'var(--blue)';
   }
 
   function sendTestMail(btn) {

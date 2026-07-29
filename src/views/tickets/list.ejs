@@ -16,7 +16,7 @@
   .ticket-table col.c-assigned { width: 9.5rem; }
   .ticket-table col.c-created  { width: 6.5rem; }
   .ticket-table col.c-updated  { width: 6.5rem; }
-  .qf-sel { width: 100%; max-width: 100%; font-size: 12px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--text); cursor: pointer; }
+  .qf-sel { width: 100%; max-width: 100%; font-size: 12px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); cursor: pointer; }
   .qf-sel:hover { border-color: var(--accent); }
   /* Resizable headers — drag the right edge of any column. */
   .ticket-table th { position: relative; }
@@ -123,7 +123,7 @@
           <div style="display:flex;gap:8px;align-items:center;">
             <span class="muted" id="bulkCount" style="font-size:12px;"></span>
             <button class="btn" type="button" onclick="tkBulk('merge')">⤚ Merge selected</button>
-            <button class="btn" type="button" onclick="tkBulk('spam')" style="color:#9f1239;">⊘ Mark spam</button>
+            <button class="btn" type="button" onclick="tkBulk('spam')" style="color:var(--rose);">⊘ Mark spam</button>
             <button class="btn" type="button" onclick="tkBulk('delete')" style="color:var(--lumen-dark);">🗑 Delete selected</button>
           </div>
         <% } %>
@@ -277,7 +277,7 @@
   (function(){
     var SECS = 60, left = SECS;
     var el = document.createElement('div');
-    el.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:900;background:#0f172a;color:#cbd5e1;'
+    el.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:900;background:var(--ink-chip);color:var(--line-strong);'
       + 'font-size:12px;font-weight:600;padding:5px 11px;border-radius:999px;box-shadow:0 4px 12px rgba(2,6,23,.25);'
       + 'opacity:.85;cursor:pointer;user-select:none;';
     el.title = 'Auto-refreshing the board — click to refresh now';

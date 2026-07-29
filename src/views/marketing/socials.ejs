@@ -105,11 +105,11 @@ function imgSearch(){
 function imgPick(url, el){
   selectedImage = (url || '').trim();
   document.querySelectorAll('#imgGrid img').forEach(function(i){ i.style.borderColor = 'transparent'; });
-  if (el) el.style.borderColor = '#0ea5b7';
+  if (el) el.style.borderColor = 'var(--accent)';
   document.getElementById('imgSel').innerHTML = selectedImage
     ? '✔ Photo selected — it will appear on the article and both social posts.'
     : 'No photo selected — everything goes out text-only.';
-  document.getElementById('imgSel').style.color = selectedImage ? '#166534' : '';
+  document.getElementById('imgSel').style.color = selectedImage ? 'var(--ok-fg)' : '';
 }
 
 function stPreview(){
@@ -133,7 +133,7 @@ function stGenerate(){
     take: document.getElementById('stTake').value
   }).then(function(d){
     b.disabled=false; b.textContent='✨ Generate with Claude';
-    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='#b91c1c'; return; }
+    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
     document.getElementById('outTitle').value=d.title; document.getElementById('outSlug').value=d.slug;
     document.getElementById('outExcerpt').value=d.excerpt; document.getElementById('outArticle').value=d.articleHtml;
     document.getElementById('outLinkedin').value=d.linkedin; document.getElementById('outFacebook').value=d.facebook;
@@ -141,8 +141,8 @@ function stGenerate(){
     document.getElementById('webBtn').disabled=false; document.getElementById('bufBtn').disabled=false;
     document.getElementById('prevBtn').disabled=false;
     if (d.imageQuery) { document.getElementById('imgQuery').value = d.imageQuery; imgSearch(); }
-    s.textContent='Done — read ' + d.sourcesRead + ' of ' + d.sourcesGiven + ' URL(s). Edit anything below, then push.'; s.style.color='#166534';
-  }).catch(function(){ b.disabled=false; b.textContent='✨ Generate with Claude'; s.textContent='Request failed.'; s.style.color='#b91c1c'; });
+    s.textContent='Done — read ' + d.sourcesRead + ' of ' + d.sourcesGiven + ' URL(s). Edit anything below, then push.'; s.style.color='var(--ok-fg)';
+  }).catch(function(){ b.disabled=false; b.textContent='✨ Generate with Claude'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
 }
 
 function stPublish(){
@@ -154,10 +154,10 @@ function stPublish(){
     imageUrl: selectedImage
   }).then(function(d){
     b.disabled=false; b.textContent='🌐 Push to website';
-    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='#b91c1c'; return; }
+    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
     publishedUrl=d.url;
-    s.innerHTML='✔ Live: <a href="'+d.url+'" target="_blank" rel="noopener">'+d.url+'</a>'; s.style.color='#166534';
-  }).catch(function(){ b.disabled=false; b.textContent='🌐 Push to website'; s.textContent='Request failed.'; s.style.color='#b91c1c'; });
+    s.innerHTML='✔ Live: <a href="'+d.url+'" target="_blank" rel="noopener">'+d.url+'</a>'; s.style.color='var(--ok-fg)';
+  }).catch(function(){ b.disabled=false; b.textContent='🌐 Push to website'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
 }
 
 function stBuffer(){
@@ -165,7 +165,7 @@ function stBuffer(){
   var mode=document.querySelector('input[name="bufMode"]:checked').value;
   var when=document.getElementById('bufWhen').value;
   var dueAt = (mode==='schedule' && when) ? new Date(when).toISOString() : undefined;
-  if(mode==='schedule' && !dueAt){ s.textContent='Pick a date and time first.'; s.style.color='#b91c1c'; return; }
+  if(mode==='schedule' && !dueAt){ s.textContent='Pick a date and time first.'; s.style.color='var(--bad-fg)'; return; }
   if(!publishedUrl && !confirm('The article hasn\'t been pushed to the website yet, so the posts will go out without a link. Continue?')) return;
   b.disabled=true; b.textContent='📣 Pushing…'; s.textContent='';
   jpost('/marketing/socials/push-buffer', {
@@ -173,10 +173,10 @@ function stBuffer(){
     mode: mode, dueAt: dueAt, link: publishedUrl, imageUrl: selectedImage
   }).then(function(d){
     b.disabled=false; b.textContent='📣 Push to Buffer';
-    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='#b91c1c'; return; }
+    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
     s.textContent = Object.keys(d.results).map(function(k){ return k+': '+d.results[k]; }).join(' · ');
-    s.style.color = JSON.stringify(d.results).indexOf('FAILED')>=0 ? '#b45309' : '#166534';
-  }).catch(function(){ b.disabled=false; b.textContent='📣 Push to Buffer'; s.textContent='Request failed.'; s.style.color='#b91c1c'; });
+    s.style.color = JSON.stringify(d.results).indexOf('FAILED')>=0 ? 'var(--warn-fg)' : 'var(--ok-fg)';
+  }).catch(function(){ b.disabled=false; b.textContent='📣 Push to Buffer'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
 }
 </script>
 

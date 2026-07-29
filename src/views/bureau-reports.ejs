@@ -6,8 +6,8 @@
 
 <div class="card" style="display:flex;gap:28px;flex-wrap:wrap;margin-bottom:16px;">
   <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:800;"><%= money(totals.sale) %></div></div>
-  <div><div class="muted" style="font-size:12px;">Cost</div><div style="font-size:20px;font-weight:800;color:#64748b;"><%= money(totals.cost) %></div></div>
-  <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(totals.profit) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Cost</div><div style="font-size:20px;font-weight:800;color:var(--muted);"><%= money(totals.cost) %></div></div>
+  <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:20px;font-weight:800;color:var(--ok-fg);"><%= money(totals.profit) %></div></div>
 </div>
 
 <div class="tabs" style="margin:0 0 14px;">
@@ -29,9 +29,9 @@
           <td><%= c.name %></td>
           <td style="text-align:right;"><%= money(c.sale) %></td>
           <td style="text-align:right;" class="muted"><%= money(c.cost) %></td>
-          <td style="text-align:right;font-weight:600;color:<%= c.profit>=0?'#166534':'#b91c1c' %>;"><%= money(c.profit) %></td>
+          <td style="text-align:right;font-weight:600;color:<%= c.profit>=0?'var(--ok-fg)':'var(--bad-fg)' %>;"><%= money(c.profit) %></td>
           <td style="text-align:right;" data-sort="<%= m.toFixed(1) %>"><%= m.toFixed(0) %>%</td>
-          <td style="text-align:right;"><% if (c.uncosted) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;"><%= c.uncosted %></span><% } else { %>—<% } %></td>
+          <td style="text-align:right;"><% if (c.uncosted) { %><span class="badge" style="font-size:10px;background:var(--warn-bg);color:var(--warn-deep);"><%= c.uncosted %></span><% } else { %>—<% } %></td>
         </tr>
         <% }); %>
       </tbody>
@@ -49,7 +49,7 @@
         <td><strong><%= c.label %></strong></td>
         <td style="text-align:right;"><%= money(c.sale) %></td>
         <td style="text-align:right;" class="muted"><%= money(c.cost) %></td>
-        <td style="text-align:right;font-weight:600;color:<%= c.profit>=0?'#166534':'#b91c1c' %>;"><%= money(c.profit) %></td>
+        <td style="text-align:right;font-weight:600;color:<%= c.profit>=0?'var(--ok-fg)':'var(--bad-fg)' %>;"><%= money(c.profit) %></td>
         <td style="text-align:right;" data-sort="<%= m.toFixed(1) %>"><%= m.toFixed(0) %>%</td>
       </tr>
       <% }); %>
@@ -59,7 +59,7 @@
 
 <!-- Watchlist -->
 <div class="rtab" data-rtab="watch" style="display:none;">
-  <div class="card" style="margin-bottom:14px;border-left:3px solid #f59e0b;">
+  <div class="card" style="margin-bottom:14px;border-left:3px solid var(--amber);">
     <strong><%= unallocCount %></strong> unallocated CLI(s) · cost <%= money(unallocCost) %> —
     <a class="row-link" href="/bureau/bill-run">allocate in the bill run →</a>
   </div>

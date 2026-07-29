@@ -28,7 +28,7 @@
         </form>
         <form method="post" action="/settings/bookmarks/<%= b.id %>/delete" style="display:inline;" onsubmit="return confirm('Delete this bookmark?');">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-          <button class="btn" type="submit" style="color:#dc2626;">Delete</button>
+          <button class="btn" type="submit" style="color:var(--bad);">Delete</button>
         </form>
           </td>
       </tr>

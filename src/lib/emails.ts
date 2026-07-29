@@ -54,6 +54,9 @@ export function quoteEmailHtml(opts: {
 export function invoiceEmailHtml(opts: {
   contactName?: string; invoiceNumber: string; title: string;
   total?: string; dueDate?: string; directDebit?: boolean; message?: string;
+  // Public view link. Optional, because a send must still go out if the token could not be
+  // minted — the PDF is attached either way.
+  viewLink?: string;
 }): string {
   const first = (opts.contactName || '').trim().split(/\s+/)[0] || 'there';
   const esc = (s: string) => (s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as Record<string, string>)[c]);
@@ -73,7 +76,9 @@ export function invoiceEmailHtml(opts: {
     <p style="margin:0 0 16px;">Please find your invoice from Lumen IT Solutions attached as a PDF. A summary is below.</p>
     <table style="border-collapse:collapse;margin:0 0 20px;">${summary}</table>
     ${payLine}
-    <p style="margin:0;color:#6b7280;font-size:13px;">Any questions about this invoice, just reply to this email and we'll be glad to help.</p>`;
+    <p style="margin:0;color:#6b7280;font-size:13px;">Any questions about this invoice, just reply to this email and we'll be glad to help.</p>
+    ${opts.viewLink ? invoiceViewLinkHtml(opts.viewLink) : ''}
+  </div>`;
 }
 
 // Onboarding form invite — friendly note + a button to the secure form.
@@ -199,4 +204,39 @@ export function contractSignedEmailHtml(opts: {
     </p>
     <p style="margin:0;color:#6b7280;font-size:13px;">Keep this for your records, or find it any time in your portal at <a href="${opts.portalUrl}" style="color:#0e7490;">${shown}</a>. We will countersign and you will receive the fully executed copy shortly.</p>
   </div>`;
+}
+
+
+// Fully-executed copy, sent automatically once we counter-sign. Closes the promise made in
+// the signed-copy confirmation ("we will countersign and you will receive the executed copy").
+export function contractExecutedEmailHtml(opts: {
+  contactName?: string; contractNumber: string; title: string; isExtension?: boolean;
+  clientSignedAt: string; supplierSignedAt: string; portalUrl: string;
+}): string {
+  const first = (opts.contactName || '').trim().split(/\s+/)[0] || 'there';
+  const esc = (s: string) => (s || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as Record<string, string>)[c]);
+  const shown = (opts.portalUrl || '').replace(/^https?:\/\//, '');
+  const what = opts.isExtension ? 'extension' : 'agreement';
+  return `
+  <div style="font-family:'Segoe UI',Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.6;">
+    <p style="margin:0 0 14px;">Hi ${esc(first)},</p>
+    <p style="margin:0 0 16px;">Your ${what} <strong>${esc(opts.contractNumber)}</strong>${opts.title ? ' (' + esc(opts.title) + ')' : ''}
+       is now signed by both parties. The fully executed copy is attached for your records.</p>
+    <table style="border-collapse:collapse;margin:0 0 22px;">
+      <tr><td style="padding:5px 18px 5px 0;color:#6b7280;font-size:14px;">Signed by you</td><td style="padding:5px 0;font-weight:600;font-size:14px;">${esc(opts.clientSignedAt)}</td></tr>
+      <tr><td style="padding:5px 18px 5px 0;color:#6b7280;font-size:14px;">Counter-signed</td><td style="padding:5px 0;font-weight:600;font-size:14px;">${esc(opts.supplierSignedAt)}</td></tr>
+    </table>
+    <p style="margin:0;color:#6b7280;font-size:13px;">A copy is always available in your portal at
+      <a href="${opts.portalUrl}" style="color:#0e7490;">${shown}</a>. Any questions, just reply to this email.</p>
+  </div>`;
+}
+
+// Invoice view link — invoices previously went out as an attachment only, so an "open" could
+// never be more than a guess. This is the covering line pointing at the hosted copy.
+export function invoiceViewLinkHtml(link: string): string {
+  return `
+    <p style="margin:16px 0 0;">
+      <a href="${link}" style="display:inline-block;background:#0ea5b7;color:#ffffff;text-decoration:none;font-weight:600;padding:11px 24px;border-radius:6px;font-size:14.5px;">View your invoice online</a>
+    </p>
+    <p style="margin:8px 0 0;color:#6b7280;font-size:13px;">No login needed — the link opens your invoice, where you can download or print it.</p>`;
 }

@@ -6,19 +6,19 @@ const fmtNum = n => n ? parseInt(n).toLocaleString() : '0';
 const ds = dataStats[0] || {};
 const dataManagerHtml = ds.call_count > 0
   ? `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
-      <div style="text-align:center;padding:12px;background:#f9fafb;border-radius:8px;">
+      <div style="text-align:center;padding:12px;background:var(--surface-2);border-radius:8px;">
         <div style="font-size:28px;font-weight:800;color:var(--accent);">${fmtNum(ds.call_count)}</div>
         <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:4px;">Call Events</div>
       </div>
-      <div style="text-align:center;padding:12px;background:#f9fafb;border-radius:8px;">
+      <div style="text-align:center;padding:12px;background:var(--surface-2);border-radius:8px;">
         <div style="font-size:28px;font-weight:800;color:var(--accent);">${ds.file_count}</div>
         <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:4px;">Files Imported</div>
       </div>
-      <div style="text-align:center;padding:12px;background:#f9fafb;border-radius:8px;">
+      <div style="text-align:center;padding:12px;background:var(--surface-2);border-radius:8px;">
         <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:6px;">${fmtDt(ds.earliest)}</div>
         <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:4px;">Earliest Record</div>
       </div>
-      <div style="text-align:center;padding:12px;background:#f9fafb;border-radius:8px;">
+      <div style="text-align:center;padding:12px;background:var(--surface-2);border-radius:8px;">
         <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:6px;">${fmtDt(ds.latest)}</div>
         <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-top:4px;">Latest Record</div>
       </div>
@@ -99,7 +99,7 @@ ${error ? `<div class="alert alert-error">${error}</div>` : ''}
       <button type="button" id="cust-name-edit-btn" onclick="document.getElementById('cust-name-display').style.display='none';document.getElementById('name').style.display='block';document.getElementById('cust-name-edit-btn').style.display='none';document.getElementById('name').focus();" class="btn-secondary" style="font-size:11px;padding:3px 10px;">Edit Name</button>
       <input type="text" id="name" name="name" value="${customer.name}" required class="input" style="font-size:16px;font-weight:600;max-width:400px;display:none;">
     </div>
-    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;padding:14px;background:#f9fafb;border-radius:8px;border:1px solid var(--border);">
+    <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;padding:14px;background:var(--surface-2);border-radius:8px;border:1px solid var(--border);">
       <div class="form-group" style="margin:0;">
         <label>iCalls Email Token <span class="muted" style="font-size:10px;text-transform:none;">from email subject</span></label>
         <input type="text" name="icalls_token" value="${customer.icalls_token || ''}" placeholder="WHHCBTWTUZ4111" class="input" style="font-family:monospace;min-width:180px;">
@@ -172,7 +172,7 @@ ${error ? `<div class="alert alert-error">${error}</div>` : ''}
     <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;">
       ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d,i) => {
         const isWeekend = i >= 5;
-        return `<div style="background:#f9fafb;border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
+        return `<div style="background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:8px;text-align:center;">
           <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:6px;">${d}</div>
           <label style="display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px;margin-bottom:6px;cursor:pointer;">
             <input type="checkbox" name="bh_closed_${d.toLowerCase()}" ${isWeekend ? 'checked' : ''} onchange="toggleDay(this,'${d.toLowerCase()}')" style="width:auto;min-width:auto;">
@@ -263,8 +263,8 @@ function testConnection(id) {
   el.textContent = 'Testing…'; el.style.color = 'var(--muted)';
   fetch('/insights/customer/' + id + '/api-test')
     .then(r => r.json())
-    .then(d => { el.textContent = d.message || (d.ok ? 'OK' : 'Failed'); el.style.color = d.ok ? '#16a34a' : '#dc2626'; })
-    .catch(() => { el.textContent = 'Test failed'; el.style.color = '#dc2626'; });
+    .then(d => { el.textContent = d.message || (d.ok ? 'OK' : 'Failed'); el.style.color = d.ok ? 'var(--ok)' : 'var(--bad)'; })
+    .catch(() => { el.textContent = 'Test failed'; el.style.color = 'var(--bad)'; });
 }
 </script>
 ` }) %>

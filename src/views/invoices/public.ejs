@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title><%= invoice.invoice_number %> — Lumen IT Solutions</title>
+<link rel="icon" type="image/png" href="/static/lumen-crest.png">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#f1f5f9;color:#1f2937;line-height:1.55;}
+  .bar{background:#fff;border-bottom:1px solid #e2e8f0;padding:14px 22px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;position:sticky;top:0;z-index:5;}
+  .bar img{max-height:38px;width:auto;display:block;}
+  .bar .who{font-size:12px;color:#64748b;text-align:right;}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px 18px 60px;display:grid;grid-template-columns:minmax(0,1.5fr) minmax(300px,1fr);gap:18px;align-items:start;}
+  @media (max-width:900px){ .wrap{grid-template-columns:1fr;} }
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;}
+  .card h2{font-size:15px;padding:15px 18px;border-bottom:1px solid #f1f5f9;color:#0f172a;}
+  .card .in{padding:17px 18px;}
+  .acts{display:flex;gap:8px;padding:11px 18px;border-bottom:1px solid #f1f5f9;flex-wrap:wrap;background:#f8fafc;}
+  .btn{display:inline-block;border:1px solid #cbd5e1;background:#fff;color:#0f172a;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;text-decoration:none;font-family:inherit;}
+  .btn:hover{background:#f8fafc;}
+  iframe{width:100%;height:80vh;min-height:540px;border:0;display:block;background:#f8fafc;}
+  .sum{width:100%;border-collapse:collapse;}
+  .sum td{padding:6px 0;font-size:13.5px;vertical-align:top;}
+  .sum td:first-child{color:#64748b;padding-right:16px;white-space:nowrap;}
+  .sum td:last-child{font-weight:600;text-align:right;}
+  .total{font-size:26px;font-weight:700;color:#0f172a;letter-spacing:-.5px;}
+  .pill{display:inline-block;border-radius:999px;padding:3px 11px;font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;}
+  .pill.paid{background:#dcfce7;color:#166534;}
+  .pill.due{background:#fef3c7;color:#92400e;}
+  .pill.late{background:#fee2e2;color:#b91c1c;}
+  .note{background:#f0fdfa;border:1px solid #ccfbf1;border-radius:10px;padding:13px 15px;font-size:12.5px;color:#115e59;margin-top:14px;}
+  .note strong{display:block;margin-bottom:3px;color:#0f766e;}
+  .legal{font-size:11px;color:#94a3b8;text-align:center;padding:22px 18px 0;line-height:1.6;}
+</style></head>
+<body>
+<div class="bar">
+  <img src="/static/lumen-msp-logo.png" alt="Lumen IT Solutions">
+  <div class="who">
+    <strong style="color:#0f172a;font-size:13px;"><%= invoice.invoice_number %></strong><br>
+    <%= invoice.title || 'Invoice' %><% if (invoice.customer_name) { %> · <%= invoice.customer_name %><% } %>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="card">
+    <div class="acts">
+      <a class="btn" href="/i/<%= token %>/invoice.pdf?dl=1">Download PDF</a>
+      <button class="btn" type="button" id="printBtn">Print</button>
+      <a class="btn" href="/i/<%= token %>/invoice.pdf" target="_blank">Open in new tab</a>
+    </div>
+    <iframe id="doc" src="/i/<%= token %>/invoice.pdf#view=FitH" title="Invoice"></iframe>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Summary</h2>
+      <div class="in">
+        <div class="total"><%= money(invoice.total) %></div>
+        <div style="margin:8px 0 14px;">
+          <% if (invoice.payment_status === 'paid' || invoice.status === 'paid') { %>
+            <span class="pill paid">Paid — thank you</span>
+          <% } else if (overdue) { %>
+            <span class="pill late">Overdue</span>
+          <% } else { %>
+            <span class="pill due">Due<% if (dueDate) { %> <%= dueDate %><% } %></span>
+          <% } %>
+        </div>
+        <table class="sum">
+          <tr><td>Invoice</td><td><%= invoice.invoice_number %></td></tr>
+          <% if (invoice.title) { %><tr><td>For</td><td><%= invoice.title %></td></tr><% } %>
+          <% if (issueDate) { %><tr><td>Issued</td><td><%= issueDate %></td></tr><% } %>
+          <% if (dueDate) { %><tr><td>Due</td><td><%= dueDate %></td></tr><% } %>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px;">
+      <h2>Paying this invoice</h2>
+      <div class="in" style="font-size:13.5px;color:#475569;">
+        <% if (invoice.payment_status === 'paid' || invoice.status === 'paid') { %>
+          This invoice has been paid in full — nothing further is needed.
+        <% } else if (invoice.gocardless_mandate_id) { %>
+          No action is needed. This invoice is collected automatically by Direct Debit on or
+          shortly after the due date, using the mandate already set up on your account.
+        <% } else { %>
+          Our bank details are printed on the invoice. Please quote
+          <strong><%= invoice.invoice_number %></strong> as the payment reference so we can match
+          it to your account.
+        <% } %>
+      </div>
+    </div>
+
+    <!-- The same reminder the agreements carry: this email is not the only copy. -->
+    <div class="note">
+      <strong>All your invoices live in your portal</strong>
+      Every invoice, past and present, is available to view and download any time at
+      <a href="<%= appUrl %>/my" style="color:#0f766e;"><%= (appUrl||'').replace(/^https?:\/\//,'') %>/my</a> —
+      along with your agreements, tickets and reports.
+    </div>
+
+    <div class="legal">Lumen IT Solutions · Questions about this invoice? Just reply to the email it came with.</div>
+  </div>
+</div>
+
+<script>
+  (function(){
+    var pb = document.getElementById('printBtn');
+    if (!pb) return;
+    pb.addEventListener('click', function(){
+      // Printing never touches the server, so the page reports it back itself.
+      try {
+        fetch('/i/<%= token %>/event', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ event:'printed' }), keepalive:true
+        }).catch(function(){});
+      } catch (e) { /* tracking must never block the print */ }
+      var f = document.getElementById('doc');
+      // Printing the embedded viewer directly is blocked in some browsers; fall back to a tab.
+      try { f.contentWindow.focus(); f.contentWindow.print(); }
+      catch (e) { window.open('/i/<%= token %>/invoice.pdf', '_blank'); }
+    });
+  })();
+</script>
+</body></html>

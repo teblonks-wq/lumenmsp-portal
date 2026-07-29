@@ -7,15 +7,15 @@
 %>
 <style>
   .br-steps{display:flex;gap:0;margin:0 0 22px;flex-wrap:wrap;}
-  .br-step{flex:1;min-width:150px;position:relative;padding:12px 14px 12px 30px;background:var(--card,#fff);border:1px solid var(--border,#e5e7eb);cursor:pointer;}
+  .br-step{flex:1;min-width:150px;position:relative;padding:12px 14px 12px 30px;background:var(--card,#fff);border:1px solid var(--border,var(--line));cursor:pointer;}
   .br-step:first-child{border-radius:8px 0 0 8px;}
   .br-step:last-child{border-radius:0 8px 8px 0;}
-  .br-step.active{background:var(--accent,#2563eb);border-color:var(--accent,#2563eb);}
+  .br-step.active{background:var(--accent,var(--blue));border-color:var(--accent,var(--blue));}
   .br-step.active .br-n,.br-step.active .br-t{color:#fff;}
-  .br-step.done .br-n{background:#166534;color:#fff;border-color:#166534;}
-  .br-n{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;border:1.5px solid var(--muted,#94a3b8);font-size:12px;font-weight:700;color:var(--muted,#64748b);margin-right:8px;}
+  .br-step.done .br-n{background:var(--ok-fg);color:#fff;border-color:var(--ok-fg);}
+  .br-n{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;border:1.5px solid var(--muted,var(--faint));font-size:12px;font-weight:700;color:var(--muted,var(--muted));margin-right:8px;}
   .br-t{font-weight:600;font-size:13px;}
-  .br-sub{display:block;font-size:11px;color:var(--muted,#94a3b8);margin-left:30px;}
+  .br-sub{display:block;font-size:11px;color:var(--muted,var(--faint));margin-left:30px;}
   .br-panel{display:none;}
   .br-panel.active{display:block;}
   .br-nav{display:flex;justify-content:space-between;margin-top:18px;gap:10px;}
@@ -23,7 +23,7 @@
 
 <div class="page-header"><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau">← Back Office</a></p>
   <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-    <h1 style="margin:0;">Comms Bill Run <% if (period){ %><span class="muted" style="font-weight:400;">· period <%= period %></span><% } %><% if (ro){ %> <span class="badge" style="font-size:11px;background:#e2e8f0;color:#475569;vertical-align:middle;">closed — read only</span><% } %><% if ((typeof projected !== 'undefined') && projected && !ro){ %> <span class="badge" style="font-size:11px;background:#fef3c7;color:#92400e;vertical-align:middle;" title="Billing from the register (rolled forward from the last actual month). The Giacom file for this month replaces these lines when it lands; differences appear on the true-up report.">projected — awaiting Giacom actuals</span><% } %></h1>
+    <h1 style="margin:0;">Comms Bill Run <% if (period){ %><span class="muted" style="font-weight:400;">· period <%= period %></span><% } %><% if (ro){ %> <span class="badge" style="font-size:11px;background:var(--line);color:var(--text-soft);vertical-align:middle;">closed — read only</span><% } %><% if ((typeof projected !== 'undefined') && projected && !ro){ %> <span class="badge" style="font-size:11px;background:var(--warn-bg);color:var(--warn-deep);vertical-align:middle;" title="Billing from the register (rolled forward from the last actual month). The Giacom file for this month replaces these lines when it lands; differences appear on the true-up report.">projected — awaiting Giacom actuals</span><% } %></h1>
     <% if (plist.length > 1 || ro) { %>
     <form method="get" action="/bureau/bill-run" style="margin:0;">
       <select class="input" name="period" onchange="this.form.submit()" title="View another period (closed months are read-only)" style="width:auto;font-size:13px;padding:5px 8px;">
@@ -37,7 +37,7 @@
 
 <% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
 <% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
-<% if (ro) { %><div class="alert" style="max-width:900px;background:#f1f5f9;border:1px solid #cbd5e1;color:#334155;">Viewing closed period <strong><%= period %></strong> — read only. Nothing here can be changed or re-sent. <a class="row-link" href="/bureau/bill-run">← Back to the open period<%= cur ? ' (' + cur + ')' : '' %></a></div><% } %>
+<% if (ro) { %><div class="alert" style="max-width:900px;background:var(--surface-3);border:1px solid var(--line-strong);color:var(--text-strong);">Viewing closed period <strong><%= period %></strong> — read only. Nothing here can be changed or re-sent. <a class="row-link" href="/bureau/bill-run">← Back to the open period<%= cur ? ' (' + cur + ')' : '' %></a></div><% } %>
 
 <% if (!ro) { %>
 <div class="br-steps">
@@ -50,11 +50,11 @@
 <!-- STAGE 1 — Allocate CLIs -->
 <div class="br-panel active" data-step="1">
   <% if ((unaccounted||[]).length) { %>
-  <div class="card" style="padding:0;border:1px solid #fca5a5;margin-bottom:14px;">
-    <div class="card-header" style="padding:18px 22px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2 style="color:#b91c1c;">⚠ Unaccounted CLIs <span class="muted">(<%= unaccounted.length %>)</span></h2>
+  <div class="card" style="padding:0;border:1px solid var(--bad-line2);margin-bottom:14px;">
+    <div class="card-header" style="padding:18px 22px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2 style="color:var(--bad-fg);">⚠ Unaccounted CLIs <span class="muted">(<%= unaccounted.length %>)</span></h2>
       <input id="unaccFilter" class="input" placeholder="filter by area code / digits e.g. 01793" oninput="(function(v){document.querySelectorAll('#unaccTable tbody tr').forEach(function(r){var c=(r.getAttribute('data-cli')||'');r.style.display=(!v||c.indexOf(v.replace(/\D/g,''))===0||c.indexOf(v.replace(/\D/g,''))>-1)?'':'none';});})(this.value)" style="max-width:260px;font-size:13px;padding:5px 8px;"></div>
     <p class="muted" style="padding:0 22px;font-size:13px;margin:6px 0 0;">These CLIs are <strong>live but not billing to a current customer</strong> — a deleted owner, or active in the call records with no billed line. <strong>Allocate</strong> each to its customer or <strong>Suppress</strong> the ones that genuinely shouldn't bill. The run can't complete while any remain.</p>
-    <form method="post" action="/bureau/cli/bulk-allocate" onsubmit="return confirm('Allocate every comms CLI in this number range to the chosen customer?');" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 22px;margin:0;background:#f8fafc;border-top:1px solid var(--border,#e5e7eb);border-bottom:1px solid var(--border,#e5e7eb);">
+    <form method="post" action="/bureau/cli/bulk-allocate" onsubmit="return confirm('Allocate every comms CLI in this number range to the chosen customer?');" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:12px 22px;margin:0;background:var(--surface-2);border-top:1px solid var(--border,var(--line));border-bottom:1px solid var(--border,var(--line));">
       <input type="hidden" name="back" value="/bureau/bill-run">
       <strong style="font-size:13px;">Bulk assign a number range:</strong>
       <input class="input" name="from" placeholder="from e.g. 01367718760" style="width:170px;font-size:13px;padding:5px 8px;">
@@ -69,7 +69,7 @@
         <% (unaccounted||[]).forEach(function(u){ %>
           <tr data-cli="<%= String(u.cli||'').replace(/\D/g,'') %>">
             <td><strong><%= u.cli %></strong></td>
-            <td><span class="badge" style="font-size:10px;background:#fee2e2;color:#b91c1c;"><%= u.reason==='orphaned_owner'?'Owner deleted':'Active, no bill' %></span></td>
+            <td><span class="badge" style="font-size:10px;background:var(--bad-bg);color:var(--bad-fg);"><%= u.reason==='orphaned_owner'?'Owner deleted':'Active, no bill' %></span></td>
             <td class="muted" style="font-size:12px;"><%= u.detail %></td>
             <td>
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
@@ -81,7 +81,7 @@
                 </form>
                 <form method="post" action="/bureau/cli/suppress" onsubmit="return confirm('Suppress <%= u.cli %>? It will stay hidden across future imports.');" style="margin:0;">
                   <input type="hidden" name="cli" value="<%= u.cli %>">
-                  <button class="btn" type="submit" style="font-size:12px;padding:5px 9px;color:#b91c1c;">Suppress</button>
+                  <button class="btn" type="submit" style="font-size:12px;padding:5px 9px;color:var(--bad-fg);">Suppress</button>
                 </form>
               </div>
             </td>
@@ -114,7 +114,7 @@
                 </form>
                 <form method="post" action="/bureau/cli/suppress" onsubmit="return confirm('Suppress <%= c.cli %>? It will drop off the bill run and stay hidden across future imports (e.g. a dead customer). You can restore it from the suppressed list.');" style="margin:0;">
                   <input type="hidden" name="cli" value="<%= c.cli %>">
-                  <button class="btn" type="submit" style="font-size:12px;padding:5px 9px;color:#b91c1c;" title="Hide this CLI — for a customer that went under / dead asset">Suppress</button>
+                  <button class="btn" type="submit" style="font-size:12px;padding:5px 9px;color:var(--bad-fg);" title="Hide this CLI — for a customer that went under / dead asset">Suppress</button>
                 </form>
               </div>
             </td>
@@ -146,14 +146,14 @@
 
 <!-- STAGE 2 — Cost services -->
 <div class="br-panel" data-step="2">
-  <div class="card" style="padding:0;border-left:3px solid #f59e0b;">
+  <div class="card" style="padding:0;border-left:3px solid var(--amber);">
     <div class="card-header" style="padding:18px 22px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2>Services to review <span class="muted">(<%= nUncosted %>)</span></h2>
       <input class="input card-filter" placeholder="🔍 search customer, CLI or product…" style="max-width:280px;font-size:13px;padding:5px 8px;"></div>
     <p class="muted" style="padding:0 22px;font-size:13px;margin:6px 0 0;">One row per CLI. Where a <strong>package is detected</strong>, confirm it. Otherwise set the price. Use the column filters + checkboxes to <strong>price many at once</strong>.</p>
     <!-- Bulk toolbar -->
     <div id="s2bulk" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 22px;">
       <button class="btn" type="button" id="s2checkAll" style="font-size:12px;padding:5px 10px;">Check all shown</button>
-      <span style="border-left:1px solid var(--border,#e5e7eb);padding-left:10px;">Set checked to £</span>
+      <span style="border-left:1px solid var(--border,var(--line));padding-left:10px;">Set checked to £</span>
       <input class="input" id="s2price" type="text" inputmode="decimal" placeholder="16.50" style="width:90px;font-size:13px;padding:5px 8px;">
       <button class="btn" type="button" id="s2apply" style="font-size:12px;padding:5px 10px;">Apply to checked</button>
       <button class="btn btn-primary" type="button" id="s2save" style="font-size:12px;padding:5px 12px;">Save checked</button>
@@ -176,7 +176,7 @@
             <td class="muted" style="font-size:12px;white-space:nowrap;">
               <%= period || '—' %><br>
               <span style="font-size:11px;">start <%= d2(l.service_from) || '—' %></span>
-              <% if (l.has_prorata) { %> <span class="badge" style="font-size:9px;background:#fef3c7;color:#92400e;">part-month</span><% } %>
+              <% if (l.has_prorata) { %> <span class="badge" style="font-size:9px;background:var(--warn-bg);color:var(--warn-deep);">part-month</span><% } %>
             </td>
             <td style="text-align:right;"><%= money(l.unit_cost > 0 ? l.unit_cost : (l.units ? l.cost / l.units : l.cost)) %></td>
             <td style="text-align:right;"><%= (l.units && l.units > 0) ? l.units : 1 %></td>
@@ -207,7 +207,7 @@
               <% if (!l.isAddon) { %>
               <form method="post" action="/bureau/cli/release" style="margin:0;" onsubmit="return confirm('Drop <%= l.cli %> from <%= (l.customer_name||'').replace(/'/g,'') %>? It returns to stage 1 to re-allocate.');">
                 <input type="hidden" name="cli" value="<%= l.cli %>">
-                <button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:#b91c1c;" title="Wrong customer? Drop the allocation">Drop</button>
+                <button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);" title="Wrong customer? Drop the allocation">Drop</button>
               </form>
               <% } %>
             </td>
@@ -232,14 +232,14 @@
        cur = Number(cur) || 0; last = Number(last) || 0;
        if (!last && !cur) return '';
        var inner;
-       if (!last) inner = '<span style="color:#2563eb;font-weight:600;">new</span>';
+       if (!last) inner = '<span style="color:var(--blue);font-weight:600;">new</span>';
        else {
          var pct = (cur - last) / last * 100;
-         if (Math.abs(pct) < 0.05) inner = money(last) + ' <span style="color:#94a3b8;font-weight:600;">=</span>';
-         else if (pct > 0) inner = money(last) + ' <span style="color:#166534;font-weight:600;">▲ +' + pct.toFixed(1) + '%</span>';
-         else inner = money(last) + ' <span style="color:#b91c1c;font-weight:600;">▼ ' + pct.toFixed(1) + '%</span>';
+         if (Math.abs(pct) < 0.05) inner = money(last) + ' <span style="color:var(--faint);font-weight:600;">=</span>';
+         else if (pct > 0) inner = money(last) + ' <span style="color:var(--ok-fg);font-weight:600;">▲ +' + pct.toFixed(1) + '%</span>';
+         else inner = money(last) + ' <span style="color:var(--bad-fg);font-weight:600;">▼ ' + pct.toFixed(1) + '%</span>';
        }
-       return '<div class="cmp" style="display:none;font-size:11px;color:#64748b;white-space:nowrap;">' + inner + '</div>';
+       return '<div class="cmp" style="display:none;font-size:11px;color:var(--muted);white-space:nowrap;">' + inner + '</div>';
      }
   %>
   <% if (ro) { %>
@@ -269,8 +269,8 @@
   <div class="card" style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-start;">
     <div><div class="muted" style="font-size:12px;">Customers</div><div style="font-size:20px;font-weight:800;"><%= nCust %></div></div>
     <div><div class="muted" style="font-size:12px;">Monthly sale</div><div style="font-size:20px;font-weight:800;"><%= money(grand.sale) %></div><%- cmpHtml(grand.sale, grandLast) %></div>
-    <div><div class="muted" style="font-size:12px;">Cost</div><div style="font-size:20px;font-weight:800;color:#64748b;"><%= money(grand.cost) %></div></div>
-    <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:20px;font-weight:800;color:#166534;"><%= money(grand.profit) %></div></div>
+    <div><div class="muted" style="font-size:12px;">Cost</div><div style="font-size:20px;font-weight:800;color:var(--muted);"><%= money(grand.cost) %></div></div>
+    <div><div class="muted" style="font-size:12px;">Margin</div><div style="font-size:20px;font-weight:800;color:var(--ok-fg);"><%= money(grand.profit) %></div></div>
     <% if (hasLM) { %>
     <label style="margin-left:auto;display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap;">
       <input type="checkbox" id="cmpLast"> Compare to last month <span class="muted">(<%= prevP %> — as billed)</span>
@@ -286,8 +286,8 @@
         <% if (!nCust) { %><tr><td colspan="<%= cats.length+3 %>"><div class="empty-state">No comms customers for this period.</div></td></tr><% } %>
         <% (review||[]).forEach(function(r){ var lm = LM[r.id] || null; %>
           <tr>
-            <td><strong><%= r.name %></strong> <% if (r.hasUnpriced) { %><span class="badge" style="font-size:10px;background:#fef3c7;color:#92400e;">unpriced lines</span><% } %></td>
-            <% cats.forEach(function(cat){ var b=r.byCategory[cat.key]; var lv = lm ? (lm.byCat[cat.key] || 0) : 0; %><td style="text-align:right;<%= b.sale?'':'color:#cbd5e1;' %>"><%= b.sale? money(b.sale) : '—' %><%- cmpHtml(b.sale, lv) %></td><% }); %>
+            <td><strong><%= r.name %></strong> <% if (r.hasUnpriced) { %><span class="badge" style="font-size:10px;background:var(--warn-bg);color:var(--warn-deep);">unpriced lines</span><% } %></td>
+            <% cats.forEach(function(cat){ var b=r.byCategory[cat.key]; var lv = lm ? (lm.byCat[cat.key] || 0) : 0; %><td style="text-align:right;<%= b.sale?'':'color:var(--line-strong);' %>"><%= b.sale? money(b.sale) : '—' %><%- cmpHtml(b.sale, lv) %></td><% }); %>
             <td style="text-align:right;font-weight:700;"><%= money(r.totals.sale) %><%- cmpHtml(r.totals.sale, lm ? lm.total : 0) %></td>
             <td style="text-align:right;white-space:nowrap;"><a class="row-link" href="/bureau/comms/<%= r.id %>/preview<%= period ? ('?period=' + period) : '' %>" target="_blank" style="font-size:12px;">Preview</a> · <a class="row-link" href="/customers/<%= r.id %>#comms" style="font-size:12px;">View</a></td>
           </tr>
@@ -296,10 +296,10 @@
              var seen = (review||[]).some(function(r){ return String(r.id) === String(cid); });
              if (seen) return; %>
           <!-- Billed last month, nothing this month — surfaced so a vanished customer is a decision, not an accident. -->
-          <tr class="cmp" style="display:none;background:#fff7ed;">
-            <td><strong><%= LM[cid].name || ('#' + cid) %></strong> <span class="badge" style="font-size:10px;background:#ffedd5;color:#9a3412;">billed <%= prevP %>, nothing this month</span> <a class="row-link" href="/customers/<%= cid %>#comms" style="font-size:12px;">View</a></td>
-            <% cats.forEach(function(cat){ var lv = LM[cid].byCat[cat.key] || 0; %><td style="text-align:right;color:#94a3b8;font-size:12px;"><%= lv ? money(lv) : '—' %></td><% }); %>
-            <td style="text-align:right;color:#b91c1c;font-weight:700;">▼ <%= money(LM[cid].total) %></td>
+          <tr class="cmp" style="display:none;background:var(--tint-orange);">
+            <td><strong><%= LM[cid].name || ('#' + cid) %></strong> <span class="badge" style="font-size:10px;background:#ffedd5;color:var(--orange-deep);">billed <%= prevP %>, nothing this month</span> <a class="row-link" href="/customers/<%= cid %>#comms" style="font-size:12px;">View</a></td>
+            <% cats.forEach(function(cat){ var lv = LM[cid].byCat[cat.key] || 0; %><td style="text-align:right;color:var(--faint);font-size:12px;"><%= lv ? money(lv) : '—' %></td><% }); %>
+            <td style="text-align:right;color:var(--bad-fg);font-weight:700;">▼ <%= money(LM[cid].total) %></td>
             <td></td>
           </tr>
         <% }); } %>
@@ -319,12 +319,12 @@
     <div style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:18px;">
       <div><div class="muted" style="font-size:12px;">Invoices to produce</div><div style="font-size:22px;font-weight:800;"><%= nCust %></div></div>
       <div><div class="muted" style="font-size:12px;">Total billed</div><div style="font-size:22px;font-weight:800;"><%= money(grand.sale) %></div></div>
-      <div><div class="muted" style="font-size:12px;">Still to allocate</div><div style="font-size:22px;font-weight:800;color:<%= nClis?'#b45309':'inherit' %>;"><%= nClis %></div></div>
-      <div><div class="muted" style="font-size:12px;">Still to price</div><div style="font-size:22px;font-weight:800;color:<%= nUncosted?'#b45309':'inherit' %>;"><%= nUncosted %></div></div>
+      <div><div class="muted" style="font-size:12px;">Still to allocate</div><div style="font-size:22px;font-weight:800;color:<%= nClis?'var(--warn-fg)':'inherit' %>;"><%= nClis %></div></div>
+      <div><div class="muted" style="font-size:12px;">Still to price</div><div style="font-size:22px;font-weight:800;color:<%= nUncosted?'var(--warn-fg)':'inherit' %>;"><%= nUncosted %></div></div>
     </div>
     <% if (nClis || nUncosted) { %><div class="alert alert-danger" style="margin:0 0 14px;">There are still <%= nClis %> CLI(s) to allocate and <%= nUncosted %> service(s) to price. Clear these first so nothing is missed off the bills.</div><% } %>
     <% if (pinvs.length) { %>
-    <div class="card" style="padding:0;margin:0 0 16px;border:1px solid var(--border,#e5e7eb);">
+    <div class="card" style="padding:0;margin:0 0 16px;border:1px solid var(--border,var(--line));">
       <div class="card-header" style="padding:14px 18px 0;"><h3 style="margin:0;">Drafts for <%= period %> <span class="muted">(<%= pinvs.length %>)</span></h3></div>
       <p class="muted" style="padding:0 18px;font-size:12px;margin:4px 0 0;">Staged — no invoice numbers yet, hidden from the Invoices list. "2 · Complete &amp; send" numbers them and makes them real.</p>
       <div class="table-wrap"><table class="table">
@@ -351,7 +351,7 @@
       </form>
       <form method="post" action="/bureau/bill-run/finalise" onsubmit="return confirm('SEND the draft invoices for <%= period %>?\n\nThis emails each customer their invoice + PDF, pushes to QuickBooks, and via GoCardless requests payment (or sends a Direct Debit invite). It then closes the period. This contacts customers and moves money — make sure the drafts are correct.');">
         <input type="hidden" name="period" value="<%= period || '' %>">
-        <button class="btn" type="submit" style="font-size:15px;padding:10px 18px;background:#166534;color:#fff;border-color:#166534;">2 · Complete &amp; send →</button>
+        <button class="btn" type="submit" style="font-size:15px;padding:10px 18px;background:var(--ok-fg);color:#fff;border-color:var(--ok-fg);">2 · Complete &amp; send →</button>
         <p class="muted" style="font-size:12px;margin:6px 0 0;max-width:300px;">Emails invoices (+PDF), pushes to QuickBooks, GoCardless collect or DD invite, then closes &amp; rolls the period forward.</p>
       </form>
     </div>
@@ -363,7 +363,7 @@
 <!-- Admin: correct the open period (e.g. roll back after an accidental close). Deliberately
      tucked away — this rewrites which month the whole cockpit bills. -->
 <details style="margin-top:26px;max-width:900px;">
-  <summary style="cursor:pointer;font-size:12px;color:var(--muted,#94a3b8);">Admin — set the open period</summary>
+  <summary style="cursor:pointer;font-size:12px;color:var(--muted,var(--faint));">Admin — set the open period</summary>
   <div class="card" style="margin-top:8px;padding:14px 18px;">
     <p class="muted" style="font-size:13px;margin:0 0 10px;">The open period only moves forward when a month is completed. If it was rolled by mistake, set it back here — this also re-arms the bill-run reminders for the reopened month. It does <strong>not</strong> touch invoices, emails or payments.</p>
     <form method="post" action="/bureau/bill-run/set-period" onsubmit="return confirm('Set the OPEN billing period to ' + this.period.value + '? The whole bill run will bill that month.');" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0;">

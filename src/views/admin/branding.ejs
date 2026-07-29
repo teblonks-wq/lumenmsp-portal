@@ -44,7 +44,7 @@
 
   <div style="margin-top:18px;">
     <div class="muted" style="font-size:13px;margin-bottom:6px;">Live preview (with your name):</div>
-    <div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff;"><%- sigPreview %></div>
+    <div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:var(--surface);"><%- sigPreview %></div>
   </div>
 </div>
 
@@ -53,13 +53,13 @@
   <p class="muted" style="margin-top:0;">Standard emails the portal sends. The signature above is appended to each.</p>
 
   <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden;">
-    <div style="background:#f9fafb;padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);">Welcome email <span class="muted" style="font-weight:400;">— sent to new staff on import / resend</span></div>
-    <div style="padding:16px;background:#fff;"><%- welcomePreview %></div>
+    <div style="background:var(--surface-2);padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);">Welcome email <span class="muted" style="font-weight:400;">— sent to new staff on import / resend</span></div>
+    <div style="padding:16px;background:var(--surface);"><%- welcomePreview %></div>
   </div>
 
   <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:14px;">
-    <div style="background:#f9fafb;padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);">Thread / reply emails <span class="muted" style="font-weight:400;">— free text typed on a record or mail reply</span></div>
-    <div style="padding:16px;background:#fff;color:#6b7280;font-size:14px;">Body is whatever the agent types; the signature above is appended automatically.</div>
+    <div style="background:var(--surface-2);padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);">Thread / reply emails <span class="muted" style="font-weight:400;">— free text typed on a record or mail reply</span></div>
+    <div style="padding:16px;background:var(--surface);color:var(--muted);font-size:14px;">Body is whatever the agent types; the signature above is appended automatically.</div>
   </div>
 </div>
 
@@ -70,7 +70,7 @@
   <form method="post" action="/admin/branding/status-emails">
     <% statusEmails.forEach(function(s){ %>
       <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:16px;">
-        <div style="background:#f9fafb;padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;">
+        <div style="background:var(--surface-2);padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;">
           <span><%= s.label %> <span class="muted" style="font-weight:400;">· <%= s.status %></span></span>
           <% if (s.custom) { %><span class="badge badge-primary">custom</span><% } else { %><span class="badge badge-inactive">default</span><% } %>
         </div>
@@ -79,7 +79,7 @@
           <textarea class="input" name="template_<%= s.status %>" rows="4" style="width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;" spellcheck="false"><%= s.tpl %></textarea>
           <details style="margin-top:8px;">
             <summary class="muted" style="cursor:pointer;font-size:13px;">Preview</summary>
-            <div style="border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:8px;background:#fff;"><%- s.preview %></div>
+            <div style="border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:8px;background:var(--surface);"><%- s.preview %></div>
           </details>
         </div>
       </div>

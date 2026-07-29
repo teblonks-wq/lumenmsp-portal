@@ -48,7 +48,7 @@
         <td style="font-family:monospace;font-size:13px;"><%= esc(t.name) %></td>
         <td><%= t.category %></td>
         <td><%- statusBadge(meta[t.name] && meta[t.name].status) %></td>
-        <td style="max-width:420px;color:#6b7280;font-size:13px;"><%= esc(t.body) %></td>
+        <td style="max-width:420px;color:var(--muted);font-size:13px;"><%= esc(t.body) %></td>
       </tr>
       <% }); %>
     </tbody>

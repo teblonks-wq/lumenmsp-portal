@@ -9,11 +9,11 @@
 <% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
 
 <style>
-  .pk-card{border:1px solid var(--line,#e2e8f0);border-radius:12px;padding:16px 18px;margin-bottom:14px;}
+  .pk-card{border:1px solid var(--line,var(--line));border-radius:12px;padding:16px 18px;margin-bottom:14px;}
   .pk-top{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;}
-  .pk-prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px 14px;margin:12px 0 0;max-height:190px;overflow:auto;border-top:1px solid var(--line,#eef2f7);padding-top:10px;}
+  .pk-prods{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px 14px;margin:12px 0 0;max-height:190px;overflow:auto;border-top:1px solid var(--line,var(--line-soft));padding-top:10px;}
   .pk-prods label{font-size:12px;display:flex;gap:6px;align-items:center;}
-  .pk-lbl{font-size:11px;color:var(--muted,#64748b);display:block;margin-bottom:2px;}
+  .pk-lbl{font-size:11px;color:var(--muted,var(--muted));display:block;margin-bottom:2px;}
 </style>
 
 <% function pkgForm(p){ %>
@@ -43,7 +43,7 @@
     <% pkgForm(p); %>
     <div style="display:flex;gap:8px;margin-top:12px;">
       <button class="btn btn-primary" type="submit">Save</button>
-      <button class="btn" type="submit" formaction="/admin/packages/<%= p.id %>/delete" formnovalidate onclick="return confirm('Delete <%= (p.name||'').replace(/\x27/g,'') %>?');" style="color:#b91c1c;">Delete</button>
+      <button class="btn" type="submit" formaction="/admin/packages/<%= p.id %>/delete" formnovalidate onclick="return confirm('Delete <%= (p.name||'').replace(/\x27/g,'') %>?');" style="color:var(--bad-fg);">Delete</button>
     </div>
   </form>
 <% }); %>

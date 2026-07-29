@@ -6,12 +6,12 @@
 </div>
 
 <% if (notice) { %><div class="alert alert-success" style="max-width:760px;"><%= notice %></div><% } %>
-<% if (stats.autoLinked > 0) { %><div class="alert" style="background:#f0fdf4;border:1px solid #bbf7d0;max-width:760px;">Auto-linked <strong><%= stats.autoLinked %></strong> exact name match<%= stats.autoLinked===1?'':'es' %>.</div><% } %>
+<% if (stats.autoLinked > 0) { %><div class="alert" style="background:var(--tint-ok);border:1px solid var(--ok-line);max-width:760px;">Auto-linked <strong><%= stats.autoLinked %></strong> exact name match<%= stats.autoLinked===1?'':'es' %>.</div><% } %>
 
 <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
   <div class="card"><div class="card-header"><h2>QB customers</h2></div><div class="stat"><%= stats.total %></div></div>
-  <div class="card"><div class="card-header"><h2>Linked</h2></div><div class="stat" style="color:#166534;"><%= stats.linked %></div></div>
-  <div class="card"><div class="card-header"><h2>No match</h2></div><div class="stat" style="color:#b45309;"><%= stats.unmatched %></div></div>
+  <div class="card"><div class="card-header"><h2>Linked</h2></div><div class="stat" style="color:var(--ok-fg);"><%= stats.linked %></div></div>
+  <div class="card"><div class="card-header"><h2>No match</h2></div><div class="stat" style="color:var(--warn-fg);"><%= stats.unmatched %></div></div>
   <div class="card"><div class="card-header"><h2>Ignored</h2></div><div class="stat" style="color:var(--muted);"><%= stats.ignored %></div><% if (stats.ignored > 0) { %><form method="post" action="/settings/quickbooks/clear-ignored" style="margin:8px 0 0;"><button class="btn" type="submit" style="font-size:12px;padding:4px 10px;">Clear ignore list</button></form><% } %></div>
 </div>
 

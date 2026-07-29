@@ -28,7 +28,7 @@
         <input class="input" id="mmSubject" style="width:100%;" placeholder="Email subject line" value="<%= campaign ? campaign.subject : '' %>">
       </div>
       <% if (aiReady) { %>
-      <div style="border:1px solid #e0e7ff;background:#f5f7ff;border-radius:10px;padding:12px 14px;">
+      <div style="border:1px solid var(--tint-indigo);background:#f5f7ff;border-radius:10px;padding:12px 14px;">
         <label class="muted" style="display:block;font-size:13px;margin-bottom:6px;">✨ <strong>Draft with Claude</strong> — jot what the email needs to say and Claude writes the subject + message (with merge fields)</label>
         <textarea class="input" id="mmAiNotes" rows="3" style="width:100%;resize:vertical;" placeholder="e.g. price rise of 3% from 1 Sept, applies to support contracts only, invoices update automatically, reply with questions"></textarea>
         <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;">
@@ -52,7 +52,7 @@
           <button type="button" class="btn" style="font-size:12px;padding:3px 10px;" onclick="insertMerge('{{fullName}}')">+ Full name</button>
           <button type="button" class="btn" style="font-size:12px;padding:3px 10px;" onclick="insertMerge('{{company}}')">+ Company</button>
         </div>
-        <div id="mmEditor" style="background:#fff;min-height:260px;"></div>
+        <div id="mmEditor" style="background:var(--surface);min-height:260px;"></div>
       </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <button class="btn" id="mmSaveDraft" onclick="saveCampaign(false)">💾 Save draft</button>
@@ -74,7 +74,7 @@
       </label>
     </div>
     <p class="muted" style="font-size:12px;margin:8px 0 10px;">Untick anyone who shouldn't get this one. Contacts who unsubscribed are shown greyed and are never emailed. Customers with no default domain aren't listed — use <a class="row-link" href="/customers/data-missing">Data missing</a> to fill those in.</p>
-    <div id="mmAudience" style="max-height:420px;overflow:auto;border:1px solid #e5e7eb;border-radius:8px;">
+    <div id="mmAudience" style="max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:8px;">
       <div class="empty-state">Loading…</div>
     </div>
     <div id="mmCoverage" style="margin-top:12px;"></div>
@@ -110,10 +110,10 @@
         j.recipients.forEach(function(r){
           if (r.customer_name !== lastCustomer) {
             lastCustomer = r.customer_name;
-            html += '<div style="background:#f8fafc;padding:6px 12px;font-weight:600;font-size:13px;border-top:1px solid #e5e7eb;">' + esc(r.customer_name) + '</div>';
+            html += '<div style="background:var(--surface-2);padding:6px 12px;font-weight:600;font-size:13px;border-top:1px solid var(--line);">' + esc(r.customer_name) + '</div>';
           }
           if (r.opted_out) {
-            html += '<label style="display:flex;gap:8px;align-items:center;padding:5px 12px;font-size:13px;color:#9ca3af;">'
+            html += '<label style="display:flex;gap:8px;align-items:center;padding:5px 12px;font-size:13px;color:var(--faint);">'
                  + '<input type="checkbox" disabled> <span style="text-decoration:line-through;">' + esc(r.full_name) + ' — ' + esc(r.email) + '</span> <span class="badge badge-inactive" style="margin-left:auto;">unsubscribed</span></label>';
           } else {
             html += '<label style="display:flex;gap:8px;align-items:center;padding:5px 12px;font-size:13px;cursor:pointer;">'
@@ -139,11 +139,11 @@
     }
     function block(title, list, hint, extra) {
       if (!list.length) return '';
-      return '<details style="margin:6px 0;"><summary style="cursor:pointer;font-size:13px;color:#b45309;">' + title + ' (' + list.length + ')</summary>'
+      return '<details style="margin:6px 0;"><summary style="cursor:pointer;font-size:13px;color:var(--warn-fg);">' + title + ' (' + list.length + ')</summary>'
            + '<p class="muted" style="font-size:12px;margin:6px 0 4px;">' + hint + '</p>'
            + '<ul style="margin:0 0 4px;padding-left:18px;font-size:13px;">' + names(list, extra) + '</ul></details>';
     }
-    var html = '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;background:#f8fafc;">'
+    var html = '<div style="border:1px solid var(--line);border-radius:8px;padding:10px 14px;background:var(--surface-2);">'
       + '<div style="font-size:13px;"><strong>Coverage: ' + cov.represented.length + ' of ' + cov.totalCustomers + ' customers represented</strong>'
       + (cov.optedOutTotal ? ' <span class="muted">· ' + cov.optedOutTotal + ' contact(s) unsubscribed</span>' : '') + '</div>'
       + block('⚠ No default domain set', cov.noDomain,
@@ -161,20 +161,20 @@
     var msg = document.getElementById('mmAiMsg');
     var btn = document.getElementById('mmAiDraft');
     var notes = document.getElementById('mmAiNotes').value;
-    if (!notes.trim()) { msg.textContent = 'Add some notes first.'; msg.style.color = '#dc2626'; return; }
+    if (!notes.trim()) { msg.textContent = 'Add some notes first.'; msg.style.color = 'var(--bad)'; return; }
     btn.disabled = true; msg.style.color = ''; msg.textContent = 'Claude is drafting…';
     fetch('/marketing/mass-mailer/ai-draft', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ notes: notes, tone: document.getElementById('mmAiTone').value }) })
       .then(function(r){ return r.json(); })
       .then(function(j){
         btn.disabled = false;
-        if (!j.ok) { msg.textContent = j.error || 'Draft failed'; msg.style.color = '#dc2626'; return; }
+        if (!j.ok) { msg.textContent = j.error || 'Draft failed'; msg.style.color = 'var(--bad)'; return; }
         document.getElementById('mmSubject').value = j.subject;
         quill.root.innerHTML = j.bodyHtml;
         if (!document.getElementById('mmName').value) document.getElementById('mmName').value = j.subject;
-        msg.textContent = 'Done — review and tweak before saving.'; msg.style.color = '#10b981';
+        msg.textContent = 'Done — review and tweak before saving.'; msg.style.color = 'var(--green-bright)';
       })
-      .catch(function(){ btn.disabled = false; msg.textContent = 'Draft failed'; msg.style.color = '#dc2626'; });
+      .catch(function(){ btn.disabled = false; msg.textContent = 'Draft failed'; msg.style.color = 'var(--bad)'; });
   }
 
   function aiImprove() {
@@ -186,11 +186,11 @@
       .then(function(r){ return r.json(); })
       .then(function(j){
         btn.disabled = false;
-        if (!j.ok) { msg.textContent = j.error || 'Improve failed'; msg.style.color = '#dc2626'; return; }
+        if (!j.ok) { msg.textContent = j.error || 'Improve failed'; msg.style.color = 'var(--bad)'; return; }
         quill.root.innerHTML = j.bodyHtml;
-        msg.textContent = 'Improved — check it reads right.'; msg.style.color = '#10b981';
+        msg.textContent = 'Improved — check it reads right.'; msg.style.color = 'var(--green-bright)';
       })
-      .catch(function(){ btn.disabled = false; msg.textContent = 'Improve failed'; msg.style.color = '#dc2626'; });
+      .catch(function(){ btn.disabled = false; msg.textContent = 'Improve failed'; msg.style.color = 'var(--bad)'; });
   }
 
   function updateCount() {
@@ -220,7 +220,7 @@
     fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function(r){ return r.json(); })
       .then(function(j){
-        if (!j.ok) { msg.set(j.error || 'Save failed', '#dc2626'); return; }
+        if (!j.ok) { msg.set(j.error || 'Save failed', 'var(--bad)'); return; }
         if (review) {
           window.location = '/marketing/mass-mailer/' + j.id + '?msg=' + encodeURIComponent('Campaign saved — review below, send a test, then start sending.');
           return;
@@ -230,9 +230,9 @@
           CAMPAIGN_ID = j.id;
           try { history.replaceState(null, '', '/marketing/mass-mailer/' + j.id + '/edit'); } catch (e) {}
         }
-        msg.set('✓ Draft saved ' + new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + ' — keep editing, or Save & review when ready.', '#10b981');
+        msg.set('✓ Draft saved ' + new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) + ' — keep editing, or Save & review when ready.', 'var(--green-bright)');
       })
-      .catch(function(){ msg.set('Save failed', '#dc2626'); });
+      .catch(function(){ msg.set('Save failed', 'var(--bad)'); });
   }
 
   <% if (campaign && campaign.audience && campaign.audience.statusFilter === 'all') { %>

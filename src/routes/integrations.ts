@@ -9,6 +9,7 @@ import { GoCardless, chargeDateFor } from '../lib/gocardless';
 import { sendMail } from '../lib/mailer';
 import { renderInvoicePdf } from '../lib/invoice-pdf';
 import { invoiceEmailHtml } from '../lib/emails';
+import { invoiceViewUrl } from '../lib/invoice-link';
 import { syncGoCardlessMandates, linkGcPaymentsToInvoices, syncGoCardlessPayments } from '../lib/gocardless-sync';
 const isEmailAddr = (e: any): boolean => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(e || '').trim());
 import { giacomBillingTest } from '../lib/giacom';
@@ -676,7 +677,8 @@ export async function completeInvoice(id: number, userId: number): Promise<strin
       if (!pdf || pdf.length < 1000) throw new Error('PDF render produced an empty file');
       const total = '£' + (Number(inv.total) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const dueDate = inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
-      const body = invoiceEmailHtml({ contactName: toName || inv.name, invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate, directDebit: !!inv.gocardless_mandate_id });
+      const body = invoiceEmailHtml({ contactName: toName || inv.name, invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate,
+        directDebit: !!inv.gocardless_mandate_id, viewLink: await invoiceViewUrl(id) });
       await sendMail({
         to, subject: 'Invoice ' + inv.invoice_number + ' from Lumen IT Solutions',
         html: body, signatureName: 'Accounts Department',
@@ -771,7 +773,8 @@ export async function emailInvoiceAction(id: number, userId: number): Promise<st
   if (!pdf || pdf.length < 1000) throw new Error('empty PDF');
   const total = '£' + (Number(inv.total) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const dueDate = inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }) : '';
-  const body = invoiceEmailHtml({ contactName: name || inv.name, invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate, directDebit: !!inv.gocardless_mandate_id });
+  const body = invoiceEmailHtml({ contactName: name || inv.name, invoiceNumber: inv.invoice_number, title: inv.title, total, dueDate,
+    directDebit: !!inv.gocardless_mandate_id, viewLink: await invoiceViewUrl(id) });
   await sendMail({ to, subject: 'Invoice ' + inv.invoice_number + ' from Lumen IT Solutions', html: body, signatureName: 'Accounts Department',
     attachments: [{ filename: inv.invoice_number + '.pdf', contentType: 'application/pdf', base64: pdf.toString('base64') }] });
   await pool.query(`INSERT INTO communications (entity_type, entity_id, direction, from_name, from_email, to_email, subject, body, sent_by_user_id)

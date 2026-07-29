@@ -16,10 +16,10 @@
               <td><%= a.email %></td>
               <td style="white-space:nowrap;">
                 <% if (a.role === 'customer') { %>
-                  <span class="badge" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;">customer</span>
+                  <span class="badge" style="background:var(--tint-info);color:#1d4ed8;border:1px solid var(--info-line);">customer</span>
                   <span class="muted" style="font-size:12px;"><%= a.company || '' %></span>
                 <% } else if (a.role === 'bookkeeper') { %>
-                  <span class="badge" style="background:#faf5ff;color:#7c3aed;border:1px solid #ddd6fe;">bookkeeper</span>
+                  <span class="badge" style="background:#faf5ff;color:var(--violet-deep);border:1px solid var(--violet-line);">bookkeeper</span>
                 <% } else if (a.role) { %>
                   <span class="badge"><%= a.role %></span>
                 <% } else { %>
@@ -43,7 +43,7 @@
         <tbody>
           <% if (topIps.length===0) { %><tr><td colspan="3"><div class="empty-state">—</div></td></tr><% } %>
           <% topIps.forEach(function(t){ %>
-            <tr><td class="muted"><%= t.ip %></td><td style="text-align:right;"><%= t.n %></td><td style="text-align:right;color:<%= t.failed>0?'#b91c1c':'inherit' %>;"><%= t.failed %></td></tr>
+            <tr><td class="muted"><%= t.ip %></td><td style="text-align:right;"><%= t.n %></td><td style="text-align:right;color:<%= t.failed>0?'var(--bad-fg)':'inherit' %>;"><%= t.failed %></td></tr>
           <% }); %>
         </tbody>
       </table>
@@ -63,7 +63,7 @@
             <td><a class="row-link" href="/customers/<%= pc.id %>"><%= pc.name %></a></td>
             <td style="text-align:right;"><%= pc.user_count %></td>
             <td class="muted"><%= pc.last_login ? new Date(pc.last_login).toLocaleString('en-GB') : 'Never' %></td>
-            <td style="text-align:right;<%= Number(pc.logins_30d) === 0 ? 'color:#b45309;' : '' %>"><%= pc.logins_30d %></td>
+            <td style="text-align:right;<%= Number(pc.logins_30d) === 0 ? 'color:var(--warn-fg);' : '' %>"><%= pc.logins_30d %></td>
           </tr>
         <% }); %>
       </tbody>
