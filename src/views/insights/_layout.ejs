@@ -15,10 +15,32 @@
   <a class="tab-btn" href="/insights/templates">Templates</a>
   <a class="tab-btn" href="/insights/run">Run</a>
   <a class="tab-btn" href="/insights/customers">Customers</a>
-  <a class="tab-btn" href="/insights/number">Number lookup</a>
-  <a class="tab-btn" href="/insights/reverse">Reverse lookup</a>
-  <a class="tab-btn" href="/insights/outbound">Outbound lookup</a>
+  <span class="tab-sep" aria-hidden="true"></span>
+  <a class="tab-btn" href="/insights/number">Find a call</a>
+  <a class="tab-btn" href="/insights/reverse">Who answered it</a>
+  <a class="tab-btn" href="/insights/outbound">Who called them</a>
 </div>
+
+<style>
+  /* The three call tools are one group — separated from the reporting tabs so the strip
+     reads as two sets rather than nine equal items. */
+  #insightsTabs { align-items:center; }
+  .tab-sep { width:1px; height:20px; background:var(--line,#e2e8f0); margin:0 8px; display:inline-block; }
+
+  /* Search panel — the treatment from the customer portal, where the fields are labelled
+     in plain English at a readable size instead of 11px uppercase in the page header. */
+  .ins-search { background:#fff; border:1px solid var(--line,#e2e8f0); border-radius:12px; padding:18px 20px; margin-bottom:18px; }
+  .ins-search .lead { margin:0 0 13px; font-size:13.5px; color:#64748b; }
+  .ins-search form { display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin:0; }
+  .ins-search .fg { margin:0; }
+  .ins-search label { display:block; font-size:12px; font-weight:600; color:#475569; margin:0 0 5px; letter-spacing:0; text-transform:none; }
+  .ins-search .input { padding:9px 11px; font-size:14px; border-radius:8px; }
+  .ins-search .input:focus { outline:2px solid #99f6e4; border-color:var(--accent,#0ea5b7); }
+  .ins-search .btn-primary { padding:9px 20px; font-size:14px; border-radius:8px; }
+  .ins-search .hint { margin:12px 0 0; font-size:12.5px; color:#94a3b8; }
+  .ins-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-left:auto; }
+  @media print { .ins-search { display:none !important; } }
+</style>
 
 <%- body %>
 

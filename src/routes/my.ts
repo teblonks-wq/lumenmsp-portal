@@ -392,8 +392,8 @@ router.get('/my/insights', need('insights'), async (req: Request, res: Response)
   const base: any = {
     // Number Lookup and Answered by have their own sidebar entries, so the active nav
     // item follows the tab rather than always being 'insights'.
-    active: tab === 'home' ? 'number-lookup' : tab === 'reverse' ? 'answered-by'
-          : tab === 'outbound' ? 'outbound-calls' : 'insights',
+    // One sidebar entry for the whole section, so every tab keeps Insights highlighted.
+    active: 'insights',
     user: u,
     title: tab === 'home' ? 'Find a call' : tab === 'reverse' ? 'Who answered it'
          : tab === 'outbound' ? 'Who called them' : 'Call Reports',

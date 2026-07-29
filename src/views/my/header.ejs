@@ -49,12 +49,9 @@
   if (P.finance)   items.push(['quotes','/my/quotes','Quotes','quote']);
   if (P.services)  items.push(['services','/my/services','Services','box']);
   if (P.agreements) items.push(['agreements','/my/agreements','Agreements','signed']);
-  if (P.insights)  items.push(['insights','/my/insights?tab=reports','Call Reports','chart']);
-  // The two call tools get their own entries rather than living as tabs inside Insights —
-  // they're the reason customers log in, so they shouldn't need finding.
-  if (P.insights)  items.push(['number-lookup','/my/insights?tab=home','Find a call','phone']);
-  if (P.insights)  items.push(['answered-by','/my/insights?tab=reverse','Who answered it','people']);
-  if (P.insights)  items.push(['outbound-calls','/my/insights?tab=outbound','Who called them','callout']);
+  // The call tools are tabs of a single page — one nav entry, not four. The active state
+  // still follows the tab, so the sidebar highlights Insights wherever you are inside it.
+  if (P.insights)  items.push(['insights','/my/insights','Insights','chart']);
   if (P.insights)  items.push(['oneboard','/my/oneboard','OneBoard','grid']);
   if (P.insights)  items.push(['wallboard','/my/wallboard','Wallboard','tv']);
   if (P.itReports) items.push(['it-reports','/my/it-reports','IT Reports','shield']);

@@ -1,5 +1,5 @@
 <%
-// Reverse Lookup — the pair to Number Lookup. All locals are always supplied by the route
+// "Who answered it" - the pair to "Find a call". All locals are always supplied by the route
 // (see GET /insights/reverse) — reference them directly, do NOT redeclare with the same
 // name (that shadows the EJS `with(locals)` binding and throws a TDZ ReferenceError).
 const isConnected = (typeof connected === 'undefined') ? true : connected;
@@ -12,53 +12,44 @@ const fmtD  = s => s ? new Date(s).toLocaleDateString('en-GB',{day:'numeric',mon
 const fmtSecs = s => s >= 60 ? `${Math.floor(s/60)}m ${s%60}s` : `${s}s`;
 const allDay = fromTime === '00:00' && toTime === '23:59';
 
-// A caller number we can usefully send to Number Lookup (withheld/anonymous rows can't be searched).
+// A caller number we can usefully send to "Find a call" (withheld/anonymous rows can't be searched).
 const linkable = n => !!n && !/^(anonymous|withheld)$/i.test(String(n).trim());
 
 const customerOptions = customers.map(c => `<option value="${c.id}" ${cid === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
 %>
-<%- include('_layout', { title: ext ? `Answered by ${ext}` : 'Reverse Lookup', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
-<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-  <div>
-    <h1 style="font-family:monospace;letter-spacing:1px;">${ext ? esc(ext) : 'Reverse Lookup'}</h1>
-    <div style="font-size:12px;color:var(--muted);margin-top:4px;">${searched
-      ? `Calls answered by this extension · ${fmtD(fromDate)} – ${fmtD(toDate)}${allDay ? '' : ` · ${esc(fromTime)}–${esc(toTime)}`}`
-      : 'Pick a customer and an answering extension/user, then a date &amp; time range — see every call they answered. Click a number to run Number Lookup on it.'}</div>
-  </div>
-  <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-    <form method="GET" action="/insights/reverse" style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap;margin:0;">
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Customer</label>
-        <select name="customer" id="rl-customer" class="input" required style="padding:7px 10px;font-size:13px;min-width:170px;">
-          <option value="">— choose —</option>
-          ${customerOptions}
-        </select>
-      </div>
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Answered by</label>
-        <input type="text" name="ext" id="rl-ext" value="${esc(ext)}" list="extList" class="input" placeholder="extension / user" style="padding:7px 10px;font-size:13px;font-family:monospace;min-width:150px;" autocomplete="off">
-        <datalist id="extList"></datalist>
-      </div>
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">From</label>
-        <input type="date" name="from" value="${esc(fromDate)}" class="input" style="padding:7px 10px;font-size:13px;">
-      </div>
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">To</label>
-        <input type="date" name="to" value="${esc(toDate)}" class="input" style="padding:7px 10px;font-size:13px;">
-      </div>
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Between</label>
-        <input type="time" name="from_time" value="${esc(fromTime)}" class="input" style="padding:7px 8px;font-size:13px;">
-      </div>
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">And</label>
-        <input type="time" name="to_time" value="${esc(toTime)}" class="input" style="padding:7px 8px;font-size:13px;">
-      </div>
-      <button type="submit" class="btn-primary" style="padding:7px 14px;font-size:13px;">Search</button>
-    </form>
-    ${searched && stats && stats.total ? '<button onclick="window.print()" class="btn-secondary" style="padding:7px 14px;font-size:13px;">&#128438; PDF</button>' : ''}
-  </div>
+<%- include('_layout', { title: ext ? `Answered by ${ext}` : 'Who answered it', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
+<div class="page-header">
+  <h1 style="font-family:monospace;letter-spacing:1px;">${ext ? esc(ext) : 'Who answered it'}</h1>
+  <div style="font-size:12.5px;color:var(--muted);margin-top:4px;">${searched
+    ? `Calls answered by this extension &middot; ${fmtD(fromDate)} - ${fmtD(toDate)}${allDay ? '' : ` &middot; ${esc(fromTime)}-${esc(toTime)}`}`
+    : 'Enter a person or extension to see every call they picked up, and who was calling.'}</div>
+</div>
+
+<div class="ins-search">
+  <p class="lead">Pick the customer and who answered, then narrow the window.</p>
+  <form method="GET" action="/insights/reverse">
+    <div class="fg" style="min-width:200px;">
+      <label>Customer</label>
+      <select name="customer" id="rl-customer" class="input" required style="width:100%;">
+        <option value="">- choose -</option>
+        ${customerOptions}
+      </select>
+    </div>
+    <div class="fg" style="min-width:180px;">
+      <label>Answered by</label>
+      <input type="text" name="ext" id="rl-ext" value="${esc(ext)}" list="extList" class="input" placeholder="e.g. 201 or a name" style="width:100%;font-family:monospace;" autocomplete="off">
+      <datalist id="extList"></datalist>
+    </div>
+    <div class="fg"><label>From</label><input type="date" name="from" value="${esc(fromDate)}" class="input"></div>
+    <div class="fg"><label>To</label><input type="date" name="to" value="${esc(toDate)}" class="input"></div>
+    <div class="fg"><label>Between</label><input type="time" name="from_time" value="${esc(fromTime)}" class="input"></div>
+    <div class="fg"><label>And</label><input type="time" name="to_time" value="${esc(toTime)}" class="input"></div>
+    <button type="submit" class="btn-primary">Search</button>
+    <div class="ins-actions">
+      ${searched && stats && stats.total ? '<button type="button" onclick="window.print()" class="btn-secondary" style="padding:9px 16px;font-size:13px;border-radius:8px;">&#128438; PDF</button>' : ''}
+    </div>
+  </form>
+  <p class="hint">Click any caller's number in the results to follow that number's full history.</p>
 </div>
 
 ${error ? `<div class="alert alert-error">${esc(error)}</div>` : ''}
@@ -113,7 +104,7 @@ ${!isConnected ? `
           <td style="padding:10px 12px;white-space:nowrap;font-weight:500;">${fmtDt(j.datetime)}</td>
           <td style="padding:10px 12px;font-family:monospace;font-size:12px;">
             ${linkable(j.number)
-              ? `<a href="/insights/number?customer=${cid}&q=${encodeURIComponent(j.number)}" title="Number Lookup: ${esc(j.number)}" style="font-weight:600;">${esc(j.number)}</a>`
+              ? `<a href="/insights/number?customer=${cid}&q=${encodeURIComponent(j.number)}" title="Find a call: ${esc(j.number)}" style="font-weight:600;">${esc(j.number)}</a>`
               : `<span class="muted">${esc(j.number || 'Withheld')}</span>`}
           </td>
           <td style="padding:10px 12px;font-family:monospace;font-size:12px;">${j.wait || ''}</td>

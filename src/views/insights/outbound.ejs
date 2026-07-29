@@ -1,5 +1,5 @@
 <%
-// Outbound Lookup - the third call tool. All locals are always supplied by the route
+// "Who called them" - the third call tool. All locals are always supplied by the route
 // (see GET /insights/outbound) - reference them directly, do NOT redeclare with the same
 // name (that shadows the EJS `with(locals)` binding and throws a TDZ ReferenceError).
 const isConnected = (typeof connected === 'undefined') ? true : connected;
@@ -14,47 +14,38 @@ const allDay = fromTime === '00:00' && toTime === '23:59';
 
 const customerOptions = customers.map(c => `<option value="${c.id}" ${cid === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
 %>
-<%- include('_layout', { title: num ? `Calls to ${num}` : 'Outbound Lookup', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
-<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-  <div>
-    <h1 style="font-family:monospace;letter-spacing:1px;">${num ? esc(num) : 'Outbound Lookup'}</h1>
-    <div style="font-size:12px;color:var(--muted);margin-top:4px;">${searched
-      ? `Calls placed TO this number &middot; ${fmtD(fromDate)} - ${fmtD(toDate)}${allDay ? '' : ` &middot; ${esc(fromTime)}-${esc(toTime)}`}`
-      : 'Pick a customer and a number they rang, then a date &amp; time range - see who called it and whether it connected. Click an extension to see everything they answered.'}</div>
-  </div>
-  <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-    <form method="GET" action="/insights/outbound" style="display:flex;gap:6px;align-items:flex-end;flex-wrap:wrap;margin:0;">
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Customer</label>
-        <select name="customer" class="input" required style="padding:7px 10px;font-size:13px;min-width:170px;">
-          <option value="">- choose -</option>
-          ${customerOptions}
-        </select>
-      </div>
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Number called</label>
-        <input type="text" name="num" value="${esc(num)}" class="input" placeholder="e.g. 07700 900123" style="padding:7px 10px;font-size:13px;font-family:monospace;min-width:160px;" autocomplete="off">
-      </div>
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">From</label>
-        <input type="date" name="from" value="${esc(fromDate)}" class="input" style="padding:7px 10px;font-size:13px;">
-      </div>
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">To</label>
-        <input type="date" name="to" value="${esc(toDate)}" class="input" style="padding:7px 10px;font-size:13px;">
-      </div>
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">Between</label>
-        <input type="time" name="from_time" value="${esc(fromTime)}" class="input" style="padding:7px 8px;font-size:13px;">
-      </div>
-      <div>
-        <label style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:block;margin-bottom:3px;">And</label>
-        <input type="time" name="to_time" value="${esc(toTime)}" class="input" style="padding:7px 8px;font-size:13px;">
-      </div>
-      <button type="submit" class="btn-primary" style="padding:7px 14px;font-size:13px;">Search</button>
-    </form>
-    ${searched && stats && stats.total ? '<button onclick="window.print()" class="btn-secondary" style="padding:7px 14px;font-size:13px;">&#128438; PDF</button>' : ''}
-  </div>
+<%- include('_layout', { title: num ? `Calls to ${num}` : 'Who called them', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: `
+<div class="page-header">
+  <h1 style="font-family:monospace;letter-spacing:1px;">${num ? esc(num) : 'Who called them'}</h1>
+  <div style="font-size:12.5px;color:var(--muted);margin-top:4px;">${searched
+    ? `Calls placed TO this number &middot; ${fmtD(fromDate)} - ${fmtD(toDate)}${allDay ? '' : ` &middot; ${esc(fromTime)}-${esc(toTime)}`}`
+    : 'Enter a number you rang to see who called it, when, and whether it connected.'}</div>
+</div>
+
+<div class="ins-search">
+  <p class="lead">Pick the customer and the number they rang, then narrow the window.</p>
+  <form method="GET" action="/insights/outbound">
+    <div class="fg" style="min-width:200px;">
+      <label>Customer</label>
+      <select name="customer" class="input" required style="width:100%;">
+        <option value="">- choose -</option>
+        ${customerOptions}
+      </select>
+    </div>
+    <div class="fg" style="min-width:190px;">
+      <label>Number called</label>
+      <input type="text" name="num" value="${esc(num)}" class="input" placeholder="e.g. 07700 900123" style="width:100%;font-family:monospace;" autocomplete="off">
+    </div>
+    <div class="fg"><label>From</label><input type="date" name="from" value="${esc(fromDate)}" class="input"></div>
+    <div class="fg"><label>To</label><input type="date" name="to" value="${esc(toDate)}" class="input"></div>
+    <div class="fg"><label>Between</label><input type="time" name="from_time" value="${esc(fromTime)}" class="input"></div>
+    <div class="fg"><label>And</label><input type="time" name="to_time" value="${esc(toTime)}" class="input"></div>
+    <button type="submit" class="btn-primary">Search</button>
+    <div class="ins-actions">
+      ${searched && stats && stats.total ? '<button type="button" onclick="window.print()" class="btn-secondary" style="padding:9px 16px;font-size:13px;border-radius:8px;">&#128438; PDF</button>' : ''}
+    </div>
+  </form>
+  <p class="hint">Click a caller to see everything they answered, or the number to see its full history both ways.</p>
 </div>
 
 ${error ? `<div class="alert alert-error">${esc(error)}</div>` : ''}
