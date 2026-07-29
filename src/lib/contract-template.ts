@@ -104,12 +104,14 @@ export const DEFAULT_MSA_SECTIONS: TemplateSection[] = [
     body:
       'Support is available on every contracted channel {{SUPPORT_HOURS}}, {{SUPPORT_DAYS}}, {{SUPPORT_NOTE}} ' +
       '(cover level: {{SUPPORT_LABEL}}). ' +
-      'The targets below are response times — the time within which a request is acknowledged and work begins. They are ' +
-      'not resolution times, which vary with the nature of the fault.\n\n' +
-      '- Telephone (0333 335 0170) — response within 15–60 minutes\n' +
-      '- Email (sp@lumensolutions.co.uk) — response within 1 hour\n' +
-      '- WhatsApp / Microsoft Teams — response within 15–60 minutes\n' +
-      '- Support Portal (https://sp.lumensolutions.co.uk) — response within 1 hour\n\n' +
+      'The times below are the response targets we work to — how quickly we aim to acknowledge a request and begin ' +
+      'work on it. They are targets rather than guarantees, and they are not resolution times, which vary with the ' +
+      'nature of the fault. Response times may be affected by matters outside our control, and by the availability ' +
+      'of your staff where we need access or information to proceed.\n\n' +
+      '- Telephone (0333 335 0170) — target response 15–60 minutes\n' +
+      '- Email (sp@lumensolutions.co.uk) — target response 1 hour\n' +
+      '- WhatsApp / Microsoft Teams — target response 15–60 minutes\n' +
+      '- Support Portal (https://sp.lumensolutions.co.uk) — target response 1 hour\n\n' +
       'Requests raised outside these hours are responded to from the start of the next working day. Out-of-hours ' +
       'support is available at the rates set out under Additional fees.',
   },
@@ -341,11 +343,11 @@ export const TEMPLATE_CHANGELOG: TemplateChange[] = [
       },
       {
         kind: 'improvement',
-        heading: 'Response times now committed in writing',
+        heading: 'Response targets stated in one place',
         detail:
-          'Your response-time targets are set out as their own Service Levels section rather than being implied ' +
-          'by the support channel list — 15–60 minutes by telephone and messaging, one hour by email and portal. ' +
-          'The targets are unchanged; they are now something you can hold us to.',
+          'The response targets we work to are now set out as their own Service Levels section rather than being ' +
+          'implied by the support channel list — 15–60 minutes by telephone and messaging, one hour by email and ' +
+          'portal. The targets themselves are unchanged; they are simply easier to find.',
       },
       {
         kind: 'clarification',
