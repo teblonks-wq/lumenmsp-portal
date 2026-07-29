@@ -80,8 +80,14 @@
         <% } %>
       </div>
       <div class="form-group">
-        <label>Message <span class="muted" style="font-weight:400;">(optional)</span></label>
-        <textarea class="input" name="message" rows="5" style="width:100%;" placeholder="Anything you want to say alongside the agreement…"></textarea>
+        <label style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+          <span>Message <span class="muted" style="font-weight:400;">(optional)</span></span>
+          <!-- Hidden unless Claude is configured, so it never offers something that cannot work. -->
+          <button type="button" class="btn" id="ctPolish" style="display:none;font-size:12px;padding:3px 9px;font-weight:500;"
+                  title="Rewrites your draft in clear British English — keeps every fact, invents nothing">✨ Improve with Claude</button>
+        </label>
+        <textarea class="input" id="ctMessage" name="message" rows="5" style="width:100%;" placeholder="Anything you want to say alongside the agreement…"></textarea>
+        <p id="ctPolishMsg" class="muted" style="font-size:12px;margin:5px 0 0;min-height:15px;"></p>
       </div>
       <p class="muted" style="font-size:12px;">
         They receive a link that opens the agreement on our site — no login, no account. They can read it,
@@ -108,6 +114,58 @@
 </div>
 
 <script>
+  // Improve with Claude — the same /ai/polish endpoint the rest of the portal uses, so the
+  // house rules (British English, preserve every fact, invent nothing) apply here too.
+  (function(){
+    var btn = document.getElementById('ctPolish');
+    var box = document.getElementById('ctMessage');
+    var note = document.getElementById('ctPolishMsg');
+    if (!btn || !box) return;
+    var csrf = (document.querySelector('meta[name="csrf-token"]') || {}).content || '';
+    var undo = null;
+
+    // Only show it if Claude is actually set up.
+    fetch('/ai/status').then(function(r){ return r.json(); })
+      .then(function(j){ if (j && j.configured) btn.style.display = ''; })
+      .catch(function(){ /* leave hidden */ });
+
+    btn.addEventListener('click', function(){
+      var text = box.value.trim();
+      if (!text) { note.style.color = '#b45309'; note.textContent = 'Type a message first.'; return; }
+      // Second press puts the original back, so an unwanted rewrite is never a dead end.
+      if (undo !== null && btn.dataset.state === 'done') {
+        box.value = undo; undo = null; btn.dataset.state = '';
+        btn.innerHTML = '✨ Improve with Claude'; note.textContent = ''; return;
+      }
+      var original = btn.innerHTML;
+      btn.disabled = true; btn.innerHTML = '✨ Improving…';
+      note.style.color = ''; note.textContent = 'Claude is tidying your draft…';
+      fetch('/ai/polish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf },
+        body: JSON.stringify({ text: text })
+      }).then(function(r){ return r.json(); }).then(function(j){
+        btn.disabled = false;
+        if (!j || !j.ok) {
+          btn.innerHTML = original;
+          note.style.color = '#dc2626'; note.textContent = (j && j.error) || 'Improve failed.';
+          return;
+        }
+        undo = text; box.value = j.message;
+        btn.dataset.state = 'done'; btn.innerHTML = '↩ Undo';
+        note.style.color = '#0f766e'; note.textContent = 'Improved — read it before sending.';
+      }).catch(function(){
+        btn.disabled = false; btn.innerHTML = original;
+        note.style.color = '#dc2626'; note.textContent = 'Improve failed.';
+      });
+    });
+
+    box.addEventListener('input', function(){
+      // Typing after a rewrite means the undo no longer matches what is on screen.
+      if (btn.dataset.state === 'done') { btn.dataset.state = ''; undo = null; btn.innerHTML = '✨ Improve with Claude'; note.textContent = ''; }
+    });
+  })();
+
   (function(){
     var start=document.getElementById('sStart'), term=document.getElementById('sTerm'), end=document.getElementById('sEnd');
     if(!start||!term||!end) return;
