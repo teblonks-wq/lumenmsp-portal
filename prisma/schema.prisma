@@ -371,6 +371,7 @@ model CustomerAsset {
   publicIp       String?   @map("public_ip") // the WAN IP Atera saw the agent report from
   agentVersion   String?   @map("agent_version")
   lastLoginUser  String?   @map("last_login_user")
+  assignedContactId Int?   @map("assigned_contact_id") // Portal-side allocation to a customer contact - OUR data: editable despite the Atera read-only lock, survives every sync (Atera's API exposes no contact assignment)
   addedAt        DateTime? @map("added_at") // when Atera first recorded this agent
   lastSeenAt     DateTime? @map("last_seen_at")
   lastRebootAt   DateTime? @map("last_reboot_at")
@@ -384,6 +385,7 @@ model CustomerAsset {
   @@unique([sourceSystem, externalId])
   @@index([customerId])
   @@index([hostname])
+  @@index([assignedContactId])
   @@map("customer_assets")
 }
 

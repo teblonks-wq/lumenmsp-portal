@@ -10,15 +10,23 @@ import { getSetting, setSetting } from './settings';
 // didn't map turns out to matter later.
 
 function ateraAgent(r: any) {
+  // Field names confirmed against a REAL payload via /assets/:id?debug=1 (2026-07-30):
+  // RAM = Memory (MB, number) - disks = HardwareDisks [{Drive, Free, Used, Total} in MB] -
+  // manufacturer/model/serial = Vendor / VendorBrandModel / VendorSerialNumber -
+  // local IPs = IpAddresses (array) - MACs = MacAddresses (array). Old guessed names kept as fallbacks.
   const ramRaw = pick(r, ['TotalPhysicalMemoryInGB', 'TotalRAMInGB', 'RAMInGB', 'TotalMemoryGB', 'PhysicalMemory']);
   let ramGb: number | null = null;
   if (ramRaw) {
     const n = parseFloat(ramRaw.replace(/[^0-9.]/g, ''));
     if (!isNaN(n)) ramGb = n;
   }
+  if (ramGb === null && typeof r?.Memory === 'number' && r.Memory > 0) ramGb = Math.round((r.Memory / 1024) * 10) / 10;
   const online = r?.OnlineStatus === true || r?.Online === true || String(pick(r, ['OnlineStatus', 'Status'])).toLowerCase() === 'online';
-  const disk = pick(r, ['DiskInfo', 'DriveDetails', 'StorageInfo']) || (Array.isArray(r?.Disks) ? r.Disks.map((d: any) => pick(d, ['DiskName', 'Name']) + (d?.TotalSpaceInGB ? ` (${d.TotalSpaceInGB}GB)` : '')).join(', ') : '');
-  const ip = pick(r, ['IPAddresses', 'IpAddress', 'IPAddress']) || (Array.isArray(r?.IPAddresses) ? r.IPAddresses.join(', ') : '');
+  const hwDisks = Array.isArray(r?.HardwareDisks)
+    ? r.HardwareDisks.map((d: any) => [d?.Drive || '?', d?.Total ? Math.round(d.Total / 1024) + 'GB' : '', (d?.Free !== null && d?.Free !== undefined) ? '(' + Math.round(d.Free / 1024) + 'GB free)' : ''].filter(Boolean).join(' ')).join(', ')
+    : '';
+  const disk = hwDisks || pick(r, ['DiskInfo', 'DriveDetails', 'StorageInfo']) || (Array.isArray(r?.Disks) ? r.Disks.map((d: any) => pick(d, ['DiskName', 'Name']) + (d?.TotalSpaceInGB ? ` (${d.TotalSpaceInGB}GB)` : '')).join(', ') : '');
+  const ip = (Array.isArray(r?.IpAddresses) ? r.IpAddresses.join(', ') : '') || (Array.isArray(r?.IPAddresses) ? r.IPAddresses.join(', ') : '') || pick(r, ['IpAddress', 'IPAddress']);
   return {
     ateraId: pick(r, ['AgentID', 'AgentId', 'id']),
     // GUID identifier Atera's newer web UI uses in its device URL (app.atera.com/new/rmm/device/{guid}/agent)
@@ -29,14 +37,14 @@ function ateraAgent(r: any) {
     deviceType: pick(r, ['AgentType', 'DeviceType', 'MachineType']) || 'Device',
     os: pick(r, ['OSName', 'OS', 'OSType', 'OSPlatform']),
     osVersion: pick(r, ['OSVersion', 'OSBuild']),
-    manufacturer: pick(r, ['Manufacturer', 'SystemManufacturer']),
-    model: pick(r, ['Model', 'SystemModel', 'DeviceModel']),
-    serialNumber: pick(r, ['SerialNumber', 'DeviceSerialNumber']),
+    manufacturer: pick(r, ['Vendor', 'Manufacturer', 'SystemManufacturer']),
+    model: pick(r, ['VendorBrandModel', 'Model', 'SystemModel', 'DeviceModel']),
+    serialNumber: pick(r, ['VendorSerialNumber', 'SerialNumber', 'DeviceSerialNumber']),
     cpu: pick(r, ['Processor', 'CPUName', 'CPU']),
     ramGb,
     diskInfo: disk,
     ipAddresses: ip,
-    macAddress: pick(r, ['MacAddress', 'MACAddress']),
+    macAddress: (Array.isArray(r?.MacAddresses) ? r.MacAddresses.join(', ') : '') || pick(r, ['MacAddress', 'MACAddress']),
     domainOrWorkgroup: pick(r, ['DomainName', 'Workgroup', 'Domain']),
     online,
     // The IP Atera's cloud saw the agent report FROM (i.e. the site's WAN/public IP) — distinct

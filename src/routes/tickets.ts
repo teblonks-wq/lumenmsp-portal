@@ -6,6 +6,7 @@ import { sendTicketStatusEmail } from '../lib/emails';
 import { cleanHtml } from '../lib/sanitize';
 import { attachmentUpload, processAttachments } from '../lib/attachments';
 import { logActivity } from '../lib/activity';
+import { remoteUrlTemplate, buildRemoteUrl } from '../lib/asset-sync';
 import { notify } from '../lib/notifications';
 import { sendTeamsNotice } from '../lib/teams'; // sendTeamsReply (relay) disabled pending Power Automate fix
 import { teamsGraphConnected, sendTeamsChatMessage } from '../lib/teamsgraph';
@@ -515,11 +516,24 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
   // old Bot Framework/Power Automate relay never stored a usable chatId here).
   let teamsChatId = '';
   if (r.rows[0].teams_conversation) { try { teamsChatId = JSON.parse(r.rows[0].teams_conversation).chatId || ''; } catch { /* not JSON */ } }
+
+  // Requester's devices — Portal-side allocation (customer_assets.assigned_contact_id) so staff
+  // can jump straight from a case to the requester's machine (and its Atera remote page).
+  let requesterAssets: any[] = [];
+  if (r.rows[0].contact_id) {
+    try {
+      const assetTpl = await remoteUrlTemplate();
+      requesterAssets = (await pool.query(
+        `SELECT id, hostname, device_type, online_status, external_id, device_guid
+           FROM customer_assets WHERE assigned_contact_id=$1 ORDER BY hostname`, [r.rows[0].contact_id]
+      )).rows.map((d: any) => ({ ...d, remote_url: d.external_id ? buildRemoteUrl(assetTpl, { agentId: d.external_id, deviceGuid: d.device_guid }) : null }));
+    } catch { /* assigned_contact_id ships in the same deploy as this code */ }
+  }
   const aiCatOn = await aiTicketCategoryEnabled();
   await ensureReplyTemplates().catch(() => {});
   const replyTemplates = await listReplyTemplates().catch(() => [] as any[]);
 
-  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, teamsChatId, aiCatOn, replyTemplates, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
+  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, requesterAssets, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, teamsChatId, aiCatOn, replyTemplates, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
 });
 
 // ── Update fields ────────────────────────────────────────────────────────────────

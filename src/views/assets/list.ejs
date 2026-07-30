@@ -38,7 +38,7 @@ function remoteHref(a){
 
 <div class="card" style="padding:16px 20px;">
   <form method="get" action="/assets" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-    <input class="input" type="search" name="q" value="<%= filters.q %>" placeholder="Search hostname, serial, model, customer…" style="min-width:260px;">
+    <input class="input" type="search" name="q" value="<%= filters.q %>" placeholder="Search hostname, serial, model, user, customer…" style="min-width:260px;">
     <select class="input" name="customer" style="min-width:200px;">
       <option value="">All customers</option>
       <% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= filters.customer===c.id?'selected':'' %>><%= c.name %></option><% }); %>
@@ -48,17 +48,18 @@ function remoteHref(a){
       <% types.forEach(function(t){ %><option value="<%= t %>" <%= filters.type===t?'selected':'' %>><%= t %></option><% }); %>
     </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" name="online" value="1" <%= filters.online?'checked':'' %>> Online only</label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Devices with no last logged-in user reported by Atera"><input type="checkbox" name="nouser" value="1" <%= filters.nouser?'checked':'' %>> No known user</label>
     <button class="btn" type="submit">Filter</button>
-    <% if (filters.q || filters.customer || filters.type || filters.online) { %><a class="btn" href="/assets">Clear</a><% } %>
+    <% if (filters.q || filters.customer || filters.type || filters.online || filters.nouser) { %><a class="btn" href="/assets">Clear</a><% } %>
   </form>
 </div>
 
 <div class="card" style="padding:0;">
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th></th><th>Hostname</th><th>Customer</th><th>Type</th><th>OS</th><th>Manufacturer / Model</th><th>Last seen</th><th></th></tr></thead>
+      <thead><tr><th></th><th>Hostname</th><th>Customer</th><th>Type</th><th>OS</th><th>Manufacturer / Model</th><th>User</th><th>Last seen</th><th></th></tr></thead>
       <tbody>
-        <% if (rows.length===0) { %><tr><td colspan="8"><div class="empty-state">No devices match. Try "↻ Sync from Atera" if this is the first run.</div></td></tr><% } %>
+        <% if (rows.length===0) { %><tr><td colspan="9"><div class="empty-state">No devices match. Try "↻ Sync from Atera" if this is the first run.</div></td></tr><% } %>
         <% rows.forEach(function(a){ %>
           <tr>
             <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
@@ -67,6 +68,7 @@ function remoteHref(a){
             <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span></td>
             <td class="muted"><%= a.os || '—' %><% if (a.os_version) { %> <span style="font-size:11px;">(<%= a.os_version %>)</span><% } %></td>
             <td class="muted"><%= [a.manufacturer, a.model].filter(Boolean).join(' ') || '—' %></td>
+            <td class="muted" style="font-size:12px;" title="<%= a.assigned_name ? (a.assigned_name + ' (assigned)') : (a.last_login_user || '') %>"><% if (a.assigned_name) { %><span style="font-weight:600;color:var(--ink);"><%= a.assigned_name %></span><% } else if (a.last_login_user) { %><%= String(a.last_login_user).split('\\').pop() %><% } else { %><span class="muted" style="opacity:.55;">unallocated</span><% } %></td>
             <td class="muted" style="font-size:12px;"><%= timeAgo(a.last_seen_at) %></td>
             <td style="text-align:right;white-space:nowrap;">
               <% if (a.external_id) { %><a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="<%= remoteHref(a) %>">🖥 Remote</a><% } %>
