@@ -277,6 +277,65 @@
         out.appendChild(chip);
       });
     }
+    if (a.actions && a.actions.length) {
+      out.appendChild(el('div', 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin:12px 0 6px;', 'Proposed actions \u2014 nothing runs without your click'));
+      a.actions.forEach(function(act){ out.appendChild(finActionCard(act)); });
+    }
+  }
+
+  function finActionCard(act){
+    var card = el('div', 'padding:10px 12px;border:1px solid var(--accent-line);border-radius:10px;margin-bottom:8px;font-size:13px;background:var(--accent-soft);');
+    var row = el('div', 'display:flex;align-items:center;justify-content:space-between;gap:10px;');
+    var left = el('div', 'min-width:0;');
+    left.appendChild(el('div', 'font-weight:700;', act.label || act.type));
+    if (act.why) left.appendChild(el('div', 'font-size:12px;color:var(--muted);margin-top:2px;', act.why));
+    row.appendChild(left);
+    var btn = document.createElement('button');
+    btn.className = 'btn'; btn.type = 'button'; btn.style.whiteSpace = 'nowrap';
+    var armed = false;
+    if (act.type === 'draft_reply') {
+      btn.textContent = '\u270E Insert into composer';
+      btn.onclick = function(){ finInsertDraft(act.params || {}); };
+    } else {
+      btn.textContent = 'Run';
+      btn.onclick = function(){
+        if (!armed) { armed = true; btn.textContent = 'Click again to confirm'; btn.style.borderColor = 'var(--bad-fg)'; btn.style.color = 'var(--bad-fg)'; setTimeout(function(){ armed = false; btn.textContent = 'Run'; btn.style.borderColor = ''; btn.style.color = ''; }, 4000); return; }
+        btn.disabled = true; btn.textContent = 'Running\u2026';
+        fetch('/invoices/' + IID + '/agent-action', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() }, body: JSON.stringify({ type: act.type, params: act.params || {} }) })
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            var msg = el('div', 'font-size:12px;margin-top:8px;font-weight:600;color:' + (d.ok ? 'var(--ok)' : 'var(--bad)') + ';', d.ok ? ('\u2713 ' + d.done) : ('\u2717 ' + (d.error || 'Failed')));
+            card.appendChild(msg);
+            if (d.ok && d.link) { var a2 = document.createElement('a'); a2.href = d.link; a2.textContent = 'Open \u2192'; a2.className = 'row-link'; a2.style.cssText = 'font-size:12px;margin-left:8px;'; msg.appendChild(a2); }
+            if (d.ok) { btn.textContent = 'Done'; if (act.type === 'void_invoice' || act.type === 'zero_balance') setTimeout(function(){ location.reload(); }, 1200); }
+            else { btn.disabled = false; btn.textContent = 'Run'; }
+          })
+          .catch(function(){ btn.disabled = false; btn.textContent = 'Run'; });
+      };
+    }
+    row.appendChild(btn);
+    card.appendChild(row);
+    return card;
+  }
+
+  function finInsertDraft(p){
+    // Fill the composer on this page for review — the staff member presses Send.
+    try {
+      var comms = document.getElementById('comms');
+      if (!comms) return;
+      var toInput = comms.querySelector('input[list]');
+      if (toInput && p.to) toInput.value = p.to;
+      var subj = comms.querySelector('input[name="subject"]');
+      if (subj && p.subject) subj.value = p.subject;
+      var editor = comms.querySelector('.ql-editor');
+      if (editor && p.body) {
+        editor.innerHTML = String(p.body).split(/\n{2,}/).map(function(par){ return '<p>' + par.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>') + '</p>'; }).join('');
+      }
+      finClose();
+      comms.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      comms.style.boxShadow = '0 0 0 3px var(--accent)';
+      setTimeout(function(){ comms.style.boxShadow = ''; }, 2600);
+    } catch (e) { /* composer variant without Quill — staff can copy from the answer */ }
   }
 
   window.finGo = function(){

@@ -961,16 +961,40 @@ router.post('/invoices/:id/ask', requireAuth, async (req: Request, res: Response
       '- When asked "what made up £X taken on <date>", reconcile against [GC], [SIB] amounts and payout refs — multiple invoices can share a charge date. Show your arithmetic.',
       '- Answer concisely and factually. If the data cannot answer, say exactly that — NEVER guess or invent figures.',
       '- Reply with STRICT JSON only — no markdown fences:',
-      '  {"answer":"...","findings":[{"ref":"GC","quote":"exact verbatim snippet (max 140 chars) supporting the answer"}]}',
+      '  {"answer":"...","findings":[{"ref":"GC","quote":"exact verbatim snippet (max 140 chars)"}],"actions":[{"type":"...","label":"short button label","why":"one sentence","params":{}}]}',
       '- 1 to 4 findings, most relevant first, quotes copied verbatim from the blocks. Valid refs: INV, L1.., GC, I<id>, C<id>, T<id>, SIB, CRED.',
+      '- ACTIONS: when the answer clearly calls for it, propose up to 3 one-click actions (in run order) the staff member can approve. NOTHING runs or sends without their click. Allowed types + params:',
+      '  draft_reply {to, subject, body} — write the customer-facing reply (plain text paragraphs, friendly-professional UK tone, no sign-off — the signature is appended automatically). It is inserted into the composer for staff review, never sent automatically.',
+      '  void_invoice {} — void THIS invoice (no customer email is sent).',
+      '  create_restatement {title, line_description, net_amount, offset_description, notes} — raise a corrected replacement invoice on this customer; net_amount is the ex-VAT figure (20% VAT applies); include offset_description whenever the money was already collected so the replacement totals £0.',
+      '  log_credit {amount, reason} — log a customer credit (amount in pounds).',
+      '  zero_balance {} — clear a stale balance figure on a paid/void invoice (reporting fix only).',
+      '- Only propose actions justified by the data; if unsure, propose none.',
     ].join('\n');
 
     const raw = await aiAskText(system, `QUESTION: ${question}\n\nINVOICE DATA:\n\n${corpus}`, 800);
     let parsed: any;
     try { parsed = JSON.parse(raw.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim()); }
     catch { parsed = { answer: raw.trim(), findings: [] }; }
+    const ALLOWED_AGENT_ACTIONS: Record<string, string[]> = {
+      draft_reply: ['to', 'subject', 'body'], void_invoice: [],
+      create_restatement: ['title', 'line_description', 'net_amount', 'offset_description', 'notes'],
+      log_credit: ['amount', 'reason'], zero_balance: [],
+    };
+    const actions = (Array.isArray(parsed.actions) ? parsed.actions.slice(0, 3) : []).map((a: any) => {
+      const type = String(a?.type || '');
+      if (!(type in ALLOWED_AGENT_ACTIONS)) return null;
+      const src = a.params || {}; const params: any = {};
+      for (const k of ALLOWED_AGENT_ACTIONS[type]) {
+        if (src[k] === undefined || src[k] === null) continue;
+        params[k] = typeof src[k] === 'number' ? src[k] : String(src[k]).slice(0, k === 'body' ? 4000 : 300);
+      }
+      return { type, label: String(a.label || type).slice(0, 60), why: String(a.why || '').slice(0, 200), params };
+    }).filter(Boolean);
+
     const answer = { answer: String(parsed.answer || '').slice(0, 4000),
-      findings: Array.isArray(parsed.findings) ? parsed.findings.slice(0, 4).map((f: any) => ({ ref: String(f.ref || ''), quote: String(f.quote || '').slice(0, 200) })) : [] };
+      findings: Array.isArray(parsed.findings) ? parsed.findings.slice(0, 4).map((f: any) => ({ ref: String(f.ref || ''), quote: String(f.quote || '').slice(0, 200) })) : [],
+      actions };
 
     const ins = (await pool.query(
       'INSERT INTO invoice_ai_queries (invoice_id, user_id, question, answer) VALUES ($1,$2,$3,$4::jsonb) RETURNING id, created_at',
@@ -979,6 +1003,79 @@ router.post('/invoices/:id/ask', requireAuth, async (req: Request, res: Response
   } catch (e: any) {
     console.error('[finance-agent] failed:', e?.message || e);
     res.status(400).json({ ok: false, error: e.message || 'Ask failed.' });
+  }
+});
+
+// ── Finance Agent action executor ───────────────────────────────────────────────
+// Runs ONE agent-proposed action after an explicit staff click. Deliberately small,
+// hard-validated vocabulary; nothing here emails a customer (draft_reply is inserted
+// into the composer client-side for review), nothing touches GoCardless or QuickBooks.
+router.post('/invoices/:id/agent-action', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  const type = String((req.body || {}).type || '');
+  const params: any = (req.body || {}).params || {};
+  const inv = (await pool.query('SELECT i.*, c.name AS customer_name FROM invoices i LEFT JOIN customers c ON c.id=i.customer_id WHERE i.id=$1 AND i.deleted_at IS NULL LIMIT 1', [id])).rows[0];
+  if (!inv) { res.status(404).json({ ok: false, error: 'Invoice not found.' }); return; }
+  try {
+    if (type === 'void_invoice') {
+      if (inv.status === 'void') { res.json({ ok: false, error: 'Already void.' }); return; }
+      await pool.query("UPDATE invoices SET status='void', payment_status='void', balance=0, updated_at=NOW() WHERE id=$1", [id]);
+      await logActivity(user.id, 'status_changed', 'invoices', id, `Finance Agent (approved by ${user.displayName}): voided ${inv.invoice_number}, balance zeroed`);
+      res.json({ ok: true, done: `Voided ${inv.invoice_number} (balance zeroed). No customer email sent.` }); return;
+    }
+    if (type === 'zero_balance') {
+      if (Number(inv.balance) === 0) { res.json({ ok: false, error: 'Balance is already zero.' }); return; }
+      if (!(inv.status === 'void' || inv.payment_status === 'paid' || inv.payment_status === 'void')) { res.json({ ok: false, error: 'Balance can only be zeroed on paid or void invoices.' }); return; }
+      await pool.query('UPDATE invoices SET balance=0, updated_at=NOW() WHERE id=$1', [id]);
+      await logActivity(user.id, 'updated', 'invoices', id, `Finance Agent (approved by ${user.displayName}): zeroed stale balance on ${inv.invoice_number}`);
+      res.json({ ok: true, done: 'Stale balance zeroed.' }); return;
+    }
+    if (type === 'log_credit') {
+      const amount = Math.round((parseFloat(String(params.amount)) || 0) * 100) / 100;
+      if (!inv.customer_id) { res.json({ ok: false, error: 'Invoice has no customer.' }); return; }
+      if (!(amount > 0 && amount <= 100000)) { res.json({ ok: false, error: 'Credit amount must be between £0.01 and £100,000.' }); return; }
+      const reason = String(params.reason || '').slice(0, 300) || `Finance Agent credit re ${inv.invoice_number}`;
+      await pool.query('INSERT INTO customer_credits (customer_id, amount, reason, source_invoice_id, created_by) VALUES ($1,$2,$3,$4,$5)',
+        [inv.customer_id, amount.toFixed(2), reason, id, user.id]);
+      await logActivity(user.id, 'created', 'invoices', id, `Finance Agent (approved by ${user.displayName}): logged £${amount.toFixed(2)} credit — ${reason}`);
+      res.json({ ok: true, done: `Logged a £${amount.toFixed(2)} credit against ${inv.customer_name || 'the customer'}.` }); return;
+    }
+    if (type === 'create_restatement') {
+      if (!inv.customer_id) { res.json({ ok: false, error: 'Invoice has no customer.' }); return; }
+      const net = Math.round((parseFloat(String(params.net_amount)) || 0) * 100) / 100;
+      if (!(net > 0 && net <= 100000)) { res.json({ ok: false, error: 'net_amount must be between £0.01 and £100,000 (ex VAT).' }); return; }
+      const title = String(params.title || '').slice(0, 200).trim();
+      const lineDesc = String(params.line_description || '').slice(0, 500).trim();
+      if (!title || !lineDesc) { res.json({ ok: false, error: 'Title and line description are required.' }); return; }
+      const offsetDesc = String(params.offset_description || '').slice(0, 500).trim();
+      const notes = String(params.notes || '').slice(0, 1500).trim() || null;
+      const today = new Date().toISOString().slice(0, 10);
+      const vat = Math.round(net * 20) / 100;
+      const total = offsetDesc ? 0 : Math.round((net + vat) * 100) / 100;
+      const client = await pool.connect();
+      let newId = 0, num = '';
+      try {
+        await client.query('BEGIN');
+        num = await nextInvoiceNumber(inv.invoice_scheme === 'CS' ? 'CS' : 'IT');
+        const ins = await client.query(
+          `INSERT INTO invoices (customer_id, invoice_number, invoice_scheme, title, status, payment_status, payment_method,
+             issue_date, due_date, currency_code, notes, subtotal, tax_total, total, balance, created_by)
+           VALUES ($1,$2,$3,$4,'issued','unpaid',$5,$6,$6,'GBP',$7,$8,$9,$10,$10,$11) RETURNING id`,
+          [inv.customer_id, num, inv.invoice_scheme || 'IT', title, inv.payment_method || 'upfront', today, notes,
+           (offsetDesc ? 0 : net).toFixed(2), (offsetDesc ? 0 : vat).toFixed(2), total.toFixed(2), user.id]);
+        newId = ins.rows[0].id;
+        await client.query(`INSERT INTO invoice_items (invoice_id, sort_order, description, quantity, unit_price, tax_rate, line_total) VALUES ($1,1,$2,1,$3,20,$3)`, [newId, lineDesc, net.toFixed(2)]);
+        if (offsetDesc) await client.query(`INSERT INTO invoice_items (invoice_id, sort_order, description, quantity, unit_price, tax_rate, line_total) VALUES ($1,2,$2,1,$3,20,$3)`, [newId, offsetDesc, (-net).toFixed(2)]);
+        await client.query('COMMIT');
+      } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+      await logActivity(user.id, 'created', 'invoices', newId, `Finance Agent (approved by ${user.displayName}): created restatement ${num} (${offsetDesc ? '£0 due — already collected' : 'total £' + total.toFixed(2)}) re ${inv.invoice_number}`);
+      res.json({ ok: true, done: `Created ${num}${offsetDesc ? ' — £0 due (offset by the collected payment)' : ` — total £${total.toFixed(2)}`}.`, link: '/invoices/' + newId }); return;
+    }
+    res.status(400).json({ ok: false, error: 'Unknown or unsupported action type.' });
+  } catch (e: any) {
+    console.error('[finance-agent action] failed:', e?.message || e);
+    res.status(400).json({ ok: false, error: e.message || 'Action failed.' });
   }
 });
 
