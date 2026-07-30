@@ -296,6 +296,32 @@ model InvoiceAiQuery {
   @@map("invoice_ai_queries")
 }
 
+model FinanceAiConversation {
+  id         Int      @id @default(autoincrement())
+  scope      String // 'invoice' | 'customer'
+  invoiceId  Int?     @map("invoice_id")
+  customerId Int?     @map("customer_id")
+  title      String?
+  userId     Int?     @map("user_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([invoiceId])
+  @@index([customerId])
+  @@map("finance_ai_conversations")
+}
+
+model FinanceAiMessage {
+  id             Int      @id @default(autoincrement())
+  conversationId Int      @map("conversation_id")
+  role           String // 'user' | 'assistant'
+  content        Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([conversationId])
+  @@map("finance_ai_messages")
+}
+
 // ── Customer sites ─────────────────────────────────────────────────────────────
 model Site {
   id           Int      @id @default(autoincrement())

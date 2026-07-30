@@ -11,6 +11,7 @@
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div><h1>Invoices</h1><p class="muted"><%= invoices.length %> shown · <%= money(total) %><% if (Number(outstanding) > 0) { %> · <strong style="color:var(--warn-fg);"><%= money(outstanding) %> outstanding</strong><% } %><% if (period && period.from) { %> · <%= period.label %><% } %></p></div>
+  <button class="btn" type="button" onclick="finOpen()" style="color:var(--accent-deep);border-color:var(--accent-line);" title="Finance Agent — customer-wide money questions: every invoice, every GoCardless collection, credits, reconciliation pre-computed">&pound; Finance Agent</button>
   <a class="btn btn-primary" href="/invoices/new">+ New invoice</a>
 </div>
 
@@ -236,5 +237,7 @@
     refresh();
   })();
 </script>
+
+<%- include('../partials/finance-agent', { faScope: 'customer', faRefId: null, faTitle: 'customer-wide', faCustomers: (typeof faCustomersList !== 'undefined' ? faCustomersList : []), faActionsInvoiceId: null }) %>
 
 <%- include('../partials/footer') %>

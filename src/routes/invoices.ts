@@ -18,6 +18,7 @@ import { getSetting } from '../lib/settings';
 import { config } from '../config';
 import { aiAskText } from '../lib/ai-compose';
 import { GoCardless } from '../lib/gocardless';
+import { askFinance, listFinanceConversations, getFinanceConversation } from '../lib/finance-agent';
 
 import {
   clientIp as evIp, getDocEvents, logDocEvent, newPixelToken, pixelImg, userAgent as evUa,
@@ -171,9 +172,11 @@ router.get('/invoices', requireAuth, async (req: Request, res: Response) => {
   const unmatchedCount = (await pool.query(`SELECT COUNT(*)::int n FROM invoices WHERE deleted_at IS NULL AND customer_id IS NULL`)).rows[0].n;
   const total = rows.reduce((s: number, r: any) => s + Number(r.total || 0), 0);
   const outstanding = rows.reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
+  const faCustomersList = (await pool.query('SELECT id, name FROM customers WHERE deleted_at IS NULL ORDER BY name')).rows;
   res.render('invoices/list', {
     user, invoices: rows, status, search, statusCounts, legacyCount, unmatchedCount, total, outstanding,
     source, paid, dd, gc, qb, emailed, recurring, period, periodOptions: PERIOD_OPTIONS, from: req.query.from || '', to: req.query.to || '',
+    faCustomersList,
   });
 });
 
@@ -1111,6 +1114,36 @@ router.post('/invoices/:id/agent-action', requireAuth, async (req: Request, res:
     console.error('[finance-agent action] failed:', e?.message || e);
     res.status(400).json({ ok: false, error: e.message || 'Action failed.' });
   }
+});
+
+// ── Finance Agent v3 — conversational endpoints (invoice + customer scope) ──────
+router.post('/finance-agent/ask', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const b: any = req.body || {};
+  try {
+    const r = await askFinance({
+      scope: b.scope === 'customer' ? 'customer' : 'invoice',
+      invoiceId: parseInt(String(b.invoice_id || ''), 10) || null,
+      customerId: parseInt(String(b.customer_id || ''), 10) || null,
+      conversationId: parseInt(String(b.conversation_id || ''), 10) || null,
+      question: String(b.question || ''), userId: user.id, userName: user.displayName,
+    });
+    res.status(r.ok ? 200 : 400).json(r);
+  } catch (e: any) {
+    console.error('[finance-agent] ask failed:', e?.message || e);
+    res.status(400).json({ ok: false, error: e.message || 'Ask failed.' });
+  }
+});
+
+router.get('/finance-agent/conversations', requireAuth, async (req: Request, res: Response) => {
+  const scope = req.query.scope === 'customer' ? 'customer' : 'invoice';
+  const refId = parseInt(String(req.query.id || ''), 10) || 0;
+  res.json({ ok: true, conversations: refId ? await listFinanceConversations(scope, refId) : [] });
+});
+
+router.get('/finance-agent/conversation/:id', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10) || 0;
+  res.json({ ok: true, messages: id ? await getFinanceConversation(id) : [] });
 });
 
 // Jump to an invoice's Finance Agent by NUMBER (used by the case-page button when an
