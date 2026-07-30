@@ -122,5 +122,12 @@ export async function importGiacomServicesCsv(buf: Buffer): Promise<CommsService
     catch (e) { console.error('[comms-import] projection refresh failed:', (e as Error).message); }
   }
 
+  // Register reconcile (Phase 1, write-only bookkeeping): update the durable per-customer
+  // register from this file's newest month. A failure here never breaks the import.
+  if (periods.length) {
+    try { const { reconcileCommsRegister } = await import('./register'); await reconcileCommsRegister(periods); }
+    catch (e) { console.error('[comms-import] register reconcile failed:', (e as Error).message); }
+  }
+
   return { inserted, matched, productsCreated, skippedNoCli, periods, refreshedProjections };
 }

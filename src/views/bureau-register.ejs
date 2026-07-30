@@ -1,0 +1,89 @@
+<%- include('partials/header', { title: 'Customer Register', user }) %>
+<% function money(v){ return v===null||v===undefined ? null : '£' + Number(v).toFixed(2); } %>
+<% function dt(v){ return v ? new Date(v).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
+<% function d(v){ return v ? new Date(v).toLocaleDateString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric'}) : '—'; } %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <h1>Customer Register</h1>
+    <p class="muted"><%= lines.length %> line<%= lines.length===1?'':'s' %> · the durable rate card each bill will render from. Updated automatically after every comms import and nightly Giacom sync.</p>
+  </div>
+  <form method="post" action="/bureau/register/reconcile"><button class="btn btn-primary" type="submit">↻ Reconcile now</button></form>
+</div>
+
+<% if (notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<div class="card" style="background:var(--tint-accent);border-color:var(--info-line);">
+  <p style="margin:0;font-size:13px;color:var(--info-deep);">
+    <strong>Phase 1 — bookkeeping only.</strong> Nothing bills from the register yet; the current
+    engines keep running unchanged. Imports update these lines (adds land amber until priced, a
+    vanished cloud service bills through a 30-day notice then ceases — history is never deleted).
+    The shadow report will compare register-rendered bills against the live engines before any cutover.
+  </p>
+</div>
+
+<div class="card" style="padding:16px 20px;">
+  <form method="get" action="/bureau/register" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <select class="input" name="customer" style="min-width:240px;">
+      <option value="">All customers</option>
+      <% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= custId===c.id?'selected':'' %>><%= c.name %></option><% }); %>
+    </select>
+    <button class="btn" type="submit">Filter</button>
+    <% if (custId) { %><a class="btn" href="/bureau/register">Clear</a><% } %>
+  </form>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Customer</th><th>Source</th><th>Line</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Cost</th><th style="text-align:right;">Sell</th><th>Status</th><th>Seen</th></tr></thead>
+      <tbody>
+        <% if (lines.length===0) { %><tr><td colspan="8"><div class="empty-state">Register is empty — press "↻ Reconcile now" to seed it from the current feeds.</div></td></tr><% } %>
+        <% lines.forEach(function(l){ %>
+          <tr style="<%= l.status==='ceased' ? 'opacity:.55;' : '' %>">
+            <td><a class="row-link" href="/bureau/register?customer=<%= l.customer_id %>"><%= l.customer_name %></a></td>
+            <td><span class="badge badge-inactive" style="font-size:10px;"><%= l.source %></span></td>
+            <td>
+              <%= l.description %>
+              <% if (l.cli) { %><span class="muted" style="font-size:11px;"> · <%= l.cli %></span><% } %>
+              <% if (l.location) { %><span class="muted" style="font-size:11px;"> · <%= l.location %></span><% } %>
+            </td>
+            <td style="text-align:right;"><%= Number(l.qty) %></td>
+            <td style="text-align:right;" class="muted"><%= money(l.unit_cost) || '—' %></td>
+            <td style="text-align:right;"><%= money(l.sale_price) || '—' %></td>
+            <td>
+              <% if (l.status==='unpriced') { %><span class="badge" style="background:var(--warn-bg);color:var(--warn-deep);">unpriced</span>
+              <% } else if (l.status==='ceased') { %><span class="badge badge-inactive">ceased<%= l.cease_effective ? ' · bills to ' + d(l.cease_effective) : '' %></span>
+              <% } else { %><span class="badge" style="background:var(--ok-bg, var(--tint-accent));color:var(--ok);">active</span><% } %>
+            </td>
+            <td class="muted" style="font-size:11px;white-space:nowrap;"><%= d(l.first_seen) %> → <%= d(l.last_seen) %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Service history — every change, every source</h2></div>
+  <% if (!changes.length) { %><p class="muted" style="margin:0;">No changes recorded yet.</p><% } %>
+  <% changes.forEach(function(g){ %>
+    <div style="display:flex;gap:10px;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px;">
+      <span class="muted" style="font-size:11px;white-space:nowrap;min-width:110px;"><%= dt(g.created_at) %></span>
+      <span class="badge badge-inactive" style="font-size:10px;"><%= g.change_type %></span>
+      <span style="min-width:0;">
+        <a class="row-link" href="/bureau/register?customer=<%= g.customer_id %>"><%= g.customer_name %></a>
+        <span class="muted">·</span> <%= g.line_description || '' %>
+        <% var o = g.old, n = g.new; %>
+        <% if (g.change_type==='qty' && o && n) { %><span class="muted">qty <%= o.qty %> → <strong><%= n.qty %></strong></span><% } %>
+        <% if (g.change_type==='cost' && o && n) { %><span class="muted">cost £<%= Number(o.unitCost).toFixed(2) %> → <strong>£<%= Number(n.unitCost).toFixed(2) %></strong></span><% } %>
+        <% if (g.change_type==='added' && n) { %><span class="muted">qty <%= n.qty %><%= n.salePrice!==null && n.salePrice!==undefined ? ' @ £' + Number(n.salePrice).toFixed(2) : ' — unpriced' %></span><% } %>
+        <% if (g.change_type==='ceased' && n) { %><span class="muted"><%= n.noticeDays ? n.noticeDays + '-day notice started' : 'ceased' %></span><% } %>
+      </span>
+      <span class="muted" style="margin-left:auto;font-size:11px;white-space:nowrap;"><%= g.actor %></span>
+    </div>
+  <% }); %>
+</div>
+
+<%- include('partials/footer') %>

@@ -1645,4 +1645,33 @@ router.post('/bureau/pricing/apply', async (req: Request, res: Response) => {
   res.redirect('/bureau/pricing?msg=' + encodeURIComponent(`Applied ${applied} new sale price(s)` + (deleted ? ` · deleted ${deleted} line(s)` : '') + (errs.length ? ` · ${errs.length} skipped` : '')));
 });
 
+// ── Customer Register (billing register rebuild Phase 1 - read-only view) ───────
+// Write-only bookkeeping stage: the reconcilers populate/maintain the register after
+// every comms import + nightly Giacom sync; this screen shows it, plus a manual
+// "Reconcile now" so the register can be seeded without waiting for tonight's sync.
+router.get('/bureau/register', async (req: Request, res: Response) => {
+  const { registerLines, registerRecentChanges } = await import('../lib/register');
+  const custId = parseInt(String(req.query.customer || ''), 10) || null;
+  const lines = await registerLines(custId);
+  const changes = await registerRecentChanges(custId);
+  const customers = (await pool.query('SELECT id, name FROM customers WHERE deleted_at IS NULL ORDER BY name')).rows;
+  res.render('bureau-register', { user: req.session.user!, lines, changes, customers, custId,
+    notice: req.query.msg || null, error: req.query.err || null });
+});
+
+router.post('/bureau/register/reconcile', async (req: Request, res: Response) => {
+  const { reconcileCommsRegister, reconcileCloudRegister } = await import('../lib/register');
+  const actor = 'user:' + req.session.user!.id;
+  try {
+    const period = (await pool.query(
+      `SELECT MAX(billing_period) AS p FROM service_items
+        WHERE source='comms' AND COALESCE(is_projected,false)=false AND COALESCE(is_prorata,false)=false`)).rows[0].p;
+    const comms = period ? await reconcileCommsRegister([period], actor) : { added: 0, updated: 0, ceased: 0, reinstated: 0, unchanged: 0 };
+    const cloud = await reconcileCloudRegister(actor);
+    const msg = `Reconciled - comms ${period || 'n/a'}: +${comms.added} new, ${comms.updated} updated, ${comms.ceased} ceased` +
+      ` | cloud: +${cloud.added} new, ${cloud.updated} updated, ${cloud.ceased} ceased (30-day notice)`;
+    res.redirect('/bureau/register?msg=' + encodeURIComponent(msg));
+  } catch (e: any) { res.redirect('/bureau/register?err=' + encodeURIComponent(e.message)); }
+});
+
 export default router;

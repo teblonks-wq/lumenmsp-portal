@@ -11,7 +11,7 @@ import { sendMail } from '../lib/mailer';
 import { invoiceEmailHtml } from '../lib/emails';
 import { invoiceViewUrl } from '../lib/invoice-link';
 import { QuickBooks } from '../lib/quickbooks';
-import { generateFromTemplate, refreshGiacomLines, refreshCallCharges, regenerateInvoice } from '../lib/recurring-billing';
+import { generateFromTemplate, refreshGiacomLines, refreshCallCharges, regenerateInvoice, nextInvoiceNumber, recomputeInvoiceTotals } from '../lib/recurring-billing';
 import { syncItCloudInvoice, resyncItCloudLine, promoteItCloudToTemplate } from '../lib/it-cloud-sync';
 import { resolvePeriod, PERIOD_OPTIONS } from '../lib/date-periods';
 import { getSetting } from '../lib/settings';
@@ -29,18 +29,14 @@ const router = Router();
 router.use(['/invoices', '/credits'], requireFinance);
 const STATUSES = ['draft', 'issued', 'paid', 'void'];
 const PAY_STATUSES = ['unpaid', 'pending', 'paid', 'failed'];
-const SCHEMES = ['IT', 'CS'];
+const SCHEMES = ['IT', 'CS', 'IC']; // IC added Phase 0 (register rebuild) - create/edit posts were coercing IC to IT
 
 const nz = (v: any): string | null => { const s = (v ?? '').toString().trim(); return s !== '' ? s : null; };
 const num = (v: any): number => { const x = parseFloat((v ?? '').toString()); return isNaN(x) ? 0 : x; };
 const asArray = (v: any): any[] => (Array.isArray(v) ? v : v === undefined ? [] : [v]);
 
-async function nextInvoiceNumber(scheme: string): Promise<string> {
-  const { rows } = await pool.query('SELECT invoice_number FROM invoices WHERE invoice_scheme = $1', [scheme]);
-  let max = 0;
-  for (const r of rows) { const m = String(r.invoice_number).match(/(\d+)/); if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; } }
-  return scheme + '-' + String(max + 1).padStart(4, '0');
-}
+// nextInvoiceNumber now comes from lib/recurring-billing (the collision-safe version that
+// scans past globally-taken numbers incl. soft-deleted rows) - the weaker local copy is gone (Phase 0).
 
 async function saveItemsAndTotals(client: any, invoiceId: number, body: any): Promise<void> {
   const desc = asArray(body['desc']);
@@ -56,7 +52,15 @@ async function saveItemsAndTotals(client: any, invoiceId: number, body: any): Pr
   const prevQty = asArray(body['prev_qty']);
   const prevPrice = asArray(body['prev_price']);
   const prevDesc = asArray(body['prev_desc']);
+  const itemIds = asArray(body['item_id']);
   const truthy = (v: any) => v === 'on' || v === '1' || v === 'true' || v === true;
+  // PRESERVE what the form doesn't carry (Phase 0): the delete-and-reinsert below used to
+  // silently strip invoice_category and contract_line_id on EVERY hand edit - breaking the
+  // comms per-category compare tick and contract-push idempotency for the edited invoice.
+  // Rows round-trip their DB id via hidden item_id[]; new rows have none.
+  const prevRows = (await client.query('SELECT id, invoice_category, contract_line_id FROM invoice_items WHERE invoice_id=$1', [invoiceId])).rows;
+  const prevById: Record<string, any> = {};
+  for (const r of prevRows) prevById[String(r.id)] = r;
   await client.query('DELETE FROM invoice_items WHERE invoice_id = $1', [invoiceId]);
   let subtotal = 0, taxTotal = 0, sort = 1;
   for (let i = 0; i < desc.length; i++) {
@@ -75,10 +79,11 @@ async function saveItemsAndTotals(client: any, invoiceId: number, body: any): Pr
     const oneoff = truthy(oneOff[i]);
     const lineTotal = q * p;
     subtotal += lineTotal; taxTotal += lineTotal * (t / 100);
+    const keep = prevById[String((itemIds[i] || '').toString().trim())] || null;
     await client.query(
-      `INSERT INTO invoice_items (invoice_id, product_id, source, sort_order, description, quantity, unit_price, tax_rate, line_total, sync_ref, sync_locked, is_one_off)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [invoiceId, pid, source, sort++, d, q, p, t, lineTotal, ref, locked, oneoff]
+      `INSERT INTO invoice_items (invoice_id, product_id, source, sort_order, description, quantity, unit_price, tax_rate, line_total, sync_ref, sync_locked, is_one_off, invoice_category, contract_line_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [invoiceId, pid, source, sort++, d, q, p, t, lineTotal, ref, locked, oneoff, keep ? keep.invoice_category : null, keep ? keep.contract_line_id : null]
     );
   }
   await client.query('UPDATE invoices SET subtotal=$1, tax_total=$2, total=$3, updated_at=NOW() WHERE id=$4',
@@ -423,9 +428,7 @@ router.post('/invoices/:id/apply-credit', requireAuth, async (req: Request, res:
        VALUES ($1,$2,$3,1,$4,$5,$4)`,
       [id, sort, 'Credit applied' + (srcNum ? ' (overpayment from ' + srcNum + ')' : '') + (cleanSplit ? ' - ' + amount.toFixed(2) + ' inc VAT' : ''), creditUnit.toFixed(2), creditRate]
     );
-    const agg = (await client.query("SELECT COALESCE(SUM(line_total),0) AS sub, COALESCE(SUM(line_total*tax_rate/100),0) AS tax FROM invoice_items WHERE invoice_id=$1", [id])).rows[0];
-    await client.query('UPDATE invoices SET subtotal=$1, tax_total=$2, total=$3, updated_at=NOW() WHERE id=$4',
-      [Number(agg.sub).toFixed(2), Number(agg.tax).toFixed(2), (Number(agg.sub) + Number(agg.tax)).toFixed(2), id]);
+    await recomputeInvoiceTotals(client, id);
     await client.query("UPDATE customer_credits SET status='applied', applied_invoice_id=$1, applied_at=NOW() WHERE id=$2", [id, creditId]);
     await client.query('COMMIT');
   } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }

@@ -4,10 +4,10 @@ import { resolveCliPackages } from './packages';
 
 // Product role classification (by Giacom description). Seat-core defines a Simply VoIP seat;
 // broadband/mobile are standalone; everything else on a seat CLI is included in the seat.
-const SEAT_RE = /hv select/i;
-const BB_RE = /fttp|sogea|fttc|adsl|ethernet|internet access|broadband|fibre|leased/i;
-const REC_RE = /voice recording|call recording/i;
-const MOBILE_RE = /everyway|vodashare|gprs|data optimiser|\bee\d|mobile/i;
+export const SEAT_RE = /hv select/i;
+export const BB_RE = /fttp|sogea|fttc|adsl|ethernet|internet access|broadband|fibre|leased/i;
+export const REC_RE = /voice recording|call recording/i;
+export const MOBILE_RE = /everyway|vodashare|gprs|data optimiser|\bee\d|mobile/i;
 // Included package components — handsets (often on their own device-ID "CLI", not the seat's),
 // Webex, CRM connectors. Cost is absorbed into the Simply VoIP package; never billed as their
 // own line or counted as a seat.
@@ -336,7 +336,7 @@ export const COMMS_CATS: { key: CommsCat; label: string }[] = [
 // One-off / non-recurring charges. Includes additional-handset PURCHASES (W73P Addl, W73H DECT,
 // "additional handset") — but NOT the recurring handset-finance line ("Yealink W73P", "… Recurring").
 export const ONEOFF_RE = /disconnection|reconnection|\binstall|connection fee|set[\s-]?up|activation|cease|ceasing|migrat|admin fee|one[\s-]?off|\bfee\b|new geographic|geographic number|number or ddi|\baddl\b|additional handset|\bw73h\b|handset purchase/i;
-const ADDITIONAL_RE = /feature pack|recording|gointegrator|crmconnect|\bcrm\b|insight|collaboration/i;
+export const ADDITIONAL_RE = /feature pack|recording|gointegrator|crmconnect|\bcrm\b|insight|collaboration/i;
 
 // Classify a service line into its invoice category. Order matters: one-offs first,
 // then recording/feature-pack (additional) before voice (so "Voice Recording" → additional).
@@ -386,8 +386,9 @@ export async function commsRateCard(customerId: number, period?: string): Promis
         WHERE si.source='comms' AND si.customer_id=$1 AND si.billed_at IS NULL
           AND (si.is_one_off = true OR si.description ~* $2
                OR (si.billing_from IS NOT NULL AND si.billing_from = si.billing_to))
+          AND (si.billing_period IS NULL OR si.billing_period <= $3)
         GROUP BY si.product_reference, si.description, si.unit_cost, sp.sale_price`,
-      [customerId, ONEOFF_RE.source]
+      [customerId, ONEOFF_RE.source, per]
     );
     for (const r of oo.rows) {
       const buy = Number(r.cost) || 0;
@@ -410,8 +411,9 @@ export async function commsRateCard(customerId: number, period?: string): Promis
                AND COALESCE(sp.product_reference,'')=COALESCE(si.product_reference,'') AND sp.unit_cost=si.unit_cost
         WHERE si.source='comms' AND si.customer_id=$1 AND si.is_prorata=true AND si.billed_at IS NULL
           AND NOT (si.billing_from IS NOT NULL AND si.billing_from = si.billing_to)
+          AND (si.billing_period IS NULL OR si.billing_period <= $2)
         GROUP BY si.product_reference, si.description, si.unit_cost, sp.sale_price`,
-      [customerId]
+      [customerId, per]
     );
     for (const r of pp.rows) {
       const buy = Number(r.cost) || 0; const unit = Number(r.unit_cost) || 0;

@@ -671,6 +671,7 @@ model ServiceItem {
   @@index([customerId])
   @@index([source])
   @@index([externalCustomerId])
+  @@index([billingPeriod]) // Phase 0: the comms engine filters on billing_period constantly
   @@map("service_items")
 }
 
@@ -754,6 +755,57 @@ model ServicePricing {
   @@unique([source, customerId, productReference, unitCost], name: "uq_service_pricing", map: "uq_service_pricing")
   @@index([customerId])
   @@map("service_pricing")
+}
+
+// The Customer Register (billing register rebuild Phase 1) - one durable rate card per
+// customer; the invoice becomes a monthly rendering of it. Raw-SQL managed by
+// src/lib/register.ts but MUST stay declared here or `prisma db push` drops the tables.
+model CustomerRegisterLine {
+  id             Int       @id @default(autoincrement())
+  customerId     Int       @map("customer_id")
+  source         String // 'comms-feed' | 'cloud-feed' | 'lumen'
+  sourceKey      String    @map("source_key") // identity within the source: comms 'cli|pN', cloud giacom code, lumen 'L<id>'
+  cli            String? // comms lines - keeps per-CLI granularity
+  productId      Int?      @map("product_id") // catalogue link (asset_products)
+  description    String // supplier's latest label - display only, never identity
+  invoiceCategory String?  @map("invoice_category")
+  location       String?
+  qty            Decimal   @default(1) @db.Decimal(12, 2)
+  qtyMode        String    @default("fixed") @map("qty_mode") // 'fixed' | 'derived' (seats/rec auto-count at render)
+  unitCost       Decimal   @default(0) @map("unit_cost") @db.Decimal(12, 4) // buy - latest from feed
+  salePrice      Decimal?  @map("sale_price") @db.Decimal(12, 4) // sell per unit; NULL = unpriced amber, never bills
+  vatRate        Decimal   @default(20) @map("vat_rate") @db.Decimal(5, 2)
+  billingFrequency String  @default("monthly") @map("billing_frequency")
+  status         String    @default("active") // 'active' | 'unpriced' | 'ceased'
+  firstSeen      DateTime  @default(now()) @map("first_seen")
+  lastSeen       DateTime  @default(now()) @map("last_seen")
+  ceasedAt       DateTime? @map("ceased_at")
+  ceaseEffective DateTime? @map("cease_effective") // cloud: cease + 30-day notice - bills until here
+  contractLineId Int?      @map("contract_line_id")
+  createdBy      Int?      @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([customerId, source, sourceKey])
+  @@index([customerId])
+  @@index([source])
+  @@index([status])
+  @@map("customer_register_lines")
+}
+
+model RegisterChange {
+  id             Int      @id @default(autoincrement())
+  registerLineId Int?     @map("register_line_id")
+  customerId     Int      @map("customer_id")
+  changeType     String   @map("change_type") // added|ceased|reinstated|qty|cost|price|desc|manual-edit
+  oldValues      Json?    @map("old")
+  newValues      Json?    @map("new")
+  actor          String // 'comms-import' | 'cloud-sync' | 'migration' | 'user:<id>' | 'contract-push'
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@index([registerLineId])
+  @@map("register_changes")
 }
 
 // ── Quotes ──────────────────────────────────────────────────────────────────────

@@ -71,6 +71,12 @@ export async function syncGiacomBilling(): Promise<{ fetched: number; matched: n
   } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
 
   await setSetting('giacom', 'last_sync', new Date().toISOString());
+
+  // Register reconcile (Phase 1, write-only bookkeeping) - cloud-feed lines diffed off the
+  // fresh state; a vanished code starts its 30-day notice. Failure never breaks the sync.
+  try { const { reconcileCloudRegister } = await import('./register'); await reconcileCloudRegister(); }
+  catch (e) { console.error('[giacom] register reconcile failed:', (e as Error).message); }
+
   return { fetched: rows.length, matched, unmatched, customers: giacomCustomers.size };
 }
 

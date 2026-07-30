@@ -108,6 +108,15 @@ export async function refreshCallCharges(invoiceId: number, customerId: number, 
 }
 
 // First due_day-of-month strictly after `from` (so the 23rd resolves to the 1st of next month).
+// One shared totals recompute (Phase 0) - this exact SQL previously lived at six call sites.
+export async function recomputeInvoiceTotals(client: any, invoiceId: number): Promise<void> {
+  const agg = (await client.query(
+    `SELECT COALESCE(SUM(line_total),0) AS sub, COALESCE(SUM(line_total*tax_rate/100),0) AS tax
+       FROM invoice_items WHERE invoice_id=$1`, [invoiceId])).rows[0];
+  await client.query('UPDATE invoices SET subtotal=$1, tax_total=$2, total=$3, updated_at=NOW() WHERE id=$4',
+    [Number(agg.sub).toFixed(2), Number(agg.tax).toFixed(2), (Number(agg.sub) + Number(agg.tax)).toFixed(2), invoiceId]);
+}
+
 export function nextDueDate(from: Date, dueDay: number): Date {
   let t = new Date(from.getFullYear(), from.getMonth(), dueDay);
   if (t <= from) t = new Date(from.getFullYear(), from.getMonth() + 1, dueDay);
@@ -293,8 +302,9 @@ export async function generateCommsBillRun(period: string, userId: number | null
       await client.query(
         `UPDATE service_items SET billed_at=NOW() WHERE source='comms' AND customer_id=$1 AND billed_at IS NULL
            AND (is_one_off=true OR description ~* $2 OR (billing_from IS NOT NULL AND billing_from = billing_to)
-                OR is_prorata=true)`,
-        [c.id, ONEOFF_RE.source]
+                OR is_prorata=true)
+           AND (billing_period IS NULL OR billing_period <= $3)`,
+        [c.id, ONEOFF_RE.source, period]
       );
       await client.query('COMMIT');
       invoiceIds.push(invId); created++;
