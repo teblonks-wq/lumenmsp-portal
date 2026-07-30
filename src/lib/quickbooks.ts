@@ -376,6 +376,11 @@ export class QuickBooks {
 
   // Create a portal invoice in QB. Customer must have quickbooks_customer_id.
   async pushInvoice(invoice: any, items: any[], qbCustomerId: string): Promise<string> {
+    // GUARD (2026-07-30): a staged/numberless invoice must never reach QB. A blank DocNumber
+    // makes QB auto-number the invoice by incrementing its last-used number, colliding with
+    // portal numbering (June 2026: two numberless pushes became QB "IT-2026-0006/0007" and the
+    // QB import then overwrote Larkmead's real IT-2026-0006/0007 with other customers' lines).
+    if (!invoice.invoice_number) throw new Error('This invoice has no number yet (staged draft) - complete/send it first, then push to QuickBooks.');
     const lines = await this.buildInvoiceLines(items);
     const d = await this.apiPost('/invoice', {
       CustomerRef: { value: qbCustomerId }, DocNumber: invoice.invoice_number || '',
@@ -389,6 +394,11 @@ export class QuickBooks {
 
   // Amend an existing QB invoice (sync portal edits). Reads the current SyncToken first.
   async updateInvoice(invoice: any, items: any[], qbCustomerId: string, qbInvoiceId: string): Promise<string> {
+    // GUARD (2026-07-30): a staged/numberless invoice must never reach QB. A blank DocNumber
+    // makes QB auto-number the invoice by incrementing its last-used number, colliding with
+    // portal numbering (June 2026: two numberless pushes became QB "IT-2026-0006/0007" and the
+    // QB import then overwrote Larkmead's real IT-2026-0006/0007 with other customers' lines).
+    if (!invoice.invoice_number) throw new Error('This invoice has no number yet (staged draft) - complete/send it first, then push to QuickBooks.');
     const cur = await this.apiGet('/invoice/' + qbInvoiceId);
     const syncToken = cur?.Invoice?.SyncToken;
     if (syncToken === undefined || syncToken === null) throw new Error('Could not read the QuickBooks invoice to amend (it may have been deleted in QB).');
@@ -499,8 +509,9 @@ export class QuickBooks {
 
   // Import invoices FROM QuickBooks into the portal (upsert by quickbooks_invoice_id).
   // Pass { since, until } (YYYY-MM-DD) to back-fill a specific window by transaction date.
-  async importInvoices(opts: { since?: string; until?: string } = {}): Promise<{ imported: number; skipped: number }> {
+  async importInvoices(opts: { since?: string; until?: string } = {}): Promise<{ imported: number; skipped: number; conflicts: { doc: string; qbId: string; reason: string }[] }> {
     let imported = 0, skipped = 0, start = 1;
+    const conflicts: { doc: string; qbId: string; reason: string }[] = [];
     // portal customers keyed by their quickbooks_customer_id
     const custRows = (await pool.query(`SELECT id, quickbooks_customer_id FROM customers WHERE quickbooks_customer_id IS NOT NULL`)).rows;
     const custByQb: Record<string, number> = {};
@@ -524,6 +535,28 @@ export class QuickBooks {
         const status = balance <= 0 ? 'paid' : 'issued';
         const payStatus = balance <= 0 ? 'paid' : 'unpaid';
         const number = qi.DocNumber || ('QB-' + qbId);
+        // GUARD (2026-07-30): the upsert below matches ON CONFLICT (invoice_number). A QB doc
+        // must never land on a portal invoice that is not its own row - QB auto-numbered docs
+        // have collided with portal-native numbers before (June 2026: Larkmead IT-2026-0006/7
+        // had their lines wiped and replaced with other customers' QB content). On any doubt:
+        // skip and report, never merge.
+        const existing = (await pool.query(
+          'SELECT id, customer_id, quickbooks_invoice_id, gocardless_payment_id FROM invoices WHERE invoice_number=$1',
+          [number]
+        )).rows[0];
+        if (existing) {
+          const reason =
+            existing.quickbooks_invoice_id && String(existing.quickbooks_invoice_id) !== qbId
+              ? 'portal invoice with this number is linked to a different QuickBooks invoice'
+              : !existing.quickbooks_invoice_id
+                ? 'portal-native invoice already uses this number'
+                : existing.gocardless_payment_id
+                  ? 'GoCardless-collected invoice - owned by the GC payout sync'
+                  : existing.customer_id && customerId && existing.customer_id !== customerId
+                    ? 'customer mismatch'
+                    : '';
+          if (reason) { conflicts.push({ doc: number, qbId, reason }); skipped++; continue; }
+        }
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
@@ -561,6 +594,6 @@ export class QuickBooks {
       start += invs.length;
       if (invs.length < 100) break;
     }
-    return { imported, skipped };
+    return { imported, skipped, conflicts };
   }
 }

@@ -284,6 +284,18 @@ model TicketAiQuery {
   @@map("ticket_ai_queries")
 }
 
+model InvoiceAiQuery {
+  id        Int      @id @default(autoincrement())
+  invoiceId Int      @map("invoice_id")
+  userId    Int?     @map("user_id")
+  question  String
+  answer    Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([invoiceId])
+  @@map("invoice_ai_queries")
+}
+
 // ── Customer sites ─────────────────────────────────────────────────────────────
 model Site {
   id           Int      @id @default(autoincrement())

@@ -55,6 +55,9 @@
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;">
     <button class="btn" type="button" onclick="askOpen()" style="color:var(--accent-deep);border-color:var(--accent-line);" title="Ask Claude anything about this case — it reads every message, note and hidden email text">&#10024; Ask Claude</button>
+    <% if (typeof subjectInvoice !== 'undefined' && subjectInvoice) { %>
+    <a class="btn" href="/invoices/<%= subjectInvoice.id %>?ask=1" style="color:var(--ok);border-color:var(--ok);" title="This case's subject cites invoice <%= subjectInvoice.invoice_number %> — open the Finance Agent on it (live GoCardless check, credits, related invoices)">&pound; Finance Agent &mdash; <%= subjectInvoice.invoice_number %></a>
+    <% } %>
     <form method="post" action="/tickets/<%= ticket.id %>/convert-to-lead" onsubmit="return confirm('Transfer this ticket to sales as a draft lead?');" style="margin:0;"><button class="btn" type="submit">→ Draft Lead</button></form>
     <form method="post" action="/tickets/<%= ticket.id %>/convert-to-quote" onsubmit="return confirm('Create a draft quote from this ticket?');" style="margin:0;"><button class="btn" type="submit">→ Draft Quote</button></form>
     <button class="btn" type="button" onclick="var p=document.getElementById('escalatePanel');p.style.display=p.style.display==='none'?'block':'none';">Escalate</button>

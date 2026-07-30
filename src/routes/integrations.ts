@@ -326,7 +326,10 @@ router.post('/settings/quickbooks/import-invoices', requireAuth, requireAdmin, a
     const until = String(req.body.until || '').trim() || undefined;
     const r = await qb.importInvoices({ since, until });
     const range = since || until ? ` (${since || '…'} → ${until || 'now'})` : '';
-    res.redirect('/settings/integrations?msg=' + encodeURIComponent(`Imported ${r.imported} invoices${range} (${r.skipped} skipped)`));
+    const confNote = r.conflicts.length
+      ? `; ${r.conflicts.length} number conflict(s) NOT touched: ` + r.conflicts.slice(0, 5).map((c: any) => c.doc).join(', ') + (r.conflicts.length > 5 ? ', ...' : '')
+      : '';
+    res.redirect('/settings/integrations?msg=' + encodeURIComponent(`Imported ${r.imported} invoices${range} (${r.skipped} skipped${confNote})`));
   } catch (e: any) { res.redirect('/settings/integrations?err=' + encodeURIComponent(e.message)); }
 });
 

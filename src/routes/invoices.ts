@@ -16,6 +16,8 @@ import { syncItCloudInvoice, resyncItCloudLine, promoteItCloudToTemplate } from 
 import { resolvePeriod, PERIOD_OPTIONS } from '../lib/date-periods';
 import { getSetting } from '../lib/settings';
 import { config } from '../config';
+import { aiAskText } from '../lib/ai-compose';
+import { GoCardless } from '../lib/gocardless';
 
 import {
   clientIp as evIp, getDocEvents, logDocEvent, newPixelToken, pixelImg, userAgent as evUa,
@@ -852,6 +854,141 @@ router.post('/i/:token/event', async (req: Request, res: Response) => {
     });
   }
   res.status(204).end();
+});
+
+// ── Finance Agent — natural-language questions over ONE invoice ─────────────────
+// Built for customer billing queries ("you took £91.80 but the invoice says £22.20"):
+// grounds Claude in the invoice, its lines, the LIVE GoCardless payment (what actually
+// happened to the money), the customer's credits + other invoices, and the email thread,
+// then answers with citations. Every Q&A is stored per invoice, team-wide.
+// (Terry, 2026-07-30 — born directly out of the June IT-2026-0006/0007 forensic.)
+
+(async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS invoice_ai_queries (
+      id         SERIAL PRIMARY KEY,
+      invoice_id INTEGER NOT NULL,
+      user_id    INTEGER,
+      question   TEXT NOT NULL,
+      answer     JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`).catch((e) => console.error('ensure invoice_ai_queries failed:', e.message));
+  await pool.query('CREATE INDEX IF NOT EXISTS invoice_ai_queries_invoice_idx ON invoice_ai_queries (invoice_id)')
+    .catch(() => { /* index best-effort */ });
+})();
+
+function finPlain(html: string): string {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<(br|\/p|\/div|\/tr|\/li|\/h[1-6])[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&#39;|&apos;/gi, "'").replace(/&quot;/gi, '"')
+    .replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+}
+const finMoney = (v: any) => '£' + (Number(v) || 0).toFixed(2);
+const finDate = (v: any) => v ? new Date(v).toISOString().slice(0, 10) : '-';
+
+router.get('/invoices/:id/ask', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const rows = (await pool.query(
+    `SELECT q.id, q.question, q.answer, q.created_at, u.display_name AS asked_by
+       FROM invoice_ai_queries q LEFT JOIN users u ON u.id = q.user_id
+      WHERE q.invoice_id = $1 ORDER BY q.created_at DESC LIMIT 50`, [id])).rows;
+  res.json({ ok: true, queries: rows });
+});
+
+router.post('/invoices/:id/ask', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  const question = String((req.body || {}).question || '').trim().slice(0, 600);
+  if (!Number.isInteger(id) || !question) { res.status(400).json({ ok: false, error: 'Ask a question first.' }); return; }
+  try {
+    const inv = (await pool.query(
+      `SELECT i.*, c.name AS customer_name FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id
+        WHERE i.id = $1 AND i.deleted_at IS NULL LIMIT 1`, [id])).rows[0];
+    if (!inv) { res.status(404).json({ ok: false, error: 'Invoice not found.' }); return; }
+    const items = (await pool.query('SELECT * FROM invoice_items WHERE invoice_id=$1 ORDER BY sort_order, id', [id])).rows;
+
+    const blocks: string[] = [];
+    blocks.push(`[INV] Invoice ${inv.invoice_number || '(unnumbered draft)'} — "${inv.title || ''}" | Customer: ${inv.customer_name || 'none'} | Status: ${inv.status} / payment ${inv.payment_status} | Scheme: ${inv.invoice_scheme || '-'} | Issued ${finDate(inv.issue_date)}, due ${finDate(inv.due_date)} | Subtotal ${finMoney(inv.subtotal)} + VAT ${finMoney(inv.tax_total)} = TOTAL ${finMoney(inv.total)} | Balance on record: ${finMoney(inv.balance)} | QuickBooks id: ${inv.quickbooks_invoice_id || 'not pushed'} | GoCardless payment: ${inv.gocardless_payment_id || 'not submitted'} | GC payout ref: ${inv.gocardless_payout_ref || '-'}` + (inv.notes ? `\nNotes: ${String(inv.notes).slice(0, 1500)}` : ''));
+    items.forEach((it: any, i: number) => blocks.push(`[L${i + 1}] ${it.description} | qty ${it.quantity} × ${finMoney(it.unit_price)} @ ${it.tax_rate}% VAT = ${finMoney(it.line_total)}`));
+
+    // What ACTUALLY happened to the money — live GoCardless lookup, never trusted from the doc.
+    if (inv.gocardless_payment_id) {
+      try {
+        const gc = await GoCardless.load();
+        if (gc.isConfigured()) {
+          const pmt = await gc.getPayment(inv.gocardless_payment_id);
+          const collected = Number(pmt?.amount || 0) / 100;
+          const mismatch = Math.abs(collected - Number(inv.total || 0)) > 0.005;
+          blocks.push(`[GC] LIVE GoCardless payment ${inv.gocardless_payment_id}: collected ${finMoney(collected)} | status ${pmt?.status || '?'} | charge date ${pmt?.charge_date || '?'} | description "${pmt?.description || ''}"` +
+            (mismatch
+              ? `\n!!! MISMATCH: the money actually collected (${finMoney(collected)}) does NOT equal the invoice's current total (${finMoney(inv.total)}). The collected amount is the truth about the money; the invoice document has probably been edited since collection.`
+              : `\nCollected amount matches the invoice total.`));
+        }
+      } catch (e: any) { blocks.push(`[GC] GoCardless lookup failed: ${String(e.message || '').slice(0, 140)}`); }
+    }
+
+    if (inv.customer_id) {
+      const sibs = (await pool.query(
+        `SELECT id, invoice_number, title, total, status, payment_status, issue_date, gocardless_payment_id, gocardless_payout_ref
+           FROM invoices WHERE customer_id=$1 AND deleted_at IS NULL AND id<>$2
+          ORDER BY issue_date DESC NULLS LAST, id DESC LIMIT 30`, [inv.customer_id, id])).rows;
+      if (sibs.length) blocks.push('[SIB] Other invoices for this customer (newest first):\n' +
+        sibs.map((sb: any) => `[I${sb.id}] ${sb.invoice_number || '(draft)'} "${String(sb.title || '').slice(0, 60)}" ${finMoney(sb.total)} ${sb.status}/${sb.payment_status} issued ${finDate(sb.issue_date)}${sb.gocardless_payment_id ? ' DD-collected' : ''}${sb.gocardless_payout_ref ? ' payout ' + sb.gocardless_payout_ref : ''}`).join('\n'));
+      const crs = (await pool.query(
+        `SELECT id, amount, reason, status, source_invoice_id, applied_invoice_id, created_at
+           FROM customer_credits WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 15`, [inv.customer_id])).rows;
+      if (crs.length) blocks.push('[CRED] Customer credits:\n' +
+        crs.map((cr: any) => `[C${cr.id}] ${finMoney(cr.amount)} ${cr.status} — ${String(cr.reason || '').slice(0, 120)} (source invoice id ${cr.source_invoice_id || '-'}, applied to invoice id ${cr.applied_invoice_id || '-'}, ${finDate(cr.created_at)})`).join('\n'));
+    }
+
+    const thread = await getComms('invoice', id);
+    for (const m of thread.slice(-15)) {
+      const who = m.direction === 'outbound' ? `Lumen (${m.sent_by_name || 'sent'}) → ${m.to_email || ''}` : `from ${m.from_name || m.from_email || 'customer'}`;
+      blocks.push(`[T${m.id}] ${who} · ${new Date(m.created_at).toISOString().slice(0, 16).replace('T', ' ')} | ${m.subject || ''}\n${finPlain(m.body || '').slice(0, 8000)}`);
+    }
+
+    let corpus = blocks.join('\n\n---\n\n');
+    if (corpus.length > 160000) corpus = corpus.slice(0, 80000) + '\n\n[... omitted ...]\n\n' + corpus.slice(-80000);
+
+    const system = [
+      "You are the finance agent for Lumen IT Solutions' portal. Answer questions about ONE invoice — usually a customer's billing query — using ONLY the data provided.",
+      'Blocks: [INV] invoice header, [L1..] its line items, [GC] the LIVE GoCardless payment (what actually happened to the money), [SIB] the customer\'s other invoices, [CRED] credits, [T123] email-thread messages.',
+      'Rules:',
+      '- The [GC] block is authoritative about money. If it flags a mismatch with the invoice total, lead with that and explain the document no longer matches the collection.',
+      '- When asked "what made up £X taken on <date>", reconcile against [GC], [SIB] amounts and payout refs — multiple invoices can share a charge date. Show your arithmetic.',
+      '- Answer concisely and factually. If the data cannot answer, say exactly that — NEVER guess or invent figures.',
+      '- Reply with STRICT JSON only — no markdown fences:',
+      '  {"answer":"...","findings":[{"ref":"GC","quote":"exact verbatim snippet (max 140 chars) supporting the answer"}]}',
+      '- 1 to 4 findings, most relevant first, quotes copied verbatim from the blocks. Valid refs: INV, L1.., GC, I<id>, C<id>, T<id>, SIB, CRED.',
+    ].join('\n');
+
+    const raw = await aiAskText(system, `QUESTION: ${question}\n\nINVOICE DATA:\n\n${corpus}`, 800);
+    let parsed: any;
+    try { parsed = JSON.parse(raw.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim()); }
+    catch { parsed = { answer: raw.trim(), findings: [] }; }
+    const answer = { answer: String(parsed.answer || '').slice(0, 4000),
+      findings: Array.isArray(parsed.findings) ? parsed.findings.slice(0, 4).map((f: any) => ({ ref: String(f.ref || ''), quote: String(f.quote || '').slice(0, 200) })) : [] };
+
+    const ins = (await pool.query(
+      'INSERT INTO invoice_ai_queries (invoice_id, user_id, question, answer) VALUES ($1,$2,$3,$4::jsonb) RETURNING id, created_at',
+      [id, user.id, question, JSON.stringify(answer)])).rows[0];
+    res.json({ ok: true, id: ins.id, question, answer, created_at: ins.created_at, asked_by: user.displayName });
+  } catch (e: any) {
+    console.error('[finance-agent] failed:', e?.message || e);
+    res.status(400).json({ ok: false, error: e.message || 'Ask failed.' });
+  }
+});
+
+// Jump to an invoice's Finance Agent by NUMBER (used by the case-page button when an
+// inbound email's subject cites an invoice). Own path so it can't shadow /invoices/:id.
+router.get('/invoice-lookup/:number', requireAuth, async (req: Request, res: Response) => {
+  const n = String(req.params.number || '').trim();
+  const row = (await pool.query('SELECT id FROM invoices WHERE invoice_number=$1 AND deleted_at IS NULL LIMIT 1', [n])).rows[0];
+  if (!row) { res.status(404).render('error', { message: 'No invoice numbered ' + n + '.' }); return; }
+  res.redirect('/invoices/' + row.id + '?ask=1');
 });
 
 export default router;

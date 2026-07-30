@@ -517,6 +517,16 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
   let teamsChatId = '';
   if (r.rows[0].teams_conversation) { try { teamsChatId = JSON.parse(r.rows[0].teams_conversation).chatId || ''; } catch { /* not JSON */ } }
 
+  // Finance Agent hand-off: an inbound case whose subject cites an invoice number gets a
+  // one-click jump to that invoice's Finance Agent (Terry, 2026-07-30).
+  let subjectInvoice: any = null;
+  try {
+    const invCands = Array.from(String(r.rows[0].subject || '').matchAll(/\b([A-Z]{1,4}-[0-9][0-9-]{2,}|[A-Z]{1,4}[0-9]{7,})\b/g)).map((m: any) => m[1].replace(/-+$/, ''));
+    if (invCands.length) {
+      subjectInvoice = (await pool.query('SELECT id, invoice_number FROM invoices WHERE invoice_number = ANY($1) AND deleted_at IS NULL LIMIT 1', [invCands])).rows[0] || null;
+    }
+  } catch { /* cosmetic — never block the case page */ }
+
   // Requester's devices — Portal-side allocation (customer_assets.assigned_contact_id) so staff
   // can jump straight from a case to the requester's machine (and its Atera remote page).
   let requesterAssets: any[] = [];
@@ -533,7 +543,7 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
   await ensureReplyTemplates().catch(() => {});
   const replyTemplates = await listReplyTemplates().catch(() => [] as any[]);
 
-  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, requesterAssets, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, teamsChatId, aiCatOn, replyTemplates, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
+  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, requesterAssets, subjectInvoice, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, teamsChatId, aiCatOn, replyTemplates, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
 });
 
 // ── Update fields ────────────────────────────────────────────────────────────────
