@@ -337,6 +337,20 @@ export class QuickBooks {
         }
       }
     }
+    // SELF-HEAL for credit/adjustment lines (negative amounts, e.g. "Credit applied ..."): they
+    // carry no catalogue product, so post them under the same QB item credit memos use
+    // (credit_item_id) - creating a "Credits & Adjustments" item on first use. A credit line can
+    // then never fail the push (Terry, 2026-07-30: "this bug is becoming annoying").
+    let creditItem = (await getSetting('quickbooks', 'credit_item_id')) || '';
+    const hasCreditLine = items.some((it) => (Number(it.quantity) || 1) * (Number(it.unit_price) || 0) < 0);
+    if (hasCreditLine && !creditItem && !defItem) {
+      try {
+        const accts = await this.getIncomeAccounts();
+        const incomeId = accts[0]?.Id || '';
+        if (incomeId) { creditItem = await this.createItem('Credits & Adjustments', incomeId); await setSetting('quickbooks', 'credit_item_id', creditItem); }
+      } catch { /* leave unmapped -> reported below */ }
+    }
+
     const lineQbItem = (it: any): string => {
       const src = String(it.source || '');
       if (src === 'comms' || src === 'calls') return catItems[String(it.invoice_category || '') || 'additional'] || commsItem || defItem;
@@ -352,7 +366,7 @@ export class QuickBooks {
       //   2. its Giacom code (covers part-month '…|pro' lines + services catalogued after sync), then
       //   3. the configured default item for this line's category/source.
       const baseCode = String(it.source || '') === 'giacom' ? String(it.sync_ref || '').split('|')[0].trim().toLowerCase() : '';
-      const qbItem = productMap[Number(it.product_id)] || (baseCode ? giacomCodeMap[baseCode] : '') || lineQbItem(it);
+      const qbItem = productMap[Number(it.product_id)] || (baseCode ? giacomCodeMap[baseCode] : '') || lineQbItem(it) || ((qty * price < 0) ? creditItem : '');
       if (!qbItem) unmapped.push(it.description || '(no description)');
       const isZero = !(Number(it.tax_rate) > 0);
       if (isZero && !zeroCode) noVat.push(it.description || '(no description)');
@@ -410,6 +424,13 @@ export class QuickBooks {
       GlobalTaxCalculation: 'TaxExcluded', Line: lines,
     });
     return d?.Invoice?.Id || qbInvoiceId;
+  }
+
+  // Read one invoice — used by the Finance Agent to compare QB's recorded figures with the
+  // portal document (portal edits do NOT auto-update QB, so they can legitimately differ).
+  async getInvoice(qbInvoiceId: string): Promise<any> {
+    const d = await this.apiGet('/invoice/' + encodeURIComponent(qbInvoiceId));
+    return d?.Invoice || null;
   }
 
   // Read-only reconciliation: pull every invoice from QuickBooks and report which ones

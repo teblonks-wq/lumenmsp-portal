@@ -410,10 +410,18 @@ router.post('/invoices/:id/apply-credit', requireAuth, async (req: Request, res:
   try {
     await client.query('BEGIN');
     const sort = (await client.query('SELECT COALESCE(MAX(sort_order),0)+1 AS n FROM invoice_items WHERE invoice_id=$1', [id])).rows[0].n;
+    // VAT-aware credit line (2026-07-30): a credit is CASH (VAT-inclusive). When it divides
+    // cleanly into net + 20% VAT, post it net @20% so the document's subtotal/VAT split stays
+    // honest — a gross line at 0% produces negative subtotals and overstates VAT (seen on
+    // IT-10001321). Falls back to the old gross@0 form when the pennies don't split.
+    const creditNet = Math.round((amount / 1.2) * 100) / 100;
+    const cleanSplit = Math.abs(creditNet * 1.2 - amount) < 0.005;
+    const creditUnit = cleanSplit ? -creditNet : -amount;
+    const creditRate = cleanSplit ? 20 : 0;
     await client.query(
       `INSERT INTO invoice_items (invoice_id, sort_order, description, quantity, unit_price, tax_rate, line_total)
-       VALUES ($1,$2,$3,1,$4,0,$4)`,
-      [id, sort, 'Credit applied' + (srcNum ? ' (overpayment from ' + srcNum + ')' : ''), (-amount).toFixed(2)]
+       VALUES ($1,$2,$3,1,$4,$5,$4)`,
+      [id, sort, 'Credit applied' + (srcNum ? ' (overpayment from ' + srcNum + ')' : '') + (cleanSplit ? ' - ' + amount.toFixed(2) + ' inc VAT' : ''), creditUnit.toFixed(2), creditRate]
     );
     const agg = (await client.query("SELECT COALESCE(SUM(line_total),0) AS sub, COALESCE(SUM(line_total*tax_rate/100),0) AS tax FROM invoice_items WHERE invoice_id=$1", [id])).rows[0];
     await client.query('UPDATE invoices SET subtotal=$1, tax_total=$2, total=$3, updated_at=NOW() WHERE id=$4',
@@ -930,6 +938,25 @@ router.post('/invoices/:id/ask', requireAuth, async (req: Request, res: Response
       } catch (e: any) { blocks.push(`[GC] GoCardless lookup failed: ${String(e.message || '').slice(0, 140)}`); }
     }
 
+    // What QuickBooks has on record — portal edits do NOT auto-update QB, so its copy can
+    // legitimately differ from the portal document (IT-2026-0008 taught us that on day one).
+    if (inv.quickbooks_invoice_id) {
+      try {
+        const qbc = await QuickBooks.load();
+        if (qbc.isConnected()) {
+          const qi = await qbc.getInvoice(String(inv.quickbooks_invoice_id));
+          if (qi) {
+            const qbTotal = Number(qi.TotalAmt || 0);
+            const drift = Math.abs(qbTotal - Number(inv.total || 0)) > 0.005;
+            blocks.push(`[QB] QuickBooks invoice #${inv.quickbooks_invoice_id} (DocNumber ${qi.DocNumber || '-'}): total ${finMoney(qbTotal)} | balance ${finMoney(qi.Balance ?? qbTotal)} | date ${qi.TxnDate || '-'} | customer "${qi.CustomerRef?.name || ''}"` +
+              (drift
+                ? `\n!!! QB DRIFT: QuickBooks holds ${finMoney(qbTotal)} but the portal document now totals ${finMoney(inv.total)} — the invoice was edited after it was pushed. VAT/credit decisions must account for which figure was declared.`
+                : `\nQuickBooks matches the portal document.`));
+          }
+        }
+      } catch (e: any) { blocks.push(`[QB] QuickBooks lookup failed: ${String(e.message || '').slice(0, 140)}`); }
+    }
+
     if (inv.customer_id) {
       const sibs = (await pool.query(
         `SELECT id, invoice_number, title, total, status, payment_status, issue_date, gocardless_payment_id, gocardless_payout_ref
@@ -962,7 +989,7 @@ router.post('/invoices/:id/ask', requireAuth, async (req: Request, res: Response
       '- Answer concisely and factually. If the data cannot answer, say exactly that — NEVER guess or invent figures.',
       '- Reply with STRICT JSON only — no markdown fences:',
       '  {"answer":"...","findings":[{"ref":"GC","quote":"exact verbatim snippet (max 140 chars)"}],"actions":[{"type":"...","label":"short button label","why":"one sentence","params":{}}]}',
-      '- 1 to 4 findings, most relevant first, quotes copied verbatim from the blocks. Valid refs: INV, L1.., GC, I<id>, C<id>, T<id>, SIB, CRED.',
+      '- 1 to 4 findings, most relevant first, quotes copied verbatim from the blocks. Valid refs: INV, L1.., GC, QB, I<id>, C<id>, T<id>, SIB, CRED.',
       '- ACTIONS: when the answer clearly calls for it, propose up to 3 one-click actions (in run order) the staff member can approve. NOTHING runs or sends without their click. Allowed types + params:',
       '  draft_reply {to, subject, body} — write the customer-facing reply (plain text paragraphs, friendly-professional UK tone, no sign-off — the signature is appended automatically). It is inserted into the composer for staff review, never sent automatically.',
       '  void_invoice {} — void THIS invoice (no customer email is sent).',
@@ -973,9 +1000,13 @@ router.post('/invoices/:id/ask', requireAuth, async (req: Request, res: Response
     ].join('\n');
 
     const raw = await aiAskText(system, `QUESTION: ${question}\n\nINVOICE DATA:\n\n${corpus}`, 800);
+    // Parse robustly: models sometimes wrap JSON in fences or lead with prose — take the
+    // outermost {...} span rather than trusting the reply shape.
     let parsed: any;
-    try { parsed = JSON.parse(raw.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim()); }
-    catch { parsed = { answer: raw.trim(), findings: [] }; }
+    try {
+      const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+      parsed = JSON.parse(a >= 0 && b > a ? raw.slice(a, b + 1) : raw);
+    } catch { parsed = { answer: raw.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim(), findings: [] }; }
     const ALLOWED_AGENT_ACTIONS: Record<string, string[]> = {
       draft_reply: ['to', 'subject', 'body'], void_invoice: [],
       create_restatement: ['title', 'line_description', 'net_amount', 'offset_description', 'notes'],
