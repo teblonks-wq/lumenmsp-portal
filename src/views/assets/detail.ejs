@@ -50,6 +50,7 @@
     <button type="button" data-tab="overview">Overview</button>
     <button type="button" data-tab="hardware">Hardware</button>
     <button type="button" data-tab="os">OS</button>
+    <button type="button" data-tab="backup">Backup<% if (backupPlans.length && backupPlans.some(function(p){ return p.cls==='failed'; })) { %> <span style="color:var(--bad-fg);">●</span><% } %></button>
   </nav>
 
   <section class="dev-tab-panel" data-key="overview">
@@ -107,6 +108,48 @@
         <div class="dev-field-row"><div class="k">Disk</div><div class="v"><%= fmt(asset.disk_info) %></div></div>
       </div>
     </div>
+  </section>
+
+  <section class="dev-tab-panel" data-key="backup">
+    <% if (!backupPlans.length) { %>
+      <p class="muted" style="font-size:13px;">No backup plans reported for this device by MSP360. If it should be protected, check the machine name matches in MSP360 (<%= asset.hostname || 'no hostname' %>) — devices match by machine name.</p>
+    <% } else { %>
+      <p class="dev-subcard-title">Backup plans (<%= backupPlans[0].provider %>)</p>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th>Plan</th><th>Type</th><th>Last run</th><th>Next run</th><th>Data moved</th><th>Status</th></tr></thead>
+        <tbody>
+        <% backupPlans.forEach(function(p){ %>
+          <tr>
+            <td style="font-weight:600;"><%= p.planName %><% if (p.errorMessage) { %><div class="muted" style="font-size:11px;color:var(--bad-fg);"><%= p.errorMessage %></div><% } %></td>
+            <td class="muted"><%= p.typeLabel || '—' %></td>
+            <td class="muted" style="white-space:nowrap;"><%= dt(p.lastStart) %></td>
+            <td class="muted" style="white-space:nowrap;"><%= dt(p.nextStart) %></td>
+            <td class="muted"><%= p.dataCopiedH || '—' %><% if (p.totalDataH) { %> <span style="font-size:11px;">of <%= p.totalDataH %></span><% } %></td>
+            <td><span class="badge <%= p.cls==='ok' ? 'badge-sent' : (p.cls==='failed' ? 'badge-failed' : 'badge-inactive') %>"><%= p.statusLabel %></span></td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+      <% if (backupHistory.length) { %>
+        <p class="dev-subcard-title" style="margin-top:16px;">Recent history (last 14 days)</p>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>Day</th><th>Plan</th><th>Result</th><th>Data moved</th></tr></thead>
+          <tbody>
+          <% backupHistory.forEach(function(h){ %>
+            <tr>
+              <td class="muted" style="white-space:nowrap;"><%= new Date(h.day + 'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'}) %></td>
+              <td class="muted"><%= h.planName %></td>
+              <td><span class="badge <%= h.cls==='ok' ? 'badge-sent' : (h.cls==='failed' ? 'badge-failed' : 'badge-inactive') %>"><%= h.statusLabel %></span></td>
+              <td class="muted"><%= h.dataCopiedH || '—' %></td>
+            </tr>
+          <% }); %>
+          </tbody>
+        </table></div>
+      <% } else { %>
+        <p class="muted" style="font-size:12px;margin-top:12px;">Daily history starts accruing from today's sync — the Portal keeps its own backup timeline per device from now on.</p>
+      <% } %>
+      <p class="muted" style="font-size:12px;margin-top:10px;">Synced nightly from MSP360; matched to this device by machine name. Company link for reporting is set on the customer's IT report page.</p>
+    <% } %>
   </section>
 
   <section class="dev-tab-panel" data-key="os">

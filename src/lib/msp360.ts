@@ -94,6 +94,21 @@ export async function ensureBackupTables(): Promise<void> {
       synced_at     TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_bps_company ON backup_plan_status (provider, company);
+    -- Daily history (append-only): one row per plan per day, so the Portal accrues its own
+    -- backup timeline per device — the asset page is heading towards system-of-record status,
+    -- so history starts accruing NOW and survives any future RMM/provider switch.
+    CREATE TABLE IF NOT EXISTS backup_history (
+      id          SERIAL PRIMARY KEY,
+      day         DATE NOT NULL,
+      provider    TEXT NOT NULL DEFAULT 'msp360',
+      company     TEXT DEFAULT '',
+      computer    TEXT DEFAULT '',
+      plan_name   TEXT DEFAULT '',
+      status      TEXT DEFAULT '',
+      data_copied BIGINT,
+      UNIQUE (day, provider, company, computer, plan_name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bh_computer ON backup_history (computer, day DESC);
   `);
 }
 
@@ -146,6 +161,13 @@ export async function syncMsp360(): Promise<{ companies: number; plans: number }
          String(m.ErrorMessage || '').slice(0, 500), ts(m.LastStart), ts(m.NextStart),
          num(m.DataCopied), num(m.TotalData)]);
       planCount++;
+      // Append today's state to the permanent history (latest state wins within a day).
+      await client.query(
+        `INSERT INTO backup_history (day, provider, company, computer, plan_name, status, data_copied)
+         VALUES (CURRENT_DATE, 'msp360', $1, $2, $3, $4, $5)
+         ON CONFLICT (day, provider, company, computer, plan_name) DO UPDATE SET status=$4, data_copied=$5`,
+        [String(m.CompanyName || '').trim(), String(m.ComputerName || ''), String(m.PlanName || ''),
+         String(m.Status ?? ''), num(m.DataCopied)]);
     }
     await client.query('COMMIT');
     console.log(`[msp360] synced ${companyCount} companies, ${planCount} plan statuses`);
@@ -260,6 +282,66 @@ export async function listBackupCompanies(customerId: number): Promise<{
     linked_customer_id: row.linked_customer_id,
     linked_here: row.linked_customer_id === customerId,
   }));
+}
+
+// ── Asset-page integration: backup state per DEVICE ───────────────────────────────
+// MSP360's ComputerName and Atera's hostname are the same machine name in practice
+// (AMR-S1, LAR-DENTAL…), so devices match case-insensitively on hostname. No link
+// table needed at device level — the company link governs the customer level.
+export async function getBackupForComputer(hostname: string): Promise<BackupPlanRow[]> {
+  const h = String(hostname || '').trim();
+  if (!h) return [];
+  try {
+    const r = await pool.query(
+      `SELECT provider, company, computer, plan_name, plan_type, status, error_message,
+              last_start, next_start, data_copied, total_data
+         FROM backup_plan_status
+        WHERE LOWER(computer) = LOWER($1) AND plan_type = ANY($2)
+        ORDER BY plan_name`, [h, [...BACKUP_PLAN_TYPES]]);
+    return r.rows.map((p: any) => ({
+      provider: p.provider, company: p.company, computer: p.computer, planName: p.plan_name,
+      planType: p.plan_type, status: p.status, errorMessage: p.error_message,
+      lastStart: p.last_start, nextStart: p.next_start,
+      dataCopied: p.data_copied == null ? null : Number(p.data_copied),
+      totalData: p.total_data == null ? null : Number(p.total_data),
+    }));
+  } catch { return []; }
+}
+
+// Worst backup state per computer (lower-cased hostname → ok/failed/other) for list badges.
+// One grouped query, not per-row — the assets list can have hundreds of devices.
+export async function backupStateByComputer(): Promise<Record<string, 'ok' | 'failed' | 'other'>> {
+  const out: Record<string, 'ok' | 'failed' | 'other'> = {};
+  try {
+    const r = await pool.query(
+      `SELECT LOWER(computer) AS comp, ARRAY_AGG(status) AS statuses
+         FROM backup_plan_status WHERE computer <> '' AND plan_type = ANY($1)
+        GROUP BY LOWER(computer)`, [[...BACKUP_PLAN_TYPES]]);
+    for (const row of r.rows) {
+      const classes = (row.statuses as string[]).map(classifyPlanStatus);
+      out[row.comp] = classes.includes('failed') ? 'failed' : classes.includes('other') ? 'other' : 'ok';
+    }
+  } catch { /* tables may not exist yet */ }
+  return out;
+}
+
+// Recent daily history for one device (newest first) — feeds the asset page's timeline.
+export async function getBackupHistoryForComputer(hostname: string, days = 14): Promise<{
+  day: string; planName: string; status: string; dataCopied: number | null;
+}[]> {
+  const h = String(hostname || '').trim();
+  if (!h) return [];
+  try {
+    const r = await pool.query(
+      `SELECT TO_CHAR(day, 'YYYY-MM-DD') AS day, plan_name, status, data_copied
+         FROM backup_history
+        WHERE LOWER(computer) = LOWER($1) AND day > CURRENT_DATE - $2::int
+        ORDER BY day DESC, plan_name`, [h, days]);
+    return r.rows.map((x: any) => ({
+      day: x.day, planName: x.plan_name, status: x.status,
+      dataCopied: x.data_copied == null ? null : Number(x.data_copied),
+    }));
+  } catch { return []; }
 }
 
 export function fmtBytes(n: number): string {

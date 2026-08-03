@@ -3,6 +3,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { syncAssetsFromAtera, lastAssetSyncAt, remoteUrlTemplate, saveRemoteUrlTemplate, buildRemoteUrl } from '../lib/asset-sync';
+import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
 
 const router = Router();
 
@@ -39,8 +40,11 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   const types = (await pool.query("SELECT DISTINCT device_type FROM customer_assets WHERE device_type IS NOT NULL ORDER BY device_type")).rows.map((r: any) => r.device_type);
   const customers = (await pool.query('SELECT id, name FROM customers WHERE deleted_at IS NULL ORDER BY name')).rows;
 
+  // Backup badge per device — one grouped query over the MSP360 snapshot.
+  const backupState = await backupStateByComputer();
+
   res.render('assets/list', {
-    user: req.session.user!, rows, unmatchedCount, types, customers,
+    user: req.session.user!, rows, unmatchedCount, types, customers, backupState,
     filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser },
     lastSynced: await lastAssetSyncAt(),
     remoteTemplate: await remoteUrlTemplate(),
@@ -109,8 +113,26 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   // device without guessing, since pick() field-name candidates won't always match every Atera
   // account/API version. Temporary diagnostic aid, not a general feature.
   const showDebug = req.session.user!.role === 'admin' && req.query.debug === '1';
+  // Backup panel: MSP360 plans matched to this device by machine name, plus the Portal's
+  // own accrued daily history (the asset page is heading towards system-of-record status).
+  const backupPlansRaw = await getBackupForComputer(row.hostname || '');
+  const backupPlans = backupPlansRaw.map((pl) => ({
+    provider: pl.provider === 'msp360' ? 'MSP360' : pl.provider,
+    company: pl.company, planName: pl.planName,
+    typeLabel: planTypeLabel(pl.planType),
+    statusLabel: planStatusLabel(pl.status),
+    cls: classifyPlanStatus(pl.status),
+    lastStart: pl.lastStart, nextStart: pl.nextStart,
+    dataCopiedH: pl.dataCopied != null ? fmtBytes(pl.dataCopied) : null,
+    totalDataH: pl.totalData != null ? fmtBytes(pl.totalData) : null,
+    errorMessage: pl.errorMessage || '',
+  }));
+  const backupHistory = (await getBackupHistoryForComputer(row.hostname || '', 14)).map((h) => ({
+    ...h, statusLabel: planStatusLabel(h.status), cls: classifyPlanStatus(h.status),
+    dataCopiedH: h.dataCopied != null ? fmtBytes(h.dataCopied) : null,
+  }));
   res.render('assets/detail', {
-    user: req.session.user!, asset: row,
+    user: req.session.user!, asset: row, backupPlans, backupHistory,
     remoteUrl: row.external_id ? buildRemoteUrl(tpl, { agentId: row.external_id, deviceGuid: row.device_guid }) : null,
     back: safeBack(req.query.back, '/assets'), contactOptions,
     rawJson: showDebug ? JSON.stringify(row.raw, null, 2) : null,

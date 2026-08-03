@@ -2006,3 +2006,18 @@ model BackupPlanStatus {
   @@index([provider, company], map: "idx_bps_company")
   @@map("backup_plan_status")
 }
+
+model BackupHistory {
+  id         Int     @id @default(autoincrement())
+  day        DateTime @db.Date
+  provider   String  @default("msp360")
+  company    String? @default("")
+  computer   String? @default("")
+  planName   String? @default("") @map("plan_name")
+  status     String? @default("")
+  dataCopied BigInt? @map("data_copied")
+
+  @@unique([day, provider, company, computer, planName], map: "backup_history_day_provider_company_computer_plan_name_key")
+  @@index([computer, day(sort: Desc)], map: "idx_bh_computer")
+  @@map("backup_history")
+}

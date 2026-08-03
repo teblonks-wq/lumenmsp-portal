@@ -57,15 +57,21 @@ function remoteHref(a){
 <div class="card" style="padding:0;">
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th></th><th>Hostname</th><th>Customer</th><th>Type</th><th>OS</th><th>Manufacturer / Model</th><th>User</th><th>Last seen</th><th></th></tr></thead>
+      <thead><tr><th></th><th>Hostname</th><th>Customer</th><th>Type</th><th>Backup</th><th>OS</th><th>Manufacturer / Model</th><th>User</th><th>Last seen</th><th></th></tr></thead>
       <tbody>
-        <% if (rows.length===0) { %><tr><td colspan="9"><div class="empty-state">No devices match. Try "↻ Sync from Atera" if this is the first run.</div></td></tr><% } %>
+        <% if (rows.length===0) { %><tr><td colspan="10"><div class="empty-state">No devices match. Try "↻ Sync from Atera" if this is the first run.</div></td></tr><% } %>
         <% rows.forEach(function(a){ %>
           <tr>
             <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
             <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/assets') %>"><%= a.hostname || '(unnamed device)' %></a></td>
             <td class="muted"><% if (a.customer_id) { %><a class="row-link" href="/customers/<%= a.customer_id %>#assets"><%= a.customer_name %></a><% } else { %>—<% } %></td>
             <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span></td>
+            <td><% var bs = backupState[String(a.hostname||'').toLowerCase()]; %>
+              <% if (bs === 'ok') { %><span class="badge badge-sent" title="All backup plans succeeded (MSP360)">Protected</span>
+              <% } else if (bs === 'failed') { %><span class="badge badge-failed" title="A backup plan needs attention (MSP360)">Attention</span>
+              <% } else if (bs) { %><span class="badge badge-inactive" title="Backup state is running/warning/unknown (MSP360)">Check</span>
+              <% } else { %><span class="muted" style="opacity:.5;">—</span><% } %>
+            </td>
             <td class="muted"><%= a.os || '—' %><% if (a.os_version) { %> <span style="font-size:11px;">(<%= a.os_version %>)</span><% } %></td>
             <td class="muted"><%= [a.manufacturer, a.model].filter(Boolean).join(' ') || '—' %></td>
             <td class="muted" style="font-size:12px;" title="<%= a.assigned_name ? (a.assigned_name + ' (assigned)') : (a.last_login_user || '') %>"><% if (a.assigned_name) { %><span style="font-weight:600;color:var(--ink);"><%= a.assigned_name %></span><% } else if (a.last_login_user) { %><%= String(a.last_login_user).split('\\').pop() %><% } else { %><span class="muted" style="opacity:.55;">unallocated</span><% } %></td>
