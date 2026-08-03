@@ -93,7 +93,7 @@
 
   <% if (hv && customer.entra_tenant_id) { %>
   <div style="margin:-6px 0 16px;">
-    <button type="button" class="btn" style="padding:5px 12px;font-size:13px;" onclick="testGraph()">\u{1F50D} Test Microsoft 365 access</button>
+    <button type="button" class="btn" style="padding:5px 12px;font-size:13px;" onclick="testGraph()">🔍 Test Microsoft 365 access</button>
     <span id="gtestMsg" class="muted" style="font-size:12px;margin-left:8px;"></span>
     <div id="gtestOut" style="display:none;margin-top:10px;"></div>
   </div>
@@ -117,6 +117,7 @@
     }).catch(function(){ msg.textContent='Test failed \u2014 try again.'; });
   }
   </script>
+  <% } %>
 <nav class="cust-tabs">
   <button type="button" data-tab="overview">Overview</button>
   <button type="button" data-tab="contacts">Contacts (<%= contacts.length %>)</button>
