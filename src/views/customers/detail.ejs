@@ -91,6 +91,32 @@
 </div>
 <% } %>
 
+  <% if (hv && customer.entra_tenant_id) { %>
+  <div style="margin:-6px 0 16px;">
+    <button type="button" class="btn" style="padding:5px 12px;font-size:13px;" onclick="testGraph()">\u{1F50D} Test Microsoft 365 access</button>
+    <span id="gtestMsg" class="muted" style="font-size:12px;margin-left:8px;"></span>
+    <div id="gtestOut" style="display:none;margin-top:10px;"></div>
+  </div>
+  <script>
+  function testGraph(){
+    var out=document.getElementById('gtestOut'), msg=document.getElementById('gtestMsg');
+    msg.textContent='Testing every permission with a fresh token\u2026'; out.style.display='none';
+    fetch('/customers/<%= customer.id %>/graph-test',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+      msg.textContent='';
+      if(!d.ok){ out.style.display='block'; out.innerHTML='<div class="alert alert-error" style="max-width:900px;">'+(d.error||'Test failed')+'</div>'; return; }
+      if(!d.tokenOk){ out.style.display='block'; out.innerHTML='<div class="alert alert-error" style="max-width:900px;">Could not get a token for this tenant: '+(d.tokenError||'')+'</div>'; return; }
+      var rows=d.results.map(function(p){
+        var col=p.ok?'#16a34a':'#dc2626';
+        return '<tr><td style="padding:6px 10px;font-weight:600;">'+p.label+'</td>'+
+          '<td style="padding:6px 10px;font-family:monospace;font-size:12px;color:#6b7280;">'+p.scope+'</td>'+
+          '<td style="padding:6px 10px;white-space:nowrap;"><span style="color:'+col+';font-weight:800;">'+(p.ok?'\u2714 Pass':'\u2716 Fail')+'</span></td>'+
+          '<td style="padding:6px 10px;font-size:13px;color:#6b7280;">'+(p.note||'')+'</td></tr>';
+      }).join('');
+      out.style.display='block';
+      out.innerHTML='<div class="card" style="padding:0;max-width:900px;"><div class="table-wrap"><table class="table"><thead><tr><th>Capability</th><th>Permission (scope)</th><th>Result</th><th>Detail</th></tr></thead><tbody>'+rows+'</tbody></table></div></div>';
+    }).catch(function(){ msg.textContent='Test failed \u2014 try again.'; });
+  }
+  </script>
 <nav class="cust-tabs">
   <button type="button" data-tab="overview">Overview</button>
   <button type="button" data-tab="contacts">Contacts (<%= contacts.length %>)</button>

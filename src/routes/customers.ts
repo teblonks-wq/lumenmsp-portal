@@ -12,7 +12,7 @@ import { getSetting, setSetting } from '../lib/settings';
 import { accountTotals, cliList, commsAccount, HANDSET_RE, CALL_TYPES, classifyCall, getCallMarkups, allocateNumberRange, commsCallCharge } from '../lib/comms-billing';
 import { setSalePrice } from '../lib/service-pricing';
 import { config } from '../config';
-import { syncGraphConsent, graphConsentUrl } from '../lib/graph-consent';
+import { syncGraphConsent, graphConsentUrl, testGraphPermissions } from '../lib/graph-consent';
 import { getBackupSummaryForCustomer, listBackupCompanies, ensureBackupTables, classifyPlanStatus, planStatusLabel, fmtBytes } from '../lib/msp360';
 import crypto from 'crypto';
 import multer from 'multer';
@@ -130,6 +130,20 @@ router.post('/customers/:id/backup-unlink', requireAuth, async (req: Request, re
     'DELETE FROM backup_provider_links WHERE customer_id=$1 AND provider=$2 AND external_key=$3',
     [id, String(req.body.provider || 'msp360'), String(req.body.external_key || '')]);
   res.redirect('/customers/' + id + '#assets');
+});
+
+// Live per-permission Graph test for one customer (button on the customer panel).
+router.get('/customers/:id/graph-test', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const c = (await pool.query('SELECT entra_tenant_id, name FROM customers WHERE id=$1', [id])).rows[0];
+  if (!c) { res.status(404).json({ ok: false, error: 'Customer not found' }); return; }
+  if (!c.entra_tenant_id) { res.json({ ok: false, error: 'No Entra tenant ID recorded for this customer.' }); return; }
+  try {
+    const r = await testGraphPermissions(c.entra_tenant_id);
+    res.json({ ok: true, tenant: c.entra_tenant_id, ...r });
+  } catch (e: any) {
+    res.json({ ok: false, error: (e.message || 'Test failed').slice(0, 200) });
+  }
 });
 
 // Re-probe every recorded tenant's Graph consent on demand (the daily check runs at 06:15).

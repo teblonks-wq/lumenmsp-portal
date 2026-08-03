@@ -84,6 +84,46 @@ async function probeTenant(tenant: string): Promise<{ status: string; detail: st
   return first;
 }
 
+// ── Per-permission tester ────────────────────────────────────────────────────────
+// Probes every Graph permission the reporting/report features rely on, one endpoint each,
+// with a single forced-fresh token, and reports pass/fail per permission. Powers the
+// "Test Microsoft 365 access" button on the customer panel — so staff can see exactly which
+// scopes are effective in a tenant, not just a single green/amber dot.
+export interface PermTest { label: string; scope: string; ok: boolean; status: number | string; note: string; }
+
+const PERM_PROBES: { label: string; scope: string; path: string }[] = [
+  { label: 'Directory / users', scope: 'User.Read.All', path: '/v1.0/users?$top=1&$select=id' },
+  { label: 'Organisation details', scope: 'Organization.Read.All', path: '/v1.0/organization?$select=id,displayName' },
+  { label: 'Groups', scope: 'Group.Read.All', path: '/v1.0/groups?$top=1&$select=id' },
+  { label: 'Intune devices', scope: 'DeviceManagementManagedDevices.Read.All', path: '/v1.0/deviceManagement/managedDevices?$top=1&$select=id' },
+  { label: 'Secure Score', scope: 'SecurityEvents.Read.All', path: '/v1.0/security/secureScores?$top=1' },
+  { label: 'Service health', scope: 'ServiceHealth.Read.All', path: '/v1.0/admin/serviceAnnouncement/issues?$top=1' },
+];
+
+export async function testGraphPermissions(tenant: string): Promise<{ tokenOk: boolean; tokenError: string; results: PermTest[] }> {
+  let token = '';
+  try {
+    token = await getGraphTokenForTenant(tenant, true); // always a fresh token for a true test
+  } catch (e: any) {
+    return { tokenOk: false, tokenError: String(e?.message || e).slice(0, 300), results: [] };
+  }
+  const results: PermTest[] = [];
+  for (const p of PERM_PROBES) {
+    try {
+      const res = await fetch('https://graph.microsoft.com' + p.path, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+      if (res.ok) { results.push({ label: p.label, scope: p.scope, ok: true, status: res.status, note: 'OK' }); continue; }
+      let note = `HTTP ${res.status}`;
+      if (res.status === 403) note = 'Forbidden — scope not granted, or feature not licensed in this tenant';
+      else if (res.status === 401) note = 'Unauthorised — consent missing';
+      else { try { const j: any = await res.json(); if (j?.error?.message) note = String(j.error.message).slice(0, 120); } catch { /* ignore */ } }
+      results.push({ label: p.label, scope: p.scope, ok: false, status: res.status, note });
+    } catch (e: any) {
+      results.push({ label: p.label, scope: p.scope, ok: false, status: 'error', note: String(e?.message || e).slice(0, 120) });
+    }
+  }
+  return { tokenOk: true, tokenError: '', results };
+}
+
 export async function refreshGraphConsentForTenant(tenantId: string): Promise<void> {
   const t = (tenantId || '').trim();
   if (!t || !reportingApp().clientId) return;
