@@ -4,6 +4,7 @@ import { getIntuneSummary, getSecureScoreSummary, type IntuneSummary, type Secur
 import { getHelpdeskStats, fmtResponse, type HelpdeskStats } from './helpdesk';
 import { getDnsSecurity, type DnsResult } from './dns';
 import { getDmarcMonthSummary, getDomainHealth, type DmarcMonthSummary, type DomainHealth } from '../dmarc/store';
+import { getBackupSummaryForCustomer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes, type BackupSummary } from '../msp360';
 import { aiWriteItReport } from '../ai-compose';
 
 // ── Monthly "IT Operations & Security Snapshot" ──────────────────────────────────
@@ -145,21 +146,23 @@ export interface ItReportData {
   dns: DnsResult | null;
   dmarcMon: DmarcMonthSummary | null;  // LITS-DMARC — null unless the domain is monitored
   domainHealth: DomainHealth | null;   // LITS-DMARC deep check (score, SPF/DKIM/DMARC, platform DNS)
+  backup: BackupSummary | null;        // MSP360 (and future providers) via backup_provider_links
 }
 
 export async function collectItReportData(customerId: number, tenant: string | null, domain: string, from: Date, to: Date, excludedTickets: string[] = []): Promise<ItReportData> {
-  const [intune, secureScore, helpdesk, dns, dmarcMon, domainHealth] = await Promise.all([
+  const [intune, secureScore, helpdesk, dns, dmarcMon, domainHealth, backup] = await Promise.all([
     getIntuneSummary(tenant),
     getSecureScoreSummary(tenant),
     getHelpdeskStats(customerId, from, to, excludedTickets),
     domain ? getDnsSecurity(domain) : Promise.resolve(null),
     domain ? getDmarcMonthSummary(domain, from, to).catch(() => null) : Promise.resolve(null),
     domain ? getDomainHealth(domain).catch(() => null) : Promise.resolve(null),
+    getBackupSummaryForCustomer(customerId).catch(() => null),
   ]);
   // Vulnerability comes from the monthly external RoboShadow scan (entered manually — no remote
   // access to auto-pull). Defender TVM stays available as a future auto-source but isn't called here.
   const vulnerability: Unavailable = { available: false, note: 'Provided from the monthly external scan.' };
-  return { intune, secureScore, vulnerability, helpdesk, dns, dmarcMon, domainHealth };
+  return { intune, secureScore, vulnerability, helpdesk, dns, dmarcMon, domainHealth, backup };
 }
 
 // A full plain-text digest of EVERY collected + manual metric, so Claude forms a complete picture
@@ -173,8 +176,13 @@ function metricsBrief(d: ItReportData, m: ItManual): string {
   if (d.intune.available) patch.push(`Windows patch compliance ${d.intune.compliancePct}%`);
   bulletsFromText(m.patchBullets).forEach((b) => patch.push(b));
   if (patch.length || m.patchStatus) L.push(`Patch/endpoint: ${patch.join('; ') || 'see status'}${m.patchStatus ? ` (status: ${m.patchStatus})` : ''}.`);
+  if (d.backup) {
+    const b = d.backup;
+    const failing = b.plans.filter((pl) => classifyPlanStatus(pl.status) === 'failed').map((pl) => `${pl.computer} (${pl.planName} — ${planStatusLabel(pl.status)})`);
+    L.push(`Backup (${b.providers.join(', ')}): ${fmtBytes(b.totalStorageBytes)} protected across ${b.companies.join(', ')}; ${b.plans.length} backup plans — ${b.okPlans} healthy, ${b.failedPlans} failing${b.otherPlans ? `, ${b.otherPlans} other` : ''}${failing.length ? `; failing: ${failing.slice(0, 5).join(', ')}` : ''}.`);
+  }
   const backup = bulletsFromText(m.backupBullets);
-  if (backup.length || m.backupStatus) L.push(`Backup: ${backup.join('; ') || 'configured'}${m.backupStatus ? ` (status: ${m.backupStatus})` : ''}.`);
+  if (backup.length || m.backupStatus) L.push(`Backup notes: ${backup.join('; ') || 'configured'}${m.backupStatus ? ` (status: ${m.backupStatus})` : ''}.`);
   const delivPct = (m.deliverabilityPct || '').trim() || ((d.dmarcMon && d.dmarcMon.volume) ? `${d.dmarcMon.alignedPct}% (from DMARC authentication)` : '');
   if (d.dns) L.push(`Email security: ${d.dns.rows.filter((r) => r.ok).length}/${d.dns.rows.length} DNS controls present for ${d.dns.domain}${delivPct ? `; deliverability ${delivPct}` : ''}.`);
   if (d.domainHealth) {
@@ -313,10 +321,36 @@ function sectionPatch(d: ItReportData, m: ItManual): string {
   return card('Patch Management & Endpoint Protection', ticks(lines), m.patchStatus || (d.intune.available && d.intune.compliancePct >= 90 ? 'Healthy' : 'Active monitoring'));
 }
 
-function sectionBackup(m: ItManual): string {
+function sectionBackup(d: ItReportData, m: ItManual): string {
   const bl = bulletsFromText(m.backupBullets);
-  if (!bl.length) return card('Backup & Recovery Readiness', pending('Backup details not yet recorded.', 'Add the backup configuration in the report settings.'), 'Data pending');
-  return card('Backup & Recovery Readiness', ticks(bl), m.backupStatus || 'Healthy');
+  const b = d.backup;
+  if (!b) {
+    // No provider linked (or nothing synced yet) — the manual path, exactly as before.
+    if (!bl.length) return card('Backup & Recovery Readiness', pending('Backup details not yet recorded.', 'Link a backup provider or add the configuration in the report settings.'), 'Data pending');
+    return card('Backup & Recovery Readiness', ticks(bl), m.backupStatus || 'Healthy');
+  }
+  const grid = `<div class="stat-grid">
+    <div class="stat"><div class="stat-val">${esc(fmtBytes(b.totalStorageBytes))}</div><div class="stat-lbl">Total protected data</div></div>
+    <div class="stat"><div class="stat-val">${b.plans.length}</div><div class="stat-lbl">Backup plans monitored</div></div>
+    <div class="stat ${b.failedPlans ? '' : 'stat-good'}"><div class="stat-val">${b.failedPlans}</div><div class="stat-lbl">Plans needing attention</div></div>
+  </div>`;
+  const bar = (b.okPlans + b.failedPlans) ? splitBar('Healthy plans', b.okPlans, 'Failing', b.failedPlans) : '';
+  const planRows = b.plans.slice(0, 20).map((pl) => {
+    const cls = classifyPlanStatus(pl.status);
+    const badge = cls === 'ok' ? '<span class="badge badge-answered">OK</span>'
+      : cls === 'failed' ? `<span class="badge badge-missed">${esc(planStatusLabel(pl.status))}</span>`
+      : `<span class="badge">${esc(planStatusLabel(pl.status))}</span>`;
+    const when = pl.lastStart ? new Date(pl.lastStart).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—';
+    const typ = planTypeLabel(pl.planType);
+    return `<tr><td style="font-family:monospace;">${esc(pl.computer || '—')}</td><td>${esc(pl.planName)}${typ ? ` <span style="font-size:12px;color:#94a3b8;">(${esc(typ)})</span>` : ''}</td><td style="white-space:nowrap;">${when}</td><td>${badge}</td></tr>`;
+  }).join('');
+  const table = b.plans.length
+    ? `<div class="table-wrap" style="margin-top:12px;"><table class="tbl"><thead><tr><th>Device</th><th>Backup plan</th><th>Last run</th><th>Status</th></tr></thead><tbody>${planRows}</tbody></table></div>`
+    : '';
+  const src = `<p style="margin:10px 0 0;font-size:13px;color:#94a3b8;">Monitored via ${esc(b.providers.join(', '))}${b.syncedAt ? `, checked ${new Date(b.syncedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}.</p>`;
+  const extras = bl.length ? `<div style="margin-top:10px;">${ticks(bl)}</div>` : '';
+  const status = m.backupStatus || (b.failedPlans ? 'Attention' : 'Healthy');
+  return card('Backup & Recovery Readiness', grid + bar + table + extras + src, status);
 }
 
 // Deliverability: AUTO from DMARC authentication (Domain Health aggregate reports) when
@@ -575,7 +609,7 @@ export async function generateItReport(opts: GenerateOpts): Promise<{ html: stri
     commentaryCard,
     sectionDevices(data),
     sectionPatch(data, manual),
-    sectionBackup(manual),
+    sectionBackup(data, manual),
     sectionDns(data, manual),
     sectionThreat(data, manual),
     sectionCyber(data),

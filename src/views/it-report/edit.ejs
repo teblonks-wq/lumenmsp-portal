@@ -119,6 +119,45 @@
 </form>
 
 <div class="card">
+  <div class="card-header"><h2>Backup providers</h2></div>
+  <p class="muted" style="margin-top:0;">Companies synced from MSP360 (short names). Link the ones that belong to <strong><%= c.name %></strong> — the report's Backup &amp; Recovery section then fills itself with plan health and protected storage. A customer can have several linked companies (and other providers later).</p>
+  <% if (!backupCompanies || !backupCompanies.length) { %>
+    <p class="muted">Nothing synced from MSP360 yet — check the API credentials in the server settings, or wait for the nightly sync (05:45).</p>
+  <% } else { %>
+  <table class="table">
+    <thead><tr><th>Provider company</th><th>Users</th><th>Storage</th><th>Linked to</th><th style="width:110px;"></th></tr></thead>
+    <tbody>
+    <% backupCompanies.forEach(function(b){ %>
+      <tr>
+        <td style="font-weight:600;"><%= b.external_key %> <span class="muted" style="font-size:11px;">(MSP360)</span></td>
+        <td><%= b.users %></td>
+        <td><%= b.storage_h %></td>
+        <td>
+          <% if (b.linked_here) { %><span class="badge badge-sent">this customer</span>
+          <% } else if (b.linked_customer_id) { %><span class="muted" style="font-size:13px;"><%= backupCustNames.get(b.linked_customer_id) %></span>
+          <% } else { %><span class="muted" style="font-size:13px;">—</span><% } %>
+        </td>
+        <td style="text-align:right;">
+          <% if (b.linked_here) { %>
+            <form method="post" action="/it-report/<%= c.id %>/backup-unlink" style="margin:0;display:inline;">
+              <input type="hidden" name="provider" value="<%= b.provider %>"><input type="hidden" name="external_key" value="<%= b.external_key %>">
+              <button class="btn" style="padding:3px 10px;font-size:12px;">Unlink</button>
+            </form>
+          <% } else if (!b.linked_customer_id) { %>
+            <form method="post" action="/it-report/<%= c.id %>/backup-link" style="margin:0;display:inline;">
+              <input type="hidden" name="provider" value="<%= b.provider %>"><input type="hidden" name="external_key" value="<%= b.external_key %>">
+              <button class="btn btn-primary" style="padding:3px 10px;font-size:12px;">Link here</button>
+            </form>
+          <% } %>
+        </td>
+      </tr>
+    <% }); %>
+    </tbody>
+  </table>
+  <% } %>
+</div>
+
+<div class="card">
   <div class="card-header"><h2>Running notes log</h2></div>
   <p class="muted" style="margin-top:0;">Drop observations as they happen (e.g. "internet outage on the 12th — considering a supplier review"). Notes within the reporting month are compiled and handed to Claude for the write-up.</p>
   <div style="display:flex;gap:8px;margin-bottom:16px;">

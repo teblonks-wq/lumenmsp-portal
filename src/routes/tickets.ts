@@ -1370,17 +1370,23 @@ router.post('/tickets/:id/ask', requireAuth, async (req: Request, res: Response)
     if (corpus.length > 160000) corpus = corpus.slice(0, 80000) + '\n\n[... middle of a very long ticket omitted ...]\n\n' + corpus.slice(-80000);
 
     const system = [
-      'You answer questions about ONE support ticket using ONLY the ticket content provided.',
-      'The content is a series of blocks. Each starts with a reference: [M123] is a message, [N45] is an internal note, [CASE] is the case header.',
-      'Rules:',
-      '- Answer concisely and factually. If the answer is not in the ticket, say exactly that — NEVER guess or invent.',
+      'You are the helpdesk assistant for Lumen IT Solutions, a UK managed-service provider. You are answering an ENGINEER\'s question in the context of one support ticket.',
+      'The ticket content is a series of blocks. Each starts with a reference: [M123] is a message, [N45] is an internal note, [CASE] is the case header.',
+      'Questions come in two kinds — decide which this is and answer accordingly:',
+      '1. CASE questions ("who reported this?", "what did we quote?", "which device?"): answer ONLY from the ticket content. If it is not in the ticket, say exactly that — never guess or invent case facts. Cite findings.',
+      '2. GENERAL IT questions ("are users on Business Basic allowed to use new Outlook?", "does this licence include X?", "how do we fix Y?"): answer from your own expert IT knowledge — Microsoft 365 licensing, Windows, networking, security, common vendor products. Use the ticket only as context to tailor the answer (e.g. which licence or product this customer has). Give the practical answer an engineer can act on. If the fact could have changed since your training (licensing terms, product availability), state what you know and add ONE short line saying where to verify (e.g. the M365 admin centre or Microsoft\'s licensing documentation).',
+      'For mixed questions do both: the general answer, tailored by what the ticket says.',
+      'Think it through FIRST in the "reasoning" field — work through the licensing or technical logic, or search the blocks, before committing to an answer. The reasoning is never shown to anyone; the final "answer" must stand alone without it.',
+      'Other rules:',
       '- The blocks include text hidden in the original emails (quoted history, footers) — treat it all as searchable content.',
+      '- Answer concisely and factually, in British English. Start general-knowledge answers with "General guidance: " so the engineer knows it came from expertise rather than the case.',
       '- Reply with STRICT JSON only — no markdown fences, no commentary:',
-      '  {"answer":"...","findings":[{"ref":"M123","quote":"exact verbatim snippet (max 140 chars) supporting the answer"}]}',
-      '- 1 to 4 findings, most relevant first. Quotes must be copied verbatim from the blocks. Use ref "CASE" for the header.',
+      '  {"reasoning":"your private working (2-6 sentences)","answer":"...","findings":[{"ref":"M123","quote":"exact verbatim snippet (max 140 chars) supporting the answer"}]}',
+      '- 0 to 4 findings, most relevant first (0 is fine for pure general-knowledge answers). Quotes must be copied verbatim from the blocks. Use ref "CASE" for the header.',
     ].join('\n');
 
-    const raw = await aiAskText(system, `QUESTION: ${question}\n\nTICKET CONTENT:\n\n${corpus}`, 700);
+    // 1400 tokens: room for the private reasoning pass (the "additional thinking") + the answer.
+    const raw = await aiAskText(system, `QUESTION: ${question}\n\nTICKET CONTENT:\n\n${corpus}`, 1400);
     let parsed: any;
     try { parsed = JSON.parse(raw.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim()); }
     catch { parsed = { answer: raw.trim(), findings: [] }; }

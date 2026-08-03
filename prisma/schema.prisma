@@ -1960,3 +1960,49 @@ model MailCampaignRecipient {
   @@index([campaignId, status])
   @@map("mail_campaign_recipients")
 }
+
+// ── MSP360 / backup-provider integration (raw-SQL managed in src/lib/msp360.ts) ──
+// No-op mirrors so `prisma db push --accept-data-loss` KEEPS the tables on deploy —
+// same pattern as the DMARC tables. If the DDL in msp360.ts changes, mirror it here.
+model BackupProviderLink {
+  id          Int       @id @default(autoincrement())
+  customerId  Int       @map("customer_id")
+  provider    String    @default("msp360")
+  externalKey String    @map("external_key")
+  createdAt   DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@unique([customerId, provider, externalKey], map: "backup_provider_links_customer_id_provider_external_key_key")
+  @@map("backup_provider_links")
+}
+
+model BackupCompany {
+  id           Int       @id @default(autoincrement())
+  provider     String    @default("msp360")
+  externalKey  String    @map("external_key")
+  users        Int?      @default(0)
+  storageBytes BigInt?   @default(0) @map("storage_bytes")
+  syncedAt     DateTime? @default(now()) @db.Timestamptz(6) @map("synced_at")
+
+  @@unique([provider, externalKey], map: "backup_companies_provider_external_key_key")
+  @@map("backup_companies")
+}
+
+model BackupPlanStatus {
+  id           Int       @id @default(autoincrement())
+  provider     String    @default("msp360")
+  company      String?   @default("")
+  userEmail    String?   @default("") @map("user_email")
+  computer     String?   @default("")
+  planName     String?   @default("") @map("plan_name")
+  planType     String?   @default("") @map("plan_type")
+  status       String?   @default("")
+  errorMessage String?   @default("") @map("error_message")
+  lastStart    DateTime? @db.Timestamptz(6) @map("last_start")
+  nextStart    DateTime? @db.Timestamptz(6) @map("next_start")
+  dataCopied   BigInt?   @map("data_copied")
+  totalData    BigInt?   @map("total_data")
+  syncedAt     DateTime? @default(now()) @db.Timestamptz(6) @map("synced_at")
+
+  @@index([provider, company], map: "idx_bps_company")
+  @@map("backup_plan_status")
+}
