@@ -54,6 +54,7 @@ import { ensureSocialsTables } from './lib/socials';
 import { startGiacomStatus } from './lib/giacom-status';
 import { startUnifiPoll } from './lib/unifi';
 import { startMsp360Sync } from './lib/msp360';
+import { startGraphConsentCheck } from './lib/graph-consent';
 import { resumeMassMailer } from './lib/mass-mailer';
 import { hasFinanceAccess, hasVaultAccess } from './middleware/auth';
 import { startRecurringBilling } from './lib/recurring-billing';
@@ -410,4 +411,5 @@ server.listen(config.PORT, () => {
   startGiacomStatus();   // N3twrx: poll Giacom status feed
   startUnifiPoll();      // N3twrx: poll UniFi Site Manager API for offline devices
   startMsp360Sync();     // MSP360: nightly backup status + storage snapshot for the IT reports
+  startGraphConsentCheck(); // Graph: which customer tenants have consented the portal app (Customers list badge)
 });

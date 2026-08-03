@@ -12,6 +12,7 @@ import { getSetting, setSetting } from '../lib/settings';
 import { accountTotals, cliList, commsAccount, HANDSET_RE, CALL_TYPES, classifyCall, getCallMarkups, allocateNumberRange, commsCallCharge } from '../lib/comms-billing';
 import { setSalePrice } from '../lib/service-pricing';
 import { config } from '../config';
+import { syncGraphConsent, graphConsentUrl } from '../lib/graph-consent';
 import crypto from 'crypto';
 import multer from 'multer';
 import fs from 'fs';
@@ -84,7 +85,8 @@ router.get('/customers', requireAuth, async (req: Request, res: Response) => {
 
   const sql = `
     SELECT c.id, c.account_number, c.name, c.status, c.domain, c.phone, c.city, c.county, c.postcode,
-           c.is_itsm,
+           c.is_itsm, c.entra_tenant_id,
+           g.status AS graph_status, g.checked_at AS graph_checked_at,
            COALESCE(c.has_internet, false) AS has_internet,
            COALESCE(c.has_phones,   false) AS has_phones,
            COALESCE(c.has_cloud,    false) AS has_cloud,
@@ -92,6 +94,7 @@ router.get('/customers', requireAuth, async (req: Request, res: Response) => {
            (SELECT COUNT(*)::int FROM customer_contacts cc WHERE cc.customer_id = c.id) AS contact_count,
            (SELECT COUNT(*)::int FROM customer_sites cs  WHERE cs.customer_id  = c.id) AS site_count
     FROM customers c
+    LEFT JOIN graph_consent_status g ON g.customer_id = c.id
     WHERE ${where.join(' AND ')}
     ORDER BY c.name ASC`;
 
@@ -103,7 +106,13 @@ router.get('/customers', requireAuth, async (req: Request, res: Response) => {
   const statusCounts: Record<string, number> = {};
   stat.rows.forEach((r: any) => { statusCounts[r.status] = r.n; });
 
-  res.render('customers/list', { user, customers: rows, search, status, statusCounts });
+  res.render('customers/list', { user, customers: rows, search, status, statusCounts, graphConsentUrl });
+});
+
+// Re-probe every recorded tenant's Graph consent on demand (the daily check runs at 06:15).
+router.post('/customers/graph-consent/refresh', requireAuth, async (_req: Request, res: Response) => {
+  const r = await syncGraphConsent().catch(() => ({ checked: 0 }));
+  res.redirect('/customers?search=&status=&checked=' + r.checked);
 });
 
 // ── New form ────────────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getAuthCodeUrl, acquireTokenByCode } from '../auth/microsoft';
+import { refreshGraphConsentForTenant } from '../lib/graph-consent';
 import { pool } from '../db/pool';
 import { config } from '../config';
 import crypto from 'crypto';
@@ -130,6 +131,23 @@ router.post('/login/local', async (req: Request, res: Response) => {
 // Microsoft SSO callback
 router.get('/auth/callback', async (req: Request, res: Response) => {
   const { code, state, error, error_description } = req.query as Record<string, string>;
+
+  // Admin-consent return: a CUSTOMER admin just approved (or declined) the Graph app grant
+  // via the adminconsent link — Microsoft bounces back here with admin_consent=True&tenant=…
+  // It is NOT a login, so it must not hit the state check below (it used to show a scary
+  // "Invalid state — possible CSRF" even though the grant itself had succeeded).
+  const adminConsent = String((req.query as any).admin_consent || '');
+  if (adminConsent) {
+    const tid = String((req.query as any).tenant || '');
+    const granted = /^true$/i.test(adminConsent);
+    if (granted && tid) { refreshGraphConsentForTenant(tid).catch(() => {}); }
+    res.render('error', {
+      message: granted
+        ? 'Admin consent granted' + (tid ? ' for tenant ' + tid : '') + '. Intune and Secure Score data will be available within a few minutes — the Customers list shows the live Graph status.'
+        : 'Admin consent was not completed (declined or cancelled). No changes were made.',
+    });
+    return;
+  }
 
   if (error) {
     res.render('error', { message: error_description || 'Microsoft login failed.' });

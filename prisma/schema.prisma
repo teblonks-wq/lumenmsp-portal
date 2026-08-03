@@ -2021,3 +2021,13 @@ model BackupHistory {
   @@index([computer, day(sort: Desc)], map: "idx_bh_computer")
   @@map("backup_history")
 }
+
+model GraphConsentStatus {
+  customerId Int      @id @map("customer_id")
+  tenantId   String   @map("tenant_id")
+  status     String   @default("none")
+  detail     String?  @default("")
+  checkedAt  DateTime? @default(now()) @db.Timestamptz(6) @map("checked_at")
+
+  @@map("graph_consent_status")
+}
