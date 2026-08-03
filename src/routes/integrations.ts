@@ -4,6 +4,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { config } from '../config';
 import { getGroup, getSetting, setSetting } from '../lib/settings';
+import { CAPABILITIES, getCapability, capabilityApp, capabilityConsentUrl } from '../lib/graph-capabilities';
 import { QuickBooks } from '../lib/quickbooks';
 import { GoCardless, chargeDateFor } from '../lib/gocardless';
 import { sendMail } from '../lib/mailer';
@@ -107,6 +108,23 @@ router.get('/settings/integrations', requireAuth, requireAdmin, async (req: Requ
     envSet: !!bufEnv,
   };
 
+  // MSP360 + Acronis (backup providers) — keys manageable here; saved values override .env.
+  const m360Login = (await getSetting('msp360', 'login')) || '';
+  const m360Pass = (await getSetting('msp360', 'password')) || '';
+  const msp360 = {
+    keySet: !!(m360Login && m360Pass),
+    loginMasked: m360Login ? m360Login.slice(0, 4) + '…' : '',
+    envSet: !!((process.env.MSP360_USER || '').trim() && (process.env.MSP360_PASS || '').trim()),
+  };
+  const acrId = (await getSetting('acronis', 'client_id')) || '';
+  const acrSec = (await getSetting('acronis', 'secret')) || '';
+  const acronis = {
+    keySet: !!(acrId && acrSec),
+    idMasked: acrId ? acrId.slice(0, 8) + '…' : '',
+    envSet: !!((process.env.ACRONIS_CLIENT_ID || '').trim() && (process.env.ACRONIS_SECRET || '').trim()),
+    datacenter: (await getSetting('acronis', 'datacenter')) || (process.env.ACRONIS_DC || 'https://eu-cloud.acronis.com'),
+  };
+
   const pexKey = (await getSetting('pexels', 'api_key')) || '';
   const pexels = {
     keySet: !!pexKey,
@@ -114,11 +132,27 @@ router.get('/settings/integrations', requireAuth, requireAdmin, async (req: Requ
     envSet: !!(process.env.PEXELS_API_KEY || '').trim(),
   };
 
+  // Graph capability packs (app-by-app write access). Each write pack is its own Entra app;
+  // show whether its creds are configured so staff know what's ready to consent.
+  const capabilities = [] as any[];
+  for (const cap of CAPABILITIES) {
+    const app = await capabilityApp(cap).catch(() => ({ clientId: '', clientSecret: '' }));
+    capabilities.push({
+      key: cap.key, label: cap.label, description: cap.description, access: cap.access,
+      appKey: cap.appKey, scopes: cap.scopes,
+      configured: !!(app.clientId && app.clientSecret),
+      idMasked: app.clientId ? app.clientId.slice(0, 8) + '…' : '',
+    });
+  }
+  const capCustomers = (await pool.query(
+    "SELECT id, name, entra_tenant_id FROM customers WHERE deleted_at IS NULL AND COALESCE(is_placeholder,false)=false AND entra_tenant_id IS NOT NULL AND TRIM(entra_tenant_id) <> '' ORDER BY name"
+  )).rows;
+
   res.render('settings/integrations', {
-    user: req.session.user!,
+    user: req.session.user!, capabilities, capCustomers,
     qb: { hasCreds: qb.hasCredentials(), connected: qb.isConnected(), company: qbCompany, env: qb.environment },
     gc: { configured: gc.isConfigured(), env: gcCfg.environment || 'live' },
-    teamsWebhook, languagetoolUrl, unifiKey, giacom, dws, atera, wa, teams, anthropic, buffer, pexels,
+    teamsWebhook, languagetoolUrl, unifiKey, giacom, dws, atera, wa, teams, anthropic, buffer, pexels, msp360, acronis,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
@@ -181,6 +215,68 @@ router.post('/settings/integrations/anthropic', requireAuth, requireAdmin, async
   if (b.clear_key === '1') await setSetting('anthropic', 'api_key', null);
   await setSetting('anthropic', 'model', (b.model || '').trim() || null);
   res.redirect('/settings/integrations?msg=' + encodeURIComponent('Claude settings saved'));
+});
+
+// ── Graph capability packs (app-by-app write access) ─────────────────────────────
+// Save a write capability's own app credentials (client id/secret) — each capability is a
+// distinct Entra app so its consent screen shows ONLY its scopes.
+router.post('/settings/integrations/graph-capability/save', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body as Record<string, string>;
+  const cap = getCapability(String(b.key || ''));
+  if (!cap || cap.appKey === 'reporting') { res.redirect('/settings/integrations?err=' + encodeURIComponent('Unknown or read-only capability.')); return; }
+  if ((b.client_id || '').trim()) await setSetting(cap.appKey, 'client_id', b.client_id.trim());
+  if ((b.secret || '').trim()) await setSetting(cap.appKey, 'secret', b.secret.trim());
+  if (b.clear === '1') { await setSetting(cap.appKey, 'client_id', null); await setSetting(cap.appKey, 'secret', null); }
+  res.redirect('/settings/integrations?msg=' + encodeURIComponent(cap.label + ' app saved') + '#graphcaps');
+});
+
+// Send a customer admin the consent screen for one capability against their tenant.
+router.get('/settings/integrations/graph-capability/consent', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const cap = getCapability(String(req.query.key || ''));
+  const customerId = parseInt(String(req.query.customer || ''), 10);
+  if (!cap) { res.redirect('/settings/integrations?err=' + encodeURIComponent('Unknown capability.')); return; }
+  const c = (await pool.query('SELECT entra_tenant_id, name FROM customers WHERE id=$1', [customerId])).rows[0];
+  if (!c || !c.entra_tenant_id) { res.redirect('/settings/integrations?err=' + encodeURIComponent('That customer has no Entra tenant recorded.')); return; }
+  const app = await capabilityApp(cap);
+  if (!app.clientId) { res.redirect('/settings/integrations?err=' + encodeURIComponent(cap.label + ' app is not configured yet — add its client id/secret first.') + '#graphcaps'); return; }
+  res.redirect(capabilityConsentUrl(app.clientId, c.entra_tenant_id));
+});
+
+// MSP360 Managed Backup — save / clear API credentials (override server .env), plus test+sync.
+router.post('/settings/integrations/msp360', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body as Record<string, string>;
+  if ((b.login || '').trim()) await setSetting('msp360', 'login', b.login.trim());
+  if ((b.password || '').trim()) await setSetting('msp360', 'password', b.password.trim());
+  if (b.clear_key === '1') { await setSetting('msp360', 'login', null); await setSetting('msp360', 'password', null); }
+  res.redirect('/settings/integrations?msg=' + encodeURIComponent('MSP360 settings saved'));
+});
+router.post('/settings/integrations/msp360/test', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const { syncMsp360 } = await import('../lib/msp360');
+    const r = await syncMsp360();
+    res.redirect('/settings/integrations?msg=' + encodeURIComponent(`MSP360 OK — synced ${r.companies} companies, ${r.plans} plan statuses`));
+  } catch (e: any) {
+    res.redirect('/settings/integrations?err=' + encodeURIComponent('MSP360 test failed: ' + (e.message || e).slice(0, 140)));
+  }
+});
+
+// Acronis Cyber Protect Cloud — save / clear API client (overrides server .env), plus test+sync.
+router.post('/settings/integrations/acronis', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body as Record<string, string>;
+  if ((b.client_id || '').trim()) await setSetting('acronis', 'client_id', b.client_id.trim());
+  if ((b.secret || '').trim()) await setSetting('acronis', 'secret', b.secret.trim());
+  await setSetting('acronis', 'datacenter', (b.datacenter || '').trim() || null);
+  if (b.clear_key === '1') { await setSetting('acronis', 'client_id', null); await setSetting('acronis', 'secret', null); }
+  res.redirect('/settings/integrations?msg=' + encodeURIComponent('Acronis settings saved'));
+});
+router.post('/settings/integrations/acronis/test', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const { syncAcronis } = await import('../lib/acronis');
+    const r = await syncAcronis();
+    res.redirect('/settings/integrations?msg=' + encodeURIComponent(`Acronis OK — synced ${r.tenants} tenant(s), ${r.workloads} workload group(s)`));
+  } catch (e: any) {
+    res.redirect('/settings/integrations?err=' + encodeURIComponent('Acronis test failed: ' + (e.message || e).slice(0, 140)));
+  }
 });
 
 // Buffer (social posting) — save / clear the personal API key (overrides server .env).

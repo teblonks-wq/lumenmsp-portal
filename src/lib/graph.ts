@@ -292,17 +292,30 @@ export async function graphSendTeamsChat(senderUpn: string, recipientUpn: string
   if (!msgRes.ok) throw new Error(`Teams chat message ${msgRes.status}: ${(await msgRes.text()).slice(0, 200)}`);
 }
 
+// The app used for CUSTOMER-facing reporting (Intune/Secure Score/service health): the
+// dedicated read-only reporting app if configured, else the main Graph app. Exposed so the
+// consent-link builder and the consent checker use the SAME client id the token uses.
+export function reportingApp(): { clientId: string; clientSecret: string } {
+  const id = (config.REPORTING_CLIENT_ID || '').trim();
+  const secret = (config.REPORTING_CLIENT_SECRET || '').trim();
+  return id && secret
+    ? { clientId: id, clientSecret: secret }
+    : { clientId: config.GRAPH_CLIENT_ID, clientSecret: config.GRAPH_CLIENT_SECRET };
+}
+
 // App-only token for a SPECIFIC tenant (a customer's Entra tenant). The app must be
 // multi-tenant and admin-consented in that tenant. Cached per tenant until expiry.
+// Uses the READING app (reportingApp) so customer consent stays minimal/read-only.
 const _tenantTokens: Record<string, { value: string; expires: number }> = {};
 export async function getGraphTokenForTenant(tenant: string): Promise<string> {
   const cached = _tenantTokens[tenant];
   if (cached && Date.now() < cached.expires) return cached.value;
-  if (!graphConfigured()) throw new Error('Graph is not configured.');
+  const app = reportingApp();
+  if (!app.clientId || !app.clientSecret) throw new Error('Graph reporting app is not configured.');
   const res = await fetch(TOKEN_URL(tenant), {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: config.GRAPH_CLIENT_ID, client_secret: config.GRAPH_CLIENT_SECRET,
+      client_id: app.clientId, client_secret: app.clientSecret,
       scope: 'https://graph.microsoft.com/.default', grant_type: 'client_credentials',
     }),
   });

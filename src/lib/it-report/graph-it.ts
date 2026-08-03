@@ -1,5 +1,5 @@
 import { config } from '../../config';
-import { getGraphTokenForTenant } from '../graph';
+import { getGraphTokenForTenant, reportingApp } from '../graph';
 
 // ── Microsoft Graph collectors for the monthly IT report ─────────────────────────
 // Each pulls from a CUSTOMER's Entra tenant (customers.entra_tenant_id) using the
@@ -147,7 +147,7 @@ async function getDefenderToken(tenant: string): Promise<string> {
   const res = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: config.GRAPH_CLIENT_ID, client_secret: config.GRAPH_CLIENT_SECRET,
+      client_id: reportingApp().clientId, client_secret: reportingApp().clientSecret,
       scope: 'https://api.securitycenter.microsoft.com/.default', grant_type: 'client_credentials',
     }),
   });

@@ -827,7 +827,7 @@
       </table>
     </div>
     <% } %>
-    <% var bcs = (typeof backupCompanies!=='undefined') ? backupCompanies : []; %>
+    <% var bcs = ((typeof backupCompanies!=='undefined') ? backupCompanies : []).filter(function(b){ return b.linked_here || !b.linked_customer_id; }); %>
     <% if (bcs.length) { %>
     <details style="margin:0 24px 18px;">
       <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);">Manage provider links (<%= bcs.filter(function(b){return b.linked_here;}).length %> linked)</summary>
@@ -841,7 +841,6 @@
             <td><%= b.storage_h %></td>
             <td>
               <% if (b.linked_here) { %><span class="badge badge-sent">this customer</span>
-              <% } else if (b.linked_customer_id) { %><span class="muted" style="font-size:13px;"><%= backupCustNames.get(b.linked_customer_id) || ('#' + b.linked_customer_id) %></span>
               <% } else { %><span class="muted" style="font-size:13px;">—</span><% } %>
             </td>
             <td style="text-align:right;">

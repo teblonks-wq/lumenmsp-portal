@@ -269,6 +269,118 @@ function filterIntg(q){
   </div>
 </details>
 
+<% var caps = (typeof capabilities !== 'undefined') ? capabilities : []; %>
+<% var capCust = (typeof capCustomers !== 'undefined') ? capCustomers : []; %>
+<% var readCap = caps.filter(function(c){ return c.access==='read'; })[0]; %>
+<% var writeCaps = caps.filter(function(c){ return c.access==='write'; }); %>
+<details class="intg" id="graphcaps">
+  <summary><span class="intg-left"><span class="chev"></span> Microsoft Graph — customer access</span>
+    <% if (readCap && readCap.configured) { %><span class="badge badge-sent">Reporting ready</span><% } else { %><span class="badge badge-inactive">Reporting app not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Customers consent to the <strong>read-only reporting app</strong> by default (Intune, Secure Score, service health) — nothing we've built needs write access to a customer tenant. If a future job DOES need write access, it goes on an <strong>app-by-app basis</strong>: each capability below is its own Entra app in Lumen's tenant, so a customer only ever consents to exactly the scopes that job needs.</p>
+
+    <p style="margin:14px 0 4px;font-weight:700;font-size:14px;">Additional write access</p>
+    <p class="muted" style="margin:0 0 10px;">Configure a capability's app once (paste its client id/secret from Lumen's Entra), then request per-customer consent. Microsoft grants ALL of an app's permissions at consent, so each capability is deliberately a separate app.</p>
+
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+      <select class="input" id="capPick" style="min-width:240px;">
+        <option value="">+ Add / manage a write capability…</option>
+        <% writeCaps.forEach(function(c){ %><option value="<%= c.key %>"><%= c.label %><%= c.configured ? ' — configured' : '' %></option><% }); %>
+      </select>
+    </div>
+
+    <% writeCaps.forEach(function(c){ %>
+    <div class="cap-panel" data-cap="<%= c.key %>" style="display:none;border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <strong><%= c.label %></strong>
+        <% if (c.configured) { %><span class="badge badge-sent">app configured (<%= c.idMasked %>)</span><% } else { %><span class="badge badge-inactive">app not set</span><% } %>
+      </div>
+      <p class="muted" style="margin:6px 0 8px;font-size:13px;"><%= c.description %></p>
+      <p class="muted" style="margin:0 0 10px;font-size:12px;">Scopes (put these — and only these — on the Entra app): <code><%= c.scopes.join(', ') %></code></p>
+      <form method="post" action="/settings/integrations/graph-capability/save" style="max-width:620px;margin-bottom:10px;">
+        <input type="hidden" name="key" value="<%= c.key %>">
+        <div class="form-group" style="margin-bottom:8px;"><label>App client ID <% if (c.configured) { %><span class="muted">(set: <%= c.idMasked %> — blank keeps)</span><% } %></label>
+          <input class="input" type="text" name="client_id" autocomplete="off" placeholder="<%= c.configured ? '•••••• (set)' : 'xxxxxxxx-xxxx-…' %>" style="width:100%;"></div>
+        <div class="form-group" style="margin-bottom:10px;"><label>App secret</label>
+          <input class="input" type="password" name="secret" autocomplete="off" placeholder="<%= c.configured ? '•••••• (set)' : '' %>" style="width:100%;"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary" type="submit">Save app</button>
+          <% if (c.configured) { %><button class="btn" type="submit" name="clear" value="1" onclick="return confirm('Remove this capability app?');">Clear</button><% } %>
+        </div>
+      </form>
+      <% if (c.configured) { %>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px;">
+        <span class="muted" style="font-size:13px;">Request consent for:</span>
+        <select class="input cap-cust" style="min-width:220px;"><% capCust.forEach(function(cust){ %><option value="<%= cust.id %>"><%= cust.name %></option><% }); %></select>
+        <a class="btn" target="_blank" rel="noopener" href="#" onclick="var s=this.parentNode.querySelector('.cap-cust'); this.href='/settings/integrations/graph-capability/consent?key=<%= c.key %>&customer='+s.value; return true;">Request consent &rarr;</a>
+      </div>
+      <% } %>
+    </div>
+    <% }); %>
+  </div>
+</details>
+
+<% var m360 = (typeof msp360 !== 'undefined' && msp360) ? msp360 : { keySet:false, loginMasked:'', envSet:false }; %>
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> MSP360 Managed Backup</span>
+    <% if (m360.keySet || m360.envSet) { %><span class="badge badge-sent">Configured</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Backup plan health + protected storage for the customer panel, asset pages and the monthly IT Snapshot. Credentials come from the MBS portal (<a href="https://mspbackups.com" target="_blank" rel="noopener">mspbackups.com</a> → Settings → General → API Credentials). Values saved here <strong>override</strong> the server <code>.env</code> (<code>MSP360_USER</code>/<code>MSP360_PASS</code>). Syncs nightly at 05:45.</p>
+    <% if (m360.envSet && !m360.keySet) { %><p class="muted" style="color:var(--warn-fg);">Currently running on the server <code>.env</code> credentials. Saving a pair here takes precedence.</p><% } %>
+    <form method="post" action="/settings/integrations/msp360" style="max-width:620px;">
+      <div class="form-group" style="margin-bottom:12px;">
+        <label>API login <% if (m360.keySet) { %><span class="muted">(set: <%= m360.loginMasked %> — leave blank to keep)</span><% } %></label>
+        <input class="input" type="text" name="login" autocomplete="off" placeholder="<%= m360.keySet ? '•••••• (set)' : 'generated in the MBS portal' %>" style="width:100%;">
+      </div>
+      <div class="form-group" style="margin-bottom:14px;">
+        <label>API password</label>
+        <input class="input" type="password" name="password" autocomplete="off" placeholder="<%= m360.keySet ? '•••••• (set)' : '' %>" style="width:100%;">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" type="submit">Save</button>
+        <% if (m360.keySet) { %><button class="btn" type="submit" name="clear_key" value="1" onclick="return confirm('Remove the saved MSP360 credentials?');">Clear</button><% } %>
+      </div>
+    </form>
+    <% if (m360.keySet || m360.envSet) { %>
+    <form method="post" action="/settings/integrations/msp360/test" style="margin-top:10px;"><button class="btn" type="submit">Test connection &amp; sync now</button></form>
+    <% } %>
+  </div>
+</details>
+
+<% var acr = (typeof acronis !== 'undefined' && acronis) ? acronis : { keySet:false, idMasked:'', envSet:false, datacenter:'https://eu-cloud.acronis.com' }; %>
+<details class="intg">
+  <summary><span class="intg-left"><span class="chev"></span> Acronis Cyber Protect Cloud</span>
+    <% if (acr.keySet || acr.envSet) { %><span class="badge badge-sent">Configured</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Cloud-to-cloud backup (Microsoft 365 mailboxes, SharePoint, Teams) per customer tenant — feeds the same backup surfaces as MSP360. Create the API client in the Acronis <strong>Management Portal</strong> → Settings → API clients (the secret is shown once). Values saved here <strong>override</strong> the server <code>.env</code> (<code>ACRONIS_CLIENT_ID</code>/<code>ACRONIS_SECRET</code>/<code>ACRONIS_DC</code>). Syncs nightly at 06:05.</p>
+    <% if (acr.envSet && !acr.keySet) { %><p class="muted" style="color:var(--warn-fg);">Currently running on the server <code>.env</code> credentials. Saving a pair here takes precedence.</p><% } %>
+    <form method="post" action="/settings/integrations/acronis" style="max-width:620px;">
+      <div class="form-group" style="margin-bottom:12px;">
+        <label>Client ID <% if (acr.keySet) { %><span class="muted">(set: <%= acr.idMasked %> — leave blank to keep)</span><% } %></label>
+        <input class="input" type="text" name="client_id" autocomplete="off" placeholder="<%= acr.keySet ? '•••••• (set)' : 'xxxxxxxx-xxxx-…' %>" style="width:100%;">
+      </div>
+      <div class="form-group" style="margin-bottom:12px;">
+        <label>Secret</label>
+        <input class="input" type="password" name="secret" autocomplete="off" placeholder="<%= acr.keySet ? '•••••• (set)' : '' %>" style="width:100%;">
+      </div>
+      <div class="form-group" style="margin-bottom:14px;">
+        <label>Data centre URL</label>
+        <input class="input" type="text" name="datacenter" value="<%= acr.datacenter %>" style="width:100%;">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" type="submit">Save</button>
+        <% if (acr.keySet) { %><button class="btn" type="submit" name="clear_key" value="1" onclick="return confirm('Remove the saved Acronis credentials?');">Clear</button><% } %>
+      </div>
+    </form>
+    <% if (acr.keySet || acr.envSet) { %>
+    <form method="post" action="/settings/integrations/acronis/test" style="margin-top:10px;"><button class="btn" type="submit">Test connection &amp; sync now</button></form>
+    <% } %>
+  </div>
+</details>
+
 <details class="intg">
   <summary><span class="intg-left"><span class="chev"></span> Giacom / Cloud Market</span>
     <% if (giacom.billingSet) { %><span class="badge badge-sent">Billing key set</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
@@ -331,3 +443,13 @@ function filterIntg(q){
 </details>
 
 <%- include('../partials/footer') %>
+
+<script>
+(function(){
+  var pick = document.getElementById('capPick');
+  if (!pick) return;
+  pick.addEventListener('change', function(){
+    document.querySelectorAll('.cap-panel').forEach(function(p){ p.style.display = (p.getAttribute('data-cap')===pick.value) ? 'block' : 'none'; });
+  });
+})();
+</script>

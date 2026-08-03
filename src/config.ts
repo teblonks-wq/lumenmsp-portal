@@ -24,6 +24,11 @@ const schema = z.object({
   GRAPH_TENANT_ID:     z.string().default(''),
   GRAPH_CLIENT_ID:     z.string().default(''),
   GRAPH_CLIENT_SECRET: z.string().default(''),
+  // Dedicated READ-ONLY app for customer-facing reporting consent (Intune, Secure Score,
+  // service health). Keeps customers off the heavy LumenMSP-Insights consent screen.
+  // Falls back to the main GRAPH_* app when unset.
+  REPORTING_CLIENT_ID:     z.string().default(''),
+  REPORTING_CLIENT_SECRET: z.string().default(''),
   GRAPH_SYNC_MAILBOX:  z.string().default(''),   // inbound: mailbox we read replies from (e.g. sp@lumenmsp.co.uk)
   GRAPH_SEND_FROM:     z.string().default(''),   // outbound: default send-as mailbox (e.g. sales@lumenmsp.co.uk)
   GRAPH_TEAMS_SENDER:  z.string().default('sp@lumensolutions.co.uk'), // Teams-licensed mailbox used to send escalation chats

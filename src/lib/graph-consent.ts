@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { pool } from '../db/pool';
 import { config } from '../config';
-import { getGraphTokenForTenant, graphConfigured } from './graph';
+import { getGraphTokenForTenant, reportingApp } from './graph';
 
 // ── Graph consent status per customer tenant ─────────────────────────────────────
 // The IT report's Intune/Secure Score sections only work once the portal's multi-tenant
@@ -37,7 +37,7 @@ export async function ensureGraphConsentTable(): Promise<void> {
 export function graphConsentUrl(tenantId: string): string {
   const redirect = ((config.APP_URL || 'https://portal.lumenmsp.co.uk').replace(/\/+$/, '')) + '/auth/callback';
   return `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/v2.0/adminconsent`
-    + `?client_id=${encodeURIComponent(config.GRAPH_CLIENT_ID || '')}`
+    + `?client_id=${encodeURIComponent(reportingApp().clientId || '')}`
     + `&scope=${encodeURIComponent('https://graph.microsoft.com/.default')}`
     + `&redirect_uri=${encodeURIComponent(redirect)}`;
 }
@@ -66,7 +66,7 @@ async function probeTenant(tenant: string): Promise<{ status: string; detail: st
 
 export async function refreshGraphConsentForTenant(tenantId: string): Promise<void> {
   const t = (tenantId || '').trim();
-  if (!t || !graphConfigured()) return;
+  if (!t || !reportingApp().clientId) return;
   const customers = (await pool.query(
     'SELECT id FROM customers WHERE deleted_at IS NULL AND lower(entra_tenant_id)=lower($1)', [t])).rows;
   if (!customers.length) return;
@@ -81,7 +81,7 @@ export async function refreshGraphConsentForTenant(tenantId: string): Promise<vo
 }
 
 export async function syncGraphConsent(): Promise<{ checked: number }> {
-  if (!graphConfigured()) return { checked: 0 };
+  if (!reportingApp().clientId) return { checked: 0 };
   await ensureGraphConsentTable().catch(() => {});
   const rows = (await pool.query(
     `SELECT id, entra_tenant_id FROM customers

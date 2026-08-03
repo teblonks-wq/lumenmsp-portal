@@ -97,6 +97,19 @@ export async function syncAcronis(): Promise<{ tenants: number; workloads: numbe
   }
   tenants = tenants.filter((x) => x.kind === 'customer' && x.enabled !== false);
 
+  // Latest completed activity per tenant (partner-wide feed, newest first) — gives the
+  // REAL last-run time and result for the workload rows (usages carry no timestamps).
+  const lastRunByTenant = new Map<string, { at: Date | null; ok: boolean }>();
+  try {
+    const acts: any = await apiGet('/api/task_manager/v2/activities?limit=200&order=desc(completedAt)');
+    for (const a of (acts.items || [])) {
+      const tn = String(a.tenant?.name || '');
+      if (!tn || lastRunByTenant.has(tn)) continue; // newest-first → first hit is the latest
+      const at = a.completedAt ? new Date(a.completedAt) : null;
+      lastRunByTenant.set(tn, { at: at && !isNaN(at.getTime()) ? at : null, ok: String(a.result?.code ?? a.result ?? 'ok') === 'ok' });
+    }
+  } catch { /* activities API unavailable — rows just show no last-run */ }
+
   // Active alerts (partner-wide). Any alert against a tenant marks its workloads unhealthy.
   const alertsByTenant = new Map<string, string>();
   try {
@@ -125,21 +138,22 @@ export async function syncAcronis(): Promise<{ tenants: number; workloads: numbe
         [String(ten.name || ten.id), protectedCount, storage]);
 
       const alert = alertsByTenant.get(String(ten.id)) || '';
+      const run = lastRunByTenant.get(String(ten.name || '')) || null;
       for (const w of WORKLOADS) {
         const n = usageOf(items, w.count);
         if (!n) continue;
         const label = `${w.label} ×${n}`;
         const bytes = w.storage ? usageOf(items, w.storage) : null;
-        const status = alert ? 'Failed' : 'Completed';
+        const status = alert ? 'Failed' : (run && !run.ok ? 'Warning' : 'Completed');
         await client.query(
           `INSERT INTO backup_plan_status (provider, company, user_email, computer, plan_name, plan_type, status, error_message, last_start, next_start, data_copied, total_data, synced_at)
-           VALUES ('acronis',$1,'',$2,'Acronis cloud backup','1',$3,$4,NULL,NULL,$5,NULL,NOW())`,
-          [String(ten.name || ten.id), label, status, alert ? `Active Acronis alert: ${alert}` : '', bytes]);
+           VALUES ('acronis',$1,'',$2,'Acronis cloud backup','1',$3,$4,$5,NULL,$6,NULL,NOW())`,
+          [String(ten.name || ten.id), label, status, alert ? `Active Acronis alert: ${alert}` : '', run ? run.at : null, bytes]);
         await client.query(
           `INSERT INTO backup_history (day, provider, company, computer, plan_name, status, data_copied)
-           VALUES (CURRENT_DATE, 'acronis', $1, $2, 'Acronis cloud backup', $3, $4)
+           VALUES (COALESCE($5::date, CURRENT_DATE), 'acronis', $1, $2, 'Acronis cloud backup', $3, $4)
            ON CONFLICT (day, provider, company, computer, plan_name) DO UPDATE SET status=$3, data_copied=$4`,
-          [String(ten.name || ten.id), label, status, bytes]);
+          [String(ten.name || ten.id), label, status, bytes, run ? run.at : null]);
         workloadCount++;
       }
     }
