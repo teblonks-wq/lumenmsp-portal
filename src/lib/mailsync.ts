@@ -393,8 +393,16 @@ export async function syncInbox(): Promise<{ fetched: number; inserted: number }
         // An out-of-office / auto-reply is still visible on the board, but we never ACK it
         // (loop) or spam the team about it. Genuine new mail gets the ack + "new case" ping.
         if (!autoReply) {
-          try { if (m.from) await sendTicketStatusEmail('new', m.from, m.fromName || 'there', tn, 'Support', subject); } catch (e) { /* ignore ack failure */ }
-          const reporter = (m.fromName ? m.fromName + ' · ' : '') + (m.from || 'unknown');
+          // Ack the REQUESTER: for staff-forwarded mail that's the ORIGINAL sender (the
+          // customer), not the staff member who forwarded it in (2026-08-03 fix — the
+          // requester/contact was already resolved to fwd.email above, but the ack still
+          // went to m.from, i.e. the forwarder).
+          const ackEmail = fwd ? fwd.email : m.from;
+          const ackName = fwd ? (fwd.name || 'there') : (m.fromName || 'there');
+          try { if (ackEmail) await sendTicketStatusEmail('new', ackEmail, ackName, tn, 'Support', subject); } catch (e) { /* ignore ack failure */ }
+          const reporter = fwd
+            ? (fwd.name ? fwd.name + ' · ' : '') + fwd.email + ' (forwarded by ' + (m.from || 'staff') + ')'
+            : (m.fromName ? m.fromName + ' · ' : '') + (m.from || 'unknown');
           const staff = await pool.query("SELECT email FROM users WHERE is_active=true AND customer_id IS NULL AND support_group=true AND email IS NOT NULL");
           await Promise.allSettled(staff.rows.map((s: any) => sendTeamsNotice({
             toEmail: s.email, title: 'New case waiting — ' + tn, text: (subject || '(no subject)') + ' — ' + reporter, link: config.APP_URL + '/tickets/' + tid,
