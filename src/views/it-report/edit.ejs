@@ -39,7 +39,7 @@
 
   <div class="card">
     <div class="card-header"><h2>Service Delivery Manager — standing notes</h2></div>
-    <p class="muted" style="margin-top:0;">Persistent commentary that always feeds the report. Month-specific observations go in the running log below.</p>
+    <p class="muted" style="margin-top:0;">Persistent commentary that always feeds the report. Month-specific observations go in the running log below. <strong>Prune completed items after each report</strong> — anything left here is fed to Claude every month and can resurface as if it were new.</p>
     <textarea class="input" name="sdm_notes" rows="4" style="width:100%;"><%= cfg ? cfg.sdm_notes : '' %></textarea>
   </div>
 
@@ -92,6 +92,27 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>Support cases — <%= periodLabel %></h2></div>
+    <p class="muted" style="margin-top:0;">These are the cases the report will count and list under "Work carried out this period". Tick any to <strong>exclude</strong> — an excluded case disappears from the totals, timers, case mix and the work table (use for internal noise, e.g. a forwarded copy of last month's report). Save settings to apply.</p>
+    <% if (!cases || !cases.length) { %><p class="muted">No cases logged in <%= periodLabel %>.</p><% } else { %>
+    <table class="table">
+      <thead><tr><th style="width:70px;">Exclude</th><th>Case</th><th>Subject</th><th>Status</th><th>Logged</th></tr></thead>
+      <tbody>
+      <% cases.forEach(function(t){ var ex = excludedSet.has(String(t.ticket_number || '').toUpperCase()); %>
+        <tr<%= ex ? ' style="opacity:.55;"' : '' %>>
+          <td style="text-align:center;"><input type="checkbox" name="excludeTicket" value="<%= t.ticket_number %>" <%= ex ? 'checked' : '' %>></td>
+          <td style="white-space:nowrap;font-family:monospace;"><%= t.ticket_number %></td>
+          <td><%= t.subject %></td>
+          <td><span class="badge <%= ['resolved','closed'].includes(String(t.status||'').toLowerCase()) ? 'badge-sent' : 'badge-inactive' %>"><%= t.status %></span></td>
+          <td class="muted" style="white-space:nowrap;"><%= new Date(t.created_at).toLocaleDateString('en-GB',{day:'numeric',month:'short'}) %></td>
+        </tr>
+      <% }); %>
+      </tbody>
+    </table>
+    <% } %>
   </div>
 
   <button class="btn btn-primary" type="submit" style="margin-bottom:24px;">Save settings</button>

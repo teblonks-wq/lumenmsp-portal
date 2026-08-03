@@ -43,6 +43,10 @@ function manualFromBody(b: any): ItManual {
     vulnCriticalCves: b.vulnCriticalCves || '', vulnCves: b.vulnCves || '',
     vulnPorts: b.vulnPorts || '', vulnWebAlerts: b.vulnWebAlerts || '',
     vulnRiskLevel: b.vulnRiskLevel || '', vulnBullets: b.vulnBullets || '', vulnStatus: b.vulnStatus || '',
+    // Checkbox list on the settings page — one value per ticked case. Express gives a
+    // string for one box, an array for several; store newline-separated either way.
+    excludedTickets: (Array.isArray(b.excludeTicket) ? b.excludeTicket : (b.excludeTicket ? [b.excludeTicket] : []))
+      .map((t: any) => String(t).trim()).filter(Boolean).join('\n'),
   };
 }
 async function customer(id: number): Promise<{ id: number; name: string; entra_tenant_id: string | null } | null> {
@@ -83,9 +87,20 @@ router.get('/it-report/:id', requireAuth, async (req: Request, res: Response) =>
     'SELECT id, period_label, status, created_at, sent_at FROM it_report_runs WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 12',
     [id]
   )).rows;
+  // The period's support cases, so staff can tick any to EXCLUDE from the client report
+  // (internal noise — e.g. a forwarded copy of last month's report itself).
+  const period = prevMonth();
+  const cases = (await pool.query(
+    `SELECT ticket_number, subject, status, created_at FROM inbox_tickets
+      WHERE customer_id=$1 AND deleted_at IS NULL AND COALESCE(is_spam,false)=false
+        AND created_at >= $2 AND created_at < $3
+      ORDER BY created_at DESC`, [id, period.from, period.to]
+  )).rows;
+  const excludedSet = new Set(String((cfg?.manual as any)?.excludedTickets || '').split(/[\n,;]+/)
+    .map((t) => t.trim().toUpperCase()).filter(Boolean));
   res.render('it-report/edit', {
-    user: req.session.user, c, cfg, notes, runs,
-    periodLabel: prevMonth().label, saved: req.query.saved === '1', err: req.query.err || null,
+    user: req.session.user, c, cfg, notes, runs, cases, excludedSet,
+    periodLabel: period.label, saved: req.query.saved === '1', err: req.query.err || null,
   });
 });
 

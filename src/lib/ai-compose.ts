@@ -123,6 +123,8 @@ export async function aiWriteItReport(input: ItReportInput): Promise<ItReportNar
     '- Do NOT repeat the same point or figure across the three sections — each fact appears once, in the section where it fits best.',
     '- The report already shows the metrics as tiles and tick-lists (device counts, ticket totals, Secure Score, DNS, vulnerability figures). Do NOT re-list those raw numbers in the prose; interpret or summarise them instead (e.g. "support demand was steady" rather than repeating every count).',
     '- Remove duplicate or near-duplicate notes; merge points that overlap.',
+    '- The standing commentary persists from month to month, so it may describe work that was already announced in an EARLIER report (a completed onboarding, a contract change, a past incident). Treat ONLY the dated running notes as this month\'s news. Long-running items from the standing commentary should be omitted, or mentioned briefly as established context ("continues to", "remains in place") — never re-announced as if they just happened.',
+    '- NEVER attribute an event to the reporting month unless a dated running note or a collected metric places it inside that month. If the standing commentary mentions an incident (an outage, a failure, an issue) with no date in this period, do not write "this month saw…" or "<month> saw…" about it — either omit it or reference it neutrally as a previously reported item still being monitored.',
     '- Do not use markdown, headings or bullet points. Prose only. Separate paragraphs with a blank line.',
     '- Return ONLY a JSON object of the form {"executiveSummary": "...", "commentary": "...", "overallStatus": "..."} with no code fences and no other text.',
   ].join('\n');

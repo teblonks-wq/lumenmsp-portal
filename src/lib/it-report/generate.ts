@@ -3,7 +3,7 @@ import { REPORT_CSS } from '../insights/reports/report-styles';
 import { getIntuneSummary, getSecureScoreSummary, type IntuneSummary, type SecureScoreSummary, type VulnerabilitySummary, type Unavailable } from './graph-it';
 import { getHelpdeskStats, fmtResponse, type HelpdeskStats } from './helpdesk';
 import { getDnsSecurity, type DnsResult } from './dns';
-import { getDmarcMonthSummary, type DmarcMonthSummary } from '../dmarc/store';
+import { getDmarcMonthSummary, getDomainHealth, type DmarcMonthSummary, type DomainHealth } from '../dmarc/store';
 import { aiWriteItReport } from '../ai-compose';
 
 // ── Monthly "IT Operations & Security Snapshot" ──────────────────────────────────
@@ -34,6 +34,7 @@ export interface ItManual {
   vulnRiskLevel?: string;      // e.g. "Low"
   vulnBullets?: string;
   vulnStatus?: string;         // e.g. "Secured"
+  excludedTickets?: string;    // newline-separated ticket numbers hidden from the report (internal noise)
 }
 
 export interface ItReportConfig {
@@ -143,20 +144,22 @@ export interface ItReportData {
   helpdesk: HelpdeskStats;
   dns: DnsResult | null;
   dmarcMon: DmarcMonthSummary | null;  // LITS-DMARC — null unless the domain is monitored
+  domainHealth: DomainHealth | null;   // LITS-DMARC deep check (score, SPF/DKIM/DMARC, platform DNS)
 }
 
-export async function collectItReportData(customerId: number, tenant: string | null, domain: string, from: Date, to: Date): Promise<ItReportData> {
-  const [intune, secureScore, helpdesk, dns, dmarcMon] = await Promise.all([
+export async function collectItReportData(customerId: number, tenant: string | null, domain: string, from: Date, to: Date, excludedTickets: string[] = []): Promise<ItReportData> {
+  const [intune, secureScore, helpdesk, dns, dmarcMon, domainHealth] = await Promise.all([
     getIntuneSummary(tenant),
     getSecureScoreSummary(tenant),
-    getHelpdeskStats(customerId, from, to),
+    getHelpdeskStats(customerId, from, to, excludedTickets),
     domain ? getDnsSecurity(domain) : Promise.resolve(null),
     domain ? getDmarcMonthSummary(domain, from, to).catch(() => null) : Promise.resolve(null),
+    domain ? getDomainHealth(domain).catch(() => null) : Promise.resolve(null),
   ]);
   // Vulnerability comes from the monthly external RoboShadow scan (entered manually — no remote
   // access to auto-pull). Defender TVM stays available as a future auto-source but isn't called here.
   const vulnerability: Unavailable = { available: false, note: 'Provided from the monthly external scan.' };
-  return { intune, secureScore, vulnerability, helpdesk, dns, dmarcMon };
+  return { intune, secureScore, vulnerability, helpdesk, dns, dmarcMon, domainHealth };
 }
 
 // A full plain-text digest of EVERY collected + manual metric, so Claude forms a complete picture
@@ -172,8 +175,21 @@ function metricsBrief(d: ItReportData, m: ItManual): string {
   if (patch.length || m.patchStatus) L.push(`Patch/endpoint: ${patch.join('; ') || 'see status'}${m.patchStatus ? ` (status: ${m.patchStatus})` : ''}.`);
   const backup = bulletsFromText(m.backupBullets);
   if (backup.length || m.backupStatus) L.push(`Backup: ${backup.join('; ') || 'configured'}${m.backupStatus ? ` (status: ${m.backupStatus})` : ''}.`);
-  if (d.dns) L.push(`Email security: ${d.dns.rows.filter((r) => r.ok).length}/${d.dns.rows.length} DNS controls present for ${d.dns.domain}${m.deliverabilityPct ? `; deliverability ${m.deliverabilityPct}` : ''}.`);
-  if (d.dmarcMon && d.dmarcMon.volume) L.push(`DMARC monitoring (LITS-DMARC): ${d.dmarcMon.volume} emails observed sent as ${d.dmarcMon.domain} this period; ${d.dmarcMon.alignedPct}% properly authenticated, ${d.dmarcMon.failed} failed authentication across ${d.dmarcMon.sources} sending IPs; policy ${d.dmarcMon.policy ? `p=${d.dmarcMon.policy}` : 'not yet published'}${d.dmarcMon.unknownFailingSources.length ? `; unrecognised failing sources: ${d.dmarcMon.unknownFailingSources.join(', ')}` : ''}.`);
+  const delivPct = (m.deliverabilityPct || '').trim() || ((d.dmarcMon && d.dmarcMon.volume) ? `${d.dmarcMon.alignedPct}% (from DMARC authentication)` : '');
+  if (d.dns) L.push(`Email security: ${d.dns.rows.filter((r) => r.ok).length}/${d.dns.rows.length} DNS controls present for ${d.dns.domain}${delivPct ? `; deliverability ${delivPct}` : ''}.`);
+  if (d.domainHealth) {
+    const dh = d.domainHealth;
+    const issues = [...(dh.check?.spf?.issues || []), ...(dh.check?.dmarc?.issues || [])];
+    L.push(`Domain Health (LITS-DMARC deep check): score ${dh.score}/100 for ${dh.domain}; DMARC policy ${dh.policy ? `p=${dh.policy}` : 'not published'} (agreed target p=${dh.targetPolicy}); SPF ${dh.check?.spf?.found ? 'published' : 'MISSING'}, DKIM ${dh.check?.dkim?.found ? `signing (${(dh.check?.dkim?.selectors || []).join(', ')})` : 'not signing'}${issues.length ? `; open issues: ${issues.slice(0, 4).join(' ')}` : '; no open issues'}.`);
+  }
+  if (d.dmarcMon && d.dmarcMon.volume) {
+    const dm = d.dmarcMon;
+    L.push(`DMARC monitoring (LITS-DMARC): ${dm.volume} emails observed sent as ${dm.domain} this period; ${dm.alignedPct}% properly authenticated, ${dm.failed} failed authentication across ${dm.sources} sending IPs; policy ${dm.policy ? `p=${dm.policy}` : 'not yet published'}${(dm.quarantined + dm.rejected) ? `; ${dm.quarantined + dm.rejected} spoofed/unauthenticated messages actioned by the policy (${dm.rejected} rejected, ${dm.quarantined} quarantined)` : ''}${dm.topSources.length ? `; sending services seen: ${dm.topSources.map((sx) => `${sx.name} ${sx.volume} @ ${sx.alignedPct}%${sx.known ? '' : ' UNRECOGNISED'}`).join(', ')}` : ''}${dm.unknownFailingSources.length ? `; unrecognised failing sources: ${dm.unknownFailingSources.join(', ')}` : ''}.`);
+  }
+  if (d.domainHealth?.check?.registry?.expires) {
+    const reg = d.domainHealth.check.registry;
+    L.push(`Domain registration: registrar ${reg.registrar || 'unknown'}, renews ${reg.expires}${d.domainHealth.check.dnsManager ? `, DNS managed at ${d.domainHealth.check.dnsManager}` : ''}.`);
+  }
   const threat = [m.firewallBlocked && `${m.firewallBlocked} firewall threats blocked`, m.endpointThreats && `${m.endpointThreats} endpoint threats removed`, ...bulletsFromText(m.threatBullets)].filter(Boolean);
   if (threat.length || m.threatStatus) L.push(`Threat protection: ${threat.join('; ') || 'monitored'}${m.threatStatus ? ` (status: ${m.threatStatus})` : ''}.`);
   if (d.secureScore.available) L.push(`Secure Score: ${d.secureScore.pct}% (${d.secureScore.currentScore}/${d.secureScore.maxScore})${d.secureScore.industryAvgPct != null ? `, industry average ${d.secureScore.industryAvgPct}%` : ''}.`);
@@ -181,11 +197,64 @@ function metricsBrief(d: ItReportData, m: ItManual): string {
   if (vparts.length) L.push(`Vulnerability scan (${(m.vulnProvider || 'RoboShadow')}${m.vulnTarget ? `, ${m.vulnTarget}` : ''}): ${vparts.join(', ')}.`);
   const h = d.helpdesk;
   L.push(`Support (working-hours timers): ${h.totalCases} total cases logged, ${h.resolved} resolved, ${h.closed} closed, ${h.open} still open; average first response ${fmtResponse(h.avgResponseMins)}${h.avgResolutionMins != null ? `, average resolution ${fmtResponse(h.avgResolutionMins)}` : ''}.`);
+  if (h.byCategory.length) L.push(`Support case mix: ${h.byCategory.map((c) => `${c.category} ×${c.count}`).join(', ')}.`);
+  if (h.notable.length) L.push(`Cases worked this period (newest first): ${h.notable.map((n) => `${n.subject} [${n.status}]`).join('; ')}.`);
   return L.join('\n');
 }
 
 // ── HTML helpers ─────────────────────────────────────────────────────────────────
 const esc = (s: any) => String(s == null ? '' : s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as Record<string, string>)[c]);
+
+// ── Email-safe mini-charts ───────────────────────────────────────────────────
+// Pure table/div CSS — no SVG, no JS — so they survive email clients (classic
+// Outlook renders with Word: no flex, no border-radius; these degrade to square
+// bars, which still read fine). Colour pair validated for colour-vision deficiency
+// (cyan #0891b2 vs red #dc2626 — deutan dE 19.5, all checks pass); every bar also
+// carries direct labels + counts so colour is never the only encoding.
+const CHART_GOOD = '#0891b2';
+const CHART_BAD = '#dc2626';
+
+// Horizontal 0–100 meter (score gauges). Caller supplies the fill colour.
+function meterBar(pct: number, color: string): string {
+  const pv = Math.max(0, Math.min(100, pct));
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:8px;"><tr>
+    <td width="${pv}%" style="background:${color};height:12px;border-radius:6px 0 0 6px;font-size:0;line-height:0;">&nbsp;</td>
+    <td style="background:#e5e7eb;height:12px;border-radius:0 6px 6px 0;font-size:0;line-height:0;">&nbsp;</td>
+  </tr></table>`;
+}
+
+// Two-segment split bar (good vs bad) with a 2px surface gap between segments and
+// a labelled legend underneath — the split reads even without colour.
+function splitBar(goodLabel: string, good: number, badLabel: string, bad: number): string {
+  const total = good + bad;
+  if (!total) return '';
+  const gp = Math.round((good / total) * 1000) / 10;
+  const chip = (c: string) => `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${c};margin-right:4px;"></span>`;
+  const cells = bad
+    ? `<td width="${Math.max(2, gp)}%" style="background:${CHART_GOOD};height:14px;border-radius:7px 0 0 7px;font-size:0;line-height:0;">&nbsp;</td>
+       <td width="2" style="background:#ffffff;font-size:0;line-height:0;">&nbsp;</td>
+       <td style="background:${CHART_BAD};height:14px;border-radius:0 7px 7px 0;font-size:0;line-height:0;">&nbsp;</td>`
+    : `<td style="background:${CHART_GOOD};height:14px;border-radius:7px;font-size:0;line-height:0;">&nbsp;</td>`;
+  return `<div style="margin-top:12px;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>${cells}</tr></table>
+    <p style="margin:6px 0 0;font-size:13px;color:#475569;">${chip(CHART_GOOD)}${esc(goodLabel)}: <strong>${good}</strong> (${gp}%)${bad ? ` &nbsp;&nbsp;${chip(CHART_BAD)}${esc(badLabel)}: <strong>${bad}</strong>` : ''}</p>
+  </div>`;
+}
+
+// Horizontal bar list for a category breakdown — single hue (magnitude, not identity;
+// the row label carries identity), values labelled at the end of every row.
+function hBars(items: { label: string; value: number }[]): string {
+  if (!items.length) return '';
+  const max = Math.max(...items.map((i) => i.value), 1);
+  return `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:6px;">${items.map((i) => `<tr>
+    <td style="padding:3px 10px 3px 0;font-size:13px;color:#475569;white-space:nowrap;width:1%;">${esc(i.label)}</td>
+    <td style="padding:3px 0;"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr>
+      <td width="${Math.max(3, Math.round((i.value / max) * 100))}%" style="background:${CHART_GOOD};height:12px;border-radius:6px;font-size:0;line-height:0;">&nbsp;</td>
+      <td style="font-size:0;line-height:0;">&nbsp;</td>
+    </tr></table></td>
+    <td style="padding:3px 0 3px 8px;font-size:13px;font-weight:700;color:#0f172a;width:1%;">${i.value}</td>
+  </tr>`).join('')}</table>`;
+}
 
 function statusPill(label: string): string {
   const l = label.toLowerCase();
@@ -228,7 +297,7 @@ function sectionDevices(d: ItReportData): string {
     s.encrypted ? `${s.encrypted} device${s.encrypted === 1 ? '' : 's'} with disk encryption enabled` : '',
     `Security baselines and policies enforced`,
     `Centralised visibility and compliance reporting enabled`,
-  ])}<div style="height:12px;"></div>${table}`;
+  ])}${splitBar('Compliant', s.compliant, 'Needs review', s.nonCompliant + s.unknown)}<div style="height:12px;"></div>${table}`;
   const status = s.compliancePct >= 90 ? 'Healthy' : 'Attention';
   return card('Device Management & Compliance', inner, status);
 }
@@ -250,15 +319,103 @@ function sectionBackup(m: ItManual): string {
   return card('Backup & Recovery Readiness', ticks(bl), m.backupStatus || 'Healthy');
 }
 
+// Deliverability: AUTO from DMARC authentication (Domain Health aggregate reports) when
+// the domain is monitored and saw volume this period. A manually entered figure still
+// wins (explicit override); otherwise the manual field can now stay empty.
+function deliverabilityLine(d: ItReportData, m: ItManual): string {
+  const manual = (m.deliverabilityPct || '').trim();
+  if (manual) return `<p style="margin:12px 0 0;font-size:16px;"><span style="color:#16a34a;font-weight:800;">&#10004;</span> Email deliverability measured at ${esc(manual)} with a healthy domain reputation.</p>`;
+  if (d.dmarcMon && d.dmarcMon.volume) {
+    const pct = d.dmarcMon.alignedPct;
+    const col = pct >= 98 ? '#16a34a' : pct >= 90 ? '#d97706' : '#dc2626';
+    return `<p style="margin:12px 0 0;font-size:16px;"><span style="color:${col};font-weight:800;">&#10004;</span> Email deliverability running at <strong>${pct}%</strong>, measured from ${d.dmarcMon.volume} emails observed in DMARC authentication reports this period.</p>`;
+  }
+  return '';
+}
+
 function sectionDns(d: ItReportData, m: ItManual): string {
+  if (!d.dns && !d.domainHealth) return card('DNS & Email Security Status', pending('No primary domain set for this customer.', 'Add the domain in the report settings to enable live DNS checks.'), 'Data pending');
+
+  // ── Rich path: LITS-DMARC Domain Health (same analysis as the Domain Health screen) ──
+  if (d.domainHealth && d.domainHealth.check) {
+    const dh = d.domainHealth;
+    const c = dh.check;
+    const scoreCol = dh.score >= 80 ? '#16a34a' : dh.score >= 60 ? '#d97706' : '#dc2626';
+    const meetsTarget = !c.dmarc?.issues?.some((i: string) => /below the agreed target/i.test(i));
+    const rows: { record: string; purpose: string; ok: boolean; detail: string }[] = [];
+    for (const pr of (c.platform || []) as any[]) {
+      rows.push({ record: pr.record, purpose: pr.record === 'MX' ? 'Mail routing' : pr.record === 'Autodiscover' ? 'Client configuration' : 'Device management', ok: !!pr.ok, detail: pr.detail || '' });
+    }
+    rows.push({
+      record: 'SPF', purpose: 'Authorised senders', ok: !!c.spf?.found && !(c.spf?.issues || []).length,
+      detail: c.spf?.found ? `published${c.spf?.allMechanism ? ` (${c.spf.allMechanism})` : ''}` : 'not found',
+    });
+    rows.push({
+      record: 'DKIM', purpose: 'Message integrity', ok: !!c.dkim?.found,
+      detail: c.dkim?.found ? `signing via ${(c.dkim?.selectors || []).join(', ')}` : 'not signing',
+    });
+    rows.push({
+      record: 'DMARC', purpose: 'Policy & reporting', ok: !!c.dmarc?.found && meetsTarget,
+      detail: c.dmarc?.found ? `p=${c.dmarc.policy || 'none'} (agreed target p=${dh.targetPolicy})` : 'not found',
+    });
+    const tableRows = rows.map((r) => `<tr>
+      <td><strong>${esc(r.record)}</strong></td><td>${esc(r.purpose)}</td>
+      <td>${r.ok ? '<span style="color:#16a34a;font-weight:800;">&#10004;</span>' : '<span style="color:#dc2626;font-weight:800;">&#10007;</span>'}</td>
+      <td style="color:#6b7280;font-size:14px;">${esc(r.detail)}</td>
+    </tr>`).join('');
+    const issues: string[] = [...(c.spf?.issues || []), ...(c.dmarc?.issues || [])]
+      .filter((i: string) => !/not being sent to our collector/i.test(i)); // internal ops detail, not client-facing
+    const issuesHtml = issues.length
+      ? `<div style="margin-top:12px;"><p style="margin:0 0 6px;font-weight:700;font-size:14px;color:#b45309;">Being addressed</p><ul style="margin:0;padding-left:18px;color:#92400e;font-size:14px;">${issues.slice(0, 5).map((i: string) => `<li style="margin:3px 0;">${esc(i)}</li>`).join('')}</ul></div>`
+      : '';
+    const grid = `<div class="stat-grid">
+      <div class="stat"><div class="stat-val" style="color:${scoreCol};">${dh.score}/100</div><div class="stat-lbl">Domain Health score</div></div>
+      <div class="stat"><div class="stat-val" style="font-size:26px;">${esc(dh.policy ? `p=${dh.policy}` : 'none')}</div><div class="stat-lbl">DMARC enforcement</div></div>
+      ${c.mailProvider ? `<div class="stat"><div class="stat-val" style="font-size:22px;">${esc(c.mailProvider)}</div><div class="stat-lbl">Mail platform</div></div>` : ''}
+    </div>`;
+    const deliver = deliverabilityLine(d, m);
+    const scoreMeter = meterBar(dh.score, scoreCol);
+    // Domain registration facts (RDAP): registrar, expiry (with a renewal warning inside 60
+    // days), and where the DNS is managed — the "who holds the keys" context clients ask about.
+    const reg = c.registry || null;
+    let regLine = '';
+    if (reg && (reg.registrar || reg.expires)) {
+      const bits: string[] = [];
+      if (reg.registrar) bits.push(`Registrar: <strong>${esc(reg.registrar)}</strong>`);
+      if (reg.expires) {
+        const days = Math.floor((new Date(reg.expires + 'T00:00:00Z').getTime() - Date.now()) / 86400000);
+        const warn = days >= 0 && days <= 60;
+        bits.push(`renews ${esc(new Date(reg.expires + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }))}${warn ? ` <span style="color:#dc2626;font-weight:700;">(${days} days — renewal due)</span>` : ''}`);
+      }
+      if (c.dnsManager) bits.push(`DNS managed at ${esc(c.dnsManager)}`);
+      regLine = `<p style="margin:0 0 12px;color:#6b7280;font-size:14px;">${bits.join(' &nbsp;·&nbsp; ')}</p>`;
+    }
+    const inner = `<p style="margin:0 0 6px;color:#6b7280;font-size:15px;">Domain: <strong>${esc(dh.domain)}</strong>${dh.checkedAt ? ` &nbsp;·&nbsp; checked ${new Date(dh.checkedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}</p>${regLine}
+      ${grid}
+      ${scoreMeter}
+      <div class="table-wrap" style="margin-top:12px;"><table class="tbl"><thead><tr><th>Record</th><th>Purpose</th><th>Status</th><th>Detail</th></tr></thead><tbody>${tableRows}</tbody></table></div>
+      ${issuesHtml}${deliver}${dmarcMonitorBlock(d)}`;
+    const dmarcConcern = !!(d.dmarcMon && d.dmarcMon.volume && d.dmarcMon.alignedPct < 90);
+    const status = (dh.score >= 80 && meetsTarget && !dmarcConcern) ? 'Healthy' : (dh.score >= 60 && !dmarcConcern) ? 'Active monitoring' : 'Attention';
+    return card('DNS & Email Security Status', inner, status);
+  }
+
   if (!d.dns) return card('DNS & Email Security Status', pending('No primary domain set for this customer.', 'Add the domain in the report settings to enable live DNS checks.'), 'Data pending');
   const rows = d.dns.rows.map((r) => `<tr>
       <td><strong>${esc(r.record)}</strong></td><td>${esc(r.purpose)}</td>
       <td>${r.ok ? '<span style="color:#16a34a;font-weight:800;">&#10004;</span>' : '<span style="color:#dc2626;font-weight:800;">&#10007;</span>'}</td>
       <td style="color:#6b7280;font-size:14px;">${esc(r.detail)}</td>
     </tr>`).join('');
-  const deliver = m.deliverabilityPct ? `<p style="margin:12px 0 0;font-size:16px;"><span style="color:#16a34a;font-weight:800;">&#10004;</span> Email deliverability measured at ${esc(m.deliverabilityPct)} with a healthy domain reputation.</p>` : '';
-  // LITS-DMARC: when the domain is monitored, add what the aggregate reports actually saw this period.
+  const deliver = deliverabilityLine(d, m);
+  const inner = `<p style="margin:0 0 12px;color:#6b7280;font-size:15px;">Domain: <strong>${esc(d.dns.domain)}</strong></p>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>Record</th><th>Purpose</th><th>Status</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table></div>${deliver}${dmarcMonitorBlock(d)}`;
+  const allOk = d.dns.rows.every((r) => r.ok);
+  const dmarcConcern = !!(d.dmarcMon && d.dmarcMon.volume && d.dmarcMon.alignedPct < 90);
+  return card('DNS & Email Security Status', inner, (allOk && !dmarcConcern) ? 'Healthy' : 'Attention');
+}
+
+// LITS-DMARC aggregate-report stats for the period — shared by both DNS-section paths.
+function dmarcMonitorBlock(d: ItReportData): string {
   let dmarcBlock = '';
   if (d.dmarcMon && d.dmarcMon.volume) {
     const dm = d.dmarcMon;
@@ -271,15 +428,18 @@ function sectionDns(d: ItReportData, m: ItManual): string {
         <div class="stat"><div class="stat-val">${dm.failed}</div><div class="stat-lbl">Failed authentication</div></div>
         <div class="stat"><div class="stat-val">${dm.sources}</div><div class="stat-lbl">Sending sources seen</div></div>
       </div>
+      ${splitBar('Authenticated', dm.aligned, 'Failed authentication', dm.failed)}
+      ${(dm.quarantined + dm.rejected) > 0 ? `<p style="margin:10px 0 0;font-size:15px;"><span style="color:#16a34a;font-weight:800;">&#128737;</span> <strong>${dm.quarantined + dm.rejected}</strong> message${(dm.quarantined + dm.rejected) === 1 ? '' : 's'} failing authentication ${dm.rejected ? `were blocked (${dm.rejected} rejected${dm.quarantined ? `, ${dm.quarantined} quarantined` : ''})` : 'were quarantined'} by your DMARC policy — spoofed mail that never reached inboxes.</p>` : ''}
+      ${dm.topSources.length ? `<p style="margin:12px 0 6px;font-weight:700;font-size:15px;">Who sends email as ${esc(dm.domain)}</p>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Sending service</th><th>Emails</th><th>Authenticated</th></tr></thead><tbody>${dm.topSources.map((sx) => {
+        const col = sx.alignedPct >= 98 ? '#16a34a' : sx.alignedPct >= 90 ? '#d97706' : '#dc2626';
+        return `<tr><td>${esc(sx.name)}${sx.known ? '' : ' <span style="font-size:12px;color:#b45309;">(unrecognised)</span>'}</td><td>${sx.volume}</td><td style="color:${col};font-weight:700;">${sx.alignedPct}%</td></tr>`;
+      }).join('')}</tbody></table></div>` : ''}
       ${dm.unknownFailingSources.length ? `<p style="margin:10px 0 0;font-size:14px;color:#b45309;">Unrecognised failing sources under review: ${esc(dm.unknownFailingSources.join(', '))}.</p>` : ''}
       ${dm.policy === 'none' ? `<p style="margin:10px 0 0;font-size:14px;color:#6b7280;">Policy is currently monitor-only (p=none); we are validating legitimate senders before moving to enforcement.</p>` : ''}
     </div>`;
   }
-  const inner = `<p style="margin:0 0 12px;color:#6b7280;font-size:15px;">Domain: <strong>${esc(d.dns.domain)}</strong></p>
-    <div class="table-wrap"><table class="tbl"><thead><tr><th>Record</th><th>Purpose</th><th>Status</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table></div>${deliver}${dmarcBlock}`;
-  const allOk = d.dns.rows.every((r) => r.ok);
-  const dmarcConcern = !!(d.dmarcMon && d.dmarcMon.volume && d.dmarcMon.alignedPct < 90);
-  return card('DNS & Email Security Status', inner, (allOk && !dmarcConcern) ? 'Healthy' : 'Attention');
+  return dmarcBlock;
 }
 
 function sectionThreat(d: ItReportData, m: ItManual): string {
@@ -351,7 +511,22 @@ function sectionSupport(d: ItReportData): string {
     `${h.resolved} resolved and ${h.closed} closed`,
     h.open ? `${h.open} case${h.open === 1 ? '' : 's'} remain open and are being progressed` : 'All cases for the period resolved or closed',
   ];
-  return card('Support & Service Activity', grid + ticks(lines), h.open ? 'Active monitoring' : 'Healthy');
+  // Case mix by category — pulled straight from the period's tickets.
+  const mix = h.byCategory.length
+    ? `<p style="margin:14px 0 2px;font-weight:700;font-size:15px;">Case mix</p>${hBars(h.byCategory.slice(0, 6).map((c) => ({ label: c.category, value: c.count })))}`
+    : '';
+  // What we actually worked on — the period's cases (subjects only, client-safe).
+  const CLOSED_BADGE = '<span class="badge badge-answered">Resolved</span>';
+  const OPEN_BADGE = '<span class="badge">In progress</span>';
+  const work = h.notable.length
+    ? `<p style="margin:14px 0 6px;font-weight:700;font-size:15px;">Work carried out this period</p>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Case</th><th>Subject</th><th>Outcome</th></tr></thead><tbody>${h.notable.map((n) => `<tr>
+        <td style="font-family:monospace;white-space:nowrap;">${esc(n.ticketNumber)}</td>
+        <td>${esc(n.subject)}</td>
+        <td>${['resolved', 'closed'].includes(n.status.toLowerCase()) ? CLOSED_BADGE : OPEN_BADGE}</td>
+      </tr>`).join('')}</tbody></table></div>${h.totalCases > h.notable.length ? `<p style="margin:6px 0 0;font-size:13px;color:#94a3b8;">Showing the ${h.notable.length} most recent of ${h.totalCases} cases.</p>` : ''}`
+    : '';
+  return card('Support & Service Activity', grid + ticks(lines) + mix + work, h.open ? 'Active monitoring' : 'Healthy');
 }
 
 // ── Assembly ─────────────────────────────────────────────────────────────────────
@@ -362,8 +537,8 @@ export interface GenerateOpts {
 }
 
 export async function generateItReport(opts: GenerateOpts): Promise<{ html: string; subject: string; data: ItReportData }> {
-  const data = await collectItReportData(opts.customerId, opts.tenant, opts.domain, opts.from, opts.to);
   const manual = opts.manual || {};
+  const data = await collectItReportData(opts.customerId, opts.tenant, opts.domain, opts.from, opts.to, bulletsFromText(manual.excludedTickets));
 
   // Claude writes the narrative from the SDM notes + metrics, consolidating & polishing every note
   // (spelling, grammar, IT terminology) into the Executive Summary, Commentary and Overall Status.
@@ -406,11 +581,9 @@ export async function generateItReport(opts: GenerateOpts): Promise<{ html: stri
     sectionCyber(data),
     sectionVulnerability(data, manual),
     sectionSupport(data),
-    card('Overall IT Status', `<p style="margin:0 0 12px;font-size:16px;line-height:1.6;">${esc(overallStatus).replace(/\n/g, '<br>')}</p>` + ticks([
-      'Environment operating securely and efficiently',
-      'Backup, patching and email security controls reviewed',
-      data.helpdesk.open ? 'Open support items are in progress and under review' : 'No outstanding support items',
-    ]), 'Stable'),
+    // Prose only — the old canned tick-list underneath just repeated the Executive
+    // Summary and read as padding (flagged on the July 2026 Staybrook review).
+    card('Overall IT Status', `<p style="margin:0;font-size:16px;line-height:1.6;">${esc(overallStatus).replace(/\n/g, '<br>')}</p>`, 'Stable'),
   ].join('\n');
 
   const subject = `IT Operations & Security Snapshot — ${opts.customerName} — ${opts.periodLabel}`;

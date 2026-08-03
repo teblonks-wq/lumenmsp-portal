@@ -50,12 +50,17 @@ export interface HelpdeskStats {
   avgResolutionMins: number | null;// created → closed/resolved, working-hours, averaged
   byCategory: { category: string; count: number }[];
   topRequesters: { name: string; count: number }[];
+  notable: { ticketNumber: string; subject: string; status: string }[]; // the period's cases, newest first
 }
 
-export async function getHelpdeskStats(customerId: number, from: Date, to: Date): Promise<HelpdeskStats> {
+export async function getHelpdeskStats(customerId: number, from: Date, to: Date, excludeTicketNumbers: string[] = []): Promise<HelpdeskStats> {
+  // Cases explicitly EXCLUDED from the client-facing report (internal noise, e.g. a
+  // forwarded copy of last month's report) — ticked per case on the report settings page.
+  // Excluded cases vanish from EVERYTHING: totals, timers, case mix and the work table.
+  const excluded = new Set(excludeTicketNumbers.map((t) => String(t || '').trim().toUpperCase()).filter(Boolean));
   // Tickets created in the window (the "handled" set), with resolution + first-response timing.
-  const { rows } = await pool.query(
-    `SELECT t.id, t.category, t.status, t.created_at, t.closed_at,
+  const { rows: allRows } = await pool.query(
+    `SELECT t.id, t.ticket_number, t.subject, t.category, t.status, t.created_at, t.closed_at,
             co.full_name AS requester,
             (SELECT MIN(COALESCE(m.received_at, m.created_at))
                FROM inbox_messages m
@@ -66,6 +71,7 @@ export async function getHelpdeskStats(customerId: number, from: Date, to: Date)
         AND t.created_at >= $2 AND t.created_at < $3`,
     [customerId, from, to]
   );
+  const rows = allRows.filter((t: any) => !excluded.has(String(t.ticket_number || '').toUpperCase()));
 
   let resolved = 0, closed = 0, open = 0;
   const responseMins: number[] = [];
@@ -105,6 +111,11 @@ export async function getHelpdeskStats(customerId: number, from: Date, to: Date)
     ? Math.round(resolutionMins.reduce((a, b) => a + b, 0) / resolutionMins.length)
     : null;
 
+  const notable = [...rows]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 10)
+    .map((t) => ({ ticketNumber: String(t.ticket_number || ''), subject: String(t.subject || '(no subject)'), status: String(t.status || '') }));
+
   return {
     totalCases: rows.length,
     resolved,
@@ -115,6 +126,7 @@ export async function getHelpdeskStats(customerId: number, from: Date, to: Date)
     avgResolutionMins,
     byCategory: [...byCat.entries()].map(([category, count]) => ({ category, count })).sort((a, b) => b.count - a.count),
     topRequesters: [...byReq.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count).slice(0, 5),
+    notable,
   };
 }
 

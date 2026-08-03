@@ -222,6 +222,31 @@ export interface DmarcMonthSummary {
   domain: string; policy: string; score: number | null;
   volume: number; aligned: number; alignedPct: number; failed: number;
   sources: number; unknownFailingSources: string[];
+  quarantined: number; rejected: number;   // spoofed/unauthenticated mail actioned by the policy
+  topSources: { name: string; known: boolean; volume: number; alignedPct: number }[]; // who sends as the domain
+}
+
+// Stored deep DNS/Domain Health check for a monitored domain (dmarc_domains.last_check,
+// refreshed by the daily sweep + on-demand re-runs). Used by the monthly IT report so the
+// "DNS & Email Security" section shows the SAME analysis as the Domain Health screen —
+// score, SPF/DKIM/DMARC detail, platform records — without re-running lookups at generate time.
+export interface DomainHealth {
+  domain: string; policy: string; targetPolicy: string; score: number;
+  checkedAt: Date | null; check: any; // DmarcDnsCheck JSON as stored
+}
+
+export async function getDomainHealth(domain: string): Promise<DomainHealth | null> {
+  const d = (domain || '').trim().toLowerCase();
+  if (!d) return null;
+  const r = await pool.query(
+    `SELECT domain, policy, COALESCE(target_policy,'none') AS target_policy, score, last_check, last_checked_at
+       FROM dmarc_domains WHERE domain=$1 AND monitoring_enabled=true`, [d]);
+  const row = r.rows[0];
+  if (!row || row.score == null) return null;
+  const check = (row.last_check && typeof row.last_check === 'object') ? row.last_check : null;
+  if (!check || !check.spf) return null; // no stored deep check yet — caller falls back to plain DNS
+  return { domain: row.domain, policy: row.policy || '', targetPolicy: row.target_policy,
+           score: row.score, checkedAt: row.last_checked_at, check };
 }
 
 export async function getDmarcMonthSummary(domain: string, from: Date, to: Date): Promise<DmarcMonthSummary | null> {
@@ -229,10 +254,12 @@ export async function getDmarcMonthSummary(domain: string, from: Date, to: Date)
   if (!d) return null;
   const dom = (await pool.query('SELECT * FROM dmarc_domains WHERE domain=$1 AND monitoring_enabled=true', [d])).rows[0];
   if (!dom) return null;
-  const [tot, bad] = await Promise.all([
+  const [tot, bad, src] = await Promise.all([
     pool.query(
       `SELECT COALESCE(SUM(count),0)::int AS volume,
               COALESCE(SUM(count) FILTER (WHERE dkim_aligned OR spf_aligned),0)::int AS aligned,
+              COALESCE(SUM(count) FILTER (WHERE disposition='quarantine'),0)::int AS quarantined,
+              COALESCE(SUM(count) FILTER (WHERE disposition='reject'),0)::int AS rejected,
               COUNT(DISTINCT source_ip)::int AS sources
          FROM dmarc_records WHERE domain_id=$1 AND date_begin >= $2 AND date_begin < $3`, [dom.id, from, to]),
     pool.query(
@@ -241,6 +268,11 @@ export async function getDmarcMonthSummary(domain: string, from: Date, to: Date)
         WHERE domain_id=$1 AND date_begin >= $2 AND date_begin < $3
           AND NOT dkim_aligned AND NOT spf_aligned AND NOT sender_known
         GROUP BY sender_name ORDER BY SUM(count) DESC LIMIT 5`, [dom.id, from, to]),
+    pool.query(
+      `SELECT sender_name, BOOL_OR(sender_known) AS known, SUM(count)::int AS volume,
+              COALESCE(SUM(count) FILTER (WHERE dkim_aligned OR spf_aligned),0)::int AS aligned
+         FROM dmarc_records WHERE domain_id=$1 AND date_begin >= $2 AND date_begin < $3
+        GROUP BY sender_name ORDER BY SUM(count) DESC LIMIT 6`, [dom.id, from, to]),
   ]);
   const t = tot.rows[0];
   const volume = t.volume || 0;
@@ -251,5 +283,11 @@ export async function getDmarcMonthSummary(domain: string, from: Date, to: Date)
     alignedPct: volume ? Math.round((aligned / volume) * 1000) / 10 : 0,
     sources: t.sources || 0,
     unknownFailingSources: bad.rows.map((r: any) => `${r.sender_name} (${r.volume})`),
+    quarantined: t.quarantined || 0,
+    rejected: t.rejected || 0,
+    topSources: src.rows.map((r: any) => ({
+      name: String(r.sender_name || 'unknown'), known: !!r.known,
+      volume: r.volume || 0, alignedPct: r.volume ? Math.round((r.aligned / r.volume) * 1000) / 10 : 0,
+    })),
   };
 }
