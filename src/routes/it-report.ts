@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { sendMail } from '../lib/mailer';
+import { htmlToPdf } from '../lib/pdf';
 import {
   ensureItReportTables, getItConfig, getReportNotes, compileSdmNotes,
   generateItReport, reportDomain, type ItManual,
@@ -12,6 +13,13 @@ import {
 
 const router = Router();
 const CSP = "default-src 'self' 'unsafe-inline' data: blob: https:; img-src * data: blob:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; font-src 'self' data: https:";
+
+// Render a report run's rich HTML to a PDF attachment for emailing.
+async function reportPdfAttachment(customerName: string, periodLabel: string, html: string) {
+  const buf = await htmlToPdf(html, { format: 'A4', margin: { top: '14mm', right: '12mm', bottom: '16mm', left: '12mm' } });
+  const safe = `IT Snapshot - ${customerName} - ${periodLabel}`.replace(/[^a-zA-Z0-9 _.-]/g, '').slice(0, 90);
+  return { filename: `${safe}.pdf`, contentType: 'application/pdf', base64: buf.toString('base64') };
+}
 
 // Previous calendar month [start, end) in UTC, plus a label like "June 2026".
 function prevMonth(ref = new Date()): { from: Date; to: Date; label: string } {
@@ -152,17 +160,18 @@ router.get('/it-report/:id/preview', requireAuth, async (req: Request, res: Resp
   try {
     const notes = await getReportNotes(id, from, to);
     const sdmNotes = compileSdmNotes(cfg?.sdm_notes || '', notes);
-    const { html, subject } = await generateItReport({
+    const genResult = await generateItReport({
       customerId: id, customerName: c.name, tenant: c.entra_tenant_id, domain: await reportDomain(id, cfg?.primary_domain),
       from, to, periodLabel: label, sdmNotes, manual: cfg?.manual || {},
       useClaude: req.query.noai !== '1', preparedBy: 'Lumen IT Solutions',
     });
+    const { html, subject } = genResult;
     // Refresh this period's DRAFT with the exact HTML shown, so Send emails the reviewed copy.
     await pool.query("DELETE FROM it_report_runs WHERE customer_id=$1 AND period_start=$2 AND status='draft'", [id, from]);
     const ins = await pool.query(
-      `INSERT INTO it_report_runs (customer_id, period_start, period_end, period_label, sdm_notes, manual, subject, html, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'draft') RETURNING id`,
-      [id, from, to, label, sdmNotes, JSON.stringify(cfg?.manual || {}), subject, html]
+      `INSERT INTO it_report_runs (customer_id, period_start, period_end, period_label, sdm_notes, manual, subject, html, cover_html, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'draft') RETURNING id`,
+      [id, from, to, label, sdmNotes, JSON.stringify(cfg?.manual || {}), subject, html, (genResult as any).coverHtml || null]
     );
     const runId = ins.rows[0].id;
     const recipients = String(cfg?.recipients || '').split(/[\n,;]+/).map((s) => s.trim()).filter((s) => s.includes('@'));
@@ -196,10 +205,15 @@ router.post('/it-report/:id/send-draft', requireAuth, async (req: Request, res: 
   const cfg = await getItConfig(id);
   const recipients = String(cfg?.recipients || '').split(/[\n,;]+/).map((s) => s.trim()).filter((s) => s.includes('@'));
   if (!recipients.length) { res.redirect('/it-report/' + id + '?err=' + encodeURIComponent('Add at least one recipient email first.')); return; }
-  const run = (await pool.query('SELECT subject, html FROM it_report_runs WHERE id=$1 AND customer_id=$2', [runId, id])).rows[0];
+  const run = (await pool.query('SELECT subject, html, cover_html, period_label FROM it_report_runs WHERE id=$1 AND customer_id=$2', [runId, id])).rows[0];
   if (!run || !run.html) { res.redirect('/it-report/' + id + '?err=' + encodeURIComponent('Preview expired — please preview again, then send.')); return; }
+  const c2 = await customer(id);
+  let pdf: any = null;
+  try { pdf = await reportPdfAttachment(c2?.name || 'Customer', run.period_label || '', run.html); }
+  catch (e) { res.redirect('/it-report/' + id + '?err=' + encodeURIComponent('PDF generation failed: ' + (String((e as Error).message)).slice(0, 120))); return; }
+  const body = run.cover_html || run.html; // cover email if present, else fall back to the rich html
   let sent = 0;
-  for (const to of recipients) { try { await sendMail({ to, subject: run.subject, html: run.html }); sent++; } catch { /* keep going */ } }
+  for (const to of recipients) { try { await sendMail({ to, subject: run.subject, html: body, attachments: [pdf] }); sent++; } catch { /* keep going */ } }
   await pool.query('UPDATE it_report_runs SET status=$1, sent_at=NOW() WHERE id=$2', [sent ? 'sent' : 'failed', runId]);
   res.redirect('/it-report/' + id + (sent ? '?saved=1' : '?err=' + encodeURIComponent('Send failed — check mail settings.')));
 });
@@ -224,16 +238,17 @@ router.post('/it-report/:id/send', requireAuth, async (req: Request, res: Respon
   try {
     const notes = await getReportNotes(id, from, to);
     const sdmNotes = compileSdmNotes(cfg?.sdm_notes || '', notes);
-    const { html, subject } = await generateItReport({
+    const { html, coverHtml, subject } = await generateItReport({
       customerId: id, customerName: c.name, tenant: c.entra_tenant_id, domain: await reportDomain(id, cfg?.primary_domain),
       from, to, periodLabel: label, sdmNotes, manual: cfg?.manual || {}, preparedBy: 'Lumen IT Solutions',
     });
+    const pdf = await reportPdfAttachment(c.name, label, html);
     let sent = 0;
-    for (const to2 of recipients) { try { await sendMail({ to: to2, subject, html }); sent++; } catch { /* keep going */ } }
+    for (const to2 of recipients) { try { await sendMail({ to: to2, subject, html: coverHtml || html, attachments: [pdf] }); sent++; } catch { /* keep going */ } }
     await pool.query(
-      `INSERT INTO it_report_runs (customer_id, period_start, period_end, period_label, sdm_notes, manual, subject, html, status, sent_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
-      [id, from, to, label, sdmNotes, JSON.stringify(cfg?.manual || {}), subject, html, sent ? 'sent' : 'failed']
+      `INSERT INTO it_report_runs (customer_id, period_start, period_end, period_label, sdm_notes, manual, subject, html, cover_html, status, sent_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())`,
+      [id, from, to, label, sdmNotes, JSON.stringify(cfg?.manual || {}), subject, html, coverHtml || null, sent ? 'sent' : 'failed']
     );
     res.redirect('/it-report/' + id + '?saved=1');
   } catch (e: any) {

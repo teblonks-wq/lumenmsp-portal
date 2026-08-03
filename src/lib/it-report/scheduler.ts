@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { pool } from '../../db/pool';
 import { config } from '../../config';
 import { sendMail } from '../mailer';
+import { htmlToPdf } from '../pdf';
 import { getItConfig, getReportNotes, compileSdmNotes, generateItReport, reportDomain } from './generate';
 
 // Monthly IT Snapshot scheduler. Fires at 00:00 on the 1st and produces the PREVIOUS
@@ -38,24 +39,31 @@ export async function runItReportBatch(ref = new Date()): Promise<void> {
       const sdmNotes = compileSdmNotes(conf?.sdm_notes || '', notes);
       const recipients = String(conf?.recipients || '').split(/[\n,;]+/).map((s) => s.trim()).filter((s) => s.includes('@'));
 
-      const { html, subject } = await generateItReport({
+      const { html, coverHtml, subject } = await generateItReport({
         customerId: cfg.customer_id, customerName: cfg.customer_name, tenant: cfg.entra_tenant_id,
         domain: await reportDomain(cfg.customer_id, conf?.primary_domain), from, to, periodLabel: label,
         sdmNotes, manual: conf?.manual || {}, preparedBy: 'Lumen IT Solutions',
       });
+      // Rich report → PDF attachment; the email body is the clean, email-safe cover.
+      let pdf: any = null;
+      try {
+        const buf = await htmlToPdf(html, { format: 'A4', margin: { top: '14mm', right: '12mm', bottom: '16mm', left: '12mm' } });
+        const safe = `IT Snapshot - ${cfg.customer_name} - ${label}`.replace(/[^a-zA-Z0-9 _.-]/g, '').slice(0, 90);
+        pdf = { filename: `${safe}.pdf`, contentType: 'application/pdf', base64: buf.toString('base64') };
+      } catch (e) { console.error(`[it-report] PDF failed for ${cfg.customer_name}:`, (e as Error).message); }
 
       let status = 'draft';
       let sentAt: Date | null = null;
       if (cfg.auto_send && recipients.length) {
         let sent = 0;
-        for (const to2 of recipients) { try { await sendMail({ to: to2, subject, html }); sent++; } catch (e) { console.error(`[it-report] send to ${to2} failed:`, (e as Error).message); } }
+        for (const to2 of recipients) { try { await sendMail({ to: to2, subject, html: coverHtml || html, attachments: pdf ? [pdf] : [] }); sent++; } catch (e) { console.error(`[it-report] send to ${to2} failed:`, (e as Error).message); } }
         status = sent ? 'sent' : 'failed';
         sentAt = sent ? new Date() : null;
       }
       await pool.query(
-        `INSERT INTO it_report_runs (customer_id, period_start, period_end, period_label, sdm_notes, manual, subject, html, status, sent_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [cfg.customer_id, from, to, label, sdmNotes, JSON.stringify(conf?.manual || {}), subject, html, status, sentAt]
+        `INSERT INTO it_report_runs (customer_id, period_start, period_end, period_label, sdm_notes, manual, subject, html, cover_html, status, sent_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [cfg.customer_id, from, to, label, sdmNotes, JSON.stringify(conf?.manual || {}), subject, html, coverHtml || null, status, sentAt]
       );
       // Review-mode (auto_send off): tell staff the draft is ready to check and send.
       if (status === 'draft') await notifyDraftReady(cfg.customer_id, cfg.customer_name, label).catch(() => {});

@@ -74,6 +74,7 @@ export async function ensureItReportTables(): Promise<void> {
       sent_at       TIMESTAMPTZ
     );
     CREATE INDEX IF NOT EXISTS idx_itrun_cust ON it_report_runs (customer_id, period_start DESC);
+    ALTER TABLE it_report_runs ADD COLUMN IF NOT EXISTS cover_html TEXT;
     CREATE TABLE IF NOT EXISTS it_report_notes (
       id           SERIAL PRIMARY KEY,
       customer_id  INTEGER NOT NULL,
@@ -649,7 +650,41 @@ export interface GenerateOpts {
   sdmNotes?: string; manual?: ItManual; useClaude?: boolean; preparedBy?: string;
 }
 
-export async function generateItReport(opts: GenerateOpts): Promise<{ html: string; subject: string; data: ItReportData }> {
+// Email-safe COVERING email (tables + inline styles only — survives Outlook/Gmail, unlike the
+// rich report which is sent as a PDF attachment). Branded header, the binary status board,
+// the executive summary, and a line pointing to the attached PDF.
+function reportCoverEmail(customerName: string, periodLabel: string, execSummary: string, data: ItReportData, manual: ItManual, preparedBy: string): string {
+  const dot = (st: MarkerState) => st === 'ok' ? '#16a34a' : st === 'attention' ? '#d97706' : '#94a3b8';
+  const word = (st: MarkerState) => st === 'ok' ? 'OK' : st === 'attention' ? 'Needs attention' : 'Not monitored';
+  const rows = reportMarkers(data, manual).map((mk) => `<tr>
+    <td style="padding:8px 10px;border-bottom:1px solid #eef2f7;font-family:Segoe UI,Arial,sans-serif;font-size:14px;color:#0f172a;font-weight:600;">${esc(mk.label)}</td>
+    <td style="padding:8px 10px;border-bottom:1px solid #eef2f7;font-family:Segoe UI,Arial,sans-serif;font-size:14px;white-space:nowrap;color:${dot(mk.state)};font-weight:700;">&#9679; ${word(mk.state)}</td>
+    <td style="padding:8px 10px;border-bottom:1px solid #eef2f7;font-family:Segoe UI,Arial,sans-serif;font-size:13px;color:#64748b;">${esc(mk.note)}</td>
+  </tr>`).join('');
+  return `<div style="background:#f1f5f9;padding:24px 0;font-family:Segoe UI,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;">
+    <tr><td style="background:#0f172a;padding:22px 28px;">
+      <div style="color:#ffffff;font-size:18px;font-weight:700;">Lumen IT Solutions</div>
+      <div style="color:#cbd5e1;font-size:14px;margin-top:2px;">IT Operations &amp; Security Snapshot &nbsp;&middot;&nbsp; ${esc(periodLabel)}</div>
+    </td></tr>
+    <tr><td style="padding:24px 28px;">
+      <p style="margin:0 0 14px;font-size:15px;color:#1f2937;line-height:1.6;">Hello,</p>
+      <p style="margin:0 0 18px;font-size:15px;color:#1f2937;line-height:1.6;">Please find <strong>${esc(customerName)}</strong>'s IT Operations &amp; Security Snapshot for <strong>${esc(periodLabel)}</strong> attached as a PDF. A summary of the month is below.</p>
+      <p style="margin:0 0 8px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#64748b;">At a glance</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #eef2f7;border-radius:8px;border-collapse:separate;margin-bottom:20px;">${rows}</table>
+      <p style="margin:0 0 8px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#64748b;">Executive summary</p>
+      <p style="margin:0 0 20px;font-size:15px;color:#1f2937;line-height:1.6;">${esc(execSummary).replace(/\n/g, '<br>')}</p>
+      <p style="margin:0;font-size:15px;color:#1f2937;line-height:1.6;">The full report &mdash; devices, backup, email security, support activity and more &mdash; is in the attached PDF. If you have any questions, just reply to this email and we'll be glad to help.</p>
+      <p style="margin:18px 0 0;font-size:15px;color:#1f2937;">Kind regards,<br><strong>${esc(preparedBy)}</strong></p>
+    </td></tr>
+    <tr><td style="background:#f8fafc;padding:14px 28px;border-top:1px solid #e2e8f0;">
+      <div style="font-size:12px;color:#94a3b8;">Lumen IT Solutions &nbsp;&middot;&nbsp; Prepared by ${esc(preparedBy)}</div>
+    </td></tr>
+  </table>
+</div>`;
+}
+
+export async function generateItReport(opts: GenerateOpts): Promise<{ html: string; coverHtml: string; subject: string; data: ItReportData }> {
   const manual = opts.manual || {};
   const data = await collectItReportData(opts.customerId, opts.tenant, opts.domain, opts.from, opts.to, bulletsFromText(manual.excludedTickets));
 
@@ -704,7 +739,8 @@ export async function generateItReport(opts: GenerateOpts): Promise<{ html: stri
 
   const subject = `IT Operations & Security Snapshot — ${opts.customerName} — ${opts.periodLabel}`;
   const html = itDocument(subject, header + body);
-  return { html, subject, data };
+  const coverHtml = reportCoverEmail(opts.customerName, opts.periodLabel, execSummary, data, manual, opts.preparedBy || 'Lumen IT Solutions');
+  return { html, coverHtml, subject, data };
 }
 
 // Standalone HTML document reusing the report stylesheet + a print/Save-as-PDF toolbar.
