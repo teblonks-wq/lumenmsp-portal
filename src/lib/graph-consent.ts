@@ -28,10 +28,18 @@ export async function ensureGraphConsentTable(): Promise<void> {
   `);
 }
 
-// The one-time grant link a CUSTOMER global admin must open (v1 admin-consent endpoint —
-// redirects back to the app's registered redirect URI, which /auth/callback now handles).
+// The one-time grant link a CUSTOMER global admin must open. v2 admin-consent endpoint
+// with an EXPLICIT redirect_uri — the v1 endpoint bounces to the app's DEFAULT redirect
+// URI, which on this app registration is learn.lumenmsp.co.uk (discovered 2026-08-03 when
+// a consent landed on LITS Learn's login and scared everyone with its CSRF message).
+// Requires https://<portal>/auth/callback to be REGISTERED as a redirect URI on the Graph
+// app (Entra → App registrations → the app → Authentication → Web → add it).
 export function graphConsentUrl(tenantId: string): string {
-  return `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/adminconsent?client_id=${encodeURIComponent(config.GRAPH_CLIENT_ID || '')}`;
+  const redirect = ((config.APP_URL || 'https://portal.lumenmsp.co.uk').replace(/\/+$/, '')) + '/auth/callback';
+  return `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/v2.0/adminconsent`
+    + `?client_id=${encodeURIComponent(config.GRAPH_CLIENT_ID || '')}`
+    + `&scope=${encodeURIComponent('https://graph.microsoft.com/.default')}`
+    + `&redirect_uri=${encodeURIComponent(redirect)}`;
 }
 
 async function probeTenant(tenant: string): Promise<{ status: string; detail: string }> {

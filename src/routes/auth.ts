@@ -141,11 +141,20 @@ router.get('/auth/callback', async (req: Request, res: Response) => {
     const tid = String((req.query as any).tenant || '');
     const granted = /^true$/i.test(adminConsent);
     if (granted && tid) { refreshGraphConsentForTenant(tid).catch(() => {}); }
-    res.render('error', {
-      message: granted
-        ? 'Admin consent granted' + (tid ? ' for tenant ' + tid : '') + '. Intune and Secure Score data will be available within a few minutes — the Customers list shows the live Graph status.'
-        : 'Admin consent was not completed (declined or cancelled). No changes were made.',
-    });
+    // A dedicated page — NOT the error view; a successful grant must not say "Something
+    // went wrong" (which it did on 2026-08-03 and read as a failure).
+    const esc = (x: string) => x.replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as Record<string, string>)[ch]);
+    res.send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">`
+      + `<title>${granted ? 'Consent granted' : 'Consent not completed'} — Lumen MSP Portal</title></head>`
+      + `<body style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f1f5f9;margin:0;">`
+      + `<div style="max-width:520px;margin:12vh auto;background:#fff;border-radius:16px;padding:36px 32px;box-shadow:0 12px 30px rgba(2,6,23,.12);text-align:center;">`
+      + `<div style="font-size:44px;margin-bottom:10px;">${granted ? '&#9989;' : '&#9888;&#65039;'}</div>`
+      + `<h1 style="font-size:22px;margin:0 0 10px;color:#0f172a;">${granted ? 'Microsoft 365 access granted' : 'Consent not completed'}</h1>`
+      + `<p style="color:#475569;font-size:15px;line-height:1.6;margin:0;">${granted
+        ? 'Thank you — admin consent was granted successfully' + (tid ? ' for tenant <span style="font-family:monospace;font-size:13px;">' + esc(tid) + '</span>' : '') + '. Device and security reporting will light up automatically within a few minutes; nothing more is needed.'
+        : 'The consent was declined or cancelled — no changes were made. You can re-run it from the Customers page at any time.'}</p>`
+      + `<p style="color:#94a3b8;font-size:13px;margin:24px 0 0;">Lumen IT Solutions</p>`
+      + `</div></body></html>`);
     return;
   }
 
