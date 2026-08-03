@@ -55,6 +55,8 @@ import { startGiacomStatus } from './lib/giacom-status';
 import { startUnifiPoll } from './lib/unifi';
 import { startMsp360Sync } from './lib/msp360';
 import { startGraphConsentCheck } from './lib/graph-consent';
+import { startAzureBackupSync } from './lib/azure-backup';
+import { startAcronisSync } from './lib/acronis';
 import { resumeMassMailer } from './lib/mass-mailer';
 import { hasFinanceAccess, hasVaultAccess } from './middleware/auth';
 import { startRecurringBilling } from './lib/recurring-billing';
@@ -412,4 +414,6 @@ server.listen(config.PORT, () => {
   startUnifiPoll();      // N3twrx: poll UniFi Site Manager API for offline devices
   startMsp360Sync();     // MSP360: nightly backup status + storage snapshot for the IT reports
   startGraphConsentCheck(); // Graph: which customer tenants have consented the portal app (Customers list badge)
+  startAzureBackupSync();   // Azure Backup: Recovery Services vaults per customer tenant (needs Reader RBAC per subscription)
+  startAcronisSync();       // Acronis: per-tenant protected workloads + storage (linked like MSP360)
 });

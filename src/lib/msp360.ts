@@ -220,9 +220,13 @@ export function planTypeLabel(t: string): string {
 }
 export function classifyPlanStatus(status: string): 'ok' | 'failed' | 'other' {
   const s = String(status || '').trim();
-  if (s === '0') return 'ok';                                  // Success
-  if (s === '1' || s === '2' || s === '5' || s === '6') return 'failed'; // Overdue/Error/Interrupted/UnexpectedlyClosed
-  return 'other';                                              // Running/Unknown/Warning
+  if (s === '0') return 'ok';                                  // MSP360: Success
+  if (s === '1' || s === '2' || s === '5' || s === '6') return 'failed'; // MSP360: Overdue/Error/Interrupted/UnexpectedlyClosed
+  // Text statuses from other providers (Azure Backup: Completed/Failed/…, Acronis later).
+  const t = s.toLowerCase();
+  if (/^(completed|success|succeeded|healthy|ok)$/.test(t)) return 'ok';
+  if (/fail|error|unhealthy|critical|expired/.test(t)) return 'failed';
+  return 'other';                                              // Running/Unknown/Warning/InProgress…
 }
 
 export async function getBackupSummaryForCustomer(customerId: number): Promise<BackupSummary | null> {
