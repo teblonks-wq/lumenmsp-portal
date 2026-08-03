@@ -21,13 +21,18 @@ function noteFromStatus(status: number, what: string): string {
   return `${what}: unavailable right now (HTTP ${status}).`;
 }
 
-async function graphGetAll(tenant: string, path: string): Promise<{ ok: true; value: any[] } | { ok: false; status: number }> {
-  const token = await getGraphTokenForTenant(tenant);
+async function graphGetAll(tenant: string, path: string, _retry = false): Promise<{ ok: true; value: any[] } | { ok: false; status: number }> {
+  const token = await getGraphTokenForTenant(tenant, _retry); // _retry → force a fresh token
   const out: any[] = [];
   let url: string = GRAPH + path;
   while (url) {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-    if (!res.ok) return { ok: false, status: res.status };
+    if (!res.ok) {
+      // A 401/403 on the FIRST try can be a token cached before the tenant consented the
+      // scope — bust it and retry once with a fresh token before giving up.
+      if ((res.status === 401 || res.status === 403) && !_retry) return graphGetAll(tenant, path, true);
+      return { ok: false, status: res.status };
+    }
     const data: any = await res.json();
     for (const v of (data.value || [])) out.push(v);
     url = data['@odata.nextLink'] || '';
@@ -106,8 +111,12 @@ export interface SecureScoreSummary {
 export async function getSecureScoreSummary(tenant: string | null | undefined): Promise<SecureScoreSummary | Unavailable> {
   if (!tenant) return unavailable('No Entra tenant ID is set for this customer.');
   try {
-    const token = await getGraphTokenForTenant(tenant);
-    const res = await fetch(`${GRAPH}/security/secureScores?$top=1`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    let token = await getGraphTokenForTenant(tenant);
+    let res = await fetch(`${GRAPH}/security/secureScores?$top=1`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    if ((res.status === 401 || res.status === 403)) { // stale-token self-heal (see graphGetAll)
+      token = await getGraphTokenForTenant(tenant, true);
+      res = await fetch(`${GRAPH}/security/secureScores?$top=1`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+    }
     if (!res.ok) return unavailable(noteFromStatus(res.status, 'Secure Score'));
     const data: any = await res.json();
     const s = (data.value || [])[0];

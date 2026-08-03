@@ -315,7 +315,7 @@ function reportMarkers(d: ItReportData, m: ItManual): Marker[] {
 
   // Patch/endpoint (Intune-derived or manual)
   if (d.intune.available) out.push({ label: 'Patching & endpoint', state: d.intune.compliancePct >= 90 ? 'ok' : 'attention', note: `${d.intune.compliancePct}% patch compliance` });
-  else if (m.patchStatus || (m.patchBullets || '').trim()) out.push({ label: 'Patching & endpoint', state: /attention|review|risk/i.test(m.patchStatus || '') ? 'attention' : 'ok', note: m.patchStatus || 'monitored' });
+  else if (m.patchStatus || (m.patchBullets || '').trim()) out.push({ label: 'Patching & endpoint', state: /attention|review|risk|improv|medium|low|poor|action/i.test(m.patchStatus || '') ? 'attention' : 'ok', note: m.patchStatus || 'monitored' });
   else out.push({ label: 'Patching & endpoint', state: 'pending', note: 'not reported this period' });
 
   // Threat protection (manual figures/status)
