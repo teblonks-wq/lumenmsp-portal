@@ -284,41 +284,88 @@ function pending(note: string, manualHint = ''): string {
   return `<p style="margin:0;color:#6b7280;font-size:15px;">${esc(note)}${manualHint ? ' ' + esc(manualHint) : ''}</p>`;
 }
 
+// ── Binary status board (Overall IT Status) ──────────────────────────────────────
+// Every report marker rolled up to one of three states, at a glance:
+//   ok = green ✓  ·  attention = amber !  ·  pending = grey — (not yet monitored/consented)
+type MarkerState = 'ok' | 'attention' | 'pending';
+interface Marker { label: string; state: MarkerState; note: string; }
+
+function reportMarkers(d: ItReportData, m: ItManual): Marker[] {
+  const out: Marker[] = [];
+
+  // Backup
+  if (d.backup) out.push({ label: 'Backup & recovery', state: d.backup.failedPlans ? 'attention' : 'ok',
+    note: d.backup.failedPlans ? `${d.backup.failedPlans} plan(s) need attention` : `${d.backup.plans.length} plans healthy · ${fmtBytes(d.backup.totalStorageBytes)}` });
+  else out.push({ label: 'Backup & recovery', state: 'pending', note: 'no provider linked' });
+
+  // Email security (Domain Health preferred, else live DNS)
+  if (d.domainHealth && d.domainHealth.check) {
+    const dh = d.domainHealth;
+    const meetsTarget = !dh.check.dmarc?.issues?.some((i: string) => /below the agreed target/i.test(i));
+    const dmarcConcern = !!(d.dmarcMon && d.dmarcMon.volume && d.dmarcMon.alignedPct < 90);
+    out.push({ label: 'Email security', state: (dh.score >= 80 && meetsTarget && !dmarcConcern) ? 'ok' : 'attention',
+      note: `Domain Health ${dh.score}/100${d.dmarcMon && d.dmarcMon.volume ? ` · ${d.dmarcMon.alignedPct}% authenticated` : ''}` });
+  } else if (d.dns) {
+    out.push({ label: 'Email security', state: d.dns.rows.every((r) => r.ok) ? 'ok' : 'attention', note: `${d.dns.rows.filter((r) => r.ok).length}/${d.dns.rows.length} DNS controls present` });
+  } else out.push({ label: 'Email security', state: 'pending', note: 'no domain monitored' });
+
+  // Device compliance (Intune only)
+  if (d.intune.available) out.push({ label: 'Device compliance', state: d.intune.compliancePct >= 90 ? 'ok' : 'attention', note: `${d.intune.compliancePct}% of ${d.intune.total} devices compliant` });
+  else out.push({ label: 'Device compliance', state: 'pending', note: 'Intune access not yet granted' });
+
+  // Patch/endpoint (Intune-derived or manual)
+  if (d.intune.available) out.push({ label: 'Patching & endpoint', state: d.intune.compliancePct >= 90 ? 'ok' : 'attention', note: `${d.intune.compliancePct}% patch compliance` });
+  else if (m.patchStatus || (m.patchBullets || '').trim()) out.push({ label: 'Patching & endpoint', state: /attention|review|risk/i.test(m.patchStatus || '') ? 'attention' : 'ok', note: m.patchStatus || 'monitored' });
+  else out.push({ label: 'Patching & endpoint', state: 'pending', note: 'not reported this period' });
+
+  // Threat protection (manual figures/status)
+  if ((m.firewallBlocked || '').trim() || (m.endpointThreats || '').trim() || (m.threatStatus || '').trim() || (m.threatBullets || '').trim())
+    out.push({ label: 'Threat protection', state: /attention|risk|incident/i.test(m.threatStatus || '') ? 'attention' : 'ok', note: m.threatStatus || 'monitored, no incidents' });
+  else out.push({ label: 'Threat protection', state: 'pending', note: 'not reported this period' });
+
+  // Cyber posture (Secure Score)
+  if (d.secureScore.available) out.push({ label: 'Cyber posture (Secure Score)', state: d.secureScore.pct >= 70 ? 'ok' : 'attention', note: `${d.secureScore.pct}%` });
+  else out.push({ label: 'Cyber posture (Secure Score)', state: 'pending', note: 'Graph access not yet granted' });
+
+  // Vulnerability (external scan, manual)
+  const hasVuln = [m.vulnCriticalCves, m.vulnCves, m.vulnRiskLevel, m.vulnStatus, m.vulnBullets].some((x) => (x || '').toString().trim());
+  if (hasVuln) out.push({ label: 'Vulnerability testing', state: (Number(m.vulnCriticalCves) > 0 || /attention|high|critical/i.test(m.vulnRiskLevel || '')) ? 'attention' : 'ok', note: m.vulnStatus || (m.vulnRiskLevel ? `risk ${m.vulnRiskLevel}` : 'secured') });
+  else out.push({ label: 'Vulnerability testing', state: 'pending', note: 'no scan this period' });
+
+  // Support
+  const h = d.helpdesk;
+  out.push({ label: 'Support & service', state: 'ok', note: `${h.totalCases} case(s) · ${h.open} open, being progressed` });
+
+  return out;
+}
+
+function overallMarkerState(d: ItReportData, m: ItManual): string {
+  const ms = reportMarkers(d, m);
+  if (ms.some((x) => x.state === 'attention')) return 'Attention';
+  return 'Stable';
+}
+
+function statusBoard(d: ItReportData, m: ItManual): string {
+  const dot = (st: MarkerState) => st === 'ok' ? '#16a34a' : st === 'attention' ? '#d97706' : '#94a3b8';
+  const word = (st: MarkerState) => st === 'ok' ? 'OK' : st === 'attention' ? 'Needs attention' : 'Not monitored';
+  const rows = reportMarkers(d, m).map((mk) => `<tr>
+    <td style="padding:7px 10px;font-size:15px;font-weight:600;color:#0f172a;white-space:nowrap;">${esc(mk.label)}</td>
+    <td style="padding:7px 10px;white-space:nowrap;">
+      <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${dot(mk.state)};margin-right:7px;vertical-align:middle;"></span>
+      <span style="font-weight:700;color:${dot(mk.state)};font-size:14px;vertical-align:middle;">${word(mk.state)}</span>
+    </td>
+    <td style="padding:7px 10px;font-size:14px;color:#6b7280;">${esc(mk.note)}</td>
+  </tr>`).join('');
+  return `<div class="table-wrap"><table class="tbl" style="width:100%;"><tbody>${rows}</tbody></table></div>`;
+}
+
 // ── Section renderers ────────────────────────────────────────────────────────────
 function sectionDevices(d: ItReportData): string {
+  // Device Management & Compliance is INTUNE ONLY. Backups (incl. Acronis M365 cloud
+  // backup) belong in Backup & Recovery, never here — so when Intune isn't available this
+  // is a straight "data pending" card, no backup fallback.
   if (!d.intune.available) {
-    // Intune not consented/available — but if MSP360 is protecting machines, list THOSE
-    // devices rather than showing an empty "data pending" card. Grouped one row per device.
-    if (d.backup && d.backup.plans.length) {
-      const byComp = new Map<string, typeof d.backup.plans>();
-      for (const pl of d.backup.plans) {
-        const k = pl.computer || '(unnamed)';
-        if (!byComp.has(k)) byComp.set(k, [] as any);
-        (byComp.get(k) as any).push(pl);
-      }
-      const rows = [...byComp.entries()].map(([comp, plans]) => {
-        const worst = plans.some((pl) => classifyPlanStatus(pl.status) === 'failed') ? 'failed'
-          : plans.some((pl) => classifyPlanStatus(pl.status) === 'other') ? 'other' : 'ok';
-        const last = plans.map((pl) => pl.lastStart).filter(Boolean).sort().pop();
-        const badge = worst === 'ok' ? '<span class="badge badge-answered">Protected</span>'
-          : worst === 'failed' ? '<span class="badge badge-missed">Attention</span>'
-          : '<span class="badge">Monitoring</span>';
-        return `<tr>
-          <td style="font-family:monospace;">${esc(comp)}</td>
-          <td>${esc(plans.map((pl) => pl.planName).join(', '))}</td>
-          <td style="white-space:nowrap;">${last ? new Date(last as any).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—'}</td>
-          <td>${badge}</td>
-        </tr>`;
-      }).join('');
-      const inner = `${ticks([
-        `<strong>${byComp.size}</strong> device${byComp.size === 1 ? '' : 's'} under managed backup protection (${esc(d.backup.providers.join(', '))})`,
-        `${fmtBytes(d.backup.totalStorageBytes)} of data protected off-device`,
-      ])}
-      <div class="table-wrap" style="margin-top:10px;"><table class="tbl"><thead><tr><th>Device</th><th>Backup plan(s)</th><th>Last backup</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p style="margin:10px 0 0;font-size:13px;color:#94a3b8;">Full device compliance reporting (patching, encryption, policies) arrives once Microsoft Intune access is granted for this organisation.</p>`;
-      return card('Device Management & Compliance', inner, d.backup.failedPlans ? 'Attention' : 'Active monitoring');
-    }
-    return card('Device Management & Compliance', pending(d.intune.note, 'Enrol devices in Intune or add device details manually.'), 'Data pending');
+    return card('Device Management & Compliance', pending(d.intune.note, 'Grant Microsoft Intune access for this organisation to populate device compliance.'), 'Data pending');
   }
   const s = d.intune;
   const rows = s.devices.map((dev) => `<tr>
@@ -376,7 +423,7 @@ function sectionBackup(d: ItReportData, m: ItManual): string {
     return `<tr><td style="font-family:monospace;">${esc(pl.computer || '—')}</td><td>${esc(pl.planName)}${typ ? ` <span style="font-size:12px;color:#94a3b8;">(${esc(typ)})</span>` : ''}</td><td style="white-space:nowrap;">${when}</td><td>${badge}</td></tr>`;
   }).join('');
   const table = b.plans.length
-    ? `<div class="table-wrap" style="margin-top:12px;"><table class="tbl"><thead><tr><th>Device</th><th>Backup plan</th><th>Last run</th><th>Status</th></tr></thead><tbody>${planRows}</tbody></table></div>`
+    ? `<div class="table-wrap" style="margin-top:12px;"><table class="tbl"><thead><tr><th>Protected item</th><th>Backup plan</th><th>Last run</th><th>Status</th></tr></thead><tbody>${planRows}</tbody></table></div>`
     : '';
   const src = `<p style="margin:10px 0 0;font-size:13px;color:#94a3b8;">Monitored via ${esc(b.providers.join(', '))}${b.syncedAt ? `, checked ${new Date(b.syncedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}.</p>`;
   const extras = bl.length ? `<div style="margin-top:10px;">${ticks(bl)}</div>` : '';
@@ -387,13 +434,14 @@ function sectionBackup(d: ItReportData, m: ItManual): string {
 // Deliverability: AUTO from DMARC authentication (Domain Health aggregate reports) when
 // the domain is monitored and saw volume this period. A manually entered figure still
 // wins (explicit override); otherwise the manual field can now stay empty.
-function deliverabilityLine(d: ItReportData, m: ItManual): string {
-  const manual = (m.deliverabilityPct || '').trim();
-  if (manual) return `<p style="margin:12px 0 0;font-size:16px;"><span style="color:#16a34a;font-weight:800;">&#10004;</span> Email deliverability measured at ${esc(manual)} with a healthy domain reputation.</p>`;
+// Email AUTHENTICATION rate — auto from Domain Health's DMARC aggregate reports (aligned ÷
+// total messages this period). This is a real measured figure from the monitoring, not a
+// manual entry: the manual deliverability box was retired now Domain Health supplies it.
+function deliverabilityLine(d: ItReportData, _m: ItManual): string {
   if (d.dmarcMon && d.dmarcMon.volume) {
     const pct = d.dmarcMon.alignedPct;
     const col = pct >= 98 ? '#16a34a' : pct >= 90 ? '#d97706' : '#dc2626';
-    return `<p style="margin:12px 0 0;font-size:16px;"><span style="color:${col};font-weight:800;">&#10004;</span> Email deliverability running at <strong>${pct}%</strong>, measured from ${d.dmarcMon.volume} emails observed in DMARC authentication reports this period.</p>`;
+    return `<p style="margin:12px 0 0;font-size:16px;"><span style="color:${col};font-weight:800;">&#10004;</span> Email authentication running at <strong>${pct}%</strong>, measured from ${d.dmarcMon.volume} messages observed in DMARC reports this period.</p>`;
   }
   return '';
 }
@@ -646,9 +694,12 @@ export async function generateItReport(opts: GenerateOpts): Promise<{ html: stri
     sectionCyber(data),
     sectionVulnerability(data, manual),
     sectionSupport(data),
-    // Prose only — the old canned tick-list underneath just repeated the Executive
-    // Summary and read as padding (flagged on the July 2026 Staybrook review).
-    card('Overall IT Status', `<p style="margin:0;font-size:16px;line-height:1.6;">${esc(overallStatus).replace(/\n/g, '<br>')}</p>`, 'Stable'),
+    // Overall IT Status = a binary status BOARD across every report marker (at-a-glance
+    // OK / Attention / Pending), then a single forward-looking line from the narrative.
+    card('Overall IT Status',
+      statusBoard(data, manual)
+      + (overallStatus ? `<p style="margin:16px 0 0;font-size:15px;line-height:1.6;color:#475569;">${esc(overallStatus).replace(/\n/g, '<br>')}</p>` : ''),
+      overallMarkerState(data, manual)),
   ].join('\n');
 
   const subject = `IT Operations & Security Snapshot — ${opts.customerName} — ${opts.periodLabel}`;

@@ -65,8 +65,7 @@
           <textarea class="input" name="threatBullets" rows="3" style="width:100%;" placeholder="No persistent infections identified&#10;No security incidents escalated"><%= m.threatBullets || '' %></textarea></div>
         <div class="form-group" style="margin-top:8px;"><label>Threat status</label>
           <input class="input" name="threatStatus" value="<%= m.threatStatus || '' %>" placeholder="Healthy"></div>
-        <div class="form-group" style="margin-top:8px;"><label>Email deliverability</label>
-          <input class="input" name="deliverabilityPct" value="<%= m.deliverabilityPct || '' %>" placeholder="99.79%"></div>
+        <p class="muted" style="margin-top:8px;font-size:12px;">Email authentication % is now drawn automatically from Domain Health (DMARC reports) — no manual entry needed.</p>
       </div>
     </div>
 

@@ -43,25 +43,32 @@ export function graphConsentUrl(tenantId: string): string {
 }
 
 async function probeTenant(tenant: string): Promise<{ status: string; detail: string }> {
-  let token: string;
-  try {
-    token = await getGraphTokenForTenant(tenant);
-  } catch (e: any) {
-    const msg = String(e?.message || e);
-    // AADSTS700016 (app not found in tenant) / 65001 (no consent) → the grant was never made.
-    const noConsent = /700016|65001|consent|not found in the directory/i.test(msg);
-    return { status: noConsent ? 'none' : 'error', detail: msg.slice(0, 300) };
-  }
-  try {
-    const res = await fetch('https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$top=1&$select=id', {
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-    });
-    if (res.ok) return { status: 'ok', detail: '' };
-    if (res.status === 401 || res.status === 403) return { status: 'partial', detail: `Token issued but Intune read returned HTTP ${res.status} — the Intune permission isn't granted (re-run the consent link after adding it to the app registration).` };
-    return { status: 'partial', detail: `Intune read returned HTTP ${res.status}.` };
-  } catch (e: any) {
-    return { status: 'error', detail: String(e?.message || e).slice(0, 300) };
-  }
+  // Read Intune with a given token; a 401/403 the FIRST time may be a stale cached token
+  // fetched during consent propagation — so we retry once with a forced-fresh token before
+  // concluding "partial". This is why a freshly-consented tenant used to stick on Partial.
+  const readIntune = async (forceRefresh: boolean): Promise<{ status: string; detail: string }> => {
+    let token: string;
+    try {
+      token = await getGraphTokenForTenant(tenant, forceRefresh);
+    } catch (e: any) {
+      const msg = String(e?.message || e);
+      const noConsent = /700016|65001|consent|not found in the directory/i.test(msg);
+      return { status: noConsent ? 'none' : 'error', detail: msg.slice(0, 300) };
+    }
+    try {
+      const res = await fetch('https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$top=1&$select=id', {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      if (res.ok) return { status: 'ok', detail: '' };
+      if (res.status === 401 || res.status === 403) return { status: 'partial', detail: `Intune read returned HTTP ${res.status} — permission not yet effective (propagation) or not granted.` };
+      return { status: 'partial', detail: `Intune read returned HTTP ${res.status}.` };
+    } catch (e: any) {
+      return { status: 'error', detail: String(e?.message || e).slice(0, 300) };
+    }
+  };
+  const first = await readIntune(false);
+  if (first.status === 'partial') return readIntune(true); // bust the cache, try a fresh token once
+  return first;
 }
 
 export async function refreshGraphConsentForTenant(tenantId: string): Promise<void> {

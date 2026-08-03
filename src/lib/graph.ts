@@ -307,9 +307,9 @@ export function reportingApp(): { clientId: string; clientSecret: string } {
 // multi-tenant and admin-consented in that tenant. Cached per tenant until expiry.
 // Uses the READING app (reportingApp) so customer consent stays minimal/read-only.
 const _tenantTokens: Record<string, { value: string; expires: number }> = {};
-export async function getGraphTokenForTenant(tenant: string): Promise<string> {
+export async function getGraphTokenForTenant(tenant: string, forceRefresh = false): Promise<string> {
   const cached = _tenantTokens[tenant];
-  if (cached && Date.now() < cached.expires) return cached.value;
+  if (!forceRefresh && cached && Date.now() < cached.expires) return cached.value;
   const app = reportingApp();
   if (!app.clientId || !app.clientSecret) throw new Error('Graph reporting app is not configured.');
   const res = await fetch(TOKEN_URL(tenant), {
