@@ -6,7 +6,6 @@ import {
   ensureItReportTables, getItConfig, getReportNotes, compileSdmNotes,
   generateItReport, reportDomain, type ItManual,
 } from '../lib/it-report/generate';
-import { ensureBackupTables, listBackupCompanies, fmtBytes } from '../lib/msp360';
 
 // Monthly IT Operations & Security Snapshot — staff area. Per-customer config + running
 // notes, on-demand preview, and send-now. The monthly auto-run lives in the scheduler.
@@ -99,21 +98,8 @@ router.get('/it-report/:id', requireAuth, async (req: Request, res: Response) =>
   )).rows;
   const excludedSet = new Set(String((cfg?.manual as any)?.excludedTickets || '').split(/[\n,;]+/)
     .map((t) => t.trim().toUpperCase()).filter(Boolean));
-  // Backup providers (MSP360 …): companies synced from the provider, with link state for
-  // THIS customer. Provider companies use short names, so linking is always explicit.
-  await ensureBackupTables().catch(() => {});
-  const backupCompanies = (await listBackupCompanies(id).catch(() => []))
-    .map((b) => ({ ...b, storage_h: fmtBytes(b.storage_bytes) }));
-  const custNames = new Map<number, string>();
-  for (const b of backupCompanies) {
-    if (b.linked_customer_id && !custNames.has(b.linked_customer_id)) {
-      const r = await pool.query('SELECT name FROM customers WHERE id=$1', [b.linked_customer_id]);
-      custNames.set(b.linked_customer_id, r.rows[0]?.name || ('#' + b.linked_customer_id));
-    }
-  }
   res.render('it-report/edit', {
     user: req.session.user, c, cfg, notes, runs, cases, excludedSet,
-    backupCompanies, backupCustNames: custNames,
     periodLabel: period.label, saved: req.query.saved === '1', err: req.query.err || null,
   });
 });
@@ -130,28 +116,6 @@ router.post('/it-report/:id', requireAuth, async (req: Request, res: Response) =
        recipients=$2, primary_domain=$3, sdm_notes=$4, manual=$5, auto_send=$6, is_active=$7, updated_at=NOW()`,
     [id, b.recipients || '', b.primary_domain || '', b.sdm_notes || '', JSON.stringify(manual), b.auto_send === 'on' || b.auto_send === 'true', b.is_active === 'on' || b.is_active === 'true']
   );
-  res.redirect('/it-report/' + id + '?saved=1');
-});
-
-// ── Link / unlink a backup-provider company to this customer ─────────────────────
-router.post('/it-report/:id/backup-link', requireAuth, async (req: Request, res: Response) => {
-  const id = parseInt(String(req.params.id), 10);
-  const provider = String(req.body.provider || 'msp360').slice(0, 40);
-  const key = String(req.body.external_key || '').trim().slice(0, 200);
-  if (key) {
-    await ensureBackupTables().catch(() => {});
-    await pool.query(
-      `INSERT INTO backup_provider_links (customer_id, provider, external_key)
-       VALUES ($1,$2,$3) ON CONFLICT (customer_id, provider, external_key) DO NOTHING`,
-      [id, provider, key]);
-  }
-  res.redirect('/it-report/' + id + '?saved=1');
-});
-router.post('/it-report/:id/backup-unlink', requireAuth, async (req: Request, res: Response) => {
-  const id = parseInt(String(req.params.id), 10);
-  await pool.query(
-    'DELETE FROM backup_provider_links WHERE customer_id=$1 AND provider=$2 AND external_key=$3',
-    [id, String(req.body.provider || 'msp360'), String(req.body.external_key || '')]);
   res.redirect('/it-report/' + id + '?saved=1');
 });
 

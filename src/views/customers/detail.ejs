@@ -49,6 +49,48 @@
 <% var cloudItems = allItems.filter(function(it){ return !isTelecom(it); }); %>
 <% var ost = customer.onboarding_status; %>
 
+<% var hv = (typeof health!=='undefined') ? health : null; %>
+<% if (hv) { %>
+<style>
+  .svc-strip { display:flex; gap:10px; flex-wrap:wrap; margin:0 0 16px; }
+  .svc-tile { flex:1 1 150px; min-width:150px; max-width:220px; background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:10px 14px; text-decoration:none; color:inherit; display:block; }
+  .svc-tile:hover { border-color:var(--accent); }
+  .svc-tile .t { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-bottom:4px; display:flex; align-items:center; gap:6px; }
+  .svc-tile .v { font-size:17px; font-weight:800; }
+  .svc-tile .s { font-size:11px; color:var(--muted); margin-top:2px; }
+  .svc-dot { display:inline-block; width:8px; height:8px; border-radius:50%; }
+</style>
+<div class="svc-strip">
+  <a class="svc-tile" href="/dmarc">
+    <div class="t"><span class="svc-dot" style="background:<%= hv.domains ? (hv.domainWorst >= 80 ? 'var(--ok)' : (hv.domainWorst >= 60 ? '#d97706' : 'var(--bad-fg)')) : 'var(--line-strong)' %>;"></span>Domain health</div>
+    <div class="v"><%= hv.domains ? (hv.domainWorst + '/100') : '—' %></div>
+    <div class="s"><%= hv.domains ? (hv.domains + ' domain' + (hv.domains===1?'':'s') + ' monitored') : 'not monitored' %></div>
+  </a>
+  <a class="svc-tile" href="#assets" onclick="var b=document.querySelector('.cust-tabs button[data-tab=assets]'); if(b) b.click();">
+    <div class="t"><span class="svc-dot" style="background:<%= hv.backup ? (hv.backup.failed ? 'var(--bad-fg)' : 'var(--ok)') : 'var(--line-strong)' %>;"></span>Backup</div>
+    <div class="v"><%= hv.backup ? hv.backup.storageH : '—' %></div>
+    <div class="s"><%= hv.backup ? (hv.backup.failed ? hv.backup.failed + ' plan(s) need attention' : 'all plans healthy') : 'no provider linked' %></div>
+  </a>
+  <a class="svc-tile" href="#assets" onclick="var b=document.querySelector('.cust-tabs button[data-tab=assets]'); if(b) b.click();">
+    <div class="t"><span class="svc-dot" style="background:<%= hv.assetsTotal ? 'var(--ok)' : 'var(--line-strong)' %>;"></span>Devices</div>
+    <div class="v"><%= hv.assetsTotal ? (hv.assetsOnline + '/' + hv.assetsTotal) : '—' %></div>
+    <div class="s"><%= hv.assetsTotal ? 'online now' : 'none synced' %></div>
+  </a>
+  <% if (hv.graph === 'ok') { %>
+  <a class="svc-tile" href="/it-report/<%= customer.id %>"><div class="t"><span class="svc-dot" style="background:var(--ok);"></span>Microsoft 365</div><div class="v">Connected</div><div class="s">Intune &amp; Secure Score flowing</div></a>
+  <% } else if (hv.graph === 'no-tenant') { %>
+  <a class="svc-tile" href="/customers/<%= customer.id %>#integrations"><div class="t"><span class="svc-dot" style="background:var(--line-strong);"></span>Microsoft 365</div><div class="v">—</div><div class="s">no tenant recorded</div></a>
+  <% } else { %>
+  <a class="svc-tile" href="<%= customer.entra_tenant_id ? graphConsentUrl(customer.entra_tenant_id) : '#' %>" target="_blank" rel="noopener"><div class="t"><span class="svc-dot" style="background:<%= hv.graph==='partial' ? '#d97706' : 'var(--bad-fg)' %>;"></span>Microsoft 365</div><div class="v"><%= hv.graph==='partial' ? 'Partial' : 'Not granted' %></div><div class="s">click to run the consent grant</div></a>
+  <% } %>
+  <a class="svc-tile" href="/tickets?customer=<%= customer.id %>">
+    <div class="t"><span class="svc-dot" style="background:<%= hv.openTickets ? '#d97706' : 'var(--ok)' %>;"></span>Support</div>
+    <div class="v"><%= hv.openTickets %></div>
+    <div class="s">open case<%= hv.openTickets===1?'':'s' %></div>
+  </a>
+</div>
+<% } %>
+
 <nav class="cust-tabs">
   <button type="button" data-tab="overview">Overview</button>
   <button type="button" data-tab="contacts">Contacts (<%= contacts.length %>)</button>
@@ -766,7 +808,7 @@
       <% } %>
     </div>
     <% if (!bv) { %>
-      <p class="muted" style="margin:10px 24px 20px;font-size:13px;">No backup provider linked to this customer yet. Link their MSP360 company on the <a class="row-link" href="/it-report/<%= customer.id %>">IT report settings page</a> and backup health appears here, on each device, and in the monthly report.</p>
+      <p class="muted" style="margin:10px 24px 14px;font-size:13px;">No backup provider linked yet — link one below and backup health appears here, on each device, and in the monthly IT report.</p>
     <% } else { %>
     <div class="table-wrap">
       <table class="table">
@@ -784,6 +826,42 @@
         </tbody>
       </table>
     </div>
+    <% } %>
+    <% var bcs = (typeof backupCompanies!=='undefined') ? backupCompanies : []; %>
+    <% if (bcs.length) { %>
+    <details style="margin:0 24px 18px;">
+      <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);">Manage provider links (<%= bcs.filter(function(b){return b.linked_here;}).length %> linked)</summary>
+      <table class="table" style="margin-top:8px;">
+        <thead><tr><th>Provider company / tenant</th><th>Workloads</th><th>Storage</th><th>Linked to</th><th style="width:110px;"></th></tr></thead>
+        <tbody>
+        <% bcs.forEach(function(b){ var prov = b.provider==='msp360'?'MSP360':(b.provider==='acronis'?'Acronis':(b.provider==='azure'?'Azure':b.provider)); %>
+          <tr>
+            <td style="font-weight:600;"><%= b.external_key %> <span class="muted" style="font-size:11px;">(<%= prov %>)</span></td>
+            <td><%= b.users %></td>
+            <td><%= b.storage_h %></td>
+            <td>
+              <% if (b.linked_here) { %><span class="badge badge-sent">this customer</span>
+              <% } else if (b.linked_customer_id) { %><span class="muted" style="font-size:13px;"><%= backupCustNames.get(b.linked_customer_id) || ('#' + b.linked_customer_id) %></span>
+              <% } else { %><span class="muted" style="font-size:13px;">—</span><% } %>
+            </td>
+            <td style="text-align:right;">
+              <% if (b.linked_here) { %>
+                <form method="post" action="/customers/<%= customer.id %>/backup-unlink" style="margin:0;display:inline;">
+                  <input type="hidden" name="provider" value="<%= b.provider %>"><input type="hidden" name="external_key" value="<%= b.external_key %>">
+                  <button class="btn" style="padding:3px 10px;font-size:12px;">Unlink</button>
+                </form>
+              <% } else if (!b.linked_customer_id) { %>
+                <form method="post" action="/customers/<%= customer.id %>/backup-link" style="margin:0;display:inline;">
+                  <input type="hidden" name="provider" value="<%= b.provider %>"><input type="hidden" name="external_key" value="<%= b.external_key %>">
+                  <button class="btn btn-primary" style="padding:3px 10px;font-size:12px;">Link here</button>
+                </form>
+              <% } %>
+            </td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table>
+    </details>
     <% } %>
   </div>
 </section>

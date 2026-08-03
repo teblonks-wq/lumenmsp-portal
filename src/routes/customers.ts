@@ -13,7 +13,7 @@ import { accountTotals, cliList, commsAccount, HANDSET_RE, CALL_TYPES, classifyC
 import { setSalePrice } from '../lib/service-pricing';
 import { config } from '../config';
 import { syncGraphConsent, graphConsentUrl } from '../lib/graph-consent';
-import { getBackupSummaryForCustomer, classifyPlanStatus, planStatusLabel, fmtBytes } from '../lib/msp360';
+import { getBackupSummaryForCustomer, listBackupCompanies, ensureBackupTables, classifyPlanStatus, planStatusLabel, fmtBytes } from '../lib/msp360';
 import crypto from 'crypto';
 import multer from 'multer';
 import fs from 'fs';
@@ -108,6 +108,28 @@ router.get('/customers', requireAuth, async (req: Request, res: Response) => {
   stat.rows.forEach((r: any) => { statusCounts[r.status] = r.n; });
 
   res.render('customers/list', { user, customers: rows, search, status, statusCounts, graphConsentUrl });
+});
+
+// Link / unlink a backup-provider company to this customer (the customer panel owns this).
+router.post('/customers/:id/backup-link', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const provider = String(req.body.provider || 'msp360').slice(0, 40);
+  const key = String(req.body.external_key || '').trim().slice(0, 200);
+  if (id && key) {
+    await ensureBackupTables().catch(() => {});
+    await pool.query(
+      `INSERT INTO backup_provider_links (customer_id, provider, external_key)
+       VALUES ($1,$2,$3) ON CONFLICT (customer_id, provider, external_key) DO NOTHING`,
+      [id, provider, key]);
+  }
+  res.redirect('/customers/' + id + '#assets');
+});
+router.post('/customers/:id/backup-unlink', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  await pool.query(
+    'DELETE FROM backup_provider_links WHERE customer_id=$1 AND provider=$2 AND external_key=$3',
+    [id, String(req.body.provider || 'msp360'), String(req.body.external_key || '')]);
+  res.redirect('/customers/' + id + '#assets');
 });
 
 // Re-probe every recorded tenant's Graph consent on demand (the daily check runs at 06:15).
@@ -562,9 +584,43 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
     }
   } catch { /* backup tables may not exist yet */ }
 
+  // Provider companies/tenants available to link, with link state — the linking UI lives
+  // HERE (the customer is the owner of its backup monitoring; the IT report only reads it).
+  let backupCompanies: any[] = [];
+  const backupCustNames = new Map<number, string>();
+  try {
+    await ensureBackupTables().catch(() => {});
+    backupCompanies = (await listBackupCompanies(customer.id)).map((b) => ({ ...b, storage_h: fmtBytes(b.storage_bytes) }));
+    for (const b of backupCompanies) {
+      if (b.linked_customer_id && b.linked_customer_id !== customer.id && !backupCustNames.has(b.linked_customer_id)) {
+        const r = await pool.query('SELECT name FROM customers WHERE id=$1', [b.linked_customer_id]);
+        backupCustNames.set(b.linked_customer_id, r.rows[0]?.name || ('#' + b.linked_customer_id));
+      }
+    }
+  } catch { /* ignore */ }
+
+  // Service-health strip (Phase 1 of the unified monitoring plan): one tile per monitored
+  // element, all read from data that's ALREADY synced — no live vendor calls on page view.
+  let health: any = null;
+  try {
+    const [dm, tk, av, gc] = await Promise.all([
+      pool.query('SELECT COUNT(*)::int AS n, MIN(score) AS worst FROM dmarc_domains WHERE customer_id=$1 AND monitoring_enabled=true AND score IS NOT NULL', [customer.id]).catch(() => ({ rows: [{ n: 0, worst: null }] })),
+      pool.query("SELECT COUNT(*)::int AS n FROM inbox_tickets WHERE customer_id=$1 AND deleted_at IS NULL AND COALESCE(is_spam,false)=false AND status NOT IN ('resolved','closed')", [customer.id]),
+      pool.query('SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE online_status)::int AS online FROM customer_assets WHERE customer_id=$1', [customer.id]).catch(() => ({ rows: [{ total: 0, online: 0 }] })),
+      pool.query('SELECT status FROM graph_consent_status WHERE customer_id=$1', [customer.id]).catch(() => ({ rows: [] as any[] })),
+    ]);
+    health = {
+      domains: dm.rows[0].n, domainWorst: dm.rows[0].worst,
+      openTickets: tk.rows[0].n,
+      assetsTotal: av.rows[0].total, assetsOnline: av.rows[0].online,
+      graph: gc.rows[0] ? gc.rows[0].status : (customer.entra_tenant_id ? 'unchecked' : 'no-tenant'),
+      backup: backupView ? { failed: backupView.failed, ok: backupView.ok, storageH: backupView.storageH } : null,
+    };
+  } catch { /* strip is optional — never block the page */ }
+
   res.render('customers/detail', {
     user, customer, contacts, sites: sitesRes.rows, domains: domainsRes.rows, keyContacts, insights, itcloud, itcloudTpl, itcloudHistory,
-    assets, remoteTemplate, backupView,
+    assets, remoteTemplate, backupView, backupCompanies, backupCustNames, health, graphConsentUrl,
     quotes: quotesRes.rows, invoices: invoicesRes.rows, contracts: contractsRes.rows,
     serviceItems: serviceItemsRes.rows, lead, credentials, canVault, creditBalance, documents,
     comms, commsTo: primaryEmail, graphClientId: config.GRAPH_CLIENT_ID,
