@@ -9,10 +9,10 @@ import { getGraphTokenForTenant, reportingApp } from './graph';
 // every recorded tenant and caches the answer, so the Customers list can show exactly
 // who is granted, who is partially granted, and who still needs the consent link clicked.
 //
-// Statuses:
-//   ok      — token issued AND Intune device read succeeds (fully usable)
-//   partial — token issued but Intune read is 401/403 (app consented, but the
-//             DeviceManagementManagedDevices.Read.All grant is missing/stale)
+// Statuses (consent is judged by a baseline DIRECTORY read, not Intune — see probeTenant):
+//   ok      — token issued AND directory read succeeds (app consented & working; detail
+//             notes whether Intune is also available, which many tenants don't license)
+//   partial — token issued but the directory read is 401/403 (genuine consent problem)
 //   none    — token request refused (app not consented in the tenant at all)
 //   error   — network/other failure; treated as unknown, re-checked next run
 
@@ -43,10 +43,13 @@ export function graphConsentUrl(tenantId: string): string {
 }
 
 async function probeTenant(tenant: string): Promise<{ status: string; detail: string }> {
-  // Read Intune with a given token; a 401/403 the FIRST time may be a stale cached token
-  // fetched during consent propagation — so we retry once with a forced-fresh token before
-  // concluding "partial". This is why a freshly-consented tenant used to stick on Partial.
-  const readIntune = async (forceRefresh: boolean): Promise<{ status: string; detail: string }> => {
+  // Whether the app is CONSENTED & working in a tenant is decided by a baseline directory
+  // read (/users — the app holds User.Read.All), NOT by an Intune read. Intune is a separate
+  // capability many tenants don't even license: reading /deviceManagement there 403s for
+  // "no Intune", which is NOT a consent fault. Probing Intune was making licence-free tenants
+  // (e.g. Staybrook) stick on "partial — re-grant" forever. A 401/403 retries once with a
+  // fresh token first, to rule out a stale token cached mid consent-propagation.
+  const check = async (forceRefresh: boolean): Promise<{ status: string; detail: string }> => {
     let token: string;
     try {
       token = await getGraphTokenForTenant(tenant, forceRefresh);
@@ -56,18 +59,28 @@ async function probeTenant(tenant: string): Promise<{ status: string; detail: st
       return { status: noConsent ? 'none' : 'error', detail: msg.slice(0, 300) };
     }
     try {
-      const res = await fetch('https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$top=1&$select=id', {
+      const res = await fetch('https://graph.microsoft.com/v1.0/users?$top=1&$select=id', {
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       });
-      if (res.ok) return { status: 'ok', detail: '' };
-      if (res.status === 401 || res.status === 403) return { status: 'partial', detail: `Intune read returned HTTP ${res.status} — permission not yet effective (propagation) or not granted.` };
-      return { status: 'partial', detail: `Intune read returned HTTP ${res.status}.` };
+      if (res.ok) {
+        // Consented & working. Note (non-gating) whether Intune is actually available.
+        let intune = '';
+        try {
+          const di = await fetch('https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$top=1&$select=id', {
+            headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+          });
+          intune = di.ok ? 'Intune available' : `Intune not available (HTTP ${di.status} — likely unlicensed in this tenant)`;
+        } catch { /* ignore */ }
+        return { status: 'ok', detail: intune };
+      }
+      if (res.status === 401 || res.status === 403) return { status: 'partial', detail: `Directory read returned HTTP ${res.status} — consent not yet effective (propagation) or not granted.` };
+      return { status: 'partial', detail: `Directory read returned HTTP ${res.status}.` };
     } catch (e: any) {
       return { status: 'error', detail: String(e?.message || e).slice(0, 300) };
     }
   };
-  const first = await readIntune(false);
-  if (first.status === 'partial') return readIntune(true); // bust the cache, try a fresh token once
+  const first = await check(false);
+  if (first.status === 'partial') return check(true); // bust a possibly-stale token, try once more
   return first;
 }
 
