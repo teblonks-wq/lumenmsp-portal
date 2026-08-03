@@ -161,13 +161,15 @@ export async function syncMsp360(): Promise<{ companies: number; plans: number }
          String(m.ErrorMessage || '').slice(0, 500), ts(m.LastStart), ts(m.NextStart),
          num(m.DataCopied), num(m.TotalData)]);
       planCount++;
-      // Append today's state to the permanent history (latest state wins within a day).
+      // Append to the permanent history under the RUN's date (LastStart), not the sync
+      // date — a 23:00 backup synced at 05:45 next morning belongs to the day it ran.
+      // Latest state wins within a day (re-syncs update in place).
       await client.query(
         `INSERT INTO backup_history (day, provider, company, computer, plan_name, status, data_copied)
-         VALUES (CURRENT_DATE, 'msp360', $1, $2, $3, $4, $5)
+         VALUES (COALESCE($6::date, CURRENT_DATE), 'msp360', $1, $2, $3, $4, $5)
          ON CONFLICT (day, provider, company, computer, plan_name) DO UPDATE SET status=$4, data_copied=$5`,
         [String(m.CompanyName || '').trim(), String(m.ComputerName || ''), String(m.PlanName || ''),
-         String(m.Status ?? ''), num(m.DataCopied)]);
+         String(m.Status ?? ''), num(m.DataCopied), ts(m.LastStart)]);
     }
     await client.query('COMMIT');
     console.log(`[msp360] synced ${companyCount} companies, ${planCount} plan statuses`);

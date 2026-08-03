@@ -13,6 +13,7 @@ import { accountTotals, cliList, commsAccount, HANDSET_RE, CALL_TYPES, classifyC
 import { setSalePrice } from '../lib/service-pricing';
 import { config } from '../config';
 import { syncGraphConsent, graphConsentUrl } from '../lib/graph-consent';
+import { getBackupSummaryForCustomer, classifyPlanStatus, planStatusLabel, fmtBytes } from '../lib/msp360';
 import crypto from 'crypto';
 import multer from 'multer';
 import fs from 'fs';
@@ -544,9 +545,26 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
     remoteTemplate = await remoteUrlTemplate();
   } catch { /* not migrated yet */ }
 
+  // Managed backup (MSP360 …) — same summary the IT report uses, pre-formatted for the view.
+  let backupView: any = null;
+  try {
+    const b = await getBackupSummaryForCustomer(customer.id);
+    if (b) {
+      backupView = {
+        providers: b.providers.join(', '), companies: b.companies.join(', '),
+        storageH: fmtBytes(b.totalStorageBytes), ok: b.okPlans, failed: b.failedPlans, other: b.otherPlans,
+        plans: b.plans.map((pl) => ({
+          computer: pl.computer, planName: pl.planName,
+          statusLabel: planStatusLabel(pl.status), cls: classifyPlanStatus(pl.status),
+          lastStart: pl.lastStart, dataCopiedH: pl.dataCopied != null ? fmtBytes(pl.dataCopied) : null,
+        })),
+      };
+    }
+  } catch { /* backup tables may not exist yet */ }
+
   res.render('customers/detail', {
     user, customer, contacts, sites: sitesRes.rows, domains: domainsRes.rows, keyContacts, insights, itcloud, itcloudTpl, itcloudHistory,
-    assets, remoteTemplate,
+    assets, remoteTemplate, backupView,
     quotes: quotesRes.rows, invoices: invoicesRes.rows, contracts: contractsRes.rows,
     serviceItems: serviceItemsRes.rows, lead, credentials, canVault, creditBalance, documents,
     comms, commsTo: primaryEmail, graphClientId: config.GRAPH_CLIENT_ID,

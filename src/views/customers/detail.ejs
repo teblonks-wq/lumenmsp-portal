@@ -752,6 +752,40 @@
       </table>
     </div>
   </div>
+  <% var bv = (typeof backupView!=='undefined') ? backupView : null; %>
+  <div class="card" style="padding:0;margin-top:14px;">
+    <div class="card-header" style="padding:20px 24px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+      <h2>Backup <% if (bv) { %><span class="muted" style="font-size:13px;">(<%= bv.providers %> — <%= bv.companies %>)</span><% } %></h2>
+      <% if (bv) { %>
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;">
+        <span style="font-weight:800;font-size:18px;"><%= bv.storageH %></span><span class="muted" style="font-size:12px;">protected</span>
+        <span class="badge badge-sent"><%= bv.ok %> healthy</span>
+        <% if (bv.failed) { %><span class="badge badge-failed"><%= bv.failed %> attention</span><% } %>
+        <% if (bv.other) { %><span class="badge badge-inactive"><%= bv.other %> other</span><% } %>
+      </div>
+      <% } %>
+    </div>
+    <% if (!bv) { %>
+      <p class="muted" style="margin:10px 24px 20px;font-size:13px;">No backup provider linked to this customer yet. Link their MSP360 company on the <a class="row-link" href="/it-report/<%= customer.id %>">IT report settings page</a> and backup health appears here, on each device, and in the monthly report.</p>
+    <% } else { %>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Device</th><th>Backup plan</th><th>Last run</th><th>Data moved</th><th>Status</th></tr></thead>
+        <tbody>
+          <% bv.plans.forEach(function(pl){ %>
+            <tr>
+              <td style="font-family:monospace;"><%= pl.computer || '—' %></td>
+              <td><%= pl.planName %></td>
+              <td class="muted" style="white-space:nowrap;"><%= pl.lastStart ? new Date(pl.lastStart).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—' %></td>
+              <td class="muted"><%= pl.dataCopiedH || '—' %></td>
+              <td><span class="badge <%= pl.cls==='ok' ? 'badge-sent' : (pl.cls==='failed' ? 'badge-failed' : 'badge-inactive') %>"><%= pl.statusLabel %></span></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+    <% } %>
+  </div>
 </section>
 
 <!-- ═══ Cloud (cloud service items + M365 directory) ═══ -->

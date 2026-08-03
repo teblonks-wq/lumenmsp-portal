@@ -287,6 +287,37 @@ function pending(note: string, manualHint = ''): string {
 // ── Section renderers ────────────────────────────────────────────────────────────
 function sectionDevices(d: ItReportData): string {
   if (!d.intune.available) {
+    // Intune not consented/available — but if MSP360 is protecting machines, list THOSE
+    // devices rather than showing an empty "data pending" card. Grouped one row per device.
+    if (d.backup && d.backup.plans.length) {
+      const byComp = new Map<string, typeof d.backup.plans>();
+      for (const pl of d.backup.plans) {
+        const k = pl.computer || '(unnamed)';
+        if (!byComp.has(k)) byComp.set(k, [] as any);
+        (byComp.get(k) as any).push(pl);
+      }
+      const rows = [...byComp.entries()].map(([comp, plans]) => {
+        const worst = plans.some((pl) => classifyPlanStatus(pl.status) === 'failed') ? 'failed'
+          : plans.some((pl) => classifyPlanStatus(pl.status) === 'other') ? 'other' : 'ok';
+        const last = plans.map((pl) => pl.lastStart).filter(Boolean).sort().pop();
+        const badge = worst === 'ok' ? '<span class="badge badge-answered">Protected</span>'
+          : worst === 'failed' ? '<span class="badge badge-missed">Attention</span>'
+          : '<span class="badge">Monitoring</span>';
+        return `<tr>
+          <td style="font-family:monospace;">${esc(comp)}</td>
+          <td>${esc(plans.map((pl) => pl.planName).join(', '))}</td>
+          <td style="white-space:nowrap;">${last ? new Date(last as any).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—'}</td>
+          <td>${badge}</td>
+        </tr>`;
+      }).join('');
+      const inner = `${ticks([
+        `<strong>${byComp.size}</strong> device${byComp.size === 1 ? '' : 's'} under managed backup protection (${esc(d.backup.providers.join(', '))})`,
+        `${fmtBytes(d.backup.totalStorageBytes)} of data protected off-device`,
+      ])}
+      <div class="table-wrap" style="margin-top:10px;"><table class="tbl"><thead><tr><th>Device</th><th>Backup plan(s)</th><th>Last backup</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p style="margin:10px 0 0;font-size:13px;color:#94a3b8;">Full device compliance reporting (patching, encryption, policies) arrives once Microsoft Intune access is granted for this organisation.</p>`;
+      return card('Device Management & Compliance', inner, d.backup.failedPlans ? 'Attention' : 'Active monitoring');
+    }
     return card('Device Management & Compliance', pending(d.intune.note, 'Enrol devices in Intune or add device details manually.'), 'Data pending');
   }
   const s = d.intune;
