@@ -139,8 +139,9 @@ async function buildCustomerBlocks(customerId: number): Promise<{ blocks: string
 - Net cash position vs invoiced: collected ${money(totalCollected)} − invoiced ${money(totalInvoiced)} = ${money(totalCollected - totalInvoiced)} ${totalCollected - totalInvoiced > 0.005 ? '(customer has paid MORE than invoiced)' : totalCollected - totalInvoiced < -0.005 ? '(customer has paid LESS than invoiced)' : '(square)'}
 - Payments exceeding their invoice: ${overCollections.length ? overCollections.join('; ') : 'none'}
 - Payments with no matching portal invoice: ${unmatchedPays.length ? unmatchedPays.join('; ') : 'none'}`);
-  blocks.push('[INVOICES] Every invoice (portal record):\n| # | Title | Issued | Total | Balance | Status | GC ref | Payout |\n' +
-    invs.map((iv: any) => `| ${iv.invoice_number || '(draft)'} | ${String(iv.title || '').slice(0, 40)} | ${dISO(iv.issue_date)} | ${money(iv.total)} | ${money(iv.balance)} | ${iv.status}/${iv.payment_status} | ${iv.gocardless_payment_id ? '…' + String(iv.gocardless_payment_id).slice(-6) : '-'} | ${iv.gocardless_payout_ref || '-'} |`).join('\n'));
+  const isLegacy = (iv: any) => /^L\d/.test(String(iv.invoice_number || '')) || String(iv.title || '').trim() === 'Imported from QuickBooks';
+  blocks.push('[INVOICES] Every invoice (portal record):\n| # | Title | Issued | Total | Balance | Status | GC ref | Payout | Origin |\n' +
+    invs.map((iv: any) => `| ${iv.invoice_number || '(draft)'} | ${String(iv.title || '').slice(0, 40)} | ${dISO(iv.issue_date)} | ${money(iv.total)} | ${money(iv.balance)} | ${iv.status}/${iv.payment_status} | ${iv.gocardless_payment_id ? '…' + String(iv.gocardless_payment_id).slice(-6) : '-'} | ${iv.gocardless_payout_ref || '-'} | ${isLegacy(iv) ? 'QB-import (summary only)' : 'portal'} |`).join('\n'));
   if (payLines.length) blocks.push('[PAYMENTS] Every GoCardless collection on the mandate (LIVE):\n| Charged | Amount | Status | Description | Match |\n' + payLines.join('\n'));
   if (credits.length) blocks.push('[CRED] Credits:\n' + credits.map((cr: any) => `[C${cr.id}] ${money(cr.amount)} ${cr.status} — ${String(cr.reason || '').slice(0, 120)} (${dISO(cr.created_at)})`).join('\n'));
   const thread = await getComms('customer', customerId);
@@ -173,7 +174,46 @@ async function buildCustomerBlocks(customerId: number): Promise<{ blocks: string
       created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`).catch((e) => console.error('ensure finance_ai_messages failed:', e.message));
   await pool.query('CREATE INDEX IF NOT EXISTS finance_ai_messages_conv_idx ON finance_ai_messages (conversation_id)').catch(() => {});
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS finance_ai_memories (
+      id                     SERIAL PRIMARY KEY,
+      customer_id            INTEGER,
+      invoice_ref            TEXT,
+      title                  TEXT NOT NULL,
+      body                   TEXT NOT NULL,
+      kind                   TEXT NOT NULL DEFAULT 'fact',
+      status                 TEXT NOT NULL DEFAULT 'open',
+      source_conversation_id INTEGER,
+      created_by             TEXT,
+      created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`).catch((e) => console.error('ensure finance_ai_memories failed:', e.message));
+  await pool.query('CREATE INDEX IF NOT EXISTS finance_ai_memories_cust_idx ON finance_ai_memories (customer_id)').catch(() => {});
+  // Seed the agent's first GLOBAL memory (Terry, 2026-07-30): legacy QB-imported invoices
+  // are summarised records, not full portal documents.
+  await pool.query(`
+    INSERT INTO finance_ai_memories (customer_id, title, body, kind, created_by)
+    SELECT NULL, 'Legacy QB-imported invoices carry less detail',
+           'Invoices with L-prefixed numbers or titled "Imported from QuickBooks" came from the legacy QuickBooks migration: summarised line items, often no GoCardless reference or email thread, and payments were frequently reconciled in QuickBooks rather than the portal. Treat their detail as indicative, not authoritative, and say so when they limit certainty.',
+           'fact', 'seed'
+     WHERE NOT EXISTS (SELECT 1 FROM finance_ai_memories WHERE title = 'Legacy QB-imported invoices carry less detail')`).catch(() => {});
 })();
+
+// ── Second brain: durable memory + recall of everything the agent has said ──────
+async function loadAgentMemories(customerId: number | null): Promise<any[]> {
+  return (await pool.query(
+    `SELECT id, customer_id, title, body, kind, status, created_at FROM finance_ai_memories
+      WHERE status <> 'archived' AND (customer_id IS NULL OR customer_id = $1)
+      ORDER BY (status = 'open' AND kind = 'follow_up') DESC, updated_at DESC LIMIT 30`, [customerId])).rows;
+}
+async function loadPastAnswers(customerId: number | null, excludeConv: number | null): Promise<any[]> {
+  if (!customerId) return [];
+  return (await pool.query(
+    `SELECT m.content, m.created_at, v.title AS conv_title FROM finance_ai_messages m
+       JOIN finance_ai_conversations v ON v.id = m.conversation_id
+      WHERE m.role = 'assistant' AND v.customer_id = $1 AND ($2::int IS NULL OR m.conversation_id <> $2)
+      ORDER BY m.id DESC LIMIT 6`, [customerId, excludeConv])).rows;
+}
 
 const ALLOWED_ACTIONS: Record<string, string[]> = {
   draft_reply: ['to', 'subject', 'body'], void_invoice: [],
@@ -193,6 +233,9 @@ export async function askFinance(args: {
     : await buildCustomerBlocks(Number(args.customerId));
   if (!built) return { ok: false, error: args.scope === 'invoice' ? 'Invoice not found.' : 'Customer not found.' };
 
+  // The customer this conversation is ABOUT (memory + recall key) — both scopes resolve one.
+  const memCust: number | null = args.scope === 'customer' ? (Number(args.customerId) || null) : ((built as any).customerId || null);
+
   // Conversation: create or continue.
   let convId = Number(args.conversationId) || null;
   if (convId) {
@@ -202,12 +245,19 @@ export async function askFinance(args: {
   if (!convId) {
     convId = (await pool.query(
       'INSERT INTO finance_ai_conversations (scope, invoice_id, customer_id, title, user_id) VALUES ($1,$2,$3,$4,$5) RETURNING id',
-      [args.scope, args.invoiceId || null, args.customerId || null, question.slice(0, 120), args.userId])).rows[0].id;
+      [args.scope, args.invoiceId || null, memCust, question.slice(0, 120), args.userId])).rows[0].id;
   }
   const history = (await pool.query(
     'SELECT role, content FROM finance_ai_messages WHERE conversation_id=$1 ORDER BY id DESC LIMIT 12', [convId])).rows.reverse();
 
   let corpus = built.blocks.join('\n\n---\n\n');
+  // Second brain: the agent's own durable notes + everything it previously said about this customer.
+  const mems = await loadAgentMemories(memCust);
+  const past = await loadPastAnswers(memCust, convId);
+  if (mems.length) corpus += '\n\n---\n\n[MEMORY] Your durable memory — your own saved notes from ALL past conversations (id·kind·status):\n' +
+    mems.map((m: any) => `[M${m.id}·${m.kind}·${m.status}${m.customer_id === null ? '·global' : ''}] ${m.title} — ${m.body} (${dISO(m.created_at)})`).join('\n');
+  if (past.length) corpus += '\n\n---\n\n[PAST] What you previously told staff about this customer (other conversations, newest first):\n' +
+    past.map((pp: any) => `- ${dISO(pp.created_at)} "${String(pp.conv_title || '').slice(0, 60)}": ${String((pp.content || {}).answer_md || '').replace(/\n+/g, ' ').slice(0, 280)}`).join('\n');
   if (corpus.length > 150000) corpus = corpus.slice(0, 75000) + '\n\n[... omitted ...]\n\n' + corpus.slice(-75000);
 
   const convo = history.map((m: any) => {
@@ -216,14 +266,25 @@ export async function askFinance(args: {
   }).join('\n\n');
 
   const system = [
-    "You are the finance adviser inside Lumen IT Solutions' portal, talking to a staff member. Answer billing questions — usually a customer's query — using ONLY the data provided.",
-    'Format: answer in clean MARKDOWN ("answer_md"). Use a short verdict paragraph FIRST, then compact tables (| col | col |) for invoice/payment breakdowns, bold for key figures. Keep it tight — this renders in a chat panel.',
+    "You are the finance adviser inside Lumen IT Solutions' portal, talking to a staff member. Answer billing questions — usually a customer's query — using ONLY the data provided. You are a sharp, plain-speaking finance colleague: have a view, not just facts.",
+    'Format "answer_md" in MARKDOWN using EXACTLY this structure (skip a section only when truly empty):',
+    '  ### Verdict',
+    '  One or two sentences with the headline figure in bold. Direct answer to the question.',
+    '  ### The numbers',
+    '  A SMALL table — only the rows that matter to this question (e.g. only mismatched or disputed items), never a dump of everything. Max ~8 rows; offer "ask me for the full list" instead of printing it.',
+    '  ### What happened',
+    '  2-4 short sentences of narrative — dates, causes, who did what.',
+    '  ### My recommendation',
+    '  YOUR OPINION on what Lumen should do next, stated plainly (e.g. "refund the £X — it is genuinely owed", or "nothing owed — reply explaining the two collections"). If the data is ambiguous, say what you would do and what to check first.',
+    'End the answer with a short offer question, e.g. "Want me to draft the reply to the customer?" — and when a customer-facing reply is the natural next step, ALSO include a draft_reply action so it is one click away.',
     'The [RECON] block (customer scope) is PRE-COMPUTED and authoritative — narrate it, never re-derive the arithmetic. [GC]/[PAYMENTS] are live GoCardless truth about money. [QB] is what the accounts system holds.',
+    'YOUR MEMORY — your second brain: [MEMORY] holds your own durable notes from every past conversation; [PAST] is what you previously answered about this customer. Honour earlier decisions; surface OPEN follow_ups when relevant ("Outstanding from last time: …"); never contradict an earlier verdict without stating what changed.',
+    'Remember durable knowledge by adding "memories":[{"title":"…","body":"…","kind":"fact|decision|issue|follow_up","global":false}] (max 3/turn; only genuinely future-useful: agreed resolutions, discovered data issues, promises made to customers, follow-ups; global:true only for portal-wide finance facts). Close a completed follow_up with "resolve_memories":[id].',
+    'KNOW YOUR DATA: invoices whose Origin is "QB-import" (L-prefixed numbers / "Imported from QuickBooks") are summarised legacy migration records — line detail is indicative, GoCardless references and threads are usually absent, and their payments were often reconciled in QuickBooks, not the portal. Weigh them accordingly and SAY SO when a legacy invoice limits certainty.',
     'This is a CONVERSATION: prior turns may appear before the data. Answer follow-ups in context; the data pack is rebuilt fresh each turn.',
-    'When asked "did customer X overpay": compare collected vs invoiced (RECON), call out any payment-vs-invoice mismatches and failed payments, state a clear verdict with the exact figure, and suggest wording the staff member could send the customer.',
     '- If the data cannot answer, say exactly that — NEVER invent figures.',
     '- Reply with STRICT JSON only — no fences:',
-    '  {"answer_md":"...","findings":[{"ref":"RECON","quote":"verbatim snippet (max 140 chars)"}],"actions":[]}',
+    '  {"answer_md":"...","findings":[{"ref":"RECON","quote":"verbatim snippet (max 140 chars)"}],"actions":[],"memories":[],"resolve_memories":[]}',
     '- findings: 0-4, quotes verbatim from the blocks. Valid refs: any block tag that appears in the data.',
     args.scope === 'invoice'
       ? '- actions: up to 3 one-click proposals (staff must approve each). Types: draft_reply {to,subject,body — plain text, no sign-off}, void_invoice {}, create_restatement {title,line_description,net_amount(ex-VAT),offset_description,notes}, log_credit {amount,reason}, zero_balance {}. Only when clearly justified.'
@@ -231,12 +292,39 @@ export async function askFinance(args: {
   ].join('\n');
 
   const userMsg = (convo ? `CONVERSATION SO FAR:\n\n${convo}\n\n---\n\n` : '') + `NEW QUESTION: ${question}\n\nDATA:\n\n${corpus}`;
-  const raw = await aiAskText(system, userMsg, 1200);
-  let parsed: any;
-  try {
-    const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
-    parsed = JSON.parse(a >= 0 && b > a ? raw.slice(a, b + 1) : raw);
-  } catch { parsed = { answer_md: raw.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim(), findings: [] }; }
+  const raw = await aiAskText(system, userMsg, 1500);
+  // Models routinely emit LITERAL newlines inside JSON string values (invalid JSON) and/or
+  // fence the payload. Repair pass: walk the text, escape control chars only INSIDE strings.
+  const repairJson = (t: string): string => {
+    let out = ''; let inStr = false; let esc = false;
+    for (const ch of t) {
+      if (inStr) {
+        if (esc) { out += ch; esc = false; continue; }
+        if (ch === '\\') { out += ch; esc = true; continue; }
+        if (ch === '"') { inStr = false; out += ch; continue; }
+        if (ch === '\n') { out += '\\n'; continue; }
+        if (ch === '\r') { continue; }
+        if (ch === '\t') { out += '\\t'; continue; }
+        out += ch; continue;
+      }
+      if (ch === '"') inStr = true;
+      out += ch;
+    }
+    return out;
+  };
+  let parsed: any = null;
+  const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+  const cand = a >= 0 && b > a ? raw.slice(a, b + 1) : raw;
+  try { parsed = JSON.parse(cand); }
+  catch {
+    try { parsed = JSON.parse(repairJson(cand)); }
+    catch {
+      // Last resort: pull answer_md out by hand so the user at least gets prose, never raw JSON.
+      const m = cand.match(/"answer_md"\s*:\s*"([\s\S]*?)"\s*,\s*"(?:findings|actions)"/);
+      const txt = m ? m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"') : raw.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim();
+      parsed = { answer_md: txt, findings: [] };
+    }
+  }
 
   const actions = (Array.isArray(parsed.actions) ? parsed.actions.slice(0, 3) : []).map((a: any) => {
     const type = String(a?.type || '');
@@ -250,10 +338,35 @@ export async function askFinance(args: {
     return { type, label: String(a.label || type).slice(0, 60), why: String(a.why || '').slice(0, 200), params };
   }).filter(Boolean);
 
+  // Second brain writes: keep what the agent chose to remember; close finished follow-ups.
+  const savedMemories: any[] = [];
+  for (const m of (Array.isArray(parsed.memories) ? parsed.memories.slice(0, 3) : [])) {
+    const title = String(m?.title || '').trim().slice(0, 120);
+    const body = String(m?.body || '').trim().slice(0, 600);
+    const kind = ['fact', 'decision', 'issue', 'follow_up'].includes(String(m?.kind)) ? String(m.kind) : 'fact';
+    if (!title || !body) continue;
+    const custId = m?.global === true ? null : memCust;
+    const dup = (await pool.query("SELECT id FROM finance_ai_memories WHERE COALESCE(customer_id,0)=COALESCE($1,0) AND lower(title)=lower($2) AND status <> 'archived' LIMIT 1", [custId, title])).rows[0];
+    if (dup) continue;
+    const insm = await pool.query(
+      'INSERT INTO finance_ai_memories (customer_id, invoice_ref, title, body, kind, source_conversation_id, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+      [custId, args.scope === 'invoice' ? String(args.invoiceId) : null, title, body, kind, convId, 'agent']);
+    savedMemories.push({ id: insm.rows[0].id, title, kind });
+  }
+  const resolvedMemories: number[] = [];
+  for (const rid of (Array.isArray(parsed.resolve_memories) ? parsed.resolve_memories.slice(0, 5) : [])) {
+    const idn = parseInt(String(rid), 10);
+    if (!idn) continue;
+    const r2 = await pool.query("UPDATE finance_ai_memories SET status='resolved', updated_at=NOW() WHERE id=$1 AND (customer_id IS NULL OR customer_id=$2) RETURNING id", [idn, memCust]);
+    if (r2.rows[0]) resolvedMemories.push(idn);
+  }
+
   const answer = {
     answer_md: String(parsed.answer_md || parsed.answer || '').slice(0, 8000),
     findings: Array.isArray(parsed.findings) ? parsed.findings.slice(0, 4).map((f: any) => ({ ref: String(f.ref || ''), quote: String(f.quote || '').slice(0, 200) })) : [],
     actions,
+    saved_memories: savedMemories,
+    resolved_memories: resolvedMemories,
   };
 
   await pool.query('INSERT INTO finance_ai_messages (conversation_id, role, content) VALUES ($1,$2,$3::jsonb)',
@@ -272,6 +385,19 @@ export async function listFinanceConversations(scope: string, refId: number): Pr
        FROM finance_ai_conversations v LEFT JOIN users u ON u.id=v.user_id
       WHERE v.scope=$1 AND ${scope === 'invoice' ? 'v.invoice_id' : 'v.customer_id'}=$2
       ORDER BY v.updated_at DESC LIMIT 30`, [scope, refId])).rows;
+}
+
+export async function listFinanceMemories(customerId: number | null): Promise<any[]> {
+  return (await pool.query(
+    `SELECT id, customer_id, invoice_ref, title, body, kind, status, created_at, updated_at
+       FROM finance_ai_memories
+      WHERE status <> 'archived' AND (customer_id IS NULL OR customer_id = $1)
+      ORDER BY (status = 'open' AND kind = 'follow_up') DESC, updated_at DESC LIMIT 100`, [customerId])).rows;
+}
+
+export async function archiveFinanceMemory(id: number): Promise<boolean> {
+  const r = await pool.query("UPDATE finance_ai_memories SET status='archived', updated_at=NOW() WHERE id=$1 RETURNING id", [id]);
+  return !!r.rows[0];
 }
 
 export async function getFinanceConversation(id: number): Promise<any[]> {

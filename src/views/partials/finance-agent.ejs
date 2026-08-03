@@ -1,46 +1,79 @@
 <%
-// Finance Agent v3 — shared conversational lightbox.
-// Locals: faScope ('invoice'|'customer'), faRefId (id or null), faTitle (heading),
-//         faCustomers (array for the customer picker, or null), faActionsInvoiceId (invoice id
+// Finance Agent — shared conversational panel (the template for future module agents:
+// give a scope + a corpus builder in lib/finance-agent.ts and reuse this shell).
+// Locals: faScope ('invoice'|'customer'), faRefId (id or null), faTitle (subtitle),
+//         faCustomers (array for the picker, or null), faActionsInvoiceId (invoice id
 //         whose /agent-action executor runs the click-to-approve cards, or null).
 var _faCust = (typeof faCustomers !== 'undefined' && faCustomers) ? faCustomers : null;
 var _faActions = (typeof faActionsInvoiceId !== 'undefined' && faActionsInvoiceId) ? faActionsInvoiceId : null;
+var _faInitial = (typeof user !== 'undefined' && user && user.displayName) ? String(user.displayName).trim().charAt(0).toUpperCase() : 'Y';
 %>
 <style>
-  .fa-msg { border-radius:10px; padding:10px 13px; margin-bottom:10px; font-size:13.5px; line-height:1.55; }
-  .fa-user { background:var(--ink-chip); color:var(--surface); margin-left:15%; }
-  .fa-asst { background:var(--accent-soft); border:1px solid var(--accent-line); margin-right:5%; }
-  .fa-asst p { margin:0 0 6px; } .fa-asst p:last-child { margin-bottom:0; }
-  .fa-md-h { font-weight:700; margin:8px 0 4px; }
-  .fa-md-table { border-collapse:collapse; margin:6px 0; font-size:12.5px; width:100%; }
-  .fa-md-table th, .fa-md-table td { border:1px solid var(--line); padding:3px 8px; text-align:left; }
-  .fa-md-table th { background:var(--surface-2, var(--line)); font-weight:700; }
-  .fa-chip { padding:5px 9px; border:1px solid var(--line); border-radius:8px; margin:4px 0; font-size:12px; }
-  .fa-action { padding:9px 11px; border:1px solid var(--accent-line); border-radius:10px; margin:6px 0; font-size:13px; background:var(--surface); }
+  .fa-overlay { position:fixed; inset:0; background:rgba(9,14,26,.55); backdrop-filter:blur(3px); z-index:1000; display:none; }
+  .fa-panel { max-width:860px; margin:4vh auto; height:88vh; display:flex; flex-direction:column; background:var(--surface); border-radius:18px; overflow:hidden; box-shadow:0 32px 80px rgba(2,6,23,.45); animation:faIn .18s ease-out; }
+  @keyframes faIn { from { opacity:0; transform:translateY(10px) scale(.985); } to { opacity:1; transform:none; } }
+  .fa-head { display:flex; align-items:center; gap:12px; padding:13px 18px; border-bottom:1px solid var(--line); background:linear-gradient(135deg, var(--accent-soft), var(--surface) 70%); flex-wrap:wrap; }
+  .fa-badge { width:38px; height:38px; border-radius:12px; background:linear-gradient(135deg, var(--accent), var(--accent-deep)); color:#fff; font-weight:800; font-size:18px; display:flex; align-items:center; justify-content:center; box-shadow:0 6px 14px rgba(2,6,23,.25); flex:none; }
+  .fa-title { font-weight:800; font-size:15.5px; }
+  .fa-sub { font-size:11.5px; color:var(--muted); margin-top:1px; }
+  .fa-head select.input { font-size:12px; padding:5px 9px; border-radius:9px; }
+  .fa-msgs { flex:1; overflow:auto; padding:18px 20px; }
+  .fa-row { display:flex; gap:10px; margin-bottom:14px; animation:faIn .15s ease-out; }
+  .fa-row.user { flex-direction:row-reverse; }
+  .fa-av { width:27px; height:27px; border-radius:50%; flex:none; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; margin-top:2px; }
+  .fa-av.agent { background:linear-gradient(135deg, var(--accent), var(--accent-deep)); color:#fff; }
+  .fa-av.you { background:var(--ink-chip); color:var(--surface); }
+  .fa-msg { border-radius:14px; padding:12px 15px; font-size:13.5px; line-height:1.6; }
+  .fa-user { background:var(--ink-chip); color:var(--surface); border-bottom-right-radius:4px; max-width:78%; }
+  .fa-asst { background:var(--surface); border:1px solid var(--line); border-bottom-left-radius:4px; box-shadow:0 2px 10px rgba(2,6,23,.05); flex:1; min-width:0; }
+  .fa-asst p { margin:0 0 7px; } .fa-asst p:last-child { margin-bottom:0; }
+  .fa-md-h { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.7px; color:var(--accent-deep); margin:13px 0 5px; padding-top:10px; border-top:1px dashed var(--line); }
+  .fa-asst > .fa-md-h:first-child { margin-top:0; padding-top:0; border-top:none; }
+  .fa-md-table { border-collapse:separate; border-spacing:0; margin:7px 0 9px; font-size:12.5px; width:100%; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+  .fa-md-table th { background:var(--accent-soft); color:var(--accent-deep); font-weight:700; text-align:left; padding:6px 10px; font-size:11.5px; }
+  .fa-md-table td { padding:5px 10px; border-top:1px solid var(--line); }
+  .fa-label { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); margin:11px 0 3px; }
+  .fa-chip { display:flex; gap:7px; padding:6px 10px; border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; margin:5px 0; font-size:11.5px; color:var(--muted); background:var(--surface); }
+  .fa-chip b { color:var(--accent-deep); flex:none; }
+  .fa-action { padding:11px 13px; border:1px solid var(--accent-line); border-left:4px solid var(--accent); border-radius:11px; margin:8px 0; font-size:13px; background:var(--surface); box-shadow:0 2px 8px rgba(2,6,23,.04); }
+  .fa-inputbar { display:flex; gap:9px; padding:13px 18px; border-top:1px solid var(--line); background:var(--surface); }
+  .fa-inputbar .input { flex:1; border-radius:11px; }
+  .fa-think { display:flex; gap:5px; align-items:center; padding:6px 2px 12px 38px; }
+  .fa-think i { width:7px; height:7px; border-radius:50%; background:var(--accent); animation:faB .9s infinite; }
+  .fa-think i:nth-child(2) { animation-delay:.15s; } .fa-think i:nth-child(3) { animation-delay:.3s; }
+  .fa-think span { font-size:11.5px; color:var(--muted); margin-left:6px; }
+  @keyframes faB { 0%,80%,100% { transform:scale(.6); opacity:.4; } 40% { transform:scale(1); opacity:1; } }
+  .fa-welcome { border:1px dashed var(--accent-line); border-radius:12px; padding:12px 15px; font-size:12.5px; color:var(--muted); background:var(--accent-soft); }
 </style>
 
-<div id="faOverlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:1000;" onclick="if(event.target===this)finClose()">
-  <div style="max-width:820px;margin:4vh auto;background:var(--surface);border-radius:14px;box-shadow:0 24px 60px rgba(2,6,23,.35);height:88vh;display:flex;flex-direction:column;">
-    <div style="display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap;">
-      <h2 style="margin:0;font-size:16px;">&pound; Finance Agent</h2>
-      <span class="muted" style="font-size:12px;"><%= typeof faTitle !== 'undefined' ? faTitle : '' %></span>
+<div id="faOverlay" class="fa-overlay" onclick="if(event.target===this)finClose()">
+  <div class="fa-panel">
+    <div class="fa-head">
+      <div class="fa-badge">&pound;</div>
+      <div style="min-width:0;">
+        <div class="fa-title">Finance Agent</div>
+        <div class="fa-sub"><%= typeof faTitle !== 'undefined' ? faTitle : '' %></div>
+      </div>
       <% if (_faCust) { %>
-      <select class="input" id="faCustomer" style="font-size:12px;padding:4px 8px;max-width:240px;">
+      <select class="input" id="faCustomer" style="max-width:230px;">
         <option value="">— pick a customer —</option>
         <% _faCust.forEach(function(c){ %><option value="<%= c.id %>"><%= c.name %></option><% }); %>
       </select>
       <% } %>
-      <select class="input" id="faConvs" style="font-size:12px;padding:4px 8px;max-width:220px;margin-left:auto;" title="Previous conversations">
+      <button class="btn" type="button" id="faMemBtn" style="margin-left:auto;padding:5px 11px;border-radius:9px;font-size:12px;" title="The agent's memory — everything it has chosen to remember">🧠 Memory</button>
+      <select class="input" id="faConvs" style="max-width:210px;" title="Previous conversations">
         <option value="">＋ New conversation</option>
       </select>
-      <button class="btn" type="button" onclick="finClose()" style="padding:2px 10px;">&#10005;</button>
+      <button class="btn" type="button" onclick="finClose()" style="padding:2px 10px;border-radius:9px;">&#10005;</button>
     </div>
-    <div id="faMsgs" style="flex:1;overflow:auto;padding:14px 18px;">
-      <p class="muted" style="font-size:12.5px;">Ask anything about <%= faScope === 'customer' ? "a customer's money — it reads EVERY invoice, EVERY GoCardless collection on their mandate, credits and the thread, with the reconciliation pre-computed" : 'this invoice — live GoCardless + QuickBooks, credits, related invoices and the email thread' %>. Follow-ups keep the context.</p>
+    <div id="faMsgs" class="fa-msgs">
+      <div class="fa-welcome"><%= faScope === 'customer'
+        ? 'Ask about a customer\'s money. I read every invoice, every GoCardless collection on their mandate, credits and the email thread — with the reconciliation pre-computed, so the arithmetic is verified before I say a word. I\'ll give you a verdict, my recommendation, and offer to draft the customer reply. Follow-ups keep the context.'
+        : 'Ask anything about this invoice. I check the live GoCardless payment and QuickBooks copy, credits, related invoices and the email thread — then give you a verdict, my recommendation, and one-click actions you approve. Follow-ups keep the context.' %></div>
     </div>
-    <form onsubmit="return finGo()" style="display:flex;gap:8px;padding:12px 18px;border-top:1px solid var(--line);">
-      <input class="input" id="faQ" placeholder="e.g. This customer says they've overpaid — have they?" style="flex:1;" autocomplete="off">
-      <button class="btn btn-primary" type="submit" id="faBtn">Ask</button>
+    <form class="fa-inputbar" onsubmit="return finGo()">
+      <input class="input" id="faQ" placeholder="e.g. This customer says they've overpaid — have they?" autocomplete="off">
+      <button class="btn btn-primary" type="submit" id="faBtn" style="border-radius:11px;">Ask</button>
     </form>
   </div>
 </div>
@@ -50,9 +83,12 @@ var _faActions = (typeof faActionsInvoiceId !== 'undefined' && faActionsInvoiceI
   var SCOPE = '<%= faScope %>';
   var REF = <%= (typeof faRefId !== 'undefined' && faRefId) ? faRefId : 'null' %>;
   var ACTIONS_INV = <%= _faActions ? _faActions : 'null' %>;
+  var MEMCUST = <%= (typeof faMemoryCustomerId !== 'undefined' && faMemoryCustomerId) ? faMemoryCustomerId : 'null' %>;
+  var INITIAL = '<%= _faInitial %>';
   var CONV = null;
   function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
   function el(tag, css, text){ var e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; }
+  function cel(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   var custSel = document.getElementById('faCustomer');
   if (custSel) custSel.addEventListener('change', function(){ REF = parseInt(custSel.value, 10) || null; CONV = null; clearMsgs(); loadConvs(); });
 
@@ -72,7 +108,7 @@ var _faActions = (typeof faActionsInvoiceId !== 'undefined' && faActionsInvoiceI
         continue;
       }
       if (inTable){ out.push('</tbody></table>'); inTable = false; }
-      if (/^\s*[-*]\s+/.test(ln)) { if (!inList){ out.push('<ul style="margin:4px 0 6px 18px;">'); inList = true; } out.push('<li>' + inline(ln.replace(/^\s*[-*]\s+/,'')) + '</li>'); continue; }
+      if (/^\s*[-*]\s+/.test(ln)) { if (!inList){ out.push('<ul style="margin:4px 0 7px 18px;">'); inList = true; } out.push('<li>' + inline(ln.replace(/^\s*[-*]\s+/,'')) + '</li>'); continue; }
       if (inList){ out.push('</ul>'); inList = false; }
       if (/^#{1,4}\s+/.test(ln)) { out.push('<div class="fa-md-h">' + inline(ln.replace(/^#{1,4}\s+/,'')) + '</div>'); continue; }
       if (ln.trim() === '') continue;
@@ -82,44 +118,68 @@ var _faActions = (typeof faActionsInvoiceId !== 'undefined' && faActionsInvoiceI
     return out.join('');
   }
 
-  function clearMsgs(){ document.getElementById('faMsgs').innerHTML = ''; }
-  function addUser(text){ var d = el('div'); d.className = 'fa-msg fa-user'; d.textContent = text; document.getElementById('faMsgs').appendChild(d); scrollEnd(); }
+  function clearMsgs(){ var m = document.getElementById('faMsgs'); m.innerHTML = ''; }
+  function addUser(text){
+    var row = cel('div', 'fa-row user');
+    row.appendChild(cel('div', 'fa-av you', INITIAL));
+    var b = cel('div', 'fa-msg fa-user'); b.textContent = text;
+    row.appendChild(b);
+    document.getElementById('faMsgs').appendChild(row); scrollEnd();
+  }
   function addAsst(a){
-    var d = el('div'); d.className = 'fa-msg fa-asst';
+    var row = cel('div', 'fa-row');
+    row.appendChild(cel('div', 'fa-av agent', '£'));
+    var d = cel('div', 'fa-msg fa-asst');
     d.innerHTML = mdRender(a.answer_md || a.answer || '');
     if (a.findings && a.findings.length) {
-      var lbl = el('div', 'font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin:8px 0 2px;', 'Evidence');
-      d.appendChild(lbl);
+      d.appendChild(cel('div', 'fa-label', 'Evidence'));
       a.findings.forEach(function(f){
-        var chip = el('div'); chip.className = 'fa-chip';
-        chip.appendChild(el('span', 'font-weight:700;color:var(--accent-deep);margin-right:7px;', f.ref || ''));
+        var chip = cel('div', 'fa-chip');
+        var bb = document.createElement('b'); bb.textContent = f.ref || '';
+        chip.appendChild(bb);
         chip.appendChild(el('span', '', '“' + (f.quote || '') + '”'));
         d.appendChild(chip);
       });
     }
     if (a.actions && a.actions.length) {
-      var lbl2 = el('div', 'font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin:8px 0 2px;', 'Proposed actions — nothing runs without your click');
-      d.appendChild(lbl2);
+      d.appendChild(cel('div', 'fa-label', 'One click — nothing runs without your approval'));
       a.actions.forEach(function(act){ d.appendChild(actionCard(act)); });
     }
-    document.getElementById('faMsgs').appendChild(d); scrollEnd();
+    if ((a.saved_memories && a.saved_memories.length) || (a.resolved_memories && a.resolved_memories.length)) {
+      var memRow = el('div', 'margin-top:9px;display:flex;flex-wrap:wrap;gap:5px;');
+      (a.saved_memories || []).forEach(function(m){
+        memRow.appendChild(el('span', 'font-size:11px;padding:3px 9px;border-radius:999px;background:var(--accent-soft);border:1px solid var(--accent-line);color:var(--accent-deep);', '🧠 remembered: ' + m.title));
+      });
+      (a.resolved_memories || []).forEach(function(){
+        memRow.appendChild(el('span', 'font-size:11px;padding:3px 9px;border-radius:999px;background:var(--accent-soft);border:1px solid var(--accent-line);color:var(--ok);', '✓ follow-up closed'));
+      });
+      d.appendChild(memRow);
+    }
+    row.appendChild(d);
+    document.getElementById('faMsgs').appendChild(row); scrollEnd();
   }
   function scrollEnd(){ var m = document.getElementById('faMsgs'); m.scrollTop = m.scrollHeight; }
 
   function actionCard(act){
-    var card = el('div'); card.className = 'fa-action';
-    var row = el('div', 'display:flex;align-items:center;justify-content:space-between;gap:10px;');
-    var left = el('div', 'min-width:0;');
+    var card = cel('div', 'fa-action');
+    var row = el('div', 'display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;');
+    var left = el('div', 'min-width:0;flex:1;');
     left.appendChild(el('div', 'font-weight:700;', act.label || act.type));
     if (act.why) left.appendChild(el('div', 'font-size:12px;color:var(--muted);margin-top:2px;', act.why));
     row.appendChild(left);
     var btn = document.createElement('button'); btn.className = 'btn'; btn.type = 'button'; btn.style.whiteSpace = 'nowrap';
     var armed = false;
     if (act.type === 'draft_reply') {
-      btn.textContent = '✎ Use draft';
+      var p = act.params || {};
+      left.appendChild(el('div', 'font-size:12px;color:var(--muted);margin-top:3px;', (p.to ? 'To: ' + p.to + ' · ' : '') + 'Subject: ' + (p.subject || '')));
+      var prev = el('div', 'font-size:12.5px;background:var(--accent-soft);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-top:8px;white-space:pre-wrap;display:none;max-height:200px;overflow:auto;', p.body || '');
+      var tog = el('a', 'font-size:11.5px;cursor:pointer;color:var(--accent-deep);display:inline-block;margin-top:6px;', 'Read the email ▾');
+      tog.onclick = function(){ var open = prev.style.display !== 'none'; prev.style.display = open ? 'none' : 'block'; tog.textContent = open ? 'Read the email ▾' : 'Hide the email ▴'; };
+      var hasComposer = !!document.getElementById('comms');
+      btn.textContent = hasComposer ? '✉ Yes — put it in the composer' : '✉ Yes — copy the email';
+      btn.className = 'btn btn-primary';
       btn.onclick = function(){
         var comms = document.getElementById('comms');
-        var p = act.params || {};
         if (comms) {
           var toInput = comms.querySelector('input[list]'); if (toInput && p.to) toInput.value = p.to;
           var subj = comms.querySelector('input[name="subject"]'); if (subj && p.subject) subj.value = p.subject;
@@ -129,9 +189,14 @@ var _faActions = (typeof faActionsInvoiceId !== 'undefined' && faActionsInvoiceI
           comms.style.boxShadow = '0 0 0 3px var(--accent)'; setTimeout(function(){ comms.style.boxShadow = ''; }, 2600);
         } else {
           navigator.clipboard && navigator.clipboard.writeText((p.subject ? p.subject + '\n\n' : '') + (p.body || ''));
-          btn.textContent = 'Copied ✓';
+          btn.textContent = 'Copied ✓ — paste into any composer';
         }
       };
+      card.appendChild(row);
+      card.appendChild(tog);
+      card.appendChild(prev);
+      row.appendChild(btn);
+      return card;
     } else if (ACTIONS_INV) {
       btn.textContent = 'Run';
       btn.onclick = function(){
@@ -161,9 +226,10 @@ var _faActions = (typeof faActionsInvoiceId !== 'undefined' && faActionsInvoiceI
       if (!d.ok) return;
       d.conversations.forEach(function(v){
         var o = document.createElement('option'); o.value = v.id;
-        o.textContent = (v.title || 'conversation').slice(0, 60) + ' · ' + new Date(v.updated_at).toLocaleDateString('en-GB');
+        o.textContent = (v.title || 'conversation').slice(0, 55) + ' · ' + new Date(v.updated_at).toLocaleDateString('en-GB');
         sel.appendChild(o);
       });
+      if (CONV) sel.value = String(CONV);
     }).catch(function(){});
   }
   document.getElementById('faConvs').addEventListener('change', function(){
@@ -176,6 +242,31 @@ var _faActions = (typeof faActionsInvoiceId !== 'undefined' && faActionsInvoiceI
         if (m.role === 'user') addUser((m.content || {}).text || '');
         else addAsst(m.content || {});
       });
+    }).catch(function(){});
+  });
+
+  document.getElementById('faMemBtn').addEventListener('click', function(){
+    var url = '/finance-agent/memories' + (REF && (SCOPE === 'customer' || MEMCUST) ? '?customer=' + (SCOPE === 'customer' ? REF : MEMCUST) : (MEMCUST ? '?customer=' + MEMCUST : ''));
+    fetch(url).then(function(r){ return r.json(); }).then(function(d){
+      if (!d.ok) return;
+      var row = cel('div', 'fa-row');
+      row.appendChild(cel('div', 'fa-av agent', '🧠'));
+      var box = cel('div', 'fa-msg fa-asst');
+      box.appendChild(cel('div', 'fa-label', 'My memory — ' + d.memories.length + ' note' + (d.memories.length === 1 ? '' : 's') + ' (global + this customer)'));
+      if (!d.memories.length) box.appendChild(el('p', 'font-size:12.5px;color:var(--muted);', 'Nothing remembered yet — I save facts, decisions and follow-ups as we work.'));
+      d.memories.forEach(function(m){
+        var chip = cel('div', 'fa-chip');
+        var bb = document.createElement('b'); bb.textContent = (m.kind || 'fact') + (m.customer_id === null ? ' · global' : '') + (m.status === 'resolved' ? ' · resolved' : '');
+        chip.appendChild(bb);
+        var txt = el('span', 'flex:1;min-width:0;'); txt.innerHTML = '<strong>' + m.title.replace(/</g,'&lt;') + '</strong> — ' + m.body.replace(/</g,'&lt;');
+        chip.appendChild(txt);
+        var x = el('a', 'cursor:pointer;color:var(--faint);flex:none;', '✕'); x.title = 'Archive this memory';
+        x.onclick = function(){ fetch('/finance-agent/memory/' + m.id + '/archive', { method: 'POST', headers: { 'x-csrf-token': csrf() } }).then(function(){ chip.remove(); }); };
+        chip.appendChild(x);
+        box.appendChild(chip);
+      });
+      row.appendChild(box);
+      document.getElementById('faMsgs').appendChild(row); scrollEnd();
     }).catch(function(){});
   });
 
@@ -193,7 +284,8 @@ var _faActions = (typeof faActionsInvoiceId !== 'undefined' && faActionsInvoiceI
     var btn = document.getElementById('faBtn');
     btn.disabled = true; btn.textContent = 'Thinking…';
     addUser(q);
-    var thinking = el('div', 'font-size:12.5px;color:var(--muted);margin-bottom:10px;', SCOPE === 'customer' ? 'Reading every invoice, every GoCardless collection, credits and the thread…' : 'Checking the invoice, live GoCardless + QuickBooks, credits and the thread…');
+    var thinking = cel('div', 'fa-think');
+    thinking.innerHTML = '<i></i><i></i><i></i><span>' + (SCOPE === 'customer' ? 'reading every invoice, every GoCardless collection, credits and the thread…' : 'checking live GoCardless + QuickBooks, credits and the thread…') + '</span>';
     document.getElementById('faMsgs').appendChild(thinking); scrollEnd();
     var payload = { scope: SCOPE, question: q, conversation_id: CONV };
     if (SCOPE === 'invoice') payload.invoice_id = REF; else payload.customer_id = REF;
@@ -201,7 +293,7 @@ var _faActions = (typeof faActionsInvoiceId !== 'undefined' && faActionsInvoiceI
       .then(function(r){ return r.json(); })
       .then(function(d){
         thinking.remove();
-        if (d.ok) { CONV = d.conversationId; addAsst(d.answer); document.getElementById('faQ').value = ''; loadConvs(); var sel = document.getElementById('faConvs'); sel.value = String(CONV); }
+        if (d.ok) { CONV = d.conversationId; addAsst(d.answer); document.getElementById('faQ').value = ''; loadConvs(); }
         else { addAsst({ answer_md: '**' + (d.error || 'Ask failed.') + '**' }); }
       })
       .catch(function(){ thinking.remove(); addAsst({ answer_md: '**Network error — try again.**' }); })
@@ -209,7 +301,6 @@ var _faActions = (typeof faActionsInvoiceId !== 'undefined' && faActionsInvoiceI
     return false;
   };
 
-  // Deep links: ?ask=1 opens; ?q= prefills; ?customer= preselects (customer scope).
   var sp = new URLSearchParams(location.search);
   if (sp.get('ask') === '1') {
     if (custSel && sp.get('customer')) { custSel.value = sp.get('customer'); REF = parseInt(sp.get('customer'), 10) || null; }

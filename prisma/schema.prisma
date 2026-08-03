@@ -322,6 +322,27 @@ model FinanceAiMessage {
   @@map("finance_ai_messages")
 }
 
+// The Finance Agent's OWN durable memory ("second brain", Terry 2026-07-30): distilled
+// facts / decisions / issues / follow_ups the agent saves after answers and reads back
+// into every future conversation. customer_id NULL = portal-wide finance fact.
+model FinanceAiMemory {
+  id                   Int      @id @default(autoincrement())
+  customerId           Int?     @map("customer_id")
+  invoiceRef           String?  @map("invoice_ref")
+  title                String
+  body                 String
+  kind                 String   @default("fact") // fact | decision | issue | follow_up
+  status               String   @default("open") // open | resolved | archived
+  sourceConversationId Int?     @map("source_conversation_id")
+  createdBy            String?  @map("created_by")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([customerId])
+  @@index([status])
+  @@map("finance_ai_memories")
+}
+
 // ── Customer sites ─────────────────────────────────────────────────────────────
 model Site {
   id           Int      @id @default(autoincrement())

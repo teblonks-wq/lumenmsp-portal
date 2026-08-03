@@ -18,7 +18,7 @@ import { getSetting } from '../lib/settings';
 import { config } from '../config';
 import { aiAskText } from '../lib/ai-compose';
 import { GoCardless } from '../lib/gocardless';
-import { askFinance, listFinanceConversations, getFinanceConversation } from '../lib/finance-agent';
+import { askFinance, listFinanceConversations, getFinanceConversation, listFinanceMemories, archiveFinanceMemory } from '../lib/finance-agent';
 
 import {
   clientIp as evIp, getDocEvents, logDocEvent, newPixelToken, pixelImg, userAgent as evUa,
@@ -1144,6 +1144,16 @@ router.get('/finance-agent/conversations', requireAuth, async (req: Request, res
 router.get('/finance-agent/conversation/:id', requireAuth, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10) || 0;
   res.json({ ok: true, messages: id ? await getFinanceConversation(id) : [] });
+});
+
+// The agent's second brain — read + tidy (archiving is a staff curation act, logged implicitly).
+router.get('/finance-agent/memories', requireAuth, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.query.customer || ''), 10) || null;
+  res.json({ ok: true, memories: await listFinanceMemories(customerId) });
+});
+router.post('/finance-agent/memory/:id/archive', requireAuth, async (req: Request, res: Response) => {
+  const ok = await archiveFinanceMemory(parseInt(String(req.params.id), 10) || 0);
+  res.json({ ok });
 });
 
 // Jump to an invoice's Finance Agent by NUMBER (used by the case-page button when an

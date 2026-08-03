@@ -214,7 +214,7 @@
 </div>
 <% } %>
 
-<%- include('../partials/finance-agent', { faScope: 'invoice', faRefId: invoice.id, faTitle: (invoice.invoice_number || 'this invoice') + ' — ' + (invoice.customer_name || ''), faCustomers: null, faActionsInvoiceId: invoice.id }) %>
+<%- include('../partials/finance-agent', { faScope: 'invoice', faRefId: invoice.id, faTitle: (invoice.invoice_number || 'this invoice') + ' — ' + (invoice.customer_name || ''), faCustomers: null, faActionsInvoiceId: invoice.id, faMemoryCustomerId: invoice.customer_id }) %>
 
 <%- include('../partials/comms', { entityType: 'invoice', entityId: invoice.id, comms: comms, toEmail: commsTo, toContacts: commsContacts, commsSubject: 'Invoice ' + invoice.invoice_number }) %>
 
