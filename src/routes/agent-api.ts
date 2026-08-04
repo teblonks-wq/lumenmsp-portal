@@ -1,5 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { pool } from '../db/pool';
 import { getSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
@@ -23,6 +25,14 @@ import { nextTicketNumber } from './tickets';
 
 const router = Router();
 
+// Master agent MSI store. Lives OUTSIDE dist/static so it survives deploys (the deploy
+// tarball extracts over the top, never deletes) and can't be fetched without a valid key.
+export const AGENT_MSI_DIR = path.join(__dirname, '../../agent-files');
+export const AGENT_MSI_PATH = path.join(AGENT_MSI_DIR, 'LumenMSPAgent.msi');
+export function agentMsiInfo(): { size: number; mtime: Date } | null {
+  try { const st = fs.statSync(AGENT_MSI_PATH); return { size: st.size, mtime: st.mtime }; } catch { return null; }
+}
+
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 const s = (v: any, max = 300): string | null => { const t = String(v ?? '').trim(); return t ? t.slice(0, max) : null; };
 
@@ -30,6 +40,25 @@ const s = (v: any, max = 300): string | null => { const t = String(v ?? '').trim
 function clientIp(req: Request): string {
   return String(req.ip || '').replace(/^::ffff:/, '');
 }
+
+// ── Keyed installer download ────────────────────────────────────────────────────
+// GET /agent/download/LumenMSPAgent-<sitekey>.msi — public capability URL: the key in
+// the filename both authorises the download AND enrolls the install (the MSI records
+// its own launch path, and the service parses the key back out of the filename), so a
+// plain double-click needs no SITEKEY property. Safe to hand to a customer's IT / RMM.
+router.get('/agent/download/:file', async (req: Request, res: Response) => {
+  const m = String(req.params.file || '').match(/^LumenMSPAgent-LMA-([0-9a-f]{8,64})\.msi$/i);
+  if (!m) { res.status(404).send('Not found'); return; }
+  const key = 'LMA-' + m[1].toLowerCase();
+  try {
+    const cust = await pool.query('SELECT id FROM customers WHERE agent_site_key=$1 AND deleted_at IS NULL LIMIT 1', [key]);
+    if (!cust.rows.length) { res.status(404).send('Unknown installer'); return; }
+    if (!agentMsiInfo()) { res.status(503).send('The agent installer has not been uploaded to the portal yet.'); return; }
+    res.download(AGENT_MSI_PATH, `LumenMSPAgent-${key}.msi`);
+  } catch {
+    res.status(500).send('Download failed');
+  }
+});
 
 // ── Device auth (Bearer device token) ──────────────────────────────────────────
 async function requireDevice(req: Request, res: Response, next: NextFunction): Promise<void> {

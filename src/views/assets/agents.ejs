@@ -51,6 +51,19 @@
 
 <% if (isAdmin) { %>
 <div class="card" style="margin-bottom:20px;">
+  <h3 style="margin-top:0;">Agent installer (MSI)</h3>
+  <% if (msi) { %>
+  <p class="muted" style="font-size:13px;">Current build: <strong><%= (msi.size/1048576).toFixed(1) %> MB</strong>, uploaded <%= dt(msi.mtime) %>. Every customer download link serves this file under its own keyed name (<code>LumenMSPAgent-&lt;sitekey&gt;.msi</code>) — the installer reads the key from its filename, so a plain double-click install needs no command-line options.</p>
+  <% } else { %>
+  <p class="muted" style="font-size:13px;">No installer uploaded yet. Build it with <code>build.ps1</code> in <code>D:\LITS\LumenMSP Agent</code>, then upload <code>dist\LumenMSPAgent.msi</code> here.</p>
+  <% } %>
+  <form method="post" action="/agents/installer" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <input class="input" type="file" name="msi" accept=".msi" required style="max-width:340px;">
+    <button class="btn btn-primary" type="submit">Upload<%= msi ? ' new build' : '' %></button>
+  </form>
+</div>
+
+<div class="card" style="margin-bottom:20px;">
   <h3 style="margin-top:0;">Global defaults</h3>
   <p class="muted" style="font-size:13px;">Used by every device whose customer has no override. The RMM installer URL is what "Reinstall RMM Agent" downloads and runs (<code>msiexec /i</code>).</p>
   <form method="post" action="/agents/settings" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
@@ -73,7 +86,7 @@
   </p>
   <div style="overflow-x:auto;">
     <table class="table">
-      <thead><tr><th>Customer</th><th>Devices</th><th>Site key</th><th></th><th>RMM installer URL override</th></tr></thead>
+      <thead><tr><th>Customer</th><th>Devices</th><th>Site key</th><th></th><th>Install</th><th>RMM installer URL override</th></tr></thead>
       <tbody>
         <% customers.forEach(function(c){ %>
         <tr>
@@ -90,6 +103,12 @@
             </form>
             <% } %>
           </td>
+          <td style="white-space:nowrap;">
+            <% if (c.agent_site_key && msi) { %>
+            <a class="btn btn-small" href="/agent/download/LumenMSPAgent-<%= c.agent_site_key %>.msi">&#11015; MSI</a>
+            <button class="btn btn-small copy-cmd" type="button" data-key="<%= c.agent_site_key %>">Copy command</button>
+            <% } else { %><span class="muted" style="font-size:12px;"><%= msi ? 'needs key' : 'no MSI yet' %></span><% } %>
+          </td>
           <td>
             <form method="post" action="/agents/rmm-url/<%= c.id %>" style="display:flex;gap:6px;">
               <input class="input" type="url" name="url" value="<%= c.rmm_installer_url || '' %>" placeholder="(use default)" style="min-width:220px;font-size:12px;">
@@ -103,5 +122,23 @@
   </div>
 </div>
 <% } %>
+
+<script>
+(function(){
+  var BASE = '<%= baseUrl %>';
+  document.querySelectorAll('.copy-cmd').forEach(function(b){
+    b.addEventListener('click', function(){
+      var key = b.getAttribute('data-key');
+      var name = 'LumenMSPAgent-' + key + '.msi';
+      var url = BASE + '/agent/download/' + name;
+      var cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "$f=Join-Path $env:TEMP \'' + name + '\'; Invoke-WebRequest \'' + url + '\' -OutFile $f; Start-Process msiexec -ArgumentList \'/i\',$f,\'/qn\' -Wait"';
+      (navigator.clipboard ? navigator.clipboard.writeText(cmd) : Promise.reject()).then(function(){
+        b.textContent = 'Copied \u2713';
+        setTimeout(function(){ b.textContent = 'Copy command'; }, 1600);
+      }).catch(function(){ window.prompt('Copy this command:', cmd); });
+    });
+  });
+})();
+</script>
 
 <%- include('../partials/footer') %>

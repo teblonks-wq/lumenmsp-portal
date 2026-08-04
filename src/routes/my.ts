@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { requireCustomer } from '../middleware/auth';
 import { pool, insightsPool } from '../db/pool';
 import { nextTicketNumber } from './tickets';
+import { agentMsiInfo } from './agent-api';
 import { getGroupsAndExtensions } from './insights';
 import { buildJourneys, formatRoute, type CallEventRow } from '../lib/insights-journeys';
 import { generateFromTemplate } from '../lib/insights/report-generator';
@@ -141,7 +142,13 @@ router.get('/my', async (req: Request, res: Response) => {
   const u = req.session.user!;
   const c = cid(req);
   const p = perms(req);
-  const company = (await rows('SELECT name FROM customers WHERE id=$1', [c]))[0]?.name || 'Your company';
+  const crow = (await rows('SELECT name, agent_site_key FROM customers WHERE id=$1', [c]))[0] || {};
+  const company = crow.name || 'Your company';
+  // LumenMSP Agent self-service download — shown once Lumen has issued this company a
+  // site key and uploaded the installer. The key rides in the filename, so it is a
+  // download-and-double-click install (no options); the same link works for their RMM.
+  const agentDownload = (crow.agent_site_key && agentMsiInfo())
+    ? '/agent/download/LumenMSPAgent-' + crow.agent_site_key + '.msi' : null;
 
   // Tickets: all-company for principal/service, otherwise just your own.
   const ticketWhere = p.allTickets
@@ -162,7 +169,7 @@ router.get('/my', async (req: Request, res: Response) => {
   const h = new Date().getHours();
   const greeting = 'Good ' + (h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening') + ', ' + String(u.displayName || '').split(' ')[0];
 
-  res.render('my/dashboard', { active: 'home', user: u, company, greeting, openTickets, unpaidInvoices, services, recentTickets });
+  res.render('my/dashboard', { active: 'home', user: u, company, greeting, openTickets, unpaidInvoices, services, recentTickets, agentDownload });
 });
 
 // ── Tickets — list (scoped by permission) ──────────────────────────────────────────

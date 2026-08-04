@@ -1,9 +1,12 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
+import fs from 'fs';
+import multer from 'multer';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { getSetting, setSetting } from '../lib/settings';
+import { AGENT_MSI_DIR, AGENT_MSI_PATH, agentMsiInfo } from './agent-api';
 import { syncAssetsFromAtera, lastAssetSyncAt, remoteUrlTemplate, saveRemoteUrlTemplate, buildRemoteUrl } from '../lib/asset-sync';
 import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
 
@@ -31,9 +34,18 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   if (noUser) where.push("(a.assigned_contact_id IS NULL AND (a.last_login_user IS NULL OR a.last_login_user = ''))");
 
   const rows = (await pool.query(
-    `SELECT a.*, c.name AS customer_name, ac.full_name AS assigned_name FROM customer_assets a
+    `SELECT a.*, c.name AS customer_name, ac.full_name AS assigned_name,
+            agd.id AS agent_device_id, agd.last_seen_at AS agent_last_seen
+     FROM customer_assets a
      LEFT JOIN customers c ON c.id = a.customer_id
      LEFT JOIN customer_contacts ac ON ac.id = a.assigned_contact_id
+     LEFT JOIN LATERAL (
+       SELECT ag.id, ag.last_seen_at FROM agent_devices ag
+       WHERE ag.revoked = false AND ag.customer_id = a.customer_id
+         AND ((a.serial_number IS NOT NULL AND ag.serial_number = a.serial_number)
+           OR (a.hostname IS NOT NULL AND LOWER(ag.hostname) = LOWER(a.hostname)))
+       ORDER BY ag.last_seen_at DESC NULLS LAST LIMIT 1
+     ) agd ON true
      WHERE ${where.join(' AND ')}
      ORDER BY c.name, a.hostname`, params
   )).rows;
@@ -106,6 +118,18 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
      LEFT JOIN customer_contacts ac ON ac.id = a.assigned_contact_id WHERE a.id=$1`, [id]
   )).rows[0];
   if (!row) { res.status(404).render('error', { message: 'Device not found.' }); return; }
+  // LumenMSP Agent on this device? Matched by serial (preferred) or hostname.
+  let agentInfo: any = null;
+  try {
+    agentInfo = (await pool.query(
+      `SELECT id, last_seen_at, agent_version, logged_in_user FROM agent_devices
+       WHERE revoked = false AND customer_id = $1
+         AND (($2::text IS NOT NULL AND serial_number = $2)
+           OR ($3::text IS NOT NULL AND LOWER(hostname) = LOWER($3)))
+       ORDER BY last_seen_at DESC NULLS LAST LIMIT 1`,
+      [row.customer_id, row.serial_number || null, row.hostname || null]
+    )).rows[0] || null;
+  } catch { /* cosmetic — never block the device page */ }
   // Contacts of this device's customer, for the "Assigned user" picker (Portal-side allocation).
   const contactOptions = row.customer_id
     ? (await pool.query('SELECT id, full_name FROM customer_contacts WHERE customer_id=$1 AND archived=false ORDER BY full_name', [row.customer_id])).rows
@@ -134,7 +158,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     dataCopiedH: h.dataCopied != null ? fmtBytes(h.dataCopied) : null,
   }));
   res.render('assets/detail', {
-    user: req.session.user!, asset: row, backupPlans, backupHistory,
+    user: req.session.user!, asset: row, agentInfo, backupPlans, backupHistory,
     remoteUrl: row.external_id ? buildRemoteUrl(tpl, { agentId: row.external_id, deviceGuid: row.device_guid }) : null,
     back: safeBack(req.query.back, '/assets'), contactOptions,
     rawJson: showDebug ? JSON.stringify(row.raw, null, 2) : null,
@@ -166,8 +190,37 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
   }
   res.render('assets/agents', {
     user: req.session.user!, rows, customers, defaults, isAdmin,
+    msi: agentMsiInfo(), baseUrl: req.protocol + '://' + req.get('host'),
     notice: req.query.msg || null, error: req.query.err || null,
   });
+});
+
+// Upload/replace the master agent MSI (admin). One file on disk; every customer
+// download link serves it under a keyed filename (LumenMSPAgent-<sitekey>.msi).
+const msiUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => { fs.mkdirSync(AGENT_MSI_DIR, { recursive: true }); cb(null, AGENT_MSI_DIR); },
+    filename: (_req, _file, cb) => cb(null, 'LumenMSPAgent.msi.uploading'),
+  }),
+  limits: { fileSize: 400 * 1024 * 1024, files: 1 },
+});
+router.post('/agents/installer', requireAuth, requireAdmin, msiUpload.single('msi'), async (req: Request, res: Response) => {
+  const f = (req as any).file;
+  if (!f) { res.redirect('/agents?err=' + encodeURIComponent('No file received.')); return; }
+  try {
+    // Sanity: MSIs are OLE compound files (magic D0 CF 11 E0).
+    const fd = fs.openSync(f.path, 'r');
+    const head = Buffer.alloc(4); fs.readSync(fd, head, 0, 4, 0); fs.closeSync(fd);
+    if (head.toString('hex') !== 'd0cf11e0') {
+      fs.unlinkSync(f.path);
+      res.redirect('/agents?err=' + encodeURIComponent('That does not look like an MSI file.')); return;
+    }
+    fs.renameSync(f.path, AGENT_MSI_PATH);
+    await logActivity(req.session.user!.id, 'agent_msi_uploaded', 'settings', null, `Agent MSI updated (${Math.round(f.size / 1048576)} MB)`);
+    res.redirect('/agents?msg=' + encodeURIComponent('Agent installer updated - all customer download links now serve this build.'));
+  } catch (e: any) {
+    res.redirect('/agents?err=' + encodeURIComponent('Upload failed: ' + (e.message || 'unknown error')));
+  }
 });
 
 // Generate (or rotate) a customer's agent site key. Rotating does NOT break already-

@@ -29,6 +29,9 @@
         <%= asset.online_status ? 'Online' : 'Offline' %>
       </span>
       <span class="badge badge-inactive"><%= asset.device_type || 'Device' %></span>
+      <% if (typeof agentInfo !== 'undefined' && agentInfo) { %>
+      <span title="LumenMSP Agent v<%= agentInfo.agent_version || '?' %> — last seen <%= dt(agentInfo.last_seen_at) %>" style="display:inline-flex;align-items:center;gap:5px;font-weight:600;color:var(--accent);"><img src="/static/img/lumen-agent-16.png" width="14" height="14" alt=""> <a class="row-link" href="/agents" style="color:inherit;">Agent installed</a></span>
+      <% } %>
       <% if (asset.customer_id) { %>· <a class="row-link" href="/customers/<%= asset.customer_id %>#assets"><%= asset.customer_name %></a><% } %>
       <% if (asset.last_login_user) { %>· <span class="muted"><%= asset.last_login_user %></span><% } %>
     </p>

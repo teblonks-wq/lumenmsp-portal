@@ -24,6 +24,37 @@
   <% } %>
 </div>
 
+<% if (typeof agentDownload !== 'undefined' && agentDownload) { %>
+<div class="card" style="margin-bottom:18px;">
+  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;justify-content:space-between;">
+    <div style="display:flex;gap:12px;align-items:center;min-width:260px;flex:1;">
+      <img src="/static/img/lumen-agent-32.png" width="34" height="34" alt="" style="flex:none;">
+      <div>
+        <h3 style="margin:0;font-size:15px;">Lumen IT Support Agent</h3>
+        <p class="muted" style="margin:2px 0 0;font-size:12.5px;">Install on your company PCs for one-click support chat and quick fixes. Just download and run &mdash; no setup questions asked.</p>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <a class="btn btn-primary" href="<%= agentDownload %>">&#11015; Download installer</a>
+      <button class="btn" type="button" id="agentCmdBtn" title="Silent-install one-liner for your IT team or RMM">Copy install command</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var b = document.getElementById('agentCmdBtn'); if (!b) return;
+  b.addEventListener('click', function(){
+    var url = location.origin + '<%= agentDownload %>';
+    var name = url.split('/').pop();
+    var cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "$f=Join-Path $env:TEMP \'' + name + '\'; Invoke-WebRequest \'' + url + '\' -OutFile $f; Start-Process msiexec -ArgumentList \'/i\',$f,\'/qn\' -Wait"';
+    (navigator.clipboard ? navigator.clipboard.writeText(cmd) : Promise.reject()).then(function(){
+      b.textContent = 'Copied \u2713'; setTimeout(function(){ b.textContent = 'Copy install command'; }, 1600);
+    }).catch(function(){ window.prompt('Copy this command:', cmd); });
+  });
+})();
+</script>
+<% } %>
+
 <% if (P.insights) { %>
 <style>
   .call-hero{background:#fff;border:1px solid var(--line);border-radius:14px;padding:22px;margin-bottom:18px;position:relative;overflow:hidden;}
