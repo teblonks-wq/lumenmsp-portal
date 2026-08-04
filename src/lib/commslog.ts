@@ -1,11 +1,11 @@
 import { pool } from '../db/pool';
 
-// Records a WhatsApp/Teams message (either direction) into channel_log, mirroring email_log so
+// Records a WhatsApp/Teams/Agent message (either direction) into channel_log, mirroring email_log so
 // the Comms Log admin views can show inbound + outbound for the non-email channels. Best-effort:
 // never throws into the caller (logging must not break a send or an inbound webhook).
 
 export interface ChannelLogEntry {
-  channel: 'whatsapp' | 'teams';
+  channel: 'whatsapp' | 'teams' | 'agent';
   direction: 'inbound' | 'outbound';
   status?: 'received' | 'sent' | 'failed' | 'recorded';
   ticketId?: number | null;

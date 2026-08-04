@@ -6,7 +6,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { getSetting, setSetting } from '../lib/settings';
-import { AGENT_MSI_DIR, AGENT_MSI_PATH, agentMsiInfo } from './agent-api';
+import { AGENT_MSI_DIR, AGENT_MSI_PATH, AGENT_VERSION_PATH, agentMsiInfo, agentHostedVersion, agentHostedSha256, rolloutState } from './agent-api';
 import { syncAssetsFromAtera, lastAssetSyncAt, remoteUrlTemplate, saveRemoteUrlTemplate, buildRemoteUrl } from '../lib/asset-sync';
 import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
 
@@ -159,7 +159,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   }));
   res.render('assets/detail', {
     user: req.session.user!, asset: row, agentInfo,
-    latestAgentVersion: (await getSetting('agent', 'latest_version')) || '',
+    latestAgentVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
     backupPlans, backupHistory,
     remoteUrl: row.external_id ? buildRemoteUrl(tpl, { agentId: row.external_id, deviceGuid: row.device_guid }) : null,
     back: safeBack(req.query.back, '/assets'), contactOptions,
@@ -194,9 +194,15 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
     url: isAdmin ? ((await getSetting('agent', 'rmm_installer_url')) || '') : '',
     args: isAdmin ? ((await getSetting('agent', 'rmm_install_args')) || '') : '',
   };
+  const rollout = await rolloutState();
+  const ringCounts = (await pool.query(
+    `SELECT COALESCE(update_ring,2) AS ring, COUNT(*)::int AS n,
+            COUNT(*) FILTER (WHERE agent_version IS DISTINCT FROM $1)::int AS behind
+       FROM agent_devices WHERE revoked=false GROUP BY 1`, [rollout.version])).rows;
   res.render('assets/agents', {
     user: req.session.user!, rows, customers, defaults, isAdmin,
-    msi: agentMsiInfo(), latestVersion: (await getSetting('agent', 'latest_version')) || '',
+    rollout, ringCounts, hostedSha: agentHostedSha256(),
+    msi: agentMsiInfo(), latestVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
     baseUrl: req.protocol + '://' + req.get('host'),
     notice: req.query.msg || null, error: req.query.err || null,
   });
@@ -228,7 +234,12 @@ router.post('/agents/installer', requireAuth, requireAdmin, msiUpload.single('ms
     const typed = String((req.body && req.body.version) || '').trim();
     const sniffed = (f.originalname || '').match(/(\d+\.\d+\.\d+(?:\.\d+)?)/);
     const version = typed || (sniffed ? sniffed[1] : '');
-    if (version) await setSetting('agent', 'latest_version', version);
+    // Write version.txt too, so a hand-upload and a build.ps1 publish leave the server in
+    // exactly the same state (the file is what everything reads).
+    if (version) {
+      await setSetting('agent', 'latest_version', version);
+      try { fs.writeFileSync(AGENT_VERSION_PATH, version); } catch { /* setting still covers us */ }
+    }
     await logActivity(req.session.user!.id, 'agent_msi_uploaded', 'settings', null,
       `Agent MSI updated (${Math.round(f.size / 1048576)} MB)${version ? ', version ' + version : ', NO VERSION SET - auto-update stays off'}`);
     res.redirect('/agents?msg=' + encodeURIComponent(version
@@ -272,6 +283,32 @@ router.post('/agents/settings', requireAuth, requireAdmin, async (req: Request, 
   await setSetting('agent', 'rmm_installer_url', url || null);
   await setSetting('agent', 'rmm_install_args', args || null);
   res.redirect('/agents?msg=' + encodeURIComponent('Agent defaults saved.'));
+});
+
+// Advance (or halt) the rollout of the hosted build. Publishing puts a build at stage 0
+// (internal only); this is how it reaches pilot customers and then everyone.
+router.post('/agents/rollout', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const to = parseInt(String(req.body.stage), 10);
+  if (![-1, 0, 1, 2].includes(to)) { res.redirect('/agents?err=' + encodeURIComponent('Unknown rollout stage.')); return; }
+  const { version } = await rolloutState();
+  if (!version) { res.redirect('/agents?err=' + encodeURIComponent('No build is published yet.')); return; }
+  await setSetting('agent', 'rollout_version', version);
+  await setSetting('agent', 'rollout_stage', String(to));
+  const label = to === -1 ? 'HALTED' : to === 0 ? 'internal only' : to === 1 ? 'internal + pilot' : 'everyone';
+  await logActivity(req.session.user!.id, 'agent_rollout', 'settings', null, `Agent ${version} rollout: ${label}`);
+  res.redirect('/agents?msg=' + encodeURIComponent(
+    to === -1
+      ? `Rollout halted — no device will take ${version} until you resume.`
+      : `${version} is now rolling out to ${label}. Agents pick it up within 6 hours.`));
+});
+
+// Which ring a device updates in: 0 internal, 1 pilot, 2 everyone.
+router.post('/agents/:id/ring', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const ring = parseInt(String(req.body.ring), 10);
+  if (![0, 1, 2].includes(ring)) { res.redirect('/agents?err=' + encodeURIComponent('Unknown ring.')); return; }
+  await pool.query('UPDATE agent_devices SET update_ring=$1, updated_at=NOW() WHERE id=$2', [ring, id]);
+  res.redirect('/agents?msg=' + encodeURIComponent('Update ring saved.'));
 });
 
 // Revoke a device: its token dies instantly; a reinstall (with the site key) re-enrolls it.

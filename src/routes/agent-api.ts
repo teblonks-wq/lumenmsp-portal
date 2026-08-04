@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { pool } from '../db/pool';
-import { getSetting } from '../lib/settings';
+import { getSetting, setSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
 import { htmlToPlain } from '../lib/whatsapp';
 import { nextTicketNumber } from './tickets';
@@ -29,8 +29,28 @@ const router = Router();
 // tarball extracts over the top, never deletes) and can't be fetched without a valid key.
 export const AGENT_MSI_DIR = path.join(__dirname, '../../agent-files');
 export const AGENT_MSI_PATH = path.join(AGENT_MSI_DIR, 'LumenMSPAgent.msi');
+export const AGENT_VERSION_PATH = path.join(AGENT_MSI_DIR, 'version.txt');
 export function agentMsiInfo(): { size: number; mtime: Date } | null {
   try { const st = fs.statSync(AGENT_MSI_PATH); return { size: st.size, mtime: st.mtime }; } catch { return null; }
+}
+
+// The hosted build's version. build.ps1 writes version.txt next to the MSI when it
+// publishes, so the file and its version can never drift apart — and there is nothing
+// to type. The settings row stays as a fallback for a hand-uploaded MSI.
+export function agentHostedSha256(): string | null {
+  try {
+    const v = fs.readFileSync(path.join(AGENT_MSI_DIR, 'sha256.txt'), 'utf8').trim().toLowerCase();
+    if (/^[0-9a-f]{64}$/.test(v)) return v;
+  } catch { /* no checksum published */ }
+  return null;
+}
+
+export function agentHostedVersion(): string | null {
+  try {
+    const v = fs.readFileSync(AGENT_VERSION_PATH, 'utf8').trim();
+    if (/^\d+\.\d+\.\d+(\.\d+)?$/.test(v)) return v;
+  } catch { /* fall through to the settings row */ }
+  return null;
 }
 
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
@@ -90,15 +110,35 @@ async function rmmConfig(customerId: number | null): Promise<{ url: string | nul
 // Config pushed down to every device on enroll + heartbeat. `agent_latest_version` is
 // what drives self-update: agents compare it to their own build and upgrade themselves.
 // Blank/unset = auto-update disabled (deliberate: no version, no push).
-async function deviceConfig(customerId: number | null) {
+// Rollout stage for the CURRENT hosted build: -1 halted, 0 internal, 1 pilot, 2 everyone.
+// A newly published version always starts at 0 — publishing must never be the same act as
+// releasing to every customer machine. Detected by comparing the hosted version to the one
+// the stage was last recorded against.
+export async function rolloutState(): Promise<{ version: string | null; stage: number }> {
+  const version = agentHostedVersion() || ((await getSetting('agent', 'latest_version')) || '').trim() || null;
+  if (!version) return { version: null, stage: -1 };
+  const stagedFor = ((await getSetting('agent', 'rollout_version')) || '').trim();
+  if (stagedFor !== version) {
+    await setSetting('agent', 'rollout_version', version);
+    await setSetting('agent', 'rollout_stage', '0');
+    return { version, stage: 0 };
+  }
+  const raw = parseInt(((await getSetting('agent', 'rollout_stage')) || '0').trim(), 10);
+  return { version, stage: Number.isFinite(raw) ? raw : 0 };
+}
+
+async function deviceConfig(customerId: number | null, deviceRing = 2) {
   const rmm = await rmmConfig(customerId);
-  const latest = ((await getSetting('agent', 'latest_version')) || '').trim() || null;
+  const { version, stage } = await rolloutState();
+  // Offer the build only once the rollout has reached this device's ring.
+  const offered = version && stage >= 0 && deviceRing <= stage ? version : null;
   return {
     heartbeat_seconds: 300,
     chat_poll_seconds: 20,
     rmm_installer_url: rmm.url,
     rmm_install_args: rmm.args,
-    agent_latest_version: latest,
+    agent_latest_version: offered,
+    agent_latest_sha256: offered ? agentHostedSha256() : null,
   };
 }
 
@@ -148,7 +188,7 @@ router.post('/agent/api/enroll', async (req: Request, res: Response) => {
       deviceId = ins.rows[0].id;
     }
     await logActivity(null, existing ? 'agent_reenrolled' : 'agent_enrolled', 'agent_devices', deviceId, `${hostname} enrolled for ${cust.rows[0].name}`);
-    res.status(existing ? 200 : 201).json({ ok: true, device_id: deviceId, device_token: token, customer: cust.rows[0].name, config: await deviceConfig(customerId) });
+    res.status(existing ? 200 : 201).json({ ok: true, device_id: deviceId, device_token: token, customer: cust.rows[0].name, config: await deviceConfig(customerId, 2) });
   } catch (e: any) {
     console.error('[agent] enroll failed:', e.message);
     res.status(500).json({ ok: false, error: 'enrollment failed' });
@@ -173,7 +213,7 @@ router.post('/agent/api/heartbeat', requireDevice, async (req: Request, res: Res
       [s(b.hostname, 200), s(b.os, 200), s(b.os_version, 100), s(b.agent_version, 50),
        s(b.logged_in_user, 200), localIps, diskInfo, clientIp(req), d.id]
     );
-    res.json({ ok: true, public_ip: clientIp(req), config: await deviceConfig(d.customer_id) });
+    res.json({ ok: true, public_ip: clientIp(req), config: await deviceConfig(d.customer_id, d.update_ring ?? 2) });
   } catch (e: any) {
     console.error('[agent] heartbeat failed:', e.message);
     res.status(500).json({ ok: false, error: 'heartbeat failed' });
@@ -231,10 +271,12 @@ router.post('/agent/api/chat/message', requireDevice, async (req: Request, res: 
       t = { id: ins.rows[0].id, ticket_number: ins.rows[0].ticket_number, status: 'new' };
       await logActivity(null, 'created', 'tickets', t.id, `Agent chat case ${t.ticket_number} opened from ${d.hostname}`);
     }
+    // from_email carries the hostname: it is this channel's "peer address", which is what
+    // the Messages inbox threads on (same role as the number for WhatsApp).
     await pool.query(
-      `INSERT INTO inbox_messages (ticket_id, mailbox, message_direction, channel, processing_status, is_unread, from_name, subject, body_text, received_at)
-       VALUES ($1,'portal@lumenmsp.co.uk','inbound','agent','matched',true,$2,$3,$4,NOW())`,
-      [t.id, fromName, 'Agent chat message', text]);
+      `INSERT INTO inbox_messages (ticket_id, mailbox, message_direction, channel, processing_status, is_unread, from_name, from_email, subject, body_text, received_at)
+       VALUES ($1,'portal@lumenmsp.co.uk','inbound','agent','matched',true,$2,$3,$4,$5,NOW())`,
+      [t.id, fromName, d.hostname || ('device-' + d.id), 'Agent chat message', text]);
     // A user reply puts the ball back with us: an awaiting-customer case returns to the queue.
     await pool.query(
       `UPDATE inbox_tickets SET last_customer_message_at=NOW(), activity_status='unread',
@@ -277,6 +319,84 @@ router.get('/agent/api/chat/updates', requireDevice, async (req: Request, res: R
   } catch (e: any) {
     console.error('[agent] chat poll failed:', e.message);
     res.status(500).json({ ok: false, error: 'poll failed' });
+  }
+});
+
+// ── Remote-tool command queue ───────────────────────────────────────────────────
+// The Tools tab queues rows; agents long-poll here. An in-process waiter map lets a
+// queued command wake its device instantly instead of waiting out the poll interval
+// (the portal runs as a single PM2 fork, so in-memory coordination is sound).
+type Waiter = () => void;
+const commandWaiters = new Map<number, Set<Waiter>>();
+
+export function wakeAgent(deviceId: number): void {
+  const set = commandWaiters.get(deviceId);
+  if (!set) return;
+  for (const w of Array.from(set)) { try { w(); } catch { /* ignore */ } }
+  commandWaiters.delete(deviceId);
+}
+
+function waitForCommand(deviceId: number, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      commandWaiters.get(deviceId)?.delete(finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    if (!commandWaiters.has(deviceId)) commandWaiters.set(deviceId, new Set());
+    commandWaiters.get(deviceId)!.add(finish);
+  });
+}
+
+async function takeQueued(deviceId: number): Promise<any[]> {
+  // Claim atomically so a duplicate poll (retry, restart) can't run a command twice.
+  const r = await pool.query(
+    `UPDATE agent_commands SET status='running', started_at=NOW()
+      WHERE id IN (SELECT id FROM agent_commands WHERE device_id=$1 AND status='queued'
+                    ORDER BY id LIMIT 5)
+      RETURNING id, kind, payload`, [deviceId]);
+  return r.rows;
+}
+
+router.get('/agent/api/commands', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  const waitSec = Math.min(30, Math.max(0, parseInt(String(req.query.wait || '0'), 10) || 0));
+  try {
+    let rows = await takeQueued(d.id);
+    if (!rows.length && waitSec > 0) {
+      await waitForCommand(d.id, waitSec * 1000);
+      rows = await takeQueued(d.id);
+    }
+    // Heartbeat-by-proxy: a polling agent is demonstrably alive.
+    pool.query('UPDATE agent_devices SET last_seen_at=NOW() WHERE id=$1', [d.id]).catch(() => {});
+    res.json({ ok: true, commands: rows.map((r: any) => ({ id: r.id, kind: r.kind, payload: r.payload || null })) });
+  } catch (e: any) {
+    console.error('[agent] command poll failed:', e.message);
+    res.status(500).json({ ok: false, error: 'poll failed' });
+  }
+});
+
+router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  const id = parseInt(String(req.params.id), 10);
+  const b = req.body || {};
+  const exitCode = Number.isFinite(parseInt(String(b.exit_code), 10)) ? parseInt(String(b.exit_code), 10) : null;
+  const output = String(b.output ?? '').slice(0, 400000);
+  try {
+    // payload=NULL on completion: a reset password must not sit in the database after use.
+    const r = await pool.query(
+      `UPDATE agent_commands SET status=$1, exit_code=$2, output=$3, finished_at=NOW(), payload=NULL
+        WHERE id=$4 AND device_id=$5 RETURNING kind`,
+      [exitCode === 0 ? 'done' : 'failed', exitCode, output, id, d.id]);
+    if (!r.rows.length) { res.status(404).json({ ok: false, error: 'unknown command' }); return; }
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error('[agent] command result failed:', e.message);
+    res.status(500).json({ ok: false, error: 'result not saved' });
   }
 });
 

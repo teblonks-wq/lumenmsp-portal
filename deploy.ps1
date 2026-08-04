@@ -81,6 +81,23 @@ if (-not $ok) { Write-Host "SCP failed after 3 attempts!" -ForegroundColor Red; 
 # NOTE: using `prisma db push` for the foundation phase (starter schema is a placeholder).
 # Switch to `prisma migrate deploy` once the real schema + proper migrations exist.
 Write-Host "Restarting on server..." -ForegroundColor Yellow
+# --- Pre-deploy safety snapshot (added 2026-08-04) ----------------------------
+# The remote command below runs `prisma db push --accept-data-loss`, which DROPS any
+# column or table not present in schema.prisma. That has already cost 51 rows once.
+# Snapshot first so a mistake is recoverable instead of permanent.
+# NOTE: the dump runs as the postgres user, so /var/backups/predeploy must be OWNED by
+# postgres - root-owned 0700 gives 'Permission denied' from pg_dump (hit 2026-08-04).
+Write-Host "Taking pre-deploy database snapshot..." -ForegroundColor Cyan
+$snapName = "predeploy-$(Get-Date -Format 'yyyyMMdd-HHmmss').dump"
+ssh @sshOpts $server "sudo mkdir -p /var/backups/predeploy && sudo chown postgres:postgres /var/backups/predeploy && sudo chmod 700 /var/backups/predeploy && sudo -u postgres pg_dump -Fc lumenmsp_portal -f /var/backups/predeploy/$snapName"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "SNAPSHOT FAILED - deploy STOPPED. Fix the snapshot before shipping." -ForegroundColor Red
+    exit 1
+}
+Write-Host ("Snapshot saved: {0}" -f $snapName) -ForegroundColor DarkGray
+ssh @sshOpts $server "sudo bash -c 'ls -1t /var/backups/predeploy/*.dump 2>/dev/null | tail -n +21 | xargs -r rm -f'"
+# ------------------------------------------------------------------------------
+
 ssh @sshOpts $server "mkdir -p $remotePath && tar --warning=no-unknown-keyword -xzf /tmp/portal-deploy.tar.gz -C $remotePath && rm -f /tmp/portal-deploy.tar.gz && cd $remotePath && npm install --omit=dev --silent && npx prisma generate && npx prisma db push --accept-data-loss && pm2 restart $appName 2>/dev/null || pm2 start dist/index.js --name $appName && pm2 save"
 
 # Step 5: Clean up

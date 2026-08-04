@@ -2,7 +2,7 @@
 <%
   function d(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : ''; }
   function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c];}); }
-  var chLabel = m.channel==='teams' ? 'Teams' : (m.channel==='whatsapp' ? 'WhatsApp' : m.channel);
+  var chLabel = m.channel==='teams' ? 'Teams' : (m.channel==='whatsapp' ? 'WhatsApp' : (m.channel==='agent' ? 'Agent' : m.channel));
 %>
 
 <div class="page-header">

@@ -36,6 +36,49 @@
   <% } %>
 </div>
 
+<% if (isAdmin && rollout && rollout.version) {
+     var stage = rollout.stage;
+     var stageLabel = stage === -1 ? 'Halted' : stage === 0 ? 'Internal only' : stage === 1 ? 'Internal + pilot' : 'Everyone';
+     var stageColour = stage === -1 ? 'var(--bad-fg)' : stage === 2 ? 'var(--ok)' : 'var(--warn-fg)';
+     var byRing = {}; (ringCounts || []).forEach(function(r){ byRing[r.ring] = r; });
+     function ringN(n){ return (byRing[n] && byRing[n].n) || 0; }
+     function ringBehind(n){ return (byRing[n] && byRing[n].behind) || 0; }
+%>
+<div class="card" style="margin-bottom:20px;">
+  <h3 style="margin-top:0;">Rollout &mdash; v<%= rollout.version %></h3>
+  <p class="muted" style="font-size:13px;margin:0 0 12px;">
+    Status: <strong style="color:<%= stageColour %>;"><%= stageLabel %></strong>.
+    A newly published build always starts at <em>internal only</em> &mdash; promote it once you are happy.
+    Agents check every 6 hours.
+  </p>
+  <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:12px;font-size:12.5px;">
+    <div><strong>Ring 0 &middot; internal</strong><br><span class="muted"><%= ringN(0) %> device<%= ringN(0)===1?'':'s' %>, <%= ringBehind(0) %> to update</span></div>
+    <div><strong>Ring 1 &middot; pilot</strong><br><span class="muted"><%= ringN(1) %> device<%= ringN(1)===1?'':'s' %>, <%= ringBehind(1) %> to update</span></div>
+    <div><strong>Ring 2 &middot; everyone</strong><br><span class="muted"><%= ringN(2) %> device<%= ringN(2)===1?'':'s' %>, <%= ringBehind(2) %> to update</span></div>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+    <% if (stage < 1) { %>
+    <form method="post" action="/agents/rollout" style="display:inline;"><input type="hidden" name="stage" value="1">
+      <button class="btn btn-primary" type="submit" onsubmit="">Promote to pilot</button></form>
+    <% } %>
+    <% if (stage < 2) { %>
+    <form method="post" action="/agents/rollout" style="display:inline;" onsubmit="return confirm('Release v<%= rollout.version %> to EVERY enrolled device?');">
+      <input type="hidden" name="stage" value="2"><button class="btn btn-primary" type="submit">Release to everyone</button></form>
+    <% } %>
+    <% if (stage >= 0) { %>
+    <form method="post" action="/agents/rollout" style="display:inline;" onsubmit="return confirm('Halt this rollout? No device will update until you resume.');">
+      <input type="hidden" name="stage" value="-1"><button class="btn" type="submit">Halt</button></form>
+    <% } else { %>
+    <form method="post" action="/agents/rollout" style="display:inline;"><input type="hidden" name="stage" value="0">
+      <button class="btn" type="submit">Resume (internal only)</button></form>
+    <% } %>
+    <span class="muted" style="font-size:11.5px;">
+      <% if (hostedSha) { %>sha256 <%= hostedSha.slice(0,12) %>&hellip; verified by every agent before install<% } else { %><strong style="color:var(--warn-fg);">No checksum published &mdash; agents will refuse to self-update. Re-run build.ps1.</strong><% } %>
+    </span>
+  </div>
+</div>
+<% } %>
+
 <div class="card" style="margin-bottom:20px;">
   <h3 style="margin-top:0;">Enrolled devices (<%= rows.length %>)</h3>
   <% if (!rows.length) { %>
@@ -43,7 +86,7 @@
   <% } else { %>
   <div style="overflow-x:auto;">
     <table class="table">
-      <thead><tr><th></th><th>Device</th><th>Customer</th><th>User</th><th>Local IPs</th><th>Public IP</th><th>Version</th><th>Last seen</th><% if (isAdmin) { %><th></th><% } %></tr></thead>
+      <thead><tr><th></th><th>Device</th><th>Customer</th><th>User</th><th>Local IPs</th><th>Public IP</th><th>Version</th><th>Last seen</th><% if (isAdmin) { %><th>Ring</th><th>AD agent</th><th></th><% } %></tr></thead>
       <tbody>
         <% rows.forEach(function(d){ var on = !d.revoked && isOnline(d.last_seen_at); %>
         <tr style="<%= d.revoked ? 'opacity:.5;' : '' %>">
@@ -56,6 +99,23 @@
           <td><%= d.agent_version || '—' %><% if (latestVersion && d.agent_version && d.agent_version !== latestVersion && !d.revoked) { %> <span class="badge badge-inactive" title="Will self-update to <%= latestVersion %> within 6 hours">update due</span><% } %></td>
           <td><%= dt(d.last_seen_at) %></td>
           <% if (isAdmin) { %>
+          <td>
+            <form method="post" action="/agents/<%= d.id %>/ring" style="display:inline;">
+              <select class="input" name="ring" style="font-size:11.5px;padding:2px 6px;width:auto;" onchange="this.form.submit();" title="0 internal, 1 pilot, 2 everyone">
+                <option value="0" <%= (d.update_ring===0)?'selected':'' %>>0 internal</option>
+                <option value="1" <%= (d.update_ring===1)?'selected':'' %>>1 pilot</option>
+                <option value="2" <%= (d.update_ring==null||d.update_ring===2)?'selected':'' %>>2 everyone</option>
+              </select>
+            </form>
+          </td>
+          <td style="white-space:nowrap;">
+            <% if (!d.revoked && d.customer_id) { %>
+            <form method="post" action="/agents/<%= d.id %>/ad-agent" style="display:inline;">
+              <input type="hidden" name="on" value="<%= d.is_ad_agent ? '0' : '1' %>">
+              <button class="btn btn-small" type="submit" title="The device that runs Active Directory actions for this customer - use a DC or management server"><%= d.is_ad_agent ? '\u2713 AD agent' : 'Set' %></button>
+            </form>
+            <% } else { %><span class="muted" style="font-size:12px;">&mdash;</span><% } %>
+          </td>
           <td>
             <% if (!d.revoked) { %>
             <form method="post" action="/agents/<%= d.id %>/revoke" style="display:inline;" onsubmit="return confirm('Revoke this device? Its agent stops working until the MSI is reinstalled.');">
@@ -81,6 +141,7 @@
   <% } else { %>
   <p class="muted" style="font-size:13px;">No installer uploaded yet. Build it with <code>build.ps1</code> in <code>D:\LITS\LumenMSP Agent</code>, then upload <code>dist\LumenMSPAgent.msi</code> here.</p>
   <% } %>
+  <p class="muted" style="font-size:12px;margin:0 0 10px;"><code>.\build.ps1</code> in <code>D:\LITS\LumenMSP Agent</code> builds <em>and</em> publishes straight here &mdash; version included. Upload below only if you need to put a build up by hand.</p>
   <form method="post" action="/agents/installer" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
     <label style="flex:1;min-width:220px;">Installer file
       <input class="input" type="file" name="msi" accept=".msi" required>
@@ -90,7 +151,7 @@
     </label>
     <button class="btn btn-primary" type="submit">Upload<%= msi ? ' new build' : '' %></button>
   </form>
-  <p class="muted" style="font-size:12px;margin:8px 0 0;">Bump the version every release: it is how installed agents know to upgrade. Leave it blank only if you want to stage a build without pushing it out.</p>
+  <p class="muted" style="font-size:12px;margin:8px 0 0;">The version is how installed agents know to upgrade, so it must match the build. Leave it blank only to stage a build without pushing it out.</p>
 </div>
 
 <div class="card" style="margin-bottom:20px;">

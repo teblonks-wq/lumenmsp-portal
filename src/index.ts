@@ -43,6 +43,7 @@ import chatRoutes from './routes/chat';
 import chatPublicRoutes from './routes/chat-public';
 import leadsApiRoutes from './routes/leads-api';
 import agentApiRoutes from './routes/agent-api';
+import agentToolsRoutes from './routes/agent-tools';
 import mcpRoutes from './routes/mcp';
 import marketingRoutes from './routes/marketing';
 import networkRoutes from './routes/network';
@@ -100,7 +101,10 @@ app.use(helmet({
       scriptSrcAttr: ["'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://cdn.quilljs.com', 'https://cdn.jsdelivr.net', 'https://cdnjs.cloudflare.com'],
       fontSrc: ["'self'", 'data:', 'https://cdnjs.cloudflare.com'],
-      imgSrc: ["'self'", 'data:', 'https:'],
+      // 2026-08-04 (R-011): was ['self', data:, https:] - the bare 'https:' is a CSP
+      // wildcard, letting images load from any host. Verified across all views: the only
+      // image sources are same-origin assets and data: URIs (logos come from logoDataUri()).
+      imgSrc: ["'self'", 'data:', 'blob:'],
       connectSrc: ["'self'"],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
@@ -337,6 +341,7 @@ app.use('/', myRoutes);           // customer portal (/my) — requireCustomer-g
 app.use('/', credentialRoutes);
 app.use('/', ateraRoutes);
 app.use('/', assetRoutes);
+app.use('/', agentToolsRoutes);  // remote tools on the asset page (admin-only)
 app.use('/', reviewRoutes);
 app.use('/', insightsRoutes);
 app.use('/', itReportRoutes);     // Monthly IT Operations & Security Snapshot (staff)

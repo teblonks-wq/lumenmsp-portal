@@ -3,6 +3,7 @@
   function d(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : ''; }
   function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c];}); }
   var waU = counts.whatsapp.untagged, tmU = counts.teams.untagged;
+  var agU = (counts.agent || {}).untagged || 0;
 %>
 
 <div class="page-header"><h1>Messages</h1><p class="muted">Tag each message to a case. Untagged messages can't be replied to until they're tagged.</p></div>
@@ -11,6 +12,7 @@
   <a href="/chat" style="padding:10px 18px;text-decoration:none;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-2px;">Website</a>
   <a href="/chat/channel/whatsapp" style="padding:10px 18px;text-decoration:none;font-weight:600;margin-bottom:-2px;<%= channel==='whatsapp' ? 'color:var(--accent-dark);border-bottom:2px solid var(--accent-dark);' : 'color:var(--muted);border-bottom:2px solid transparent;' %>">WhatsApp<%if(waU){%> <span class="badge badge-failed"><%= waU %></span><%}%></a>
   <a href="/chat/channel/teams" style="padding:10px 18px;text-decoration:none;font-weight:600;margin-bottom:-2px;<%= channel==='teams' ? 'color:var(--accent-dark);border-bottom:2px solid var(--accent-dark);' : 'color:var(--muted);border-bottom:2px solid transparent;' %>">Teams<%if(tmU){%> <span class="badge badge-failed"><%= tmU %></span><%}%></a>
+  <a href="/chat/channel/agent" style="padding:10px 18px;text-decoration:none;font-weight:600;margin-bottom:-2px;display:inline-flex;align-items:center;gap:6px;<%= channel==='agent' ? 'color:var(--accent-dark);border-bottom:2px solid var(--accent-dark);' : 'color:var(--muted);border-bottom:2px solid transparent;' %>"><img src="/static/img/lumen-agent-16.png" width="14" height="14" alt="">Agent<%if(agU){%> <span class="badge badge-failed"><%= agU %></span><%}%></a>
 </div>
 
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">

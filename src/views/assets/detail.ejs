@@ -53,6 +53,7 @@
     <button type="button" data-tab="overview">Overview</button>
     <button type="button" data-tab="hardware">Hardware</button>
     <button type="button" data-tab="os">OS</button>
+<% if (user.role === 'admin') { %><button type="button" data-tab="tools">Tools</button><% } %>
     <button type="button" data-tab="backup">Backup<% if (backupPlans.length && backupPlans.some(function(p){ return p.cls==='failed'; })) { %> <span style="color:var(--bad-fg);">●</span><% } %></button>
   </nav>
 
@@ -124,6 +125,8 @@
     </div>
     <p class="muted" style="font-size:12px;margin:14px 0 0;">"Assigned user" is Portal data, not Atera's - it stays editable despite the sync lock and survives every sync (Atera's API exposes no contact assignment; last logged-in user above is the closest it reports). Assign a person here and their devices appear on any case they raise, with a jump-through and remote control.</p>
   </section>
+
+  <% if (user.role === 'admin') { %><%- include('_tools', { asset: asset, agentInfo: (typeof agentInfo !== 'undefined' ? agentInfo : null), user: user }) %><% } %>
 
   <section class="dev-tab-panel" data-key="hardware">
     <div class="dev-info-cols">

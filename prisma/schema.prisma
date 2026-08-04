@@ -425,6 +425,8 @@ model AgentDevice {
   localIps     String?   @map("local_ips")
   publicIp     String?   @map("public_ip")
   diskInfo     String?   @map("disk_info") // JSON: [{drive,total_gb,free_gb}]
+  updateRing   Int       @default(2) @map("update_ring") // 0=internal, 1=pilot, 2=general - staged self-update
+  isAdAgent    Boolean   @default(false) @map("is_ad_agent") // this device runs the customer's AD actions (a DC or management server)
   tokenHash    String    @unique @map("token_hash")
   revoked      Boolean   @default(false)
   enrolledAt   DateTime? @map("enrolled_at")
@@ -435,6 +437,27 @@ model AgentDevice {
   @@index([customerId])
   @@index([hostname])
   @@map("agent_devices")
+}
+
+// Remote-tool command queue (Portal asset Tools tab -> agent). The agent long-polls for
+// queued rows, runs them and posts the output back. `payload` is CLEARED on completion so
+// transient secrets (a reset password) don't linger in the database.
+model AgentCommand {
+  id          Int       @id @default(autoincrement())
+  deviceId    Int       @map("device_id")
+  kind        String    // shell.powershell | shell.cmd | software.list | services.* | files.list | users.* | ad.user.*
+  payload     Json?
+  status      String    @default("queued") // queued | running | done | failed | expired
+  exitCode    Int?      @map("exit_code")
+  output      String?
+  requestedBy Int?      @map("requested_by")
+  requestedAt DateTime  @default(now()) @map("requested_at")
+  startedAt   DateTime? @map("started_at")
+  finishedAt  DateTime? @map("finished_at")
+
+  @@index([deviceId, status])
+  @@index([requestedAt])
+  @@map("agent_commands")
 }
 
 model CustomerAsset {

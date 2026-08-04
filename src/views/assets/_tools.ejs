@@ -1,0 +1,390 @@
+<%
+  // Remote Tools tab — admin only. Everything here runs as SYSTEM on the customer's
+  // machine via the LumenMSP Agent, so the whole panel is hidden for non-admins and
+  // every action is audited server-side.
+%>
+<style>
+  .tool-tabs { display:flex; flex-wrap:wrap; gap:2px; margin:0 0 16px; border-bottom:1px solid var(--line); }
+  .tool-tabs button { background:none; border:none; padding:8px 14px; font-size:13px; font-weight:600; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; }
+  .tool-tabs button.active { color:var(--accent); border-bottom-color:var(--accent); }
+  .tool-panel { display:none; }
+  .tool-panel.active { display:block; }
+  .tool-out { background:#0f172a; color:#e2e8f0; font-family:ui-monospace,Consolas,monospace; font-size:12px; line-height:1.5;
+              padding:12px 14px; border-radius:8px; max-height:420px; overflow:auto; white-space:pre-wrap; word-break:break-word; margin-top:10px; }
+  .tool-out:empty { display:none; }
+  .tool-busy { display:inline-block; font-size:12px; color:var(--muted); }
+  .tool-tbl { width:100%; font-size:12.5px; border-collapse:collapse; margin-top:10px; }
+  .tool-tbl th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); padding:6px 8px; border-bottom:1px solid var(--line); }
+  .tool-tbl td { padding:6px 8px; border-bottom:1px solid var(--surface-3); }
+  .tool-tbl tr:hover td { background:var(--surface-2); }
+  .tool-crumb { font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+  .pw-reveal { background:var(--tint-accent); border:1px solid var(--info-line); border-radius:8px; padding:10px 12px; margin-top:10px; font-size:13px; }
+  .pw-reveal code { font-size:14px; font-weight:700; user-select:all; }
+</style>
+
+<section class="dev-tab-panel" data-key="tools">
+  <% if (!agentInfo) { %>
+    <div class="alert alert-info" style="margin:0;">
+      Remote tools need the LumenMSP Agent installed on this device.
+      <a class="row-link" href="/agents#download">Download the agent &rarr;</a>
+    </div>
+  <% } else { %>
+
+  <p class="muted" style="font-size:12.5px;margin:0 0 14px;">
+    These run as <strong>SYSTEM on <%= asset.hostname %></strong> through the LumenMSP Agent. Every action is
+    recorded in the activity log against your account. AD actions are routed to this customer's designated AD agent.
+  </p>
+
+  <nav class="tool-tabs">
+    <button type="button" data-tool="console">Console</button>
+    <button type="button" data-tool="software">Installed software</button>
+    <button type="button" data-tool="services">Services</button>
+    <button type="button" data-tool="users">Users</button>
+    <button type="button" data-tool="files">File system</button>
+  </nav>
+
+  <!-- Console -->
+  <div class="tool-panel" data-panel="console">
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+      <label style="display:flex;gap:5px;align-items:center;font-size:13px;"><input type="radio" name="shellKind" value="shell.powershell" checked> PowerShell</label>
+      <label style="display:flex;gap:5px;align-items:center;font-size:13px;"><input type="radio" name="shellKind" value="shell.cmd"> Command line</label>
+      <span class="muted" style="font-size:11.5px;">Ctrl+Enter to run &middot; 120s limit</span>
+    </div>
+    <textarea id="shellScript" class="input" rows="4" placeholder="e.g. Get-ComputerInfo | Select-Object OsName, OsVersion, CsName"
+              style="font-family:ui-monospace,Consolas,monospace;font-size:12.5px;"></textarea>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+      <button class="btn btn-primary" type="button" id="shellRun">Run</button>
+      <span class="tool-busy" id="shellBusy"></span>
+    </div>
+    <div class="tool-out" id="shellOut"></div>
+  </div>
+
+  <!-- Installed software -->
+  <div class="tool-panel" data-panel="software">
+    <button class="btn btn-primary" type="button" data-load="software">Load installed software</button>
+    <input class="input" id="softFilter" placeholder="Filter…" style="max-width:220px;display:inline-block;margin-left:8px;font-size:12.5px;">
+    <span class="tool-busy" id="softwareBusy"></span>
+    <div id="softwareResult"></div>
+  </div>
+
+  <!-- Services -->
+  <div class="tool-panel" data-panel="services">
+    <button class="btn btn-primary" type="button" data-load="services">Load services</button>
+    <input class="input" id="svcFilter" placeholder="Filter…" style="max-width:220px;display:inline-block;margin-left:8px;font-size:12.5px;">
+    <span class="tool-busy" id="servicesBusy"></span>
+    <div id="servicesResult"></div>
+  </div>
+
+  <!-- Users -->
+  <div class="tool-panel" data-panel="users">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <button class="btn btn-primary" type="button" data-load="users">Local users</button>
+      <button class="btn" type="button" id="adLoad">Active Directory</button>
+      <input class="input" id="adQuery" placeholder="AD search (name or username)" style="max-width:260px;font-size:12.5px;">
+      <span class="tool-busy" id="usersBusy"></span>
+    </div>
+    <div id="usersResult"></div>
+  </div>
+
+  <!-- File system -->
+  <div class="tool-panel" data-panel="files">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <button class="btn btn-primary" type="button" id="filesRoot">Drives</button>
+      <input class="input tool-crumb" id="filesPath" placeholder="C:\Windows" style="flex:1;min-width:240px;">
+      <button class="btn" type="button" id="filesGo">Go</button>
+      <span class="tool-busy" id="filesBusy"></span>
+    </div>
+    <div id="filesResult"></div>
+  </div>
+
+  <script>
+  (function(){
+    var ASSET = <%= asset.id %>;
+    var BASE = '/assets/' + ASSET + '/tools';
+    var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); };
+
+    // ── tool sub-tabs ──────────────────────────────────────────────────────────
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.tool-tabs button'));
+    var panels = Array.prototype.slice.call(document.querySelectorAll('.tool-panel'));
+    function showTool(k){
+      tabs.forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-tool') === k); });
+      panels.forEach(function(p){ p.classList.toggle('active', p.getAttribute('data-panel') === k); });
+    }
+    tabs.forEach(function(b){ b.addEventListener('click', function(){ showTool(b.getAttribute('data-tool')); }); });
+    showTool('console');
+
+    // ── queue a command, then poll until the agent answers ─────────────────────
+    function run(kind, body, busyEl){
+      if (busyEl) busyEl.textContent = 'Running on the device…';
+      var payload = Object.assign({ kind: kind }, body || {});
+      return fetch(BASE + '/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      }).then(function(r){ return r.json(); }).then(function(j){
+        if (!j.ok) throw new Error(j.error || 'Could not queue that command.');
+        return poll(j.command_id, busyEl, 0).then(function(res){ res.password = j.password; res.routedTo = j.routed_to; return res; });
+      }).catch(function(e){
+        if (busyEl) busyEl.textContent = '';
+        throw e;
+      });
+    }
+
+    function poll(id, busyEl, tries){
+      return new Promise(function(resolve, reject){
+        function attempt(n){
+          fetch(BASE + '/result/' + id).then(function(r){ return r.json(); }).then(function(j){
+            if (!j.ok) return reject(new Error(j.error || 'Lost track of that command.'));
+            if (j.status === 'queued' || j.status === 'running') {
+              if (n > 180) return reject(new Error('Timed out waiting for the device.'));
+              if (busyEl) busyEl.textContent = n < 3 ? 'Running on the device…' : 'Still running… (' + n + 's)';
+              return setTimeout(function(){ attempt(n + 1); }, 1000);
+            }
+            if (busyEl) busyEl.textContent = '';
+            resolve(j);
+          }).catch(reject);
+        }
+        attempt(tries);
+      });
+    }
+
+    // Structured tools return JSON from PowerShell; a single row comes back as an
+    // object rather than an array, so normalise before rendering.
+    function parseRows(out){
+      var t = String(out || '').trim();
+      if (!t) return [];
+      try {
+        var v = JSON.parse(t);
+        if (v == null) return [];
+        return Array.isArray(v) ? v : [v];
+      } catch (e) { return null; }   // null = not JSON, show as raw text
+    }
+
+    function fail(el, msg){ el.innerHTML = '<div class="tool-out">' + esc(msg) + '</div>'; }
+
+    // ── console ────────────────────────────────────────────────────────────────
+    var shellOut = document.getElementById('shellOut');
+    var shellBusy = document.getElementById('shellBusy');
+    function runShell(){
+      var kind = (document.querySelector('input[name="shellKind"]:checked') || {}).value || 'shell.powershell';
+      var script = document.getElementById('shellScript').value.trim();
+      if (!script) return;
+      shellOut.textContent = '';
+      run(kind, { script: script }, shellBusy).then(function(r){
+        shellOut.textContent = (r.output || '(no output)') + (r.exit_code ? '\n[exit code ' + r.exit_code + ']' : '');
+      }).catch(function(e){ shellOut.textContent = e.message; });
+    }
+    document.getElementById('shellRun').addEventListener('click', runShell);
+    document.getElementById('shellScript').addEventListener('keydown', function(e){
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runShell(); }
+    });
+
+    // ── generic table renderer with a live filter ──────────────────────────────
+    function renderTable(container, rows, cols, filterInput, rowActions){
+      if (rows === null) { fail(container, 'Unexpected output from the device.'); return; }
+      if (!rows.length) { container.innerHTML = '<p class="muted" style="font-size:12.5px;margin-top:10px;">Nothing returned.</p>'; return; }
+      function draw(q){
+        var ql = (q || '').toLowerCase();
+        var shown = rows.filter(function(r){
+          if (!ql) return true;
+          return cols.some(function(c){ return String(r[c.k] == null ? '' : r[c.k]).toLowerCase().indexOf(ql) >= 0; });
+        });
+        var html = '<table class="tool-tbl"><thead><tr>' +
+          cols.map(function(c){ return '<th>' + esc(c.t) + '</th>'; }).join('') +
+          (rowActions ? '<th></th>' : '') + '</tr></thead><tbody>';
+        shown.slice(0, 500).forEach(function(r, i){
+          html += '<tr>' + cols.map(function(c){
+            return '<td>' + (c.render ? c.render(r) : esc(r[c.k])) + '</td>';
+          }).join('') + (rowActions ? '<td style="text-align:right;white-space:nowrap;">' + rowActions(r, i) + '</td>' : '') + '</tr>';
+        });
+        html += '</tbody></table>';
+        if (shown.length > 500) html += '<p class="muted" style="font-size:11.5px;">Showing the first 500 of ' + shown.length + '.</p>';
+        else html += '<p class="muted" style="font-size:11.5px;">' + shown.length + ' row' + (shown.length===1?'':'s') + '.</p>';
+        container.innerHTML = html;
+      }
+      draw(filterInput ? filterInput.value : '');
+      if (filterInput && !filterInput._wired) {
+        filterInput._wired = true;
+        filterInput.addEventListener('input', function(){ draw(filterInput.value); });
+      }
+      container._draw = draw;
+    }
+
+    // ── installed software ─────────────────────────────────────────────────────
+    var softwareResult = document.getElementById('softwareResult');
+    document.querySelector('[data-load="software"]').addEventListener('click', function(){
+      softwareResult.innerHTML = '';
+      run('software.list', {}, document.getElementById('softwareBusy')).then(function(r){
+        renderTable(softwareResult, parseRows(r.output), [
+          { k:'name', t:'Name' }, { k:'version', t:'Version' }, { k:'publisher', t:'Publisher' },
+          { k:'size_mb', t:'Size (MB)' }
+        ], document.getElementById('softFilter'));
+      }).catch(function(e){ fail(softwareResult, e.message); });
+    });
+
+    // ── services ───────────────────────────────────────────────────────────────
+    var servicesResult = document.getElementById('servicesResult');
+    function loadServices(){
+      servicesResult.innerHTML = '';
+      run('services.list', {}, document.getElementById('servicesBusy')).then(function(r){
+        renderTable(servicesResult, parseRows(r.output), [
+          { k:'display', t:'Service' }, { k:'name', t:'Name' },
+          { k:'status', t:'Status', render:function(x){
+              var ok = String(x.status) === 'Running';
+              return '<span style="font-weight:600;color:' + (ok ? 'var(--ok)' : 'var(--muted)') + ';">' + esc(x.status) + '</span>';
+            } },
+          { k:'start', t:'Startup' }
+        ], document.getElementById('svcFilter'), function(x){
+          return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-svc="' + esc(x.name) + '" data-act="restart">Restart</button> ' +
+                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-svc="' + esc(x.name) + '" data-act="' + (String(x.status)==='Running'?'stop':'start') + '">' +
+                 (String(x.status)==='Running'?'Stop':'Start') + '</button>';
+        });
+      }).catch(function(e){ fail(servicesResult, e.message); });
+    }
+    document.querySelector('[data-load="services"]').addEventListener('click', loadServices);
+    servicesResult.addEventListener('click', function(e){
+      var b = e.target.closest('[data-svc]'); if (!b) return;
+      var name = b.getAttribute('data-svc'), act = b.getAttribute('data-act');
+      if (!confirm(act.charAt(0).toUpperCase() + act.slice(1) + ' the "' + name + '" service on <%= asset.hostname %>?')) return;
+      b.disabled = true;
+      run('services.' + act, { name: name }, document.getElementById('servicesBusy')).then(function(r){
+        alert(r.output || 'Done.');
+        loadServices();
+      }).catch(function(err){ alert(err.message); b.disabled = false; });
+    });
+
+    // ── users (local + AD) ─────────────────────────────────────────────────────
+    var usersResult = document.getElementById('usersResult');
+    var usersBusy = document.getElementById('usersBusy');
+    var usersMode = 'local';
+
+    function showPassword(container, pw, who){
+      var d = document.createElement('div');
+      d.className = 'pw-reveal';
+      d.innerHTML = '<strong>New password for ' + esc(who) + ':</strong> <code>' + esc(pw) + '</code>' +
+        '<div class="muted" style="font-size:11.5px;margin-top:4px;">Shown once — it is not stored anywhere. Copy it now.</div>';
+      container.insertBefore(d, container.firstChild);
+    }
+
+    function loadLocalUsers(){
+      usersMode = 'local';
+      usersResult.innerHTML = '';
+      run('users.list', {}, usersBusy).then(function(r){
+        renderTable(usersResult, parseRows(r.output), [
+          { k:'name', t:'User' }, { k:'full', t:'Full name' },
+          { k:'enabled', t:'Enabled', render:function(x){
+              return x.enabled ? '<span style="color:var(--ok);font-weight:600;">Yes</span>' : '<span style="color:var(--bad-fg);font-weight:600;">No</span>';
+            } },
+          { k:'last_logon', t:'Last logon' }, { k:'pw_set', t:'Password set' }
+        ], null, function(x){
+          return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-user="' + esc(x.name) + '" data-act="' + (x.enabled?'disable':'enable') + '">' +
+                 (x.enabled?'Disable':'Enable') + '</button> ' +
+                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-user="' + esc(x.name) + '" data-act="resetpw">Reset password</button>';
+        });
+      }).catch(function(e){ fail(usersResult, e.message); });
+    }
+
+    function loadAdUsers(){
+      usersMode = 'ad';
+      usersResult.innerHTML = '';
+      run('ad.users.list', { q: document.getElementById('adQuery').value.trim() }, usersBusy).then(function(r){
+        var rows = parseRows(r.output);
+        if (rows === null) { fail(usersResult, r.output || 'The AD agent returned no usable data.'); return; }
+        renderTable(usersResult, rows, [
+          { k:'name', t:'Name' }, { k:'sam', t:'Username' }, { k:'email', t:'Email' },
+          { k:'enabled', t:'Enabled', render:function(x){
+              return x.enabled ? '<span style="color:var(--ok);font-weight:600;">Yes</span>' : '<span style="color:var(--bad-fg);font-weight:600;">No</span>';
+            } },
+          { k:'last_logon', t:'Last logon' }
+        ], null, function(x){
+          return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-ad="' + esc(x.sam) + '" data-act="' + (x.enabled?'disable':'enable') + '">' +
+                 (x.enabled?'Disable':'Enable') + '</button> ' +
+                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-ad="' + esc(x.sam) + '" data-act="resetpw">Reset password</button>';
+        });
+        if (r.routedTo) {
+          var n = document.createElement('p');
+          n.className = 'muted'; n.style.fontSize = '11.5px';
+          n.textContent = 'Routed via the AD agent: ' + r.routedTo;
+          usersResult.insertBefore(n, usersResult.firstChild);
+        }
+      }).catch(function(e){ fail(usersResult, e.message); });
+    }
+
+    document.querySelector('[data-load="users"]').addEventListener('click', loadLocalUsers);
+    document.getElementById('adLoad').addEventListener('click', loadAdUsers);
+    document.getElementById('adQuery').addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); loadAdUsers(); } });
+
+    usersResult.addEventListener('click', function(e){
+      var b = e.target.closest('[data-user],[data-ad]'); if (!b) return;
+      var isAd = b.hasAttribute('data-ad');
+      var who = isAd ? b.getAttribute('data-ad') : b.getAttribute('data-user');
+      var act = b.getAttribute('data-act');
+      var kind = isAd ? ('ad.user.' + act) : ('users.' + act);
+      var body = isAd ? { sam: who } : { name: who };
+      if (act === 'resetpw') {
+        if (!confirm('Reset the password for "' + who + '"' + (isAd ? ' in Active Directory' : ' on <%= asset.hostname %>') + '?\n\nA strong password is generated and shown once.')) return;
+        body.must_change = confirm('Require a password change at next sign-in?\n\nOK = yes, Cancel = no') ? '1' : '0';
+      } else {
+        if (!confirm(act.charAt(0).toUpperCase() + act.slice(1) + ' the account "' + who + '"' + (isAd ? ' in Active Directory' : ' on <%= asset.hostname %>') + '?')) return;
+      }
+      b.disabled = true;
+      run(kind, body, usersBusy).then(function(r){
+        if (r.status !== 'done') { alert(r.output || 'That did not complete.'); b.disabled = false; return; }
+        var reload = isAd ? loadAdUsers : loadLocalUsers;
+        reload();
+        if (act === 'resetpw' && r.password) {
+          setTimeout(function(){ showPassword(usersResult, r.password, who); }, 400);
+        }
+      }).catch(function(err){ alert(err.message); b.disabled = false; });
+    });
+
+    // ── file system ────────────────────────────────────────────────────────────
+    var filesResult = document.getElementById('filesResult');
+    var filesBusy = document.getElementById('filesBusy');
+    var filesPath = document.getElementById('filesPath');
+
+    function browse(path){
+      filesPath.value = path || '';
+      filesResult.innerHTML = '';
+      run('files.list', { path: path || '' }, filesBusy).then(function(r){
+        if (r.status !== 'done') { fail(filesResult, r.output || 'Could not read that path.'); return; }
+        var rows = parseRows(r.output);
+        if (rows === null) { fail(filesResult, r.output); return; }
+        var up = '';
+        if (path && /[\\\/]/.test(path.replace(/[\\\/]+$/, ''))) {
+          var parent = path.replace(/[\\\/]+$/, '').replace(/[\\\/][^\\\/]*$/, '');
+          if (/^[A-Za-z]:$/.test(parent)) parent += '\\';
+          up = '<button class="btn" style="padding:2px 10px;font-size:11.5px;margin-bottom:6px;" data-path="' + esc(parent) + '">&uarr; Up</button>';
+        }
+        var holder = document.createElement('div');
+        holder.innerHTML = up;
+        filesResult.appendChild(holder);
+        var tblHost = document.createElement('div');
+        filesResult.appendChild(tblHost);
+        renderTable(tblHost, rows, [
+          { k:'name', t:'Name', render:function(x){
+              if (!x.dir) return '&#128196; ' + esc(x.name);
+              var full = path ? (path.replace(/[\\\/]+$/, '') + '\\' + x.name) : x.name;
+              return '&#128193; <a href="#" class="row-link" data-path="' + esc(full) + '">' + esc(x.name) + '</a>';
+            } },
+          { k:'size', t:'Size', render:function(x){
+              if (x.size == null) return '';
+              var n = Number(x.size);
+              return n >= 1048576 ? (n/1048576).toFixed(1) + ' MB' : n >= 1024 ? (n/1024).toFixed(1) + ' KB' : n + ' B';
+            } },
+          { k:'modified', t:'Modified' }
+        ]);
+      }).catch(function(e){ fail(filesResult, e.message); });
+    }
+    filesResult.addEventListener('click', function(e){
+      var a = e.target.closest('[data-path]'); if (!a) return;
+      e.preventDefault();
+      browse(a.getAttribute('data-path'));
+    });
+    document.getElementById('filesRoot').addEventListener('click', function(){ browse(''); });
+    document.getElementById('filesGo').addEventListener('click', function(){ browse(filesPath.value.trim()); });
+    filesPath.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); browse(filesPath.value.trim()); } });
+  })();
+  </script>
+  <% } %>
+</section>

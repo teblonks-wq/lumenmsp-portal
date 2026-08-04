@@ -175,14 +175,17 @@ router.post('/chat/:id/create-quote', requireAuth, async (req: Request, res: Res
 // ── Unified message inbox (WhatsApp / Teams) ─────────────────────────────────────
 // Website chats stay on the console at /chat; these tabs surface WhatsApp & Teams messages
 // from inbox_messages. Messages arrive UNTAGGED (no case) and are tagged to a case by hand.
-const CHANNEL_LABELS: Record<string, string> = { whatsapp: 'WhatsApp', teams: 'Teams' };
+const CHANNEL_LABELS: Record<string, string> = { whatsapp: 'WhatsApp', teams: 'Teams', agent: 'Agent' };
+const INBOX_CHANNELS = ['whatsapp', 'teams', 'agent'];
 
 async function channelCounts(): Promise<Record<string, { untagged: number; total: number }>> {
   const r = await pool.query(
     `SELECT channel, COUNT(*) FILTER (WHERE ticket_id IS NULL)::int AS untagged, COUNT(*)::int AS total
-       FROM inbox_messages WHERE channel IN ('whatsapp','teams') GROUP BY channel`
+       FROM inbox_messages WHERE channel = ANY($1) GROUP BY channel`, [INBOX_CHANNELS]
   );
-  const out: Record<string, { untagged: number; total: number }> = { whatsapp: { untagged: 0, total: 0 }, teams: { untagged: 0, total: 0 } };
+  const out: Record<string, { untagged: number; total: number }> = {
+    whatsapp: { untagged: 0, total: 0 }, teams: { untagged: 0, total: 0 }, agent: { untagged: 0, total: 0 },
+  };
   for (const row of r.rows) out[row.channel] = { untagged: row.untagged, total: row.total };
   return out;
 }
@@ -190,13 +193,13 @@ async function channelCounts(): Promise<Record<string, { untagged: number; total
 // Total untagged across WhatsApp + Teams — polled by the sidebar badge.
 router.get('/chat/msg/untagged-count', requireAuth, async (_req: Request, res: Response) => {
   try {
-    const n = (await pool.query("SELECT COUNT(*)::int n FROM inbox_messages WHERE channel IN ('whatsapp','teams') AND ticket_id IS NULL")).rows[0].n;
+    const n = (await pool.query('SELECT COUNT(*)::int n FROM inbox_messages WHERE channel = ANY($1) AND ticket_id IS NULL', [INBOX_CHANNELS])).rows[0].n;
     res.json({ n });
   } catch { res.json({ n: 0 }); }
 });
 
 router.get('/chat/channel/:ch', requireAuth, async (req: Request, res: Response) => {
-  const ch = req.params.ch === 'teams' ? 'teams' : 'whatsapp';
+  const ch = INBOX_CHANNELS.includes(String(req.params.ch)) ? String(req.params.ch) : 'whatsapp';
   const attOnly = req.query.att === '1';
   const rows = (await pool.query(
     `SELECT m.id, m.message_direction, m.from_name, m.from_email, m.body_text, m.body_html,
@@ -348,6 +351,23 @@ router.post('/chat/msg/:id/reply', requireAuth, async (req: Request, res: Respon
     res.json({ ok: true });
     return;
   }
+  if (m.channel === 'agent') {
+    // Pull-based delivery: the device picks this up on its next poll (~20s), so there is
+    // no send step that can fail. The note IS the delivery mechanism (agent-api.ts reads
+    // public_reply notes on channel 'agent'); the message row is for the thread view.
+    const t = (await pool.query('SELECT agent_device_id FROM inbox_tickets WHERE id=$1', [m.ticket_id])).rows[0];
+    if (!t || !t.agent_device_id) { res.json({ ok: false, error: 'This case is not linked to a LumenMSP Agent device, so it cannot be answered here.' }); return; }
+    await pool.query(
+      `INSERT INTO inbox_messages (ticket_id, mailbox, message_direction, channel, from_name, from_email, body_text, body_html, received_at, processing_status)
+       VALUES ($1,'portal@lumenmsp.co.uk','outbound','agent',$2,$3,$4,$5,NOW(),'matched')`,
+      [m.ticket_id, req.session.user?.displayName || 'Lumen IT', m.from_email, body, '<p>' + esc(body) + '</p>']);
+    await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, channel, body) VALUES ($1,$2,'public_reply','agent',$3)`,
+      [m.ticket_id, req.session.user?.id || null, '<p>' + esc(body) + '</p>']);
+    await logChannel({ channel: 'agent', direction: 'outbound', status: 'sent', ticketId: m.ticket_id, peer: m.from_email, peerName: m.from_name, preview: body });
+    res.json({ ok: true });
+    return;
+  }
+
   if (m.channel === 'teams') {
     // Graph (delegated as sp@) into the case's stored Teams chat. The Power Automate relay is
     // DISABLED pending a fix — every relay send since 18 Jun failed with HTTP 502 (audit
