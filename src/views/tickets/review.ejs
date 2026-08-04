@@ -3,6 +3,20 @@
    function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); }
    function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; }
    var ageDays = Math.floor((Date.now() - new Date(ticket.created_at).getTime()) / 86400000); %>
+<style>
+  /* Same message rendering as the case screen - tame Outlook's fixed-width tables,
+     oversized fonts and stray margins so each email reads like a normal message. */
+  .email-body { font-size:14px; line-height:1.55; color:#1f2937; overflow-x:auto; word-break:break-word; }
+  .email-body * { max-width:100% !important; }
+  .email-body > *:first-child { margin-top:0; }
+  .email-body img { height:auto !important; }
+  .email-body table { max-width:100% !important; width:auto !important; border-collapse:collapse; }
+  .email-body td, .email-body th { word-break:break-word; }
+  .email-body p { margin:0 0 10px; }
+  .email-body a { word-break:break-word; }
+  .email-body blockquote { margin:8px 0; padding-left:10px; border-left:3px solid var(--line); color:var(--text-soft); }
+  .email-body font[size] { font-size:14px !important; }
+</style>
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div>
@@ -18,7 +32,7 @@
 <% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="margin-bottom:14px;"><%= notice %></div><% } %>
 <% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" style="margin-bottom:14px;"><%= error %></div><% } %>
 
-<div style="display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:16px;align-items:start;">
+<div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:16px;align-items:start;">
 
   <!-- Case at a glance + recent activity -->
   <div>
@@ -39,24 +53,41 @@
       </div>
     </div>
 
-    <div class="card" style="padding:0;">
-      <div class="card-header" style="padding:14px 18px 0;"><h2 style="font-size:14px;">Latest activity <span class="muted" style="font-weight:500;font-size:12px;">(newest first, up to 6)</span></h2></div>
-      <% if (!timeline.length) { %>
-        <p class="muted" style="padding:12px 18px;">No messages or notes on this case yet.</p>
-      <% } else { %>
-        <div style="padding:8px 18px 14px;">
-          <% timeline.forEach(function(t){ %>
-            <div style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:8px;<%= t.kind==='note' ? 'background:var(--tint-warn);' : (t.direction==='inbound' ? 'background:var(--surface-2);' : '') %>">
-              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">
-                <strong><%= t.author %></strong>
-                · <%= t.kind==='note' ? (t.noteType==='private_note' ? 'Private note' : cap(t.noteType)) : ((t.direction==='inbound'?'Received':'Sent') + ' · ' + (t.channel||'email')) %>
-                · <%= dt(t.at) %>
-              </div>
-              <div style="font-size:13px;line-height:1.5;max-height:130px;overflow:auto;"><%- t.body %></div>
+    <div class="card">
+      <div class="card-header" style="display:flex;align-items:baseline;gap:10px;"><h2 style="margin:0;">Conversation</h2><span class="muted" style="font-size:12px;">the full case, newest first - read-only</span></div>
+      <% if (timeline.length===0) { %><div class="empty-state">No messages or notes yet.</div><% } %>
+      <% timeline.forEach(function(e){ %>
+        <% if (e.kind==='note' && e.noteType==='system_log') { %>
+          <div class="muted" style="font-size:12px;padding:6px 0;border-bottom:1px solid var(--line);"><%= e.body %> &middot; <%= dt(e.at) %></div>
+        <% } else {
+             var bg = '#fff', label = '', bd = 'var(--line)';
+             if (e.kind==='message') { if (e.direction==='outbound'){bg='var(--tint-info)';label='Sent';} else {label='From '+e.author;} }
+             else if (e.noteType==='public_reply') { bg='var(--tint-ok)'; bd='var(--ok-line)'; label='Reply by '+e.author; }
+             else if (e.noteType==='side_convo') { bg='#f5f3ff'; bd='var(--violet-line)'; label='🔒 Side conversation · '+e.author; }
+             else if (e.noteType==='bot') { bg='var(--surface-2)'; label='Bot'; }
+             else { bg='var(--tint-yellow)'; bd='var(--warn-line)'; label='Internal note · '+e.author; }
+        %>
+          <div style="border:1px solid <%= bd %>;background:<%= bg %>;border-radius:10px;padding:14px 16px;margin:12px 0;">
+            <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:8px;font-size:12px;align-items:center;">
+              <span><strong><%= label %></strong>
+              <% if (e.channel==='teams' && typeof teamsChatId!=='undefined' && teamsChatId && e.teamsMessageId) { %>
+                <a href="https://teams.microsoft.com/l/message/<%= encodeURIComponent(teamsChatId) %>/<%= encodeURIComponent(e.teamsMessageId) %>?context=%7B%22contextType%22%3A%22chat%22%7D" target="_blank" rel="noopener" title="Open this message in Microsoft Teams" style="text-decoration:none;font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;background:var(--tint-indigo);color:#4338ca;">&#128101; Teams &#8599;</a>
+              <% } else if (e.channel==='teams' || e.channel==='whatsapp') { %>
+                <span style="font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;<%= e.channel==='teams' ? 'background:var(--tint-indigo);color:#4338ca;' : 'background:var(--tint-ok);color:var(--ok-fg);' %>"><%- e.channel==='teams' ? '&#128101; Teams' : '&#128994; WhatsApp' %></span>
+              <% } %></span>
+              <span class="muted"><%= dt(e.at) %></span>
             </div>
-          <% }); %>
-        </div>
-      <% } %>
+            <% if ((e.kind==='message' && e.direction!=='outbound' && (e.fromEmail || e.to || e.cc)) || ((e.to || e.cc))) { %>
+              <div class="muted" style="font-size:12px;margin:-2px 0 8px;border-bottom:1px dashed var(--line);padding-bottom:6px;overflow-wrap:anywhere;">
+                <% if (e.kind==='message' && e.direction!=='outbound' && e.fromEmail) { %><span style="margin-right:10px;"><strong>From:</strong> <%= e.fromEmail %></span><% } %>
+                <% if (e.to) { %><span style="margin-right:10px;"><strong>To:</strong> <%= e.to %></span><% } %>
+                <% if (e.cc) { %><span><strong>Cc:</strong> <%= e.cc %></span><% } %>
+              </div>
+            <% } %>
+            <div class="email-body" style="font-size:14px;line-height:1.6;overflow-wrap:anywhere;"><%- e.body %></div>
+          </div>
+        <% } %>
+      <% }); %>
     </div>
   </div>
 

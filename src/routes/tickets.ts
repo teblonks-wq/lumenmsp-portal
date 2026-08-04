@@ -387,15 +387,23 @@ router.get('/tickets/review/:id', requireAuth, async (req: Request, res: Respons
   const [posQ, totQ, msgs, notes] = await Promise.all([
     pool.query(`SELECT COUNT(*)::int AS n FROM inbox_tickets t WHERE ${REVIEW_WHERE} AND (t.created_at < $1 OR (t.created_at = $1 AND t.id <= $2))`, [ticket.created_at, id]),
     pool.query(`SELECT COUNT(*)::int AS n FROM inbox_tickets t WHERE ${REVIEW_WHERE}`),
-    pool.query('SELECT id, message_direction, channel, from_name, from_email, body_html, body_text, received_at, created_at FROM inbox_messages WHERE ticket_id=$1 ORDER BY COALESCE(received_at, created_at) DESC LIMIT 6', [id]),
-    pool.query(`SELECT nt.id, nt.note_type, nt.body, nt.created_at, u.display_name AS author FROM inbox_notes nt LEFT JOIN users u ON u.id=nt.user_id WHERE nt.ticket_id=$1 AND nt.note_type <> 'system_log' ORDER BY nt.created_at DESC LIMIT 6`, [id]),
+    pool.query('SELECT id, message_direction, channel, from_name, from_email, to_raw, cc_raw, body_html, body_text, received_at, created_at, graph_message_id FROM inbox_messages WHERE ticket_id=$1 ORDER BY COALESCE(received_at, created_at)', [id]),
+    pool.query(`SELECT nt.id, nt.note_type, nt.channel, nt.body, nt.to_raw, nt.cc_raw, nt.created_at, u.display_name AS author FROM inbox_notes nt LEFT JOIN users u ON u.id=nt.user_id WHERE nt.ticket_id=$1 ORDER BY nt.created_at`, [id]),
   ]);
+  // Same timeline as the case screen: every message and note (system logs included), newest
+  // first with the same id tiebreak, so the review reads exactly like the case itself.
   const timeline: any[] = [];
-  for (const m of msgs.rows) timeline.push({ kind: 'message', direction: m.message_direction, channel: m.channel || 'email', author: m.from_name || m.from_email || 'Email', body: m.body_html || m.body_text || '', at: m.received_at || m.created_at });
-  for (const nt of notes.rows) timeline.push({ kind: 'note', noteType: nt.note_type, author: nt.author || 'System', body: nt.body, at: nt.created_at });
-  timeline.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  for (const m of msgs.rows) timeline.push({ kind: 'message', id: m.id, direction: m.message_direction, channel: m.channel || 'email', author: m.from_name || m.from_email || 'Email', fromEmail: m.from_email || '', to: m.to_raw || '', cc: m.cc_raw || '', body: m.body_html || m.body_text || '', at: m.received_at || m.created_at, teamsMessageId: (m.graph_message_id || '').replace(/^teamsg:/, '') || null });
+  for (const nt of notes.rows) timeline.push({ kind: 'note', id: nt.id, noteType: nt.note_type, channel: nt.channel || '', author: nt.author || 'System', to: nt.to_raw || '', cc: nt.cc_raw || '', body: nt.body, at: nt.created_at });
+  timeline.sort((a, b) => {
+    const d = new Date(b.at).getTime() - new Date(a.at).getTime();
+    return d !== 0 ? d : (b.id || 0) - (a.id || 0);
+  });
+  // Chat id for "Open in Teams" deep links, same as the case screen.
+  let teamsChatId = '';
+  if (ticket.teams_conversation) { try { teamsChatId = JSON.parse(ticket.teams_conversation).chatId || ''; } catch { /* not JSON */ } }
   res.render('tickets/review', {
-    user, ticket, timeline: timeline.slice(0, 6),
+    user, ticket, timeline, teamsChatId,
     position: posQ.rows[0].n, total: totQ.rows[0].n,
     statusList: STATUSES,
     notice: req.query.msg || null, error: req.query.err || null,
