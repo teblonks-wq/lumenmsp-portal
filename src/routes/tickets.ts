@@ -520,6 +520,8 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
   const waWindowOpen = !!(waInb && (Date.now() - new Date(waInb.at).getTime()) < 24 * 60 * 60 * 1000);
   // Whether a Teams send can actually work on this case (drives the composer's Teams pill).
   const teamsSendOk = await teamsSendPossible(r.rows[0].teams_conversation || null);
+  // Whether this case is linked to a LumenMSP Agent device (drives the composer's Agent pill).
+  const agentSendOk = !!r.rows[0].agent_device_id;
   // Chat id for "Open in Teams" deep links on this case's Teams messages (Graph path only — the
   // old Bot Framework/Power Automate relay never stored a usable chatId here).
   let teamsChatId = '';
@@ -551,7 +553,7 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
   await ensureReplyTemplates().catch(() => {});
   const replyTemplates = await listReplyTemplates().catch(() => [] as any[]);
 
-  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, requesterAssets, subjectInvoice, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, teamsChatId, aiCatOn, replyTemplates, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
+  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, requesterAssets, subjectInvoice, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, agentSendOk, teamsChatId, aiCatOn, replyTemplates, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
 });
 
 // ── Update fields ────────────────────────────────────────────────────────────────
@@ -720,7 +722,7 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
   // address; WhatsApp/Teams just need an inbound from the customer on that channel (or a number).
   if (noteType === 'public_reply' && hasContent) {
     const asg = (await pool.query('SELECT assigned_user_id, contact_id FROM inbox_tickets WHERE id=$1', [id])).rows[0];
-    const ch = ['email', 'teams', 'whatsapp'].includes(req.body.channel) ? req.body.channel : 'email';
+    const ch = ['email', 'teams', 'whatsapp', 'agent'].includes(req.body.channel) ? req.body.channel : 'email';
     const toAddr = String(req.body.to || '').trim();
     let knownRequester = !!(asg && asg.contact_id);
     if (!knownRequester) {
@@ -747,7 +749,7 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
     const cc = String(req.body.cc || '').trim() || undefined;
     const bcc = String(req.body.bcc || '').trim() || undefined;
     // Channel the reply travels on.
-    const channel = ['email', 'teams', 'whatsapp'].includes(req.body.channel) ? req.body.channel : 'email';
+    const channel = ['email', 'teams', 'whatsapp', 'agent'].includes(req.body.channel) ? req.body.channel : 'email';
     // ONLY public replies and side convos ever leave the building. An internal note must
     // NEVER touch a customer channel, whatever the "Send via" radio happens to be set to —
     // the channel selection simply doesn't apply to it. (Bug 2026-07-21: an internal note
@@ -804,6 +806,13 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
         res.redirect('/tickets/' + id + '?err=' + encodeURIComponent(friendly)); return;
       }
       teamsPeerSent = row?.email || null;
+    } else if (sendsExternally && channel === 'agent') {
+      // Agent channel is pull-based: the device collects the reply on its next poll, so
+      // there is no send-failure path — just make sure this case really has a device.
+      const ag = (await pool.query('SELECT agent_device_id FROM inbox_tickets WHERE id=$1', [id])).rows[0];
+      if (!ag || !ag.agent_device_id) {
+        res.redirect('/tickets/' + id + '?err=' + encodeURIComponent('This case is not linked to a LumenMSP Agent device, so an Agent reply cannot be delivered. Reply by another channel.')); return;
+      }
     }
     // Side convo: stamp who it went to at the top so the (private) note shows the recipient.
     const storeBody = noteType === 'side_convo'
@@ -870,6 +879,8 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
         await recordWaSent();
       } else if (channel === 'teams') {
         await recordTeamsSent();
+      } else if (channel === 'agent') {
+        await sysNote(`Sent via LumenMSP Agent (by ${user.displayName})`);
       }
     } else {
       await applyStatus(setStatus);

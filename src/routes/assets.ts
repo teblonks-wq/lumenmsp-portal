@@ -1,7 +1,9 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
+import { getSetting, setSetting } from '../lib/settings';
 import { syncAssetsFromAtera, lastAssetSyncAt, remoteUrlTemplate, saveRemoteUrlTemplate, buildRemoteUrl } from '../lib/asset-sync';
 import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
 
@@ -138,6 +140,77 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     rawJson: showDebug ? JSON.stringify(row.raw, null, 2) : null,
     notice: req.query.msg || null, error: req.query.err || null,
   });
+});
+
+// ── LumenMSP Agent — enrolled devices + site keys ───────────────────────────────
+// The Windows agent (tray + service) enrolls with a per-customer SITE KEY and then
+// heartbeats here. This page lists every enrolled device and (admin) manages the
+// site keys, per-customer RMM installer URLs and the global defaults.
+router.get('/agents', requireAuth, async (req: Request, res: Response) => {
+  const rows = (await pool.query(
+    `SELECT d.*, c.name AS customer_name FROM agent_devices d
+     LEFT JOIN customers c ON c.id = d.customer_id
+     ORDER BY c.name, d.hostname`)).rows;
+  const isAdmin = req.session.user!.role === 'admin';
+  let customers: any[] = [];
+  let defaults: { url: string; args: string } = { url: '', args: '' };
+  if (isAdmin) {
+    customers = (await pool.query(
+      `SELECT c.id, c.name, c.agent_site_key, c.rmm_installer_url,
+              (SELECT COUNT(*)::int FROM agent_devices d WHERE d.customer_id=c.id) AS device_count
+       FROM customers c WHERE c.deleted_at IS NULL AND c.status='active' ORDER BY c.name`)).rows;
+    defaults = {
+      url: (await getSetting('agent', 'rmm_installer_url')) || '',
+      args: (await getSetting('agent', 'rmm_install_args')) || '',
+    };
+  }
+  res.render('assets/agents', {
+    user: req.session.user!, rows, customers, defaults, isAdmin,
+    notice: req.query.msg || null, error: req.query.err || null,
+  });
+});
+
+// Generate (or rotate) a customer's agent site key. Rotating does NOT break already-
+// enrolled devices (they hold device tokens) — it only changes what NEW installs need.
+router.post('/agents/sitekey/:customerId', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const cid = parseInt(String(req.params.customerId), 10);
+  const key = 'LMA-' + crypto.randomBytes(18).toString('hex');
+  await pool.query('UPDATE customers SET agent_site_key=$1 WHERE id=$2', [key, cid]);
+  await logActivity(req.session.user!.id, 'agent_sitekey', 'customers', cid, 'Agent site key generated/rotated');
+  res.redirect('/agents?msg=' + encodeURIComponent('Site key generated. New installs for this customer must use the new key.'));
+});
+router.post('/agents/sitekey/:customerId/clear', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const cid = parseInt(String(req.params.customerId), 10);
+  await pool.query('UPDATE customers SET agent_site_key=NULL WHERE id=$1', [cid]);
+  await logActivity(req.session.user!.id, 'agent_sitekey', 'customers', cid, 'Agent site key cleared (enrollment disabled)');
+  res.redirect('/agents?msg=' + encodeURIComponent('Site key cleared — new enrollments for this customer are disabled.'));
+});
+
+// Per-customer RMM installer URL override (blank = use the global default).
+router.post('/agents/rmm-url/:customerId', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const cid = parseInt(String(req.params.customerId), 10);
+  const url = String(req.body.url || '').trim().slice(0, 500);
+  if (url && !/^https:\/\//i.test(url)) { res.redirect('/agents?err=' + encodeURIComponent('RMM installer URL must be https://')); return; }
+  await pool.query('UPDATE customers SET rmm_installer_url=$1 WHERE id=$2', [url || null, cid]);
+  res.redirect('/agents?msg=' + encodeURIComponent('RMM installer URL saved.'));
+});
+
+// Global defaults: RMM installer URL + msiexec args handed to devices with no override.
+router.post('/agents/settings', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const url = String(req.body.url || '').trim().slice(0, 500);
+  const args = String(req.body.args || '').trim().slice(0, 200);
+  if (url && !/^https:\/\//i.test(url)) { res.redirect('/agents?err=' + encodeURIComponent('RMM installer URL must be https://')); return; }
+  await setSetting('agent', 'rmm_installer_url', url || null);
+  await setSetting('agent', 'rmm_install_args', args || null);
+  res.redirect('/agents?msg=' + encodeURIComponent('Agent defaults saved.'));
+});
+
+// Revoke a device: its token dies instantly; a reinstall (with the site key) re-enrolls it.
+router.post('/agents/:id/revoke', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  await pool.query('UPDATE agent_devices SET revoked=true, updated_at=NOW() WHERE id=$1', [id]);
+  await logActivity(req.session.user!.id, 'agent_revoked', 'agent_devices', id, 'Agent device revoked');
+  res.redirect('/agents?msg=' + encodeURIComponent('Device revoked — its agent can no longer talk to the portal.'));
 });
 
 export default router;

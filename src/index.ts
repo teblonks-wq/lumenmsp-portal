@@ -42,6 +42,7 @@ import softphoneRoutes from './routes/softphone';
 import chatRoutes from './routes/chat';
 import chatPublicRoutes from './routes/chat-public';
 import leadsApiRoutes from './routes/leads-api';
+import agentApiRoutes from './routes/agent-api';
 import mcpRoutes from './routes/mcp';
 import marketingRoutes from './routes/marketing';
 import networkRoutes from './routes/network';
@@ -307,6 +308,7 @@ app.use('/', webhookRoutes);
 app.use('/', trackingRoutes);     // public email-open pixel (per-send token, no auth)
 app.use('/', chatPublicRoutes);   // public website chat API (token-based, CORS, no auth)
 app.use('/', leadsApiRoutes);     // public website lead intake (bearer token, no session)
+app.use('/', agentApiRoutes);     // LumenMSP Agent API (device-token auth, no session)
 app.use('/', mcpRoutes);          // Claude MCP connector (capability-URL token, read-only, no session
                                   // → the CSRF guard's !req.session.user branch already exempts it)
 app.use('/', authRoutes);

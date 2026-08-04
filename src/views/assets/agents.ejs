@@ -1,0 +1,107 @@
+<%- include('../partials/header', { title: 'LumenMSP Agents', user }) %>
+<% function dt(v){ return v ? new Date(v).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
+<% function isOnline(v){ return v && (Date.now() - new Date(v).getTime()) < 12*60*1000; } %>
+
+<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/assets">← Assets</a></p>
+    <h1 style="margin:0;">LumenMSP Agents</h1>
+    <p class="muted" style="margin:6px 0 0;">Devices running the LumenMSP Agent — chat, system info and end-user tools. Online = heartbeat in the last 12 minutes.</p>
+  </div>
+</div>
+
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<div class="card" style="margin-bottom:20px;">
+  <h3 style="margin-top:0;">Enrolled devices (<%= rows.length %>)</h3>
+  <% if (!rows.length) { %>
+    <p class="muted">No devices yet. Generate a site key below, then install the agent MSI with <code>SITEKEY=&lt;key&gt;</code>.</p>
+  <% } else { %>
+  <div style="overflow-x:auto;">
+    <table class="table">
+      <thead><tr><th></th><th>Device</th><th>Customer</th><th>User</th><th>Local IPs</th><th>Public IP</th><th>Version</th><th>Last seen</th><% if (isAdmin) { %><th></th><% } %></tr></thead>
+      <tbody>
+        <% rows.forEach(function(d){ var on = !d.revoked && isOnline(d.last_seen_at); %>
+        <tr style="<%= d.revoked ? 'opacity:.5;' : '' %>">
+          <td><span title="<%= d.revoked ? 'Revoked' : (on ? 'Online' : 'Offline') %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= d.revoked ? 'var(--bad-fg)' : (on ? 'var(--ok)' : 'var(--line-strong)') %>;"></span></td>
+          <td><strong><%= d.hostname || '(unnamed)' %></strong><% if (d.serial_number) { %><div class="muted" style="font-size:11px;"><%= d.serial_number %></div><% } %></td>
+          <td><% if (d.customer_id) { %><a class="row-link" href="/customers/<%= d.customer_id %>"><%= d.customer_name %></a><% } else { %>—<% } %></td>
+          <td><%= d.logged_in_user || '—' %></td>
+          <td style="font-size:12px;"><%= d.local_ips || '—' %></td>
+          <td style="font-size:12px;"><%= d.public_ip || '—' %></td>
+          <td><%= d.agent_version || '—' %></td>
+          <td><%= dt(d.last_seen_at) %></td>
+          <% if (isAdmin) { %>
+          <td>
+            <% if (!d.revoked) { %>
+            <form method="post" action="/agents/<%= d.id %>/revoke" style="display:inline;" onsubmit="return confirm('Revoke this device? Its agent stops working until the MSI is reinstalled.');">
+              <button class="btn btn-small" type="submit">Revoke</button>
+            </form>
+            <% } else { %><span class="muted" style="font-size:12px;">revoked</span><% } %>
+          </td>
+          <% } %>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+  <% } %>
+</div>
+
+<% if (isAdmin) { %>
+<div class="card" style="margin-bottom:20px;">
+  <h3 style="margin-top:0;">Global defaults</h3>
+  <p class="muted" style="font-size:13px;">Used by every device whose customer has no override. The RMM installer URL is what "Reinstall RMM Agent" downloads and runs (<code>msiexec /i</code>).</p>
+  <form method="post" action="/agents/settings" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+    <label style="flex:2;min-width:280px;">Default RMM installer URL (https)
+      <input class="input" type="url" name="url" value="<%= defaults.url %>" placeholder="https://…/setup.msi">
+    </label>
+    <label style="flex:1;min-width:180px;">msiexec args
+      <input class="input" type="text" name="args" value="<%= defaults.args %>" placeholder="/qn /norestart">
+    </label>
+    <button class="btn btn-primary" type="submit">Save defaults</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Site keys &amp; per-customer RMM installer</h3>
+  <p class="muted" style="font-size:13px;">
+    The site key enrolls new installs for a customer:
+    <code>msiexec /i LumenMSPAgent.msi SITEKEY=&lt;key&gt; /qn</code>.
+    Rotating a key does not affect devices already enrolled. Clearing it blocks new enrollments.
+  </p>
+  <div style="overflow-x:auto;">
+    <table class="table">
+      <thead><tr><th>Customer</th><th>Devices</th><th>Site key</th><th></th><th>RMM installer URL override</th></tr></thead>
+      <tbody>
+        <% customers.forEach(function(c){ %>
+        <tr>
+          <td><a class="row-link" href="/customers/<%= c.id %>"><%= c.name %></a></td>
+          <td><%= c.device_count %></td>
+          <td style="font-family:monospace;font-size:12px;max-width:340px;word-break:break-all;"><%= c.agent_site_key || '—' %></td>
+          <td style="white-space:nowrap;">
+            <form method="post" action="/agents/sitekey/<%= c.id %>" style="display:inline;" <% if (c.agent_site_key) { %>onsubmit="return confirm('Rotate the site key? New installs must use the new key (existing devices keep working).');"<% } %>>
+              <button class="btn btn-small" type="submit"><%= c.agent_site_key ? 'Rotate' : 'Generate' %></button>
+            </form>
+            <% if (c.agent_site_key) { %>
+            <form method="post" action="/agents/sitekey/<%= c.id %>/clear" style="display:inline;" onsubmit="return confirm('Clear the site key? New enrollments for this customer will be blocked.');">
+              <button class="btn btn-small" type="submit">Clear</button>
+            </form>
+            <% } %>
+          </td>
+          <td>
+            <form method="post" action="/agents/rmm-url/<%= c.id %>" style="display:flex;gap:6px;">
+              <input class="input" type="url" name="url" value="<%= c.rmm_installer_url || '' %>" placeholder="(use default)" style="min-width:220px;font-size:12px;">
+              <button class="btn btn-small" type="submit">Save</button>
+            </form>
+          </td>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<% } %>
+
+<%- include('../partials/footer') %>
