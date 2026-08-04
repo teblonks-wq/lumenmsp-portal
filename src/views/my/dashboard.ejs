@@ -46,7 +46,11 @@
   b.addEventListener('click', function(){
     var url = location.origin + '<%= agentDownload %>';
     var name = url.split('/').pop();
-    var cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "$f=Join-Path $env:TEMP \'' + name + '\'; Invoke-WebRequest \'' + url + '\' -OutFile $f; Start-Process msiexec -ArgumentList \'/i\',$f,\'/qn\' -Wait"';
+    var B = String.fromCharCode(92), Q = String.fromCharCode(34), A = String.fromCharCode(39);
+    var tmp = 'C:' + B + 'Windows' + B + 'Temp' + B + name;
+    var cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -Command ' + Q
+      + 'Invoke-WebRequest ' + A + url + A + ' -OutFile ' + A + tmp + A + ' -UseBasicParsing; '
+      + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',' + A + tmp + A + ',' + A + '/qn' + A + ' -Wait' + Q;
     (navigator.clipboard ? navigator.clipboard.writeText(cmd) : Promise.reject()).then(function(){
       b.textContent = 'Copied \u2713'; setTimeout(function(){ b.textContent = 'Copy install command'; }, 1600);
     }).catch(function(){ window.prompt('Copy this command:', cmd); });

@@ -87,12 +87,18 @@ async function rmmConfig(customerId: number | null): Promise<{ url: string | nul
   return { url, args };
 }
 
-function deviceConfig(rmm: { url: string | null; args: string }) {
+// Config pushed down to every device on enroll + heartbeat. `agent_latest_version` is
+// what drives self-update: agents compare it to their own build and upgrade themselves.
+// Blank/unset = auto-update disabled (deliberate: no version, no push).
+async function deviceConfig(customerId: number | null) {
+  const rmm = await rmmConfig(customerId);
+  const latest = ((await getSetting('agent', 'latest_version')) || '').trim() || null;
   return {
     heartbeat_seconds: 300,
     chat_poll_seconds: 20,
     rmm_installer_url: rmm.url,
     rmm_install_args: rmm.args,
+    agent_latest_version: latest,
   };
 }
 
@@ -142,8 +148,7 @@ router.post('/agent/api/enroll', async (req: Request, res: Response) => {
       deviceId = ins.rows[0].id;
     }
     await logActivity(null, existing ? 'agent_reenrolled' : 'agent_enrolled', 'agent_devices', deviceId, `${hostname} enrolled for ${cust.rows[0].name}`);
-    const rmm = await rmmConfig(customerId);
-    res.status(existing ? 200 : 201).json({ ok: true, device_id: deviceId, device_token: token, customer: cust.rows[0].name, config: deviceConfig(rmm) });
+    res.status(existing ? 200 : 201).json({ ok: true, device_id: deviceId, device_token: token, customer: cust.rows[0].name, config: await deviceConfig(customerId) });
   } catch (e: any) {
     console.error('[agent] enroll failed:', e.message);
     res.status(500).json({ ok: false, error: 'enrollment failed' });
@@ -168,8 +173,7 @@ router.post('/agent/api/heartbeat', requireDevice, async (req: Request, res: Res
       [s(b.hostname, 200), s(b.os, 200), s(b.os_version, 100), s(b.agent_version, 50),
        s(b.logged_in_user, 200), localIps, diskInfo, clientIp(req), d.id]
     );
-    const rmm = await rmmConfig(d.customer_id);
-    res.json({ ok: true, public_ip: clientIp(req), config: deviceConfig(rmm) });
+    res.json({ ok: true, public_ip: clientIp(req), config: await deviceConfig(d.customer_id) });
   } catch (e: any) {
     console.error('[agent] heartbeat failed:', e.message);
     res.status(500).json({ ok: false, error: 'heartbeat failed' });
@@ -179,6 +183,15 @@ router.post('/agent/api/heartbeat', requireDevice, async (req: Request, res: Res
 // Public IP echo — the tray's System Info panel shows the address the portal sees.
 router.get('/agent/api/ip', requireDevice, (req: Request, res: Response) => {
   res.json({ ok: true, ip: clientIp(req) });
+});
+
+// ── Self-update feed ────────────────────────────────────────────────────────────
+// The agent pulls its own next build here, authenticated with its DEVICE TOKEN — the
+// site key is deleted from the machine after enrollment, so the public keyed URL isn't
+// available by update time.
+router.get('/agent/api/installer', requireDevice, (req: Request, res: Response) => {
+  if (!agentMsiInfo()) { res.status(503).json({ ok: false, error: 'no installer uploaded' }); return; }
+  res.download(AGENT_MSI_PATH, 'LumenMSPAgent.msi');
 });
 
 // ── Chat: device → helpdesk ─────────────────────────────────────────────────────

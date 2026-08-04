@@ -53,7 +53,7 @@
           <td><%= d.logged_in_user || '—' %></td>
           <td style="font-size:12px;"><%= d.local_ips || '—' %></td>
           <td style="font-size:12px;"><%= d.public_ip || '—' %></td>
-          <td><%= d.agent_version || '—' %></td>
+          <td><%= d.agent_version || '—' %><% if (latestVersion && d.agent_version && d.agent_version !== latestVersion && !d.revoked) { %> <span class="badge badge-inactive" title="Will self-update to <%= latestVersion %> within 6 hours">update due</span><% } %></td>
           <td><%= dt(d.last_seen_at) %></td>
           <% if (isAdmin) { %>
           <td>
@@ -76,14 +76,21 @@
 <div class="card" style="margin-bottom:20px;">
   <h3 style="margin-top:0;">Agent installer (MSI)</h3>
   <% if (msi) { %>
-  <p class="muted" style="font-size:13px;">Current build: <strong><%= (msi.size/1048576).toFixed(1) %> MB</strong>, uploaded <%= dt(msi.mtime) %>. Every customer download link serves this file under its own keyed name (<code>LumenMSPAgent-&lt;sitekey&gt;.msi</code>) — the installer reads the key from its filename, so a plain double-click install needs no command-line options.</p>
+  <p class="muted" style="font-size:13px;">Current build: <strong><%= latestVersion ? 'v' + latestVersion : 'version not set' %></strong> &middot; <%= (msi.size/1048576).toFixed(1) %> MB &middot; uploaded <%= dt(msi.mtime) %>.
+    <% if (latestVersion) { %>Agents older than this update themselves within 6 hours &mdash; no re-download needed.<% } else { %><strong style="color:var(--warn-fg);">No version set, so agents will not auto-update.</strong><% } %> Every customer download link serves this file under its own keyed name (<code>LumenMSPAgent-&lt;sitekey&gt;.msi</code>) — the installer reads the key from its filename, so a plain double-click install needs no command-line options.</p>
   <% } else { %>
   <p class="muted" style="font-size:13px;">No installer uploaded yet. Build it with <code>build.ps1</code> in <code>D:\LITS\LumenMSP Agent</code>, then upload <code>dist\LumenMSPAgent.msi</code> here.</p>
   <% } %>
-  <form method="post" action="/agents/installer" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-    <input class="input" type="file" name="msi" accept=".msi" required style="max-width:340px;">
+  <form method="post" action="/agents/installer" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+    <label style="flex:1;min-width:220px;">Installer file
+      <input class="input" type="file" name="msi" accept=".msi" required>
+    </label>
+    <label style="width:130px;">Version
+      <input class="input" type="text" name="version" value="<%= latestVersion %>" placeholder="1.0.1" pattern="[0-9.]*" title="e.g. 1.0.1 - must match the version you built">
+    </label>
     <button class="btn btn-primary" type="submit">Upload<%= msi ? ' new build' : '' %></button>
   </form>
+  <p class="muted" style="font-size:12px;margin:8px 0 0;">Bump the version every release: it is how installed agents know to upgrade. Leave it blank only if you want to stage a build without pushing it out.</p>
 </div>
 
 <div class="card" style="margin-bottom:20px;">
@@ -161,10 +168,14 @@
     var name = 'LumenMSPAgent-' + sel.value + '.msi';
     var url = BASE + '/agent/download/' + name;
     btn.href = url;
+    // No $ anywhere: an outer PowerShell would expand $f/$env:TEMP before the inner
+    // shell ever ran (that is what produced '/i',,'/qn'). Literal temp path instead,
+    // so this one string is safe pasted into PowerShell, cmd.exe or an RMM script.
+    var B = String.fromCharCode(92);
+    var tmp = 'C:' + B + 'Windows' + B + 'Temp' + B + name;
     cmd.value = 'powershell -NoProfile -ExecutionPolicy Bypass -Command ' + Q
-      + '$f=Join-Path $env:TEMP ' + A + name + A + '; '
-      + 'Invoke-WebRequest ' + A + url + A + ' -OutFile $f; '
-      + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',$f,' + A + '/qn' + A + ' -Wait' + Q;
+      + 'Invoke-WebRequest ' + A + url + A + ' -OutFile ' + A + tmp + A + ' -UseBasicParsing; '
+      + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',' + A + tmp + A + ',' + A + '/qn' + A + ' -Wait' + Q;
   }
   sel.addEventListener('change', update);
   update();
@@ -185,7 +196,11 @@
       var key = b.getAttribute('data-key');
       var name = 'LumenMSPAgent-' + key + '.msi';
       var url = BASE + '/agent/download/' + name;
-      var cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "$f=Join-Path $env:TEMP \'' + name + '\'; Invoke-WebRequest \'' + url + '\' -OutFile $f; Start-Process msiexec -ArgumentList \'/i\',$f,\'/qn\' -Wait"';
+      var B = String.fromCharCode(92), Q = String.fromCharCode(34), A = String.fromCharCode(39);
+      var tmp = 'C:' + B + 'Windows' + B + 'Temp' + B + name;
+      var cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -Command ' + Q
+        + 'Invoke-WebRequest ' + A + url + A + ' -OutFile ' + A + tmp + A + ' -UseBasicParsing; '
+        + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',' + A + tmp + A + ',' + A + '/qn' + A + ' -Wait' + Q;
       (navigator.clipboard ? navigator.clipboard.writeText(cmd) : Promise.reject()).then(function(){
         b.textContent = 'Copied \u2713';
         setTimeout(function(){ b.textContent = 'Copy command'; }, 1600);

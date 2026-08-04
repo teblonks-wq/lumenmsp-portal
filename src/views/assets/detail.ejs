@@ -68,9 +68,33 @@
         <div class="dev-field-row"><div class="k">Last logged-in user</div><div class="v"><%= fmt(asset.last_login_user) %></div></div>
         <div class="dev-field-row"><div class="k">Last seen</div><div class="v"><%= dt(asset.last_seen_at) %></div></div>
         <div class="dev-field-row"><div class="k">Last reboot</div><div class="v"><%= dt(asset.last_reboot_at) %></div></div>
-        <div class="dev-field-row"><div class="k">Agent version</div><div class="v"><%= fmt(asset.agent_version) %></div></div>
+        <div class="dev-field-row"><div class="k">Atera agent version</div><div class="v"><%= fmt(asset.agent_version) %></div></div>
         <div class="dev-field-row"><div class="k">Date added</div><div class="v"><%= dt(asset.added_at) %></div></div>
       </div>
+      <% if (typeof agentInfo !== 'undefined' && agentInfo) {
+           var agOnline = agentInfo.last_seen_at && (Date.now() - new Date(agentInfo.last_seen_at).getTime()) < 12*60*1000;
+           var agDisks = [];
+           try { agDisks = JSON.parse(agentInfo.disk_info || '[]') || []; } catch (e) { agDisks = []; }
+      %>
+      <div>
+        <p class="dev-subcard-title" style="display:flex;align-items:center;gap:6px;"><img src="/static/img/lumen-agent-16.png" width="14" height="14" alt=""> LumenMSP Agent (live)</p>
+        <div class="dev-field-row"><div class="k">Status</div><div class="v">
+          <span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;color:<%= agOnline ? 'var(--ok)' : 'var(--faint)' %>;">
+            <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= agOnline ? 'var(--ok)' : 'var(--line-strong)' %>;"></span>
+            <%= agOnline ? 'Online' : 'Offline' %>
+          </span>
+        </div></div>
+        <div class="dev-field-row"><div class="k">Agent version</div><div class="v"><strong><%= agentInfo.agent_version ? 'v' + agentInfo.agent_version : '—' %></strong><% if (typeof latestAgentVersion !== 'undefined' && latestAgentVersion && agentInfo.agent_version && agentInfo.agent_version !== latestAgentVersion) { %> <span class="badge badge-inactive" title="Self-updates to v<%= latestAgentVersion %> within 6 hours">update due</span><% } %></div></div>
+        <div class="dev-field-row"><div class="k">Signed-in user</div><div class="v"><%= fmt(agentInfo.logged_in_user) %></div></div>
+        <div class="dev-field-row"><div class="k">Local IP address(es)</div><div class="v"><%= fmt(agentInfo.local_ips) %></div></div>
+        <div class="dev-field-row"><div class="k">Public IP</div><div class="v"><%= fmt(agentInfo.public_ip) %></div></div>
+        <% agDisks.forEach(function(d){ %>
+        <div class="dev-field-row"><div class="k">Disk <%= d.drive %></div><div class="v"><%= d.free_gb %> GB free of <%= d.total_gb %> GB</div></div>
+        <% }); %>
+        <div class="dev-field-row"><div class="k">Last check-in</div><div class="v"><%= dt(agentInfo.last_seen_at) %></div></div>
+        <div class="dev-field-row"><div class="k">&nbsp;</div><div class="v"><a class="row-link" href="/agents">Manage agents &rarr;</a></div></div>
+      </div>
+      <% } %>
       <div>
         <p class="dev-subcard-title">Device relations</p>
         <div class="dev-field-row">

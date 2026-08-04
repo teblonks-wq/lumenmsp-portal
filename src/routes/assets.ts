@@ -35,12 +35,12 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
 
   const rows = (await pool.query(
     `SELECT a.*, c.name AS customer_name, ac.full_name AS assigned_name,
-            agd.id AS agent_device_id, agd.last_seen_at AS agent_last_seen
+            agd.id AS agent_device_id, agd.last_seen_at AS agent_last_seen, agd.agent_version AS agent_agent_version
      FROM customer_assets a
      LEFT JOIN customers c ON c.id = a.customer_id
      LEFT JOIN customer_contacts ac ON ac.id = a.assigned_contact_id
      LEFT JOIN LATERAL (
-       SELECT ag.id, ag.last_seen_at FROM agent_devices ag
+       SELECT ag.id, ag.last_seen_at, ag.agent_version FROM agent_devices ag
        WHERE ag.revoked = false AND ag.customer_id = a.customer_id
          AND ((a.serial_number IS NOT NULL AND ag.serial_number = a.serial_number)
            OR (a.hostname IS NOT NULL AND LOWER(ag.hostname) = LOWER(a.hostname)))
@@ -122,7 +122,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   let agentInfo: any = null;
   try {
     agentInfo = (await pool.query(
-      `SELECT id, last_seen_at, agent_version, logged_in_user FROM agent_devices
+      `SELECT id, last_seen_at, agent_version, logged_in_user, local_ips, public_ip, disk_info FROM agent_devices
        WHERE revoked = false AND customer_id = $1
          AND (($2::text IS NOT NULL AND serial_number = $2)
            OR ($3::text IS NOT NULL AND LOWER(hostname) = LOWER($3)))
@@ -158,7 +158,9 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     dataCopiedH: h.dataCopied != null ? fmtBytes(h.dataCopied) : null,
   }));
   res.render('assets/detail', {
-    user: req.session.user!, asset: row, agentInfo, backupPlans, backupHistory,
+    user: req.session.user!, asset: row, agentInfo,
+    latestAgentVersion: (await getSetting('agent', 'latest_version')) || '',
+    backupPlans, backupHistory,
     remoteUrl: row.external_id ? buildRemoteUrl(tpl, { agentId: row.external_id, deviceGuid: row.device_guid }) : null,
     back: safeBack(req.query.back, '/assets'), contactOptions,
     rawJson: showDebug ? JSON.stringify(row.raw, null, 2) : null,
@@ -194,7 +196,8 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
   };
   res.render('assets/agents', {
     user: req.session.user!, rows, customers, defaults, isAdmin,
-    msi: agentMsiInfo(), baseUrl: req.protocol + '://' + req.get('host'),
+    msi: agentMsiInfo(), latestVersion: (await getSetting('agent', 'latest_version')) || '',
+    baseUrl: req.protocol + '://' + req.get('host'),
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
@@ -220,8 +223,17 @@ router.post('/agents/installer', requireAuth, requireAdmin, msiUpload.single('ms
       res.redirect('/agents?err=' + encodeURIComponent('That does not look like an MSI file.')); return;
     }
     fs.renameSync(f.path, AGENT_MSI_PATH);
-    await logActivity(req.session.user!.id, 'agent_msi_uploaded', 'settings', null, `Agent MSI updated (${Math.round(f.size / 1048576)} MB)`);
-    res.redirect('/agents?msg=' + encodeURIComponent('Agent installer updated - all customer download links now serve this build.'));
+    // Version drives self-update: agents on an older build pull this one automatically.
+    // Taken from the typed field, else sniffed out of the uploaded filename.
+    const typed = String((req.body && req.body.version) || '').trim();
+    const sniffed = (f.originalname || '').match(/(\d+\.\d+\.\d+(?:\.\d+)?)/);
+    const version = typed || (sniffed ? sniffed[1] : '');
+    if (version) await setSetting('agent', 'latest_version', version);
+    await logActivity(req.session.user!.id, 'agent_msi_uploaded', 'settings', null,
+      `Agent MSI updated (${Math.round(f.size / 1048576)} MB)${version ? ', version ' + version : ', NO VERSION SET - auto-update stays off'}`);
+    res.redirect('/agents?msg=' + encodeURIComponent(version
+      ? `Agent installer updated to ${version} - existing agents will update themselves within 6 hours.`
+      : 'Agent installer updated, but no version was set, so agents will NOT auto-update. Set the version to enable it.'));
   } catch (e: any) {
     res.redirect('/agents?err=' + encodeURIComponent('Upload failed: ' + (e.message || 'unknown error')));
   }
