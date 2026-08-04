@@ -1808,6 +1808,7 @@ model ItReportRun {
   manual      Json?
   subject     String?
   html        String?
+  coverHtml   String?   @map("cover_html")
   status      String?   @default("draft")
   error       String?
   createdAt   DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
