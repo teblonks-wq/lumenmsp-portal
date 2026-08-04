@@ -12,6 +12,16 @@
   .tool-out { background:#0f172a; color:#e2e8f0; font-family:ui-monospace,Consolas,monospace; font-size:12px; line-height:1.5;
               padding:12px 14px; border-radius:8px; max-height:420px; overflow:auto; white-space:pre-wrap; word-break:break-word; margin-top:10px; }
   .tool-out:empty { display:none; }
+  .reg-split { display:flex; gap:10px; align-items:stretch; min-height:340px; }
+  .reg-tree { width:340px; flex:none; overflow:auto; max-height:440px; border:1px solid var(--line); border-radius:8px; padding:6px 4px; background:var(--surface); }
+  .reg-values { flex:1; overflow:auto; max-height:440px; border:1px solid var(--line); border-radius:8px; padding:0 6px; background:var(--surface); }
+  .reg-node { font-size:12.5px; white-space:nowrap; }
+  .reg-node .row { display:flex; align-items:center; gap:3px; padding:2px 4px; border-radius:4px; cursor:pointer; }
+  .reg-node .row:hover { background:var(--surface-2); }
+  .reg-node .row.sel { background:var(--tint-accent); font-weight:600; }
+  .reg-node .tw { width:14px; text-align:center; color:var(--muted); flex:none; }
+  .reg-node ul { list-style:none; margin:0; padding-left:14px; }
+  @media (max-width: 900px) { .reg-split { flex-direction:column; } .reg-tree { width:auto; max-height:220px; } }
   .term { background:#0f172a; border-radius:8px; padding:12px 14px; max-height:460px; overflow:auto;
           font-family:ui-monospace,Consolas,monospace; font-size:12.5px; line-height:1.55; color:#e2e8f0; cursor:text; }
   .term-line { display:flex; gap:8px; align-items:baseline; }
@@ -197,24 +207,50 @@
     <div id="filesResult"></div>
   </div>
 
-  <!-- Registry -->
+  <!-- Registry: modelled on regedit - hive tree on the left, values on the right,
+       address bar across the top, and the toolset engineers actually reach for. -->
   <div class="tool-panel" data-panel="registry">
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-      <select class="input" id="regHive" style="width:auto;font-size:12.5px;">
-        <option value="HKLM:\\SOFTWARE">HKLM\SOFTWARE</option>
-        <option value="HKLM:\\SYSTEM">HKLM\SYSTEM</option>
-        <option value="HKLM:\\SOFTWARE\\Policies">HKLM\SOFTWARE\Policies</option>
-        <option value="HKCU:\\SOFTWARE">HKCU\SOFTWARE</option>
-      </select>
-      <input class="input tool-crumb" id="regPath" placeholder="HKLM:\SOFTWARE\Microsoft" style="flex:1;min-width:260px;">
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+      <input class="input tool-crumb" id="regPath" placeholder="HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft" style="flex:1;min-width:280px;">
       <button class="btn" type="button" id="regGo">Go</button>
-      <button class="btn" type="button" id="regUp">&uarr; Up</button>
-      <button class="btn" type="button" id="regNewValue">New value</button>
-      <button class="btn" type="button" id="regNewKey">New key</button>
+      <button class="btn" type="button" id="regUp" title="Parent key">&uarr;</button>
+      <button class="btn" type="button" id="regRefresh" title="Refresh">&#8635;</button>
       <span class="tool-busy" id="regBusy"></span>
     </div>
-    <p class="muted" style="font-size:11.5px;margin:8px 0 0;">Runs as SYSTEM on the device. HKCU is the SYSTEM account's own hive, not the signed-in user's.</p>
-    <div id="regResult"></div>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+      <input class="input" id="regFind" placeholder="Find…" style="max-width:190px;font-size:12.5px;">
+      <label style="font-size:11.5px;display:flex;gap:4px;align-items:center;"><input type="checkbox" id="regFindKeys" checked> keys</label>
+      <label style="font-size:11.5px;display:flex;gap:4px;align-items:center;"><input type="checkbox" id="regFindValues" checked> values</label>
+      <label style="font-size:11.5px;display:flex;gap:4px;align-items:center;"><input type="checkbox" id="regFindData" checked> data</label>
+      <button class="btn" type="button" id="regFindGo">Find</button>
+      <span style="width:1px;height:18px;background:var(--line);"></span>
+      <button class="btn" type="button" id="regNewKey">New key</button>
+      <select class="input" id="regNewValue" style="width:auto;font-size:12px;">
+        <option value="">New value…</option>
+        <option value="String">String</option>
+        <option value="ExpandString">Expandable String</option>
+        <option value="Binary">Binary</option>
+        <option value="DWord">DWORD (32-bit)</option>
+        <option value="QWord">QWORD (64-bit)</option>
+        <option value="MultiString">Multi-String</option>
+      </select>
+      <button class="btn" type="button" id="regExport" title="Export this key to a .reg file">Export</button>
+      <label class="btn" style="cursor:pointer;margin:0;" title="Import a .reg file">Import
+        <input type="file" id="regImport" accept=".reg" style="display:none;">
+      </label>
+      <button class="btn" type="button" id="regAcl" title="View permissions on this key">Permissions</button>
+      <button class="btn" type="button" id="regCopy" title="Copy key name">Copy name</button>
+    </div>
+
+    <div class="reg-split">
+      <div class="reg-tree" id="regTree"></div>
+      <div class="reg-values" id="regValues"></div>
+    </div>
+    <div class="tool-out" id="regOut"></div>
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0;">
+      Runs as SYSTEM on the device. <strong>HKEY_CURRENT_USER is the SYSTEM account's own hive</strong>, not the signed-in
+      user's &mdash; for a real user's HKCU, use the Console in "Signed-in user" mode.
+    </p>
   </div>
 
   <script>
@@ -233,15 +269,42 @@
     tabs.forEach(function(b){ b.addEventListener('click', function(){ showTool(b.getAttribute('data-tool')); }); });
     showTool('console');
 
+    // Every JSON call goes through here. If the server answers with HTML instead of JSON
+    // we say WHY (status + what it looks like) rather than leaking a parser error.
+    function jsonFetch(url, opts){
+      return fetch(url, opts).then(function(res){
+        var ct = (res.headers.get('content-type') || '').toLowerCase();
+        if (ct.indexOf('application/json') >= 0) {
+          return res.json().then(function(j){
+            if (!res.ok && j && !j.error) throw new Error('Server error ' + res.status);
+            return j;
+          });
+        }
+        return res.text().then(function(body){
+          var hint;
+          if (res.status === 401 || res.status === 403 || /name="password"|Sign in|login/i.test(body.slice(0, 800))) {
+            hint = 'Your session has expired, or this needs admin rights. Reload the page and sign in again.';
+          } else if (res.status === 404) {
+            hint = 'That endpoint is not on the server yet - the Portal needs deploying.';
+          } else if (res.status === 413) {
+            hint = 'That file is too large for the server to accept.';
+          } else {
+            hint = 'The server replied with ' + res.status + ' and a web page instead of data.';
+          }
+          throw new Error(hint);
+        });
+      });
+    }
+
     // ── queue a command, then poll until the agent answers ─────────────────────
     function run(kind, body, busyEl){
       if (busyEl) busyEl.textContent = 'Running on the device…';
       var payload = Object.assign({ kind: kind }, body || {});
-      return fetch(BASE + '/run', {
+      return jsonFetch(BASE + '/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
-      }).then(function(r){ return r.json(); }).then(function(j){
+      }).then(function(j){
         if (!j.ok) throw new Error(j.error || 'Could not queue that command.');
         return poll(j.command_id, busyEl, 0).then(function(res){ res.password = j.password; res.routedTo = j.routed_to; return res; });
       }).catch(function(e){
@@ -253,7 +316,7 @@
     function poll(id, busyEl, tries){
       return new Promise(function(resolve, reject){
         function attempt(n){
-          fetch(BASE + '/result/' + id).then(function(r){ return r.json(); }).then(function(j){
+          jsonFetch(BASE + '/result/' + id).then(function(j){
             if (!j.ok) return reject(new Error(j.error || 'Lost track of that command.'));
             if (j.status === 'queued' || j.status === 'running') {
               if (n > 180) return reject(new Error('Timed out waiting for the device.'));
@@ -473,8 +536,7 @@
     function loadSoftware(){
       var q = document.getElementById('softFilter').value.trim();
       softwareBusy.textContent = 'Loading…';
-      fetch(BASE.replace(/\/tools$/, '') + '/software?q=' + encodeURIComponent(q))
-        .then(function(r){ return r.json(); })
+      jsonFetch(BASE.replace(/\/tools$/, '') + '/software?q=' + encodeURIComponent(q))
         .then(function(j){
           softwareBusy.textContent = '';
           if (!j.ok) throw new Error(j.error || 'Could not load the list.');
@@ -591,7 +653,7 @@
       installBox.style.display = showing ? 'none' : 'block';
       if (!showing && !installBox._loaded) {
         installBox._loaded = true;
-        fetch('/agent-packages.json').then(function(r){ return r.json(); }).then(function(j){
+        jsonFetch('/agent-packages.json').then(function(j){
           if (!j.ok) return;
           var sel = document.getElementById('pkgSelect');
           j.rows.forEach(function(p){
@@ -631,11 +693,29 @@
         ], document.getElementById('svcFilter'), function(x){
           return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-svc="' + esc(x.name) + '" data-act="restart">Restart</button> ' +
                  '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-svc="' + esc(x.name) + '" data-act="' + (String(x.status)==='Running'?'stop':'start') + '">' +
-                 (String(x.status)==='Running'?'Stop':'Start') + '</button>';
+                 (String(x.status)==='Running'?'Stop':'Start') + '</button> ' +
+                 '<select class="input" style="width:auto;font-size:11px;padding:1px 4px;" data-startup="' + esc(x.name) + '" title="Change the startup type">' +
+                   '<option value="">startup\u2026</option>' +
+                   '<option value="Automatic">Automatic</option>' +
+                   '<option value="AutomaticDelayed">Automatic (delayed)</option>' +
+                   '<option value="Manual">Manual</option>' +
+                   '<option value="Disabled">Disabled</option>' +
+                 '</select>';
         });
       }).catch(function(e){ fail(servicesResult, e.message); });
     }
     document.querySelector('[data-load="services"]').addEventListener('click', loadServices);
+    servicesResult.addEventListener('change', function(e){
+      var sel = e.target.closest('[data-startup]'); if (!sel || !sel.value) return;
+      var name = sel.getAttribute('data-startup'), mode = sel.value;
+      if (!confirm('Set "' + name + '" startup type to ' + mode + ' on <%= asset.hostname %>?')) { sel.value = ''; return; }
+      sel.disabled = true;
+      run('services.startup', { name: name, startup: mode }, document.getElementById('servicesBusy')).then(function(r){
+        alert(r.output || 'Done.');
+        loadServices();
+      }).catch(function(err){ alert(err.message); sel.disabled = false; sel.value = ''; });
+    });
+
     servicesResult.addEventListener('click', function(e){
       var b = e.target.closest('[data-svc]'); if (!b) return;
       var name = b.getAttribute('data-svc'), act = b.getAttribute('data-act');
@@ -826,7 +906,7 @@
       var fd = new FormData(); fd.append('file', file);
       filesBusy.textContent = 'Uploading to the portal…';
       var input = this;
-      fetch(BASE + '/stage', { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(j){
+      jsonFetch(BASE + '/stage', { method: 'POST', body: fd }).then(function(j){
         if (!j.ok) throw new Error(j.error || 'Upload failed.');
         return run('files.upload', {
           transfer_id: j.id,
@@ -861,105 +941,267 @@
         }).catch(function(e){ fail(filesResult, e.message); });
     });
 
-    // ── registry ───────────────────────────────────────────────────────────────
-    var regResult = document.getElementById('regResult');
+    // ── registry (regedit-style) ───────────────────────────────────────────────
+    // Display uses the long hive names people recognise (HKEY_LOCAL_MACHINE\...);
+    // the agent needs PowerShell provider paths (HKLM:\...). Convert at the boundary
+    // so neither side has to care about the other's convention.
+    var BS = String.fromCharCode(92);
+    var regOut = document.getElementById('regOut');
     var regBusy = document.getElementById('regBusy');
     var regPath = document.getElementById('regPath');
-
-    function regBrowse(key){
-      regPath.value = key || '';
-      regResult.innerHTML = '';
-      run('reg.list', { key: key || '' }, regBusy).then(function(r){
-        if (r.status !== 'done') { fail(regResult, r.output || 'Could not read that key.'); return; }
-        var parsed = parseRows(r.output);
-        if (parsed === null || !parsed.length) { fail(regResult, r.output || 'Nothing there.'); return; }
-        var payload = parsed[0];
-        var items = payload.items || [];
-        renderTable(regResult, items, [
-          { k:'name', t:'Name', render:function(x){
-              if (x.kind === 'key') {
-                var full = (regPath.value.replace(/\\+$/, '')) + '\\' + x.name;
-                return '&#128193; <a href="#" class="row-link" data-regkey="' + esc(full) + '">' + esc(x.name) + '</a>';
-              }
-              return '&#128459; ' + esc(x.name);
-            } },
-          { k:'type', t:'Type', render:function(x){ return x.kind === 'key' ? '<span class="muted">key</span>' : esc(x.type || ''); } },
-          { k:'data', t:'Data', render:function(x){ return x.kind === 'key' ? '' : '<span style="font-family:ui-monospace,Consolas,monospace;">' + esc(x.data || '') + '</span>'; } }
-        ], null, function(x){
-          if (x.kind === 'key') {
-            return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-regdelkey="' + esc(x.name) + '">Delete key</button>';
-          }
-          return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-regedit="' + esc(x.name) + '" data-type="' + esc(x.type || 'String') + '" data-data="' + esc(x.data || '') + '">Edit</button> ' +
-                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-regdelval="' + esc(x.name) + '">Delete</button>';
-        });
-      }).catch(function(e){ fail(regResult, e.message); });
+    var regTree = document.getElementById('regTree');
+    var regValues = document.getElementById('regValues');
+    var regCur = '';                     // current key, provider form
+    var HIVES = [
+      { disp: 'HKEY_CLASSES_ROOT',   prov: 'HKCR:' },
+      { disp: 'HKEY_CURRENT_USER',   prov: 'HKCU:' },
+      { disp: 'HKEY_LOCAL_MACHINE',  prov: 'HKLM:' },
+      { disp: 'HKEY_USERS',          prov: 'HKU:'  },
+      { disp: 'HKEY_CURRENT_CONFIG', prov: 'HKCC:' }
+    ];
+    function toDisplay(p){
+      for (var i = 0; i < HIVES.length; i++) {
+        if (p === HIVES[i].prov || p.indexOf(HIVES[i].prov + BS) === 0) {
+          return HIVES[i].disp + p.slice(HIVES[i].prov.length);
+        }
+      }
+      return p;
+    }
+    function toProvider(p){
+      p = (p || '').trim().replace(/^Computer[\\\/]/i, '');
+      for (var i = 0; i < HIVES.length; i++) {
+        if (p === HIVES[i].disp || p.indexOf(HIVES[i].disp + BS) === 0) {
+          return HIVES[i].prov + p.slice(HIVES[i].disp.length);
+        }
+        // tolerate the short form typed by hand
+        var shortP = HIVES[i].prov.slice(0, -1);
+        if (p === shortP || p.indexOf(shortP + BS) === 0) return HIVES[i].prov + p.slice(shortP.length);
+      }
+      return p;
+    }
+    function regParent(p){
+      var t = p.replace(/\\+$/, '');
+      var i = t.lastIndexOf(BS);
+      return i < 0 ? '' : t.slice(0, i);
     }
 
-    function regReload(){ regBrowse(regPath.value.trim()); }
+    // --- tree ---------------------------------------------------------------
+    function makeNode(displayName, providerPath, hasChildren){
+      var li = document.createElement('li');
+      li.className = 'reg-node';
+      var row = document.createElement('div');
+      row.className = 'row';
+      row.setAttribute('data-key', providerPath);
+      var tw = document.createElement('span');
+      tw.className = 'tw';
+      tw.textContent = hasChildren ? '\u25B8' : '';
+      var label = document.createElement('span');
+      label.textContent = displayName;
+      row.appendChild(tw); row.appendChild(label);
+      li.appendChild(row);
+      var ul = document.createElement('ul');
+      ul.style.display = 'none';
+      li.appendChild(ul);
+      li._tw = tw; li._ul = ul; li._loaded = false; li._has = hasChildren;
+      tw.addEventListener('click', function(e){ e.stopPropagation(); toggleNode(li, providerPath); });
+      row.addEventListener('click', function(){ selectKey(providerPath); });
+      return li;
+    }
+    function toggleNode(li, key){
+      if (!li._has) return;
+      if (li._ul.style.display === 'none') {
+        li._ul.style.display = '';
+        li._tw.textContent = '\u25BE';
+        if (!li._loaded) { li._loaded = true; loadChildren(li, key); }
+      } else {
+        li._ul.style.display = 'none';
+        li._tw.textContent = '\u25B8';
+      }
+    }
+    function loadChildren(li, key){
+      li._ul.innerHTML = '<li class="reg-node muted" style="padding-left:16px;">loading…</li>';
+      run('reg.list', { key: key }, null).then(function(r){
+        var p = parseRows(r.output);
+        li._ul.innerHTML = '';
+        if (p === null || !p.length) { li._has = false; li._tw.textContent = ''; return; }
+        var subs = p[0].subkeys || [];
+        if (!subs.length) { li._has = false; li._tw.textContent = ''; return; }
+        subs.forEach(function(sk){
+          li._ul.appendChild(makeNode(sk.name, key.replace(/\\+$/, '') + BS + sk.name, sk.children !== false));
+        });
+      }).catch(function(e){ li._ul.innerHTML = '<li class="reg-node term-err" style="padding-left:16px;">' + esc(e.message) + '</li>'; });
+    }
+    function buildRoot(){
+      regTree.innerHTML = '';
+      var ul = document.createElement('ul');
+      ul.style.paddingLeft = '2px';
+      HIVES.forEach(function(h){ ul.appendChild(makeNode(h.disp, h.prov, true)); });
+      regTree.appendChild(ul);
+    }
 
-    regResult.addEventListener('click', function(e){
-      var open = e.target.closest('[data-regkey]');
-      if (open) { e.preventDefault(); regBrowse(open.getAttribute('data-regkey')); return; }
+    // --- values pane --------------------------------------------------------
+    function selectKey(key){
+      regCur = key;
+      regPath.value = toDisplay(key);
+      regTree.querySelectorAll('.row.sel').forEach(function(r){ r.classList.remove('sel'); });
+      var row = regTree.querySelector('.row[data-key="' + (window.CSS && CSS.escape ? CSS.escape(key) : key.replace(/"/g, '\\"')) + '"]');
+      if (row) row.classList.add('sel');
+      regOut.textContent = '';
+      regValues.innerHTML = '';
+      run('reg.list', { key: key }, regBusy).then(function(r){
+        if (r.status !== 'done' || r.exit_code) { fail(regValues, r.output || 'Could not read that key.'); return; }
+        var p = parseRows(r.output);
+        if (p === null || !p.length) { fail(regValues, r.output || 'Nothing there.'); return; }
+        renderTable(regValues, p[0].values || [], [
+          { k:'name', t:'Name', render:function(x){ return '&#128459; ' + esc(x.name); } },
+          { k:'type', t:'Type' },
+          { k:'data', t:'Data', render:function(x){ return '<span style="font-family:ui-monospace,Consolas,monospace;">' + esc(x.data || '') + '</span>'; } }
+        ], null, function(x){
+          if (x.data === '(value not set)' && x.name === '(Default)') return '';
+          return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-regedit="' + esc(x.name) + '" data-type="' + esc(x.type || 'String') + '" data-data="' + esc(x.data || '') + '">Modify</button> ' +
+                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-regren="' + esc(x.name) + '">Rename</button> ' +
+                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-regdelval="' + esc(x.name) + '">Delete</button>';
+        });
+      }).catch(function(e){ fail(regValues, e.message); });
+    }
+    function regReload(){ if (regCur) selectKey(regCur); }
 
+    // --- value + key actions ------------------------------------------------
+    regValues.addEventListener('click', function(e){
       var edit = e.target.closest('[data-regedit]');
       if (edit) {
         var nm = edit.getAttribute('data-regedit');
-        var cur = edit.getAttribute('data-data');
-        var val = window.prompt('New data for "' + nm + '" (' + edit.getAttribute('data-type') + '):', cur);
+        var type = edit.getAttribute('data-type');
+        var hint = type === 'MultiString' ? ' (one entry per line — use \\n between entries)'
+                 : type === 'Binary' ? ' (hex bytes, e.g. 00 ff 1a)'
+                 : (type === 'DWord' || type === 'QWord') ? ' (a number)' : '';
+        var val = window.prompt('Value data for "' + nm + '" [' + type + ']' + hint + ':', edit.getAttribute('data-data'));
         if (val === null) return;
-        run('reg.set', { key: regPath.value.trim(), name: nm === '(Default)' ? '' : nm, type: edit.getAttribute('data-type'), data: val }, regBusy)
-          .then(function(r){ if (r.status !== 'done' || r.exit_code) alert(r.output || 'Failed.'); regReload(); })
+        run('reg.set', { key: regCur, name: nm === '(Default)' ? '' : nm, type: type, data: val }, regBusy)
+          .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); regReload(); })
           .catch(function(err){ alert(err.message); });
         return;
       }
-
-      var delVal = e.target.closest('[data-regdelval]');
-      if (delVal) {
-        var vn = delVal.getAttribute('data-regdelval');
+      var ren = e.target.closest('[data-regren]');
+      if (ren) {
+        var old = ren.getAttribute('data-regren');
+        if (old === '(Default)') { alert('The default value cannot be renamed.'); return; }
+        var to = window.prompt('Rename value "' + old + '" to:', old);
+        if (!to || to === old) return;
+        run('reg.rename', { key: regCur, name: old, to: to }, regBusy)
+          .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); regReload(); })
+          .catch(function(err){ alert(err.message); });
+        return;
+      }
+      var del = e.target.closest('[data-regdelval]');
+      if (del) {
+        var vn = del.getAttribute('data-regdelval');
         if (!confirm('Delete the value "' + vn + '"?')) return;
-        run('reg.deleteValue', { key: regPath.value.trim(), name: vn === '(Default)' ? '' : vn }, regBusy)
-          .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); regReload(); })
-          .catch(function(err){ alert(err.message); });
-        return;
-      }
-
-      var delKey = e.target.closest('[data-regdelkey]');
-      if (delKey) {
-        var kn = delKey.getAttribute('data-regdelkey');
-        if (!confirm('Delete the key "' + kn + '" AND everything under it?\n\nThis cannot be undone.')) return;
-        run('reg.deleteKey', { key: (regPath.value.replace(/\\+$/, '')) + '\\' + kn }, regBusy)
+        run('reg.deleteValue', { key: regCur, name: vn === '(Default)' ? '' : vn }, regBusy)
           .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); regReload(); })
           .catch(function(err){ alert(err.message); });
       }
     });
 
-    document.getElementById('regGo').addEventListener('click', function(){ regBrowse(regPath.value.trim()); });
-    regPath.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); regBrowse(regPath.value.trim()); } });
-    document.getElementById('regHive').addEventListener('change', function(){ regBrowse(this.value); });
-    document.getElementById('regUp').addEventListener('click', function(){
-      var p = regPath.value.replace(/\\+$/, '');
-      if (p.indexOf('\\') < 0) return;
-      regBrowse(p.replace(/\\[^\\]*$/, ''));
-    });
-    document.getElementById('regNewValue').addEventListener('click', function(){
-      var key = regPath.value.trim(); if (!key) { alert('Open a key first.'); return; }
-      var nm = window.prompt('Value name:'); if (nm === null) return;
-      var type = window.prompt('Type — String, ExpandString, MultiString, DWord, QWord or Binary:', 'String');
-      if (type === null) return;
-      var data = window.prompt('Data:', ''); if (data === null) return;
-      run('reg.set', { key: key, name: nm, type: type, data: data }, regBusy)
+    document.getElementById('regNewValue').addEventListener('change', function(){
+      var type = this.value; this.value = '';
+      if (!type) return;
+      if (!regCur) { alert('Select a key first.'); return; }
+      var nm = window.prompt('New ' + type + ' value name:');
+      if (nm === null || !nm) return;
+      var data = window.prompt('Data for "' + nm + '":', (type === 'DWord' || type === 'QWord') ? '0' : '');
+      if (data === null) return;
+      run('reg.set', { key: regCur, name: nm, type: type, data: data }, regBusy)
         .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); regReload(); })
         .catch(function(e){ alert(e.message); });
     });
+
     document.getElementById('regNewKey').addEventListener('click', function(){
-      var key = regPath.value.trim(); if (!key) { alert('Open a parent key first.'); return; }
-      var nm = window.prompt('New key name:'); if (!nm) return;
-      run('reg.newKey', { key: key.replace(/\\+$/, '') + '\\' + nm }, regBusy)
-        .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); regReload(); })
+      if (!regCur) { alert('Select a parent key first.'); return; }
+      var nm = window.prompt('New key name:');
+      if (!nm) return;
+      run('reg.newKey', { key: regCur.replace(/\\+$/, '') + BS + nm }, regBusy)
+        .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); buildRoot(); selectKey(regCur); })
         .catch(function(e){ alert(e.message); });
+    });
+
+    document.getElementById('regExport').addEventListener('click', function(){
+      if (!regCur) { alert('Select a key first.'); return; }
+      regOut.textContent = 'Exporting…';
+      run('reg.export', { key: regCur }, regBusy).then(function(r){
+        var out = String(r.output || '');
+        var k = out.indexOf('___LMA_FILE___');
+        if (k < 0) { regOut.textContent = out || 'Export failed.'; return; }
+        var parts = out.slice(k + 14).trim().split('|');
+        regOut.textContent = 'Exported ' + (parts[1] || 'key') + ' — download starting.';
+        window.location.href = BASE + '/file/' + parts[0];
+      }).catch(function(e){ regOut.textContent = e.message; });
+    });
+
+    document.getElementById('regImport').addEventListener('change', function(){
+      var file = this.files && this.files[0];
+      var input = this;
+      if (!file) return;
+      if (!confirm('Import "' + file.name + '" into the registry on <%= asset.hostname %>?\n\nA .reg file can change anything on the machine. This cannot be undone.')) { input.value = ''; return; }
+      var fd = new FormData(); fd.append('file', file);
+      regOut.textContent = 'Uploading…';
+      jsonFetch(BASE + '/stage', { method: 'POST', body: fd }).then(function(j){
+        if (!j.ok) throw new Error(j.error || 'Upload failed.');
+        return run('reg.import', { transfer_id: j.id }, regBusy);
+      }).then(function(r){
+        regOut.textContent = r.output || 'Imported.';
+        regReload();
+      }).catch(function(e){ regOut.textContent = e.message; })
+        .then(function(){ input.value = ''; });
+    });
+
+    document.getElementById('regAcl').addEventListener('click', function(){
+      if (!regCur) { alert('Select a key first.'); return; }
+      regOut.textContent = 'Reading permissions…';
+      run('reg.acl', { key: regCur }, regBusy)
+        .then(function(r){ regOut.textContent = r.output || '(none)'; })
+        .catch(function(e){ regOut.textContent = e.message; });
+    });
+
+    document.getElementById('regCopy').addEventListener('click', function(){
+      var t = toDisplay(regCur || '');
+      if (!t) return;
+      (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject())
+        .then(function(){ regOut.textContent = 'Copied: ' + t; })
+        .catch(function(){ window.prompt('Copy the key name:', t); });
+    });
+
+    document.getElementById('regFindGo').addEventListener('click', function(){
+      var term = document.getElementById('regFind').value.trim();
+      if (!term) { alert('Type something to search for.'); return; }
+      if (!regCur) { alert('Select the key to search under first.'); return; }
+      regOut.textContent = 'Searching under ' + toDisplay(regCur) + '… this can take a while on a big hive.';
+      run('reg.find', {
+        key: regCur, term: term,
+        keys: document.getElementById('regFindKeys').checked ? '1' : '0',
+        values: document.getElementById('regFindValues').checked ? '1' : '0',
+        data: document.getElementById('regFindData').checked ? '1' : '0'
+      }, regBusy).then(function(r){ regOut.textContent = r.output || 'No matches.'; })
+        .catch(function(e){ regOut.textContent = e.message; });
+    });
+    document.getElementById('regFind').addEventListener('keydown', function(e){
+      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('regFindGo').click(); }
+    });
+
+    function regGo(){
+      var p = toProvider(regPath.value);
+      if (!p) return;
+      selectKey(p);
+    }
+    document.getElementById('regGo').addEventListener('click', regGo);
+    regPath.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); regGo(); } });
+    document.getElementById('regRefresh').addEventListener('click', regReload);
+    document.getElementById('regUp').addEventListener('click', function(){
+      var up = regParent(regCur);
+      if (up) selectKey(up);
     });
     document.querySelector('[data-tool="registry"]').addEventListener('click', function(){
-      if (!regResult.innerHTML) regBrowse(document.getElementById('regHive').value);
+      if (!regTree.innerHTML) { buildRoot(); selectKey('HKLM:' + BS + 'SOFTWARE'); }
     });
 
     document.getElementById('filesRoot').addEventListener('click', function(){ browse(''); });

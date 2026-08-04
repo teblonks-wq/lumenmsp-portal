@@ -76,11 +76,13 @@ export async function getDocEvents(docType: DocType, docId: number): Promise<Doc
 }
 
 // Resolve a pixel hit back to the send it belongs to.
+// age_secs is computed in SQL so the prefetch check below is not an hour out (BST).
 export async function findSendByPixel(token: string): Promise<any | null> {
   try {
     const { rows } = await pool.query(
-      `SELECT id, doc_type, doc_id, customer_id, actor, created_at FROM document_events
-        WHERE pixel_token=$1 LIMIT 1`, [token]);
+      `SELECT id, doc_type, doc_id, customer_id, actor, created_at,
+              EXTRACT(EPOCH FROM (NOW() - created_at)) AS age_secs
+         FROM document_events WHERE pixel_token=$1 LIMIT 1`, [token]);
     return rows[0] || null;
   } catch { return null; }
 }

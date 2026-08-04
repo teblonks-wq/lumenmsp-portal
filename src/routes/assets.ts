@@ -24,6 +24,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   const type = String(req.query.type || '').trim();
   const onlineOnly = req.query.online === '1';
   const noUser = req.query.nouser === '1'; // "unallocated" - no last logged-in user known
+  const agentOnly = req.query.agent === '1'; // only devices running the LumenMSP Agent
 
   const where: string[] = ['a.customer_id IS NOT NULL'];
   const params: any[] = [];
@@ -32,6 +33,8 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   if (type) { params.push(type); where.push(`a.device_type = $${params.length}`); }
   if (onlineOnly) where.push('a.online_status = true');
   if (noUser) where.push("(a.assigned_contact_id IS NULL AND (a.last_login_user IS NULL OR a.last_login_user = ''))");
+  // agd is the LATERAL agent match below, so it can be filtered on here.
+  if (agentOnly) where.push('agd.id IS NOT NULL');
 
   const rows = (await pool.query(
     `SELECT a.*, c.name AS customer_name, ac.full_name AS assigned_name,
@@ -61,7 +64,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
 
   res.render('assets/list', {
     user: req.session.user!, rows, unmatchedCount, types, customers, backupState,
-    filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser },
+    filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentOnly },
     lastSynced: await lastAssetSyncAt(),
     remoteTemplate: await remoteUrlTemplate(),
     notice: req.query.msg || null, error: req.query.err || null,
@@ -178,9 +181,17 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
 router.get('/agents', requireAuth, async (req: Request, res: Response) => {
   const rows = (await pool.query(
     `SELECT d.*, c.name AS customer_name,
-            EXTRACT(EPOCH FROM (NOW() - d.last_seen_at)) AS seen_secs
+            EXTRACT(EPOCH FROM (NOW() - d.last_seen_at)) AS seen_secs,
+            a.id AS asset_id
      FROM agent_devices d
      LEFT JOIN customers c ON c.id = d.customer_id
+     LEFT JOIN LATERAL (
+       SELECT ca.id FROM customer_assets ca
+       WHERE ca.customer_id = d.customer_id
+         AND ((d.serial_number IS NOT NULL AND ca.serial_number = d.serial_number)
+           OR (d.hostname IS NOT NULL AND LOWER(ca.hostname) = LOWER(d.hostname)))
+       ORDER BY ca.id LIMIT 1
+     ) a ON true
      ORDER BY c.name, d.hostname`)).rows;
   const isAdmin = req.session.user!.role === 'admin';
   // Every active customer gets a site key automatically — the download picker just works,

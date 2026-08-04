@@ -51,6 +51,11 @@ const KINDS: Record<string, { label: string; ad?: boolean; destructive?: boolean
   'reg.deleteValue': { label: 'Deleted a registry value', destructive: true },
   'reg.newKey': { label: 'Created a registry key', destructive: true },
   'reg.deleteKey': { label: 'Deleted a registry key', destructive: true },
+  'reg.rename': { label: 'Renamed a registry key or value', destructive: true },
+  'reg.find': { label: 'Searched the registry' },
+  'reg.export': { label: 'Exported a registry key' },
+  'reg.import': { label: 'Imported a .reg file', destructive: true },
+  'reg.acl': { label: 'Viewed registry permissions' },
   'services.list': { label: 'Listed services' },
   'services.restart': { label: 'Restarted a service', destructive: true },
   'services.start': { label: 'Started a service', destructive: true },
@@ -168,7 +173,14 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
       payload.key = String(b.key || '').slice(0, 500);
       if (b.name != null) payload.name = String(b.name).slice(0, 300);
       if (b.type != null) payload.type = String(b.type).slice(0, 20);
-      if (b.data != null) payload.data = String(b.data).slice(0, 4000);
+      if (b.data != null) payload.data = String(b.data).slice(0, 8000);
+      if (b.to != null) payload.to = String(b.to).slice(0, 300);
+      if (b.term != null) payload.term = String(b.term).slice(0, 200);
+      if (b.keys != null) payload.keys = String(b.keys) === '0' ? '0' : '1';
+      if (b.values != null) payload.values = String(b.values) === '0' ? '0' : '1';
+      if (b.data_search != null) payload.data = String(b.data_search) === '0' ? '0' : '1';
+      if (kind === 'reg.find') payload.data = String(b.data) === '0' ? '0' : '1';
+      if (kind === 'reg.import') payload.transfer_id = String(b.transfer_id || '').replace(/[^a-f0-9]/gi, '').slice(0, 32);
     }
     if (kind === 'software.uninstall') {
       payload.name = String(b.name || '').slice(0, 300);

@@ -153,13 +153,16 @@ export async function callHistory(limit = 40): Promise<any[]> {
     `SELECT c.call_id, c.direction, c.peer, c.peer_name, c.contact_id, c.customer_id, c.status,
             c.started_at, c.duration_secs,
             (SELECT MAX(cl.created_at) FROM channel_log cl
-              WHERE cl.channel='whatsapp' AND cl.direction='inbound' AND cl.peer = c.peer) AS last_inbound_at
+              WHERE cl.channel='whatsapp' AND cl.direction='inbound' AND cl.peer = c.peer) AS last_inbound_at,
+            (SELECT EXTRACT(EPOCH FROM (NOW() - MAX(cl.created_at))) FROM channel_log cl
+              WHERE cl.channel='whatsapp' AND cl.direction='inbound' AND cl.peer = c.peer) AS inbound_age_secs
        FROM wa_calls c ORDER BY c.started_at DESC LIMIT $1`, [limit]
   );
-  const now = Date.now();
+  // Age measured in SQL: against the Node clock this read an hour stale in BST and closed
+  // the 24h window early. See [[portal-timestamp-timezone-trap]].
   return r.rows.map((row: any) => ({
     ...row,
-    callable: !!row.last_inbound_at && (now - new Date(row.last_inbound_at).getTime()) < WINDOW_MS,
+    callable: row.inbound_age_secs != null && Number(row.inbound_age_secs) * 1000 < WINDOW_MS,
     window_expires_at: row.last_inbound_at ? new Date(new Date(row.last_inbound_at).getTime() + WINDOW_MS).toISOString() : null,
   }));
 }
@@ -167,10 +170,11 @@ export async function callHistory(limit = 40): Promise<any[]> {
 // Is a call-back to this peer currently allowed (open 24h window)?
 async function withinWindow(peer: string): Promise<boolean> {
   const r = await pool.query(
-    `SELECT MAX(created_at) AS last_in FROM channel_log WHERE channel='whatsapp' AND direction='inbound' AND peer=$1`, [peer]
+    `SELECT EXTRACT(EPOCH FROM (NOW() - MAX(created_at))) AS age_secs
+       FROM channel_log WHERE channel='whatsapp' AND direction='inbound' AND peer=$1`, [peer]
   );
-  const last = r.rows[0]?.last_in;
-  return !!last && (Date.now() - new Date(last).getTime()) < WINDOW_MS;
+  const age = r.rows[0]?.age_secs;
+  return age != null && Number(age) * 1000 < WINDOW_MS;
 }
 
 // ── Agent actions over the WebSocket ────────────────────────────────────────────

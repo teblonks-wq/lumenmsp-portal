@@ -124,7 +124,15 @@
         <% rows.forEach(function(d){ var on = !d.revoked && isOnline(d); %>
         <tr style="<%= d.revoked ? 'opacity:.5;' : '' %>">
           <td><span title="<%= d.revoked ? 'Revoked' : (on ? 'Online' : 'Offline') %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= d.revoked ? 'var(--bad-fg)' : (on ? 'var(--ok)' : 'var(--line-strong)') %>;"></span></td>
-          <td><strong><%= d.hostname || '(unnamed)' %></strong><% if (d.serial_number) { %><div class="muted" style="font-size:11px;"><%= d.serial_number %></div><% } %></td>
+          <td>
+            <% if (d.asset_id) { %>
+              <a class="row-link" href="/assets/<%= d.asset_id %>?back=<%= encodeURIComponent('/agents') %>" style="font-weight:700;" title="Open this device - system info, backup and the Tools tab"><%= d.hostname || '(unnamed)' %></a>
+            <% } else { %>
+              <strong><%= d.hostname || '(unnamed)' %></strong>
+              <span class="muted" style="font-size:10.5px;" title="No matching Atera asset - the device may not be in Atera, or its serial/hostname differs">(no asset)</span>
+            <% } %>
+            <% if (d.serial_number) { %><div class="muted" style="font-size:11px;"><%= d.serial_number %></div><% } %>
+          </td>
           <td>
             <% if (d.customer_id) { %><a class="row-link" href="/customers/<%= d.customer_id %>"><%= d.customer_name %></a><% } else { %><span class="muted">—</span><% } %>
             <% if (isAdmin) { var known = (customers || []).some(function(c){ return c.id === d.customer_id; }); %>

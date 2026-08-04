@@ -21,7 +21,9 @@ router.get('/e/:token.gif', async (req: Request, res: Response) => {
     const send = await findSendByPixel(token);
     if (send) {
       const ua = userAgent(req);
-      const sinceSend = Date.now() - new Date(send.created_at).getTime();
+      // From SQL, not the Node clock: an hour of skew made every open look late, so the
+      // prefetch check never fired and scanner hits were logged as genuine reads.
+      const sinceSend = Math.max(0, Number(send.age_secs || 0) * 1000);
       // Fired the instant the mail landed, or by a known scanner/proxy: almost certainly
       // automated rather than a person opening it.
       const prefetch = sinceSend < PREFETCH_WINDOW_MS ||

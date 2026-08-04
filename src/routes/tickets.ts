@@ -514,10 +514,13 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
 
   // WhatsApp 24h customer-care window: free-form replies only work within 24h of the customer's
   // last inbound WhatsApp. Outside it, Meta requires an approved template — the composer locks.
-  const waInb = (await pool.query("SELECT from_email, COALESCE(received_at, created_at) AS at FROM inbox_messages WHERE ticket_id=$1 AND channel='whatsapp' AND message_direction='inbound' ORDER BY COALESCE(received_at, created_at) DESC LIMIT 1", [r.rows[0].id]).catch(() => ({ rows: [] }))).rows[0];
+  // age_secs comes from the DATABASE clock. Comparing a db timestamp against the Node
+  // clock made this window close an HOUR early in BST (see [[portal-timestamp-timezone-trap]]),
+  // locking the composer and demanding a template while free-form would still deliver.
+  const waInb = (await pool.query("SELECT from_email, COALESCE(received_at, created_at) AS at, EXTRACT(EPOCH FROM (NOW() - COALESCE(received_at, created_at))) AS age_secs FROM inbox_messages WHERE ticket_id=$1 AND channel='whatsapp' AND message_direction='inbound' ORDER BY COALESCE(received_at, created_at) DESC LIMIT 1", [r.rows[0].id]).catch(() => ({ rows: [] }))).rows[0];
   const waNum = waInb ? String(waInb.from_email || '').replace(/[^\d]/g, '') : '';
   const waName = requesterName || r.rows[0].contact_name || '';
-  const waWindowOpen = !!(waInb && (Date.now() - new Date(waInb.at).getTime()) < 24 * 60 * 60 * 1000);
+  const waWindowOpen = !!(waInb && Number(waInb.age_secs) < 24 * 60 * 60);
   // Whether a Teams send can actually work on this case (drives the composer's Teams pill).
   const teamsSendOk = await teamsSendPossible(r.rows[0].teams_conversation || null);
   // Whether this case is linked to a LumenMSP Agent device (drives the composer's Agent pill).
