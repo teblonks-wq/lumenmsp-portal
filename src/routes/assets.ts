@@ -6,7 +6,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { getSetting, setSetting } from '../lib/settings';
-import { AGENT_MSI_DIR, AGENT_MSI_PATH, AGENT_VERSION_PATH, agentMsiInfo, agentHostedVersion, agentHostedSha256, rolloutState } from './agent-api';
+import { AGENT_MSI_DIR, AGENT_MSI_PATH, AGENT_VERSION_PATH, agentMsiInfo, agentHostedVersion, agentHostedSha256, rolloutState, wakeAgent } from './agent-api';
 import { syncAssetsFromAtera, lastAssetSyncAt, remoteUrlTemplate, saveRemoteUrlTemplate, buildRemoteUrl } from '../lib/asset-sync';
 import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
 
@@ -193,6 +193,7 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
   const defaults = {
     url: isAdmin ? ((await getSetting('agent', 'rmm_installer_url')) || '') : '',
     args: isAdmin ? ((await getSetting('agent', 'rmm_install_args')) || '') : '',
+    template: isAdmin ? ((await getSetting('agent', 'rmm_installer_template')) || '') : '',
   };
   const rollout = await rolloutState();
   const ringCounts = (await pool.query(
@@ -279,10 +280,68 @@ router.post('/agents/rmm-url/:customerId', requireAuth, requireAdmin, async (req
 router.post('/agents/settings', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const url = String(req.body.url || '').trim().slice(0, 500);
   const args = String(req.body.args || '').trim().slice(0, 200);
+  const template = String(req.body.template || '').trim().slice(0, 500);
   if (url && !/^https:\/\//i.test(url)) { res.redirect('/agents?err=' + encodeURIComponent('RMM installer URL must be https://')); return; }
+  if (template && !/^https:\/\//i.test(template)) { res.redirect('/agents?err=' + encodeURIComponent('RMM installer template must be https://')); return; }
+  if (template && !template.includes('{cid}')) {
+    res.redirect('/agents?err=' + encodeURIComponent('The template must contain {cid} - that is what gets swapped for each customer\'s Atera id. Without it, every machine would enrol into one Atera account.'));
+    return;
+  }
   await setSetting('agent', 'rmm_installer_url', url || null);
   await setSetting('agent', 'rmm_install_args', args || null);
-  res.redirect('/agents?msg=' + encodeURIComponent('Agent defaults saved.'));
+  await setSetting('agent', 'rmm_installer_template', template || null);
+  // How many customers the template can actually serve, so a half-done Atera match is visible.
+  let covered = 0, total = 0;
+  try {
+    const r = await pool.query(`SELECT COUNT(*)::int AS total,
+      COUNT(*) FILTER (WHERE atera_customer_id IS NOT NULL AND atera_customer_id <> '')::int AS covered
+      FROM customers WHERE deleted_at IS NULL AND status='active'`);
+    covered = r.rows[0].covered; total = r.rows[0].total;
+  } catch { /* cosmetic */ }
+  res.redirect('/agents?msg=' + encodeURIComponent(template
+    ? `Agent defaults saved. The template covers ${covered} of ${total} active customers (the rest have no Atera customer id - set a per-customer URL for those).`
+    : 'Agent defaults saved.'));
+});
+
+// "Update now" — queue a pushed update for one device, or for every device that is
+// behind. The version and checksum travel in the command, so a push bypasses the ring
+// gate: clicking the button is a deliberate act, unlike the unattended 6-hourly check.
+async function queueUpdate(deviceId: number, version: string, sha: string, userId: number): Promise<void> {
+  await pool.query(
+    `INSERT INTO agent_commands (device_id, kind, payload, requested_by) VALUES ($1,'agent.update',$2,$3)`,
+    [deviceId, JSON.stringify({ version, sha256: sha }), userId]);
+  wakeAgent(deviceId);
+}
+
+router.post('/agents/:id/update-now', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const version = agentHostedVersion();
+  const sha = agentHostedSha256();
+  if (!version || !sha) { res.redirect('/agents?err=' + encodeURIComponent('No published build with a checksum - run build.ps1 first.')); return; }
+  const d = (await pool.query('SELECT hostname, agent_version FROM agent_devices WHERE id=$1 AND revoked=false', [id])).rows[0];
+  if (!d) { res.redirect('/agents?err=' + encodeURIComponent('Device not found.')); return; }
+  await queueUpdate(id, version, sha, req.session.user!.id);
+  await logActivity(req.session.user!.id, 'agent_update_push', 'agent_devices', id, `Pushed ${version} to ${d.hostname}`);
+  res.redirect('/agents?msg=' + encodeURIComponent(
+    `Update to ${version} sent to ${d.hostname}. It downloads, verifies the checksum and restarts - give it a minute, then refresh.`));
+});
+
+router.post('/agents/update-all', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const version = agentHostedVersion();
+  const sha = agentHostedSha256();
+  if (!version || !sha) { res.redirect('/agents?err=' + encodeURIComponent('No published build with a checksum - run build.ps1 first.')); return; }
+  // Only devices that can actually act on it: enrolled, not revoked, behind, and new
+  // enough to have a command worker (pre-1.0.2 builds cannot self-update at all).
+  const rows = (await pool.query(
+    `SELECT id, hostname, agent_version FROM agent_devices
+      WHERE revoked=false AND agent_version IS DISTINCT FROM $1
+        AND string_to_array(regexp_replace(COALESCE(agent_version,'0.0.0'), '[^0-9.]', '', 'g'), '.')::int[] >= ARRAY[1,0,2]`,
+    [version])).rows;
+  for (const r of rows) await queueUpdate(r.id, version, sha, req.session.user!.id);
+  await logActivity(req.session.user!.id, 'agent_update_push', null, null, `Pushed ${version} to ${rows.length} device(s)`);
+  res.redirect('/agents?msg=' + encodeURIComponent(rows.length
+    ? `Update to ${version} sent to ${rows.length} device(s). Offline machines pick it up when they reconnect.`
+    : 'Every device that can self-update is already on this build.'));
 });
 
 // Move a device to a different customer — the fix for an agent installed from the

@@ -89,6 +89,13 @@
     <form method="post" action="/agents/rollout" style="display:inline;" onsubmit="return confirm('Release v<%= rollout.version %> to EVERY enrolled device?');">
       <input type="hidden" name="stage" value="2"><button class="btn btn-primary" type="submit">Release to everyone</button></form>
     <% } %>
+    <% var behindNow = (rows || []).filter(function(d){ return !d.revoked && d.agent_version && d.agent_version !== rollout.version && !stranded(d.agent_version); }); %>
+    <% if (behindNow.length) { %>
+    <form method="post" action="/agents/update-all" style="display:inline;"
+          onsubmit="return confirm('Push v<%= rollout.version %> to <%= behindNow.length %> device(s) right now, ignoring the rollout stage?');">
+      <button class="btn" type="submit" title="Skip the 6-hour wait and the ring gate for every device that is behind">Update <%= behindNow.length %> now</button>
+    </form>
+    <% } %>
     <% if (stage >= 0) { %>
     <form method="post" action="/agents/rollout" style="display:inline;" onsubmit="return confirm('Halt this rollout? No device will update until you resume.');">
       <input type="hidden" name="stage" value="-1"><button class="btn" type="submit">Halt</button></form>
@@ -155,7 +162,13 @@
             </form>
             <% } else { %><span class="muted" style="font-size:12px;">&mdash;</span><% } %>
           </td>
-          <td>
+          <td style="white-space:nowrap;">
+            <% if (!d.revoked && latestVersion && d.agent_version && d.agent_version !== latestVersion && !stranded(d.agent_version)) { %>
+            <form method="post" action="/agents/<%= d.id %>/update-now" style="display:inline;"
+                  onsubmit="return confirm('Push v<%= latestVersion %> to <%= d.hostname %> now? The agent restarts as it installs.');">
+              <button class="btn btn-small btn-primary" type="submit" title="Download, verify and install v<%= latestVersion %> immediately">Update now</button>
+            </form>
+            <% } %>
             <% if (!d.revoked) { %>
             <form method="post" action="/agents/<%= d.id %>/revoke" style="display:inline;" onsubmit="return confirm('Revoke this device? Its agent stops working until the MSI is reinstalled.');">
               <button class="btn btn-small" type="submit">Revoke</button>
@@ -197,14 +210,24 @@
   <h3 style="margin-top:0;">Global defaults</h3>
   <p class="muted" style="font-size:13px;">Used by every device whose customer has no override. The RMM installer URL is what "Reinstall RMM Agent" downloads and runs (<code>msiexec /i</code>).</p>
   <form method="post" action="/agents/settings" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
-    <label style="flex:2;min-width:280px;">Default RMM installer URL (https)
+    <label style="flex:3;min-width:320px;">RMM installer URL template
+      <input class="input" type="url" name="template" value="<%= defaults.template %>"
+             placeholder="https://yourco.servicedesk.atera.com/api/utils/agent-install/windows/?cid={cid}&amp;aeid=…">
+    </label>
+    <label style="flex:2;min-width:260px;">Fallback URL (no Atera id)
       <input class="input" type="url" name="url" value="<%= defaults.url %>" placeholder="https://…/setup.msi">
     </label>
-    <label style="flex:1;min-width:180px;">msiexec args
+    <label style="flex:1;min-width:150px;">msiexec args
       <input class="input" type="text" name="args" value="<%= defaults.args %>" placeholder="/qn /norestart">
     </label>
     <button class="btn btn-primary" type="submit">Save defaults</button>
   </form>
+  <p class="muted" style="font-size:12px;margin:8px 0 0;">
+    Atera's install link carries a per-customer <code>cid</code>, so put <code>{cid}</code> where it goes &mdash; each customer's
+    URL is then built from their synced Atera customer id, with nothing to set up per customer. A single fixed URL would
+    enrol every machine in the estate into one Atera account. Order of precedence: per-customer override (Advanced, below)
+    &rarr; this template &rarr; the fallback URL.
+  </p>
 </div>
 
 <details class="card">

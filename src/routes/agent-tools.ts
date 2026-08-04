@@ -23,6 +23,7 @@ const KINDS: Record<string, { label: string; ad?: boolean; destructive?: boolean
   'shell.powershell': { label: 'PowerShell command', destructive: true },
   'shell.cmd': { label: 'Command-line command', destructive: true },
   'shell.reset': { label: 'Reset the console session' },
+  'agent.update': { label: 'Pushed an agent update', destructive: true },
   'software.list': { label: 'Listed installed software' },
   'services.list': { label: 'Listed services' },
   'services.restart': { label: 'Restarted a service', destructive: true },

@@ -95,12 +95,24 @@ async function requireDevice(req: Request, res: Response, next: NextFunction): P
   }
 }
 
-// Per-customer RMM installer URL, falling back to the global default (Settings on /agents).
+// Which RMM installer this customer's machines should fetch, in priority order:
+//   1. an explicit per-customer URL,
+//   2. the URL TEMPLATE with {cid} swapped for this customer's Atera id,
+//   3. the global fallback URL.
+// The template matters because Atera's install URL carries a per-customer `cid` — one
+// global URL would enrol every machine in the estate into a single Atera account. Since
+// customers.atera_customer_id is already synced, step 2 needs no per-customer setup.
 async function rmmConfig(customerId: number | null): Promise<{ url: string | null; args: string }> {
   let url: string | null = null;
+  let ateraId: string | null = null;
   if (customerId) {
-    const r = await pool.query('SELECT rmm_installer_url FROM customers WHERE id=$1', [customerId]);
+    const r = await pool.query('SELECT rmm_installer_url, atera_customer_id FROM customers WHERE id=$1', [customerId]);
     url = (r.rows[0]?.rmm_installer_url || '').trim() || null;
+    ateraId = String(r.rows[0]?.atera_customer_id || '').trim() || null;
+  }
+  if (!url) {
+    const tpl = ((await getSetting('agent', 'rmm_installer_template')) || '').trim();
+    if (tpl && ateraId && tpl.includes('{cid}')) url = tpl.split('{cid}').join(encodeURIComponent(ateraId));
   }
   if (!url) url = ((await getSetting('agent', 'rmm_installer_url')) || '').trim() || null;
   const args = ((await getSetting('agent', 'rmm_install_args')) || '').trim() || '/qn /norestart';
