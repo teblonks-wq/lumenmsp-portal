@@ -176,18 +176,22 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
      LEFT JOIN customers c ON c.id = d.customer_id
      ORDER BY c.name, d.hostname`)).rows;
   const isAdmin = req.session.user!.role === 'admin';
-  let customers: any[] = [];
-  let defaults: { url: string; args: string } = { url: '', args: '' };
-  if (isAdmin) {
-    customers = (await pool.query(
-      `SELECT c.id, c.name, c.agent_site_key, c.rmm_installer_url,
-              (SELECT COUNT(*)::int FROM agent_devices d WHERE d.customer_id=c.id) AS device_count
-       FROM customers c WHERE c.deleted_at IS NULL AND c.status='active' ORDER BY c.name`)).rows;
-    defaults = {
-      url: (await getSetting('agent', 'rmm_installer_url')) || '',
-      args: (await getSetting('agent', 'rmm_install_args')) || '',
-    };
-  }
+  // Every active customer gets a site key automatically — the download picker just works,
+  // with no key admin to do first. Idempotent: only fills the blanks. md5(random()) is
+  // per-row (volatile), so each customer gets its own key.
+  try {
+    await pool.query(
+      `UPDATE customers SET agent_site_key = 'LMA-' || md5(random()::text || id::text || clock_timestamp()::text)
+       WHERE agent_site_key IS NULL AND deleted_at IS NULL AND status = 'active'`);
+  } catch { /* never block the page on backfill */ }
+  const customers = (await pool.query(
+    `SELECT c.id, c.name, c.agent_site_key, c.rmm_installer_url,
+            (SELECT COUNT(*)::int FROM agent_devices d WHERE d.customer_id=c.id) AS device_count
+     FROM customers c WHERE c.deleted_at IS NULL AND c.status='active' ORDER BY c.name`)).rows;
+  const defaults = {
+    url: isAdmin ? ((await getSetting('agent', 'rmm_installer_url')) || '') : '',
+    args: isAdmin ? ((await getSetting('agent', 'rmm_install_args')) || '') : '',
+  };
   res.render('assets/agents', {
     user: req.session.user!, rows, customers, defaults, isAdmin,
     msi: agentMsiInfo(), baseUrl: req.protocol + '://' + req.get('host'),

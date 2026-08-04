@@ -13,6 +13,29 @@
 <% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
 <% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error"><%= error %></div><% } %>
 
+<div class="card" id="download" style="margin-bottom:20px;">
+  <h3 style="margin-top:0;">Download the agent</h3>
+  <% if (!msi) { %>
+    <p class="muted" style="font-size:13px;margin:0;">No installer uploaded yet<%= isAdmin ? ' - upload dist\\LumenMSPAgent.msi below.' : ' - ask an admin to upload it.' %></p>
+  <% } else { %>
+  <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+    <label style="flex:1;min-width:280px;">Customer
+      <select class="input" id="dlCustomer">
+        <% customers.forEach(function(c){ if (c.agent_site_key) { %>
+        <option value="<%= c.agent_site_key %>"><%= c.name %></option>
+        <% } }); %>
+      </select>
+    </label>
+    <a class="btn btn-primary" id="dlBtn" href="#" style="white-space:nowrap;">&#11015; Download MSI</a>
+  </div>
+  <p class="muted" style="font-size:12px;margin:12px 0 6px;">The customer's key is built into the filename, so the installer just runs - no options, no key to type. Or paste this into an <strong>elevated</strong> PowerShell on the machine (also fine as an RMM script):</p>
+  <div style="display:flex;gap:8px;align-items:flex-start;">
+    <textarea class="input" id="dlCmd" readonly rows="3" style="flex:1;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;line-height:1.5;" onclick="this.select();"></textarea>
+    <button class="btn" type="button" id="dlCopy" style="white-space:nowrap;">Copy</button>
+  </div>
+  <% } %>
+</div>
+
 <div class="card" style="margin-bottom:20px;">
   <h3 style="margin-top:0;">Enrolled devices (<%= rows.length %>)</h3>
   <% if (!rows.length) { %>
@@ -77,8 +100,9 @@
   </form>
 </div>
 
-<div class="card">
-  <h3 style="margin-top:0;">Site keys &amp; per-customer RMM installer</h3>
+<details class="card">
+  <summary style="cursor:pointer;font-weight:700;">Advanced: site keys &amp; per-customer RMM installer</summary>
+  <div style="margin-top:14px;">
   <p class="muted" style="font-size:13px;">
     The site key enrolls new installs for a customer:
     <code>msiexec /i LumenMSPAgent.msi SITEKEY=&lt;key&gt; /qn</code>.
@@ -119,9 +143,39 @@
         <% }); %>
       </tbody>
     </table>
+    </div>
   </div>
-</div>
+</details>
 <% } %>
+
+<script>
+(function(){
+  var sel = document.getElementById('dlCustomer');
+  var btn = document.getElementById('dlBtn');
+  var cmd = document.getElementById('dlCmd');
+  var cpy = document.getElementById('dlCopy');
+  if (!sel || !btn || !cmd) return;
+  var BASE = '<%= baseUrl %>';
+  var Q = String.fromCharCode(34), A = String.fromCharCode(39);
+  function update(){
+    var name = 'LumenMSPAgent-' + sel.value + '.msi';
+    var url = BASE + '/agent/download/' + name;
+    btn.href = url;
+    cmd.value = 'powershell -NoProfile -ExecutionPolicy Bypass -Command ' + Q
+      + '$f=Join-Path $env:TEMP ' + A + name + A + '; '
+      + 'Invoke-WebRequest ' + A + url + A + ' -OutFile $f; '
+      + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',$f,' + A + '/qn' + A + ' -Wait' + Q;
+  }
+  sel.addEventListener('change', update);
+  update();
+  if (cpy) cpy.addEventListener('click', function(){
+    cmd.select();
+    (navigator.clipboard ? navigator.clipboard.writeText(cmd.value) : Promise.reject()).then(function(){
+      cpy.textContent = 'Copied \u2713'; setTimeout(function(){ cpy.textContent = 'Copy'; }, 1600);
+    }).catch(function(){ try { document.execCommand('copy'); cpy.textContent = 'Copied \u2713'; setTimeout(function(){ cpy.textContent = 'Copy'; }, 1600); } catch(e){} });
+  });
+})();
+</script>
 
 <script>
 (function(){

@@ -19,6 +19,7 @@ function remoteHref(a){
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div><h1>Assets</h1><p class="muted"><%= rows.length %> device<%= rows.length===1?'':'s' %> shown · synced from Atera <%= timeAgo(lastSynced) %></p></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <a class="btn" href="/agents#download" style="display:inline-flex;align-items:center;gap:6px;"><img src="/static/img/lumen-agent-16.png" width="14" height="14" alt=""> Download Agent</a>
     <% if (typeof user!=='undefined' && user.role==='admin') { %>
     <form method="post" action="/assets/sync"><button class="btn btn-primary" type="submit">↻ Sync from Atera</button></form>
     <% } %>
