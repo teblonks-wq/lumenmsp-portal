@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import multer from 'multer';
 import { pool } from '../db/pool';
 import { getSetting, setSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
@@ -331,6 +332,87 @@ router.get('/agent/api/chat/updates', requireDevice, async (req: Request, res: R
   } catch (e: any) {
     console.error('[agent] chat poll failed:', e.message);
     res.status(500).json({ ok: false, error: 'poll failed' });
+  }
+});
+
+// ── Software inventory (cached, so it outlives the device being off) ───────────
+export const AGENT_PKG_DIR = path.join(AGENT_MSI_DIR, 'packages');
+export const AGENT_XFER_DIR = path.join(AGENT_MSI_DIR, 'transfer');
+
+// A device sending a file up for an admin to download. Stored under a random id and
+// named `<id>__<original>`; nothing here is guessable or publicly listed.
+const xferUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => { fs.mkdirSync(AGENT_XFER_DIR, { recursive: true }); cb(null, AGENT_XFER_DIR); },
+    filename: (_req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + '__' +
+      (file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80)),
+  }),
+  limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+});
+
+router.post('/agent/api/file-upload', requireDevice, xferUpload.single('file'), (req: Request, res: Response) => {
+  const f = (req as any).file;
+  if (!f) { res.status(400).json({ ok: false, error: 'no file' }); return; }
+  res.json({ ok: true, id: path.basename(f.filename).split('__')[0] });
+});
+
+// The agent collecting a file an admin uploaded for it.
+router.get('/agent/api/transfer/:id', requireDevice, (req: Request, res: Response) => {
+  const id = String(req.params.id || '').replace(/[^a-f0-9]/gi, '');
+  if (id.length !== 32) { res.status(400).json({ ok: false, error: 'bad id' }); return; }
+  try {
+    const match = fs.readdirSync(AGENT_XFER_DIR).find((f) => f.startsWith(id + '__'));
+    if (!match) { res.status(404).json({ ok: false, error: 'not found' }); return; }
+    res.download(path.join(AGENT_XFER_DIR, match), match.split('__').slice(1).join('__'));
+  } catch { res.status(500).json({ ok: false, error: 'transfer failed' }); }
+});
+
+router.post('/agent/api/inventory', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  const list = (req.body || {}).software;
+  if (!Array.isArray(list)) { res.status(400).json({ ok: false, error: 'software must be an array' }); return; }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Replace wholesale: a partial merge would leave uninstalled software on the list
+    // for ever, which is worse than briefly having none.
+    await client.query('DELETE FROM agent_software WHERE device_id=$1', [d.id]);
+    for (const a of list.slice(0, 2000)) {
+      const name = String(a?.name || '').trim();
+      if (!name) continue;
+      await client.query(
+        `INSERT INTO agent_software (device_id, name, version, publisher, size_mb, install_date, uninstall_cmd, product_code, scope)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [d.id, name.slice(0, 300),
+         a.version ? String(a.version).slice(0, 100) : null,
+         a.publisher ? String(a.publisher).slice(0, 200) : null,
+         a.size_mb != null && !isNaN(Number(a.size_mb)) ? Number(a.size_mb) : null,
+         a.install_date ? String(a.install_date).slice(0, 20) : null,
+         a.uninstall_cmd ? String(a.uninstall_cmd).slice(0, 1000) : null,
+         a.product_code ? String(a.product_code).slice(0, 100) : null,
+         a.scope ? String(a.scope).slice(0, 20) : null]);
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true, stored: list.length });
+  } catch (e: any) {
+    try { await client.query('ROLLBACK'); } catch { /* gone */ }
+    console.error('[agent] inventory store failed:', e.message);
+    res.status(500).json({ ok: false, error: 'inventory not stored' });
+  } finally { client.release(); }
+});
+
+// Package download for software deployment. Device-token auth: an uploaded MSI is not
+// public, and the agent runs whatever this returns as SYSTEM.
+router.get('/agent/api/package/:id', requireDevice, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  try {
+    const p = (await pool.query('SELECT file_name, name FROM agent_packages WHERE id=$1', [id])).rows[0];
+    if (!p || !p.file_name) { res.status(404).json({ ok: false, error: 'unknown package' }); return; }
+    const full = path.join(AGENT_PKG_DIR, path.basename(p.file_name));
+    if (!fs.existsSync(full)) { res.status(404).json({ ok: false, error: 'package file missing' }); return; }
+    res.download(full, path.basename(p.file_name));
+  } catch {
+    res.status(500).json({ ok: false, error: 'download failed' });
   }
 });
 

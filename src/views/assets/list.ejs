@@ -1,4 +1,5 @@
 <%- include('../partials/header', { title: 'Assets', user }) %>
+<% function secsAgo(s){ if (s == null) return 'never'; var m = Math.round(Number(s)/60); if (m < 1) return 'just now'; if (m < 60) return m + 'm ago'; var h = Math.round(m/60); if (h < 24) return h + 'h ago'; return Math.round(h/24) + 'd ago'; } %>
 <% function timeAgo(iso){ if(!iso) return 'never'; var d=new Date(iso); var mins=Math.round((Date.now()-d.getTime())/60000); if(mins<1) return 'just now'; if(mins<60) return mins+'m ago'; var hrs=Math.round(mins/60); if(hrs<24) return hrs+'h ago'; return Math.round(hrs/24)+'d ago'; } %>
 <%
 // Same fallback logic as lib/asset-sync.ts's buildRemoteUrl: if the saved template needs a
@@ -64,7 +65,7 @@ function remoteHref(a){
         <% rows.forEach(function(a){ %>
           <tr>
             <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
-            <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/assets') %>"><%= a.hostname || '(unnamed device)' %></a><% if (a.agent_device_id) { %> <img src="/static/img/lumen-agent-16.png" width="14" height="14" alt="LumenMSP Agent" style="vertical-align:-2px;margin-left:5px;" title="LumenMSP Agent<%= a.agent_agent_version ? ' v' + a.agent_agent_version : '' %> — last seen <%= timeAgo(a.agent_last_seen) %>"><% if (a.agent_agent_version) { %><span class="muted" style="font-size:10.5px;margin-left:3px;">v<%= a.agent_agent_version %></span><% } %><% } %></td>
+            <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/assets') %>"><%= a.hostname || '(unnamed device)' %></a><% if (a.agent_device_id) { %> <img src="/static/img/lumen-agent-16.png" width="14" height="14" alt="LumenMSP Agent" style="vertical-align:-2px;margin-left:5px;" title="LumenMSP Agent<%= a.agent_agent_version ? ' v' + a.agent_agent_version : '' %> — last seen <%= secsAgo(a.agent_seen_secs) %>"><% if (a.agent_agent_version) { %><span class="muted" style="font-size:10.5px;margin-left:3px;">v<%= a.agent_agent_version %></span><% } %><% } %></td>
             <td class="muted"><% if (a.customer_id) { %><a class="row-link" href="/customers/<%= a.customer_id %>#assets"><%= a.customer_name %></a><% } else { %>—<% } %></td>
             <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span></td>
             <td><% var bs = backupState[String(a.hostname||'').toLowerCase()]; %>

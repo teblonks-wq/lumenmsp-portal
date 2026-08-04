@@ -17,7 +17,8 @@
   .term-line { display:flex; gap:8px; align-items:baseline; }
   .term-prompt { color:#38bdf8; white-space:pre; flex:none; }
   .term-in { flex:1; background:transparent; border:none; outline:none; color:#e2e8f0;
-             font-family:inherit; font-size:inherit; padding:0; }
+             font-family:inherit; font-size:inherit; padding:0; resize:none; overflow:hidden;
+             line-height:1.55; min-height:1.55em; }
   .term-in::placeholder { color:#475569; }
   .term-echo { color:#94a3b8; }
   .term-echo b { color:#38bdf8; font-weight:400; }
@@ -53,6 +54,7 @@
     <button type="button" data-tool="services">Services</button>
     <button type="button" data-tool="users">Users</button>
     <button type="button" data-tool="files">File system</button>
+    <button type="button" data-tool="registry">Registry</button>
   </nav>
 
   <!-- Console: a real terminal, not a text box. The agent keeps a PowerShell session
@@ -61,24 +63,94 @@
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
       <label style="display:flex;gap:5px;align-items:center;font-size:13px;"><input type="radio" name="shellKind" value="shell.powershell" checked> PowerShell</label>
       <label style="display:flex;gap:5px;align-items:center;font-size:13px;"><input type="radio" name="shellKind" value="shell.cmd"> Command line</label>
+      <span style="width:1px;height:18px;background:var(--line);"></span>
+      <label style="display:flex;gap:5px;align-items:center;font-size:13px;" title="Full rights, but no access to the user's mapped drives, HKCU or profile"><input type="radio" name="runAs" value="system" checked> SYSTEM</label>
+      <label style="display:flex;gap:5px;align-items:center;font-size:13px;" title="Runs in the signed-in user's session - their drives, HKCU and profile"><input type="radio" name="runAs" value="user"> Signed-in user</label>
       <button class="btn" type="button" id="shellReset" style="padding:2px 10px;font-size:11.5px;">Reset session</button>
-      <span class="muted" style="font-size:11.5px;">&uarr;&darr; history &middot; Ctrl+L clear &middot; 120s per command</span>
+      <button class="btn" type="button" id="shellCopy" style="padding:2px 10px;font-size:11.5px;">Copy output</button>
+      <span class="muted" style="font-size:11.5px;">&uarr;&darr; history &middot; Shift+Enter multi-line &middot; Ctrl+L clear &middot; 120s per command</span>
     </div>
     <div class="term" id="term">
       <div id="termOut"></div>
       <div class="term-line">
         <span class="term-prompt" id="termPrompt">PS&gt;</span>
-        <input class="term-in" id="termIn" spellcheck="false" autocomplete="off" placeholder="type a command and press Enter">
+        <textarea class="term-in" id="termIn" rows="1" spellcheck="false" autocomplete="off"
+                  placeholder="type or paste a command - Enter runs, Shift+Enter for a new line"></textarea>
       </div>
     </div>
   </div>
 
-  <!-- Installed software -->
+  <!-- Installed software: served from the Portal's cached inventory, so it lists and
+       searches even when the machine is off. Removal still needs it online. -->
   <div class="tool-panel" data-panel="software">
-    <button class="btn btn-primary" type="button" data-load="software">Load installed software</button>
-    <input class="input" id="softFilter" placeholder="Filter…" style="max-width:220px;display:inline-block;margin-left:8px;font-size:12.5px;">
-    <span class="tool-busy" id="softwareBusy"></span>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px;">
+      <input class="input" id="softFilter" placeholder="Search name or publisher…" style="max-width:280px;font-size:12.5px;">
+      <button class="btn" type="button" id="softSearch">Search</button>
+      <button class="btn btn-primary" type="button" id="softRefresh" title="Ask the device for a fresh list (needs it online)">Refresh from device</button>
+      <button class="btn" type="button" id="softInstall">Install software…</button>
+      <span class="tool-busy" id="softwareBusy"></span>
+    </div>
+    <p class="muted" id="softAge" style="font-size:11.5px;margin:0;"></p>
     <div id="softwareResult"></div>
+
+    <div id="installBox" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:8px;">
+      <h4 style="margin:0 0 8px;font-size:13px;">Install an MSI</h4>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+        <label style="flex:2;min-width:240px;font-size:12px;">From the package library
+          <select class="input" id="pkgSelect" style="font-size:12.5px;"><option value="">— choose —</option></select>
+        </label>
+        <span class="muted" style="font-size:12px;">or</span>
+        <label style="flex:2;min-width:240px;font-size:12px;">Direct MSI URL (https)
+          <input class="input" id="pkgUrl" placeholder="https://…/app.msi" style="font-size:12.5px;">
+        </label>
+        <label style="width:150px;font-size:12px;">msiexec args
+          <input class="input" id="pkgArgs" value="/qn /norestart" style="font-size:12.5px;">
+        </label>
+        <button class="btn btn-primary" type="button" id="pkgGo">Install</button>
+      </div>
+      <p class="muted" style="font-size:11.5px;margin:8px 0 0;">Upload MSIs to the library on the <a class="row-link" href="/agents">Agents page</a>.</p>
+
+      <hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">
+      <h4 style="margin:0 0 8px;font-size:13px;">Or install from WinGet</h4>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+        <label style="flex:2;min-width:220px;font-size:12px;">Search the WinGet repository
+          <input class="input" id="wgQuery" placeholder="e.g. 7zip, notepad++, adobe reader" style="font-size:12.5px;">
+        </label>
+        <button class="btn" type="button" id="wgSearch">Search</button>
+        <label style="flex:2;min-width:220px;font-size:12px;">Package id to install
+          <input class="input" id="wgId" placeholder="e.g. 7zip.7zip" style="font-size:12.5px;">
+        </label>
+        <button class="btn btn-primary" type="button" id="wgInstall">Install</button>
+        <button class="btn" type="button" id="wgUpgradable" title="List packages with updates available">Updates available</button>
+        <button class="btn" type="button" id="wgUpgradeAll">Update all</button>
+      </div>
+      <div class="tool-out" id="wgOut"></div>
+      <p class="muted" style="font-size:11.5px;margin:8px 0 0;">
+        Installs machine-wide (<code>--scope machine</code>) so the software is there for every user, not just whoever is signed in.
+        WinGet ships as part of App Installer; if a device does not have it, the tool says so.
+      </p>
+
+      <hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">
+      <h4 style="margin:0 0 8px;font-size:13px;">Or install from Chocolatey</h4>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+        <label style="flex:2;min-width:220px;font-size:12px;">Search Chocolatey
+          <input class="input" id="chQuery" placeholder="e.g. googlechrome, vlc, firefox" style="font-size:12.5px;">
+        </label>
+        <button class="btn" type="button" id="chSearch">Search</button>
+        <label style="flex:2;min-width:220px;font-size:12px;">Package name to install
+          <input class="input" id="chId" placeholder="e.g. googlechrome" style="font-size:12.5px;">
+        </label>
+        <button class="btn btn-primary" type="button" id="chInstall">Install</button>
+        <button class="btn" type="button" id="chOutdated" title="List Chocolatey packages with updates available">Updates available</button>
+        <button class="btn" type="button" id="chUpgradeAll">Update all</button>
+        <button class="btn" type="button" id="chBootstrap" title="Install Chocolatey itself on this device">Install Chocolatey</button>
+      </div>
+      <div class="tool-out" id="chOut"></div>
+      <p class="muted" style="font-size:11.5px;margin:8px 0 0;">
+        Chocolatey has to be present on the device first &mdash; use <strong>Install Chocolatey</strong> if the tool reports it missing.
+        Packages are community-maintained, so check what you are installing.
+      </p>
+    </div>
   </div>
 
   <!-- Services -->
@@ -108,7 +180,41 @@
       <button class="btn" type="button" id="filesGo">Go</button>
       <span class="tool-busy" id="filesBusy"></span>
     </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">
+      <input class="input" id="filesPattern" placeholder="Search this folder, e.g. *.log" style="max-width:220px;font-size:12.5px;">
+      <select class="input" id="filesDepth" style="width:auto;font-size:12.5px;">
+        <option value="1">1 level deep</option>
+        <option value="4" selected>4 levels deep</option>
+        <option value="8">8 levels deep</option>
+      </select>
+      <button class="btn" type="button" id="filesFind">Find</button>
+      <span class="muted" style="font-size:11.5px;">first 300 matches</span>
+      <span style="flex:1;"></span>
+      <label class="btn" style="cursor:pointer;margin:0;">Upload here
+        <input type="file" id="filesUpload" style="display:none;">
+      </label>
+    </div>
     <div id="filesResult"></div>
+  </div>
+
+  <!-- Registry -->
+  <div class="tool-panel" data-panel="registry">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <select class="input" id="regHive" style="width:auto;font-size:12.5px;">
+        <option value="HKLM:\\SOFTWARE">HKLM\SOFTWARE</option>
+        <option value="HKLM:\\SYSTEM">HKLM\SYSTEM</option>
+        <option value="HKLM:\\SOFTWARE\\Policies">HKLM\SOFTWARE\Policies</option>
+        <option value="HKCU:\\SOFTWARE">HKCU\SOFTWARE</option>
+      </select>
+      <input class="input tool-crumb" id="regPath" placeholder="HKLM:\SOFTWARE\Microsoft" style="flex:1;min-width:260px;">
+      <button class="btn" type="button" id="regGo">Go</button>
+      <button class="btn" type="button" id="regUp">&uarr; Up</button>
+      <button class="btn" type="button" id="regNewValue">New value</button>
+      <button class="btn" type="button" id="regNewKey">New key</button>
+      <span class="tool-busy" id="regBusy"></span>
+    </div>
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0;">Runs as SYSTEM on the device. HKCU is the SYSTEM account's own hive, not the signed-in user's.</p>
+    <div id="regResult"></div>
   </div>
 
   <script>
@@ -191,9 +297,11 @@
     var history = [], histPos = -1, cwd = '';
     var CWD_MARK = '___LMA_CWD___';
 
+    function runAsMode(){ var r = document.querySelector('input[name="runAs"]:checked'); return r ? r.value : 'system'; }
     function promptText(){
       var mode = (document.querySelector('input[name="shellKind"]:checked') || {}).value === 'shell.cmd' ? 'CMD' : 'PS';
-      return mode + ' ' + (cwd || '') + '>';
+      // Make the context impossible to miss - running the wrong one is a real trap.
+      return mode + (runAsMode() === 'user' ? ' (user)' : ' (SYSTEM)') + ' ' + (cwd || '') + '>';
     }
     function refreshPrompt(){ termPrompt.textContent = promptText(); }
 
@@ -213,7 +321,18 @@
     }
 
     term.addEventListener('click', function(e){ if (!window.getSelection().toString()) termIn.focus(); });
-    document.querySelectorAll('input[name="shellKind"]').forEach(function(r){ r.addEventListener('change', refreshPrompt); });
+    document.querySelectorAll('input[name="shellKind"], input[name="runAs"]').forEach(function(r){
+      r.addEventListener('change', function(){
+        // The two contexts have separate working directories on the device.
+        cwd = '';
+        refreshPrompt();
+        if (this.name === 'runAs') {
+          write(this.value === 'user'
+            ? '-- switched to the signed-in user context (their drives, HKCU and profile; variables do not persist between commands) --'
+            : '-- switched to SYSTEM (full rights; no user drives, HKCU or profile) --', 'term-note');
+        }
+      });
+    });
 
     function submitCommand(){
       var cmd = termIn.value.trim();
@@ -222,6 +341,7 @@
       writeEcho(cmd);
       history.unshift(cmd); histPos = -1;
       termIn.value = '';
+      growInput();
       termIn.disabled = true;
       var waiting = document.createElement('pre');
       waiting.className = 'term-note';
@@ -229,7 +349,7 @@
       termOut.appendChild(waiting);
       term.scrollTop = term.scrollHeight;
 
-      run(kind, { script: cmd }, null).then(function(r){
+      run(kind, { script: cmd, run_as: runAsMode() }, null).then(function(r){
         waiting.remove();
         var out = String(r.output || '');
         var k = out.lastIndexOf(CWD_MARK);
@@ -249,8 +369,23 @@
       });
     }
 
+    // Auto-grow so a pasted multi-line command is fully visible.
+    function growInput(){
+      termIn.style.height = 'auto';
+      termIn.style.height = Math.min(termIn.scrollHeight, 220) + 'px';
+      term.scrollTop = term.scrollHeight;
+    }
+    termIn.addEventListener('input', growInput);
+    // Paste lands as normal text (including multiple lines); just resize after it.
+    termIn.addEventListener('paste', function(){ setTimeout(growInput, 0); });
+
     termIn.addEventListener('keydown', function(e){
-      if (e.key === 'Enter') { e.preventDefault(); submitCommand(); return; }
+      // Enter runs, Shift+Enter inserts a newline - so multi-line scripts can be pasted
+      // or typed without being fired off half-written.
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitCommand(); return; }
+      if (e.key === 'Enter') return;
+      // History only makes sense on a single-line entry; otherwise arrows move the caret.
+      if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && termIn.value.indexOf('\n') >= 0) return;
       if (e.key === 'ArrowUp') {
         if (histPos + 1 < history.length) { histPos++; termIn.value = history[histPos];
           setTimeout(function(){ termIn.selectionStart = termIn.selectionEnd = termIn.value.length; }, 0); }
@@ -262,6 +397,19 @@
         e.preventDefault(); return;
       }
       if (e.key === 'l' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); termOut.innerHTML = ''; return; }
+    });
+
+    document.getElementById('shellCopy').addEventListener('click', function(){
+      var text = termOut.innerText || '';
+      var btn = document.getElementById('shellCopy');
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function(){
+        btn.textContent = 'Copied \u2713'; setTimeout(function(){ btn.textContent = 'Copy output'; }, 1500);
+      }).catch(function(){
+        // Clipboard API needs a secure context; fall back to a selection the user can copy.
+        var r = document.createRange(); r.selectNodeContents(termOut);
+        var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+        btn.textContent = 'Selected - press Ctrl+C'; setTimeout(function(){ btn.textContent = 'Copy output'; }, 2500);
+      });
     });
 
     document.getElementById('shellReset').addEventListener('click', function(){
@@ -305,16 +453,167 @@
       container._draw = draw;
     }
 
-    // ── installed software ─────────────────────────────────────────────────────
+    // ── installed software (cached in the Portal) ──────────────────────────────
     var softwareResult = document.getElementById('softwareResult');
-    document.querySelector('[data-load="software"]').addEventListener('click', function(){
-      softwareResult.innerHTML = '';
-      run('software.list', {}, document.getElementById('softwareBusy')).then(function(r){
-        renderTable(softwareResult, parseRows(r.output), [
-          { k:'name', t:'Name' }, { k:'version', t:'Version' }, { k:'publisher', t:'Publisher' },
-          { k:'size_mb', t:'Size (MB)' }
-        ], document.getElementById('softFilter'));
+    var softwareBusy = document.getElementById('softwareBusy');
+    var softAge = document.getElementById('softAge');
+
+    function ageWords(secs){
+      if (secs == null) return 'never collected';
+      var m = Math.round(secs/60);
+      if (m < 2) return 'just now';
+      if (m < 60) return m + ' minutes ago';
+      var h = Math.round(m/60);
+      if (h < 24) return h + ' hour' + (h===1?'':'s') + ' ago';
+      return Math.round(h/24) + ' day' + (Math.round(h/24)===1?'':'s') + ' ago';
+    }
+
+    // Reads the Portal's stored inventory — no device round trip, so this works with the
+    // machine switched off.
+    function loadSoftware(){
+      var q = document.getElementById('softFilter').value.trim();
+      softwareBusy.textContent = 'Loading…';
+      fetch(BASE.replace(/\/tools$/, '') + '/software?q=' + encodeURIComponent(q))
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+          softwareBusy.textContent = '';
+          if (!j.ok) throw new Error(j.error || 'Could not load the list.');
+          if (j.no_agent) { softAge.textContent = ''; fail(softwareResult, 'No LumenMSP Agent on this device.'); return; }
+          softAge.textContent = j.rows.length
+            ? 'Stored inventory, collected ' + ageWords(j.age_secs) + ' — searchable whether or not the device is on.'
+            : (q ? 'Nothing matches that search.' : 'No inventory stored yet — use "Refresh from device" once it is online.');
+          renderTable(softwareResult, j.rows, [
+            { k:'name', t:'Name' }, { k:'version', t:'Version' }, { k:'publisher', t:'Publisher' },
+            { k:'size_mb', t:'Size (MB)' }
+          ], null, function(x){
+            if (!x.removable) return '<span class="muted" style="font-size:11px;" title="No silent uninstall command is recorded for this application">no silent uninstall</span>';
+            return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-uninst="' + esc(x.name) +
+                   '" data-code="' + esc(x.product_code || '') + '" data-cmd="' + esc(x.uninstall_cmd || '') + '">Uninstall</button>';
+          });
+        })
+        .catch(function(e){ softwareBusy.textContent = ''; fail(softwareResult, e.message); });
+    }
+
+    document.getElementById('softSearch').addEventListener('click', loadSoftware);
+    document.getElementById('softFilter').addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); loadSoftware(); } });
+    document.querySelector('[data-tool="software"]').addEventListener('click', function(){ if (!softwareResult.innerHTML) loadSoftware(); });
+
+    document.getElementById('softRefresh').addEventListener('click', function(){
+      run('inventory.software', {}, softwareBusy).then(function(r){
+        softAge.textContent = r.output || 'Inventory refreshed.';
+        loadSoftware();
       }).catch(function(e){ fail(softwareResult, e.message); });
+    });
+
+    softwareResult.addEventListener('click', function(e){
+      var b = e.target.closest('[data-uninst]'); if (!b) return;
+      var name = b.getAttribute('data-uninst');
+      if (!confirm('Uninstall "' + name + '" from <%= asset.hostname %>?\n\nThis runs silently on the device and cannot be undone from here.')) return;
+      b.disabled = true;
+      run('software.uninstall', { name: name, product_code: b.getAttribute('data-code'), uninstall_cmd: b.getAttribute('data-cmd') }, softwareBusy)
+        .then(function(r){
+          alert(r.output || 'Done.');
+          // The stored list is now stale, so re-read it from the device.
+          return run('inventory.software', {}, softwareBusy);
+        })
+        .then(function(){ loadSoftware(); })
+        .catch(function(err){ alert(err.message); b.disabled = false; });
+    });
+
+    // ── winget ─────────────────────────────────────────────────────────────────
+    var wgOut = document.getElementById('wgOut');
+    function wgRun(kind, body, note){
+      wgOut.textContent = note || 'Working…';
+      run(kind, body || {}, softwareBusy).then(function(r){
+        wgOut.textContent = (r.output || '(no output)').trim();
+      }).catch(function(e){ wgOut.textContent = e.message; });
+    }
+    document.getElementById('wgSearch').addEventListener('click', function(){
+      var q = document.getElementById('wgQuery').value.trim();
+      if (!q) { alert('Type something to search for.'); return; }
+      wgRun('winget.search', { q: q }, 'Searching the WinGet repository…');
+    });
+    document.getElementById('wgQuery').addEventListener('keydown', function(e){
+      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('wgSearch').click(); }
+    });
+    document.getElementById('wgInstall').addEventListener('click', function(){
+      var id = document.getElementById('wgId').value.trim();
+      if (!id) { alert('Enter the package id from the search results (the Id column).'); return; }
+      if (!confirm('Install "' + id + '" on <%= asset.hostname %> for all users?')) return;
+      wgRun('winget.install', { id: id }, 'Installing ' + id + '… this can take a few minutes.');
+    });
+    document.getElementById('wgUpgradable').addEventListener('click', function(){
+      wgRun('winget.upgradable', {}, 'Checking for updates…');
+    });
+    document.getElementById('wgUpgradeAll').addEventListener('click', function(){
+      if (!confirm('Update every WinGet package on <%= asset.hostname %>?\n\nThis can take a while and may restart applications.')) return;
+      wgRun('winget.upgrade', {}, 'Updating everything… this can take several minutes.');
+    });
+
+    // ── chocolatey ─────────────────────────────────────────────────────────────
+    var chOut = document.getElementById('chOut');
+    function chRun(kind, body, note){
+      chOut.textContent = note || 'Working…';
+      run(kind, body || {}, softwareBusy).then(function(r){
+        chOut.textContent = (r.output || '(no output)').trim();
+      }).catch(function(e){ chOut.textContent = e.message; });
+    }
+    document.getElementById('chSearch').addEventListener('click', function(){
+      var q = document.getElementById('chQuery').value.trim();
+      if (!q) { alert('Type something to search for.'); return; }
+      chRun('choco.search', { q: q }, 'Searching Chocolatey…');
+    });
+    document.getElementById('chQuery').addEventListener('keydown', function(e){
+      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('chSearch').click(); }
+    });
+    document.getElementById('chInstall').addEventListener('click', function(){
+      var id = document.getElementById('chId').value.trim();
+      if (!id) { alert('Enter the package name from the search results.'); return; }
+      if (!confirm('Install "' + id + '" on <%= asset.hostname %> via Chocolatey?')) return;
+      chRun('choco.install', { id: id }, 'Installing ' + id + '… this can take a few minutes.');
+    });
+    document.getElementById('chOutdated').addEventListener('click', function(){
+      chRun('choco.outdated', {}, 'Checking for updates…');
+    });
+    document.getElementById('chUpgradeAll').addEventListener('click', function(){
+      if (!confirm('Update every Chocolatey package on <%= asset.hostname %>?')) return;
+      chRun('choco.upgrade', {}, 'Updating everything… this can take several minutes.');
+    });
+    document.getElementById('chBootstrap').addEventListener('click', function(){
+      if (!confirm('Install Chocolatey itself on <%= asset.hostname %>?\n\nThis downloads and runs the official install script from chocolatey.org.')) return;
+      chRun('choco.bootstrap', {}, 'Installing Chocolatey…');
+    });
+
+    // ── install software ───────────────────────────────────────────────────────
+    var installBox = document.getElementById('installBox');
+    document.getElementById('softInstall').addEventListener('click', function(){
+      var showing = installBox.style.display !== 'none';
+      installBox.style.display = showing ? 'none' : 'block';
+      if (!showing && !installBox._loaded) {
+        installBox._loaded = true;
+        fetch('/agent-packages.json').then(function(r){ return r.json(); }).then(function(j){
+          if (!j.ok) return;
+          var sel = document.getElementById('pkgSelect');
+          j.rows.forEach(function(p){
+            var o = document.createElement('option');
+            o.value = p.id;
+            o.textContent = p.name + (p.version ? ' ' + p.version : '') + (p.file_name ? '' : ' (URL)');
+            sel.appendChild(o);
+          });
+        }).catch(function(){ /* library is optional */ });
+      }
+    });
+    document.getElementById('pkgGo').addEventListener('click', function(){
+      var pkg = document.getElementById('pkgSelect').value;
+      var url = document.getElementById('pkgUrl').value.trim();
+      var args = document.getElementById('pkgArgs').value.trim() || '/qn /norestart';
+      if (!pkg && !url) { alert('Pick a package or paste an MSI URL.'); return; }
+      if (!confirm('Install this on <%= asset.hostname %> now?')) return;
+      var body = pkg ? { package_id: pkg } : { url: url, args: args };
+      run('software.install', body, softwareBusy).then(function(r){
+        alert(r.output || 'Done.');
+        return run('inventory.software', {}, softwareBusy);
+      }).then(function(){ loadSoftware(); }).catch(function(e){ alert(e.message); });
     });
 
     // ── services ───────────────────────────────────────────────────────────────
@@ -357,7 +656,7 @@
       var d = document.createElement('div');
       d.className = 'pw-reveal';
       d.innerHTML = '<strong>New password for ' + esc(who) + ':</strong> <code>' + esc(pw) + '</code>' +
-        '<div class="muted" style="font-size:11.5px;margin-top:4px;">Shown once — it is not stored anywhere. Copy it now.</div>';
+        '<div class="muted" style="font-size:11.5px;margin-top:4px;">Shown once &mdash; not stored anywhere and never written to the audit log. Copy it now.</div>';
       container.insertBefore(d, container.firstChild);
     }
 
@@ -417,7 +716,14 @@
       var kind = isAd ? ('ad.user.' + act) : ('users.' + act);
       var body = isAd ? { sam: who } : { name: who };
       if (act === 'resetpw') {
-        if (!confirm('Reset the password for "' + who + '"' + (isAd ? ' in Active Directory' : ' on <%= asset.hostname %>') + '?\n\nA strong password is generated and shown once.')) return;
+        // Leave it blank for a generated one, or type the password you want to set.
+        var chosen = window.prompt(
+          'Reset the password for "' + who + '"' + (isAd ? ' in Active Directory' : ' on <%= asset.hostname %>') + '.\n\n' +
+          'Leave blank to generate a strong one, or type the password to set (8 characters minimum):', '');
+        if (chosen === null) return;
+        chosen = chosen.trim();
+        if (chosen && chosen.length < 8) { alert('That password is too short - 8 characters minimum.'); return; }
+        body.password = chosen;
         body.must_change = confirm('Require a password change at next sign-in?\n\nOK = yes, Cancel = no') ? '1' : '0';
       } else {
         if (!confirm(act.charAt(0).toUpperCase() + act.slice(1) + ' the account "' + who + '"' + (isAd ? ' in Active Directory' : ' on <%= asset.hostname %>') + '?')) return;
@@ -468,14 +774,194 @@
               return n >= 1048576 ? (n/1048576).toFixed(1) + ' MB' : n >= 1024 ? (n/1024).toFixed(1) + ' KB' : n + ' B';
             } },
           { k:'modified', t:'Modified' }
-        ]);
+        ], null, function(x){
+          var full = (path ? path.replace(/[\\\/]+$/, '') + '\\' + x.name : x.name);
+          return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-dl="' + esc(full) + '">Download</button> ' +
+                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-del="' + esc(full) + '" data-isdir="' + (x.dir ? '1' : '0') + '">Delete</button>';
+        });
       }).catch(function(e){ fail(filesResult, e.message); });
     }
+
     filesResult.addEventListener('click', function(e){
+      var dl = e.target.closest('[data-dl]');
+      if (dl) {
+        var target = dl.getAttribute('data-dl');
+        dl.disabled = true;
+        run('files.download', { path: target }, filesBusy).then(function(r){
+          dl.disabled = false;
+          var out = String(r.output || '');
+          var k = out.indexOf('___LMA_FILE___');
+          if (k < 0) { alert(out || 'Could not fetch that file.'); return; }
+          var parts = out.slice(k + 14).trim().split('|');
+          // The device pushed it to the Portal; now pull it into the browser.
+          window.location.href = BASE + '/file/' + parts[0];
+        }).catch(function(err){ dl.disabled = false; alert(err.message); });
+        return;
+      }
+      var del = e.target.closest('[data-del]');
+      if (del) {
+        var p2 = del.getAttribute('data-del');
+        var isDir = del.getAttribute('data-isdir') === '1';
+        if (!confirm('Permanently delete ' + (isDir ? 'the folder' : 'the file') + ':\n\n' + p2 +
+                     '\n\nThere is no recycle bin - this runs as SYSTEM and cannot be undone.')) return;
+        run('files.delete', { path: p2 }, filesBusy).then(function(r){
+          if (r.exit_code) alert(r.output || 'Delete failed.');
+          browse(filesPath.value.trim());
+        }).catch(function(err){ alert(err.message); });
+        return;
+      }
       var a = e.target.closest('[data-path]'); if (!a) return;
       e.preventDefault();
       browse(a.getAttribute('data-path'));
     });
+
+    // Upload: stage the file on the Portal first, then tell the device to collect it.
+    document.getElementById('filesUpload').addEventListener('change', function(){
+      var file = this.files && this.files[0];
+      if (!file) return;
+      var dest = filesPath.value.trim();
+      if (!dest) { alert('Open the folder you want to upload into first.'); this.value = ''; return; }
+      var isZip = /\.zip$/i.test(file.name);
+      var expand = isZip && confirm('Extract "' + file.name + '" into ' + dest + ' after upload?\n\nOK = extract, Cancel = leave the zip as-is.');
+      var fd = new FormData(); fd.append('file', file);
+      filesBusy.textContent = 'Uploading to the portal…';
+      var input = this;
+      fetch(BASE + '/stage', { method: 'POST', body: fd }).then(function(r){ return r.json(); }).then(function(j){
+        if (!j.ok) throw new Error(j.error || 'Upload failed.');
+        return run('files.upload', {
+          transfer_id: j.id,
+          dest: dest.replace(/[\\\/]+$/, '') + '\\' + file.name,
+          expand: expand ? '1' : '0'
+        }, filesBusy);
+      }).then(function(r){
+        alert(r.output || 'Uploaded.');
+        browse(filesPath.value.trim());
+      }).catch(function(e){ filesBusy.textContent = ''; alert(e.message); })
+        .then(function(){ input.value = ''; });
+    });
+    // ── file search ────────────────────────────────────────────────────────────
+    document.getElementById('filesFind').addEventListener('click', function(){
+      var path = filesPath.value.trim();
+      var pattern = document.getElementById('filesPattern').value.trim();
+      if (!path || !pattern) { alert('Give a folder and something to search for, e.g. *.log'); return; }
+      filesResult.innerHTML = '';
+      run('files.search', { path: path, pattern: pattern, depth: document.getElementById('filesDepth').value }, filesBusy)
+        .then(function(r){
+          if (r.status !== 'done') { fail(filesResult, r.output || 'Search failed.'); return; }
+          var rows = parseRows(r.output);
+          if (rows === null) { fail(filesResult, r.output || 'No matches.'); return; }
+          renderTable(filesResult, rows, [
+            { k:'name', t:'Name' }, { k:'path', t:'Folder' },
+            { k:'size', t:'Size', render:function(x){
+                var n = Number(x.size);
+                return n >= 1048576 ? (n/1048576).toFixed(1) + ' MB' : n >= 1024 ? (n/1024).toFixed(1) + ' KB' : n + ' B';
+              } },
+            { k:'modified', t:'Modified' }
+          ]);
+        }).catch(function(e){ fail(filesResult, e.message); });
+    });
+
+    // ── registry ───────────────────────────────────────────────────────────────
+    var regResult = document.getElementById('regResult');
+    var regBusy = document.getElementById('regBusy');
+    var regPath = document.getElementById('regPath');
+
+    function regBrowse(key){
+      regPath.value = key || '';
+      regResult.innerHTML = '';
+      run('reg.list', { key: key || '' }, regBusy).then(function(r){
+        if (r.status !== 'done') { fail(regResult, r.output || 'Could not read that key.'); return; }
+        var parsed = parseRows(r.output);
+        if (parsed === null || !parsed.length) { fail(regResult, r.output || 'Nothing there.'); return; }
+        var payload = parsed[0];
+        var items = payload.items || [];
+        renderTable(regResult, items, [
+          { k:'name', t:'Name', render:function(x){
+              if (x.kind === 'key') {
+                var full = (regPath.value.replace(/\\+$/, '')) + '\\' + x.name;
+                return '&#128193; <a href="#" class="row-link" data-regkey="' + esc(full) + '">' + esc(x.name) + '</a>';
+              }
+              return '&#128459; ' + esc(x.name);
+            } },
+          { k:'type', t:'Type', render:function(x){ return x.kind === 'key' ? '<span class="muted">key</span>' : esc(x.type || ''); } },
+          { k:'data', t:'Data', render:function(x){ return x.kind === 'key' ? '' : '<span style="font-family:ui-monospace,Consolas,monospace;">' + esc(x.data || '') + '</span>'; } }
+        ], null, function(x){
+          if (x.kind === 'key') {
+            return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-regdelkey="' + esc(x.name) + '">Delete key</button>';
+          }
+          return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-regedit="' + esc(x.name) + '" data-type="' + esc(x.type || 'String') + '" data-data="' + esc(x.data || '') + '">Edit</button> ' +
+                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-regdelval="' + esc(x.name) + '">Delete</button>';
+        });
+      }).catch(function(e){ fail(regResult, e.message); });
+    }
+
+    function regReload(){ regBrowse(regPath.value.trim()); }
+
+    regResult.addEventListener('click', function(e){
+      var open = e.target.closest('[data-regkey]');
+      if (open) { e.preventDefault(); regBrowse(open.getAttribute('data-regkey')); return; }
+
+      var edit = e.target.closest('[data-regedit]');
+      if (edit) {
+        var nm = edit.getAttribute('data-regedit');
+        var cur = edit.getAttribute('data-data');
+        var val = window.prompt('New data for "' + nm + '" (' + edit.getAttribute('data-type') + '):', cur);
+        if (val === null) return;
+        run('reg.set', { key: regPath.value.trim(), name: nm === '(Default)' ? '' : nm, type: edit.getAttribute('data-type'), data: val }, regBusy)
+          .then(function(r){ if (r.status !== 'done' || r.exit_code) alert(r.output || 'Failed.'); regReload(); })
+          .catch(function(err){ alert(err.message); });
+        return;
+      }
+
+      var delVal = e.target.closest('[data-regdelval]');
+      if (delVal) {
+        var vn = delVal.getAttribute('data-regdelval');
+        if (!confirm('Delete the value "' + vn + '"?')) return;
+        run('reg.deleteValue', { key: regPath.value.trim(), name: vn === '(Default)' ? '' : vn }, regBusy)
+          .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); regReload(); })
+          .catch(function(err){ alert(err.message); });
+        return;
+      }
+
+      var delKey = e.target.closest('[data-regdelkey]');
+      if (delKey) {
+        var kn = delKey.getAttribute('data-regdelkey');
+        if (!confirm('Delete the key "' + kn + '" AND everything under it?\n\nThis cannot be undone.')) return;
+        run('reg.deleteKey', { key: (regPath.value.replace(/\\+$/, '')) + '\\' + kn }, regBusy)
+          .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); regReload(); })
+          .catch(function(err){ alert(err.message); });
+      }
+    });
+
+    document.getElementById('regGo').addEventListener('click', function(){ regBrowse(regPath.value.trim()); });
+    regPath.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); regBrowse(regPath.value.trim()); } });
+    document.getElementById('regHive').addEventListener('change', function(){ regBrowse(this.value); });
+    document.getElementById('regUp').addEventListener('click', function(){
+      var p = regPath.value.replace(/\\+$/, '');
+      if (p.indexOf('\\') < 0) return;
+      regBrowse(p.replace(/\\[^\\]*$/, ''));
+    });
+    document.getElementById('regNewValue').addEventListener('click', function(){
+      var key = regPath.value.trim(); if (!key) { alert('Open a key first.'); return; }
+      var nm = window.prompt('Value name:'); if (nm === null) return;
+      var type = window.prompt('Type — String, ExpandString, MultiString, DWord, QWord or Binary:', 'String');
+      if (type === null) return;
+      var data = window.prompt('Data:', ''); if (data === null) return;
+      run('reg.set', { key: key, name: nm, type: type, data: data }, regBusy)
+        .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); regReload(); })
+        .catch(function(e){ alert(e.message); });
+    });
+    document.getElementById('regNewKey').addEventListener('click', function(){
+      var key = regPath.value.trim(); if (!key) { alert('Open a parent key first.'); return; }
+      var nm = window.prompt('New key name:'); if (!nm) return;
+      run('reg.newKey', { key: key.replace(/\\+$/, '') + '\\' + nm }, regBusy)
+        .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); regReload(); })
+        .catch(function(e){ alert(e.message); });
+    });
+    document.querySelector('[data-tool="registry"]').addEventListener('click', function(){
+      if (!regResult.innerHTML) regBrowse(document.getElementById('regHive').value);
+    });
+
     document.getElementById('filesRoot').addEventListener('click', function(){ browse(''); });
     document.getElementById('filesGo').addEventListener('click', function(){ browse(filesPath.value.trim()); });
     filesPath.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); browse(filesPath.value.trim()); } });

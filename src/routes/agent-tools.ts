@@ -3,7 +3,10 @@ import crypto from 'crypto';
 import { pool } from '../db/pool';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { logActivity } from '../lib/activity';
-import { wakeAgent } from './agent-api';
+import fs from 'fs';
+import path from 'path';
+import multer from 'multer';
+import { wakeAgent, AGENT_PKG_DIR, AGENT_XFER_DIR } from './agent-api';
 
 // ── Remote tools (asset page → LumenMSP Agent) ──────────────────────────────────
 // Admin-only, without exception: every kind here runs as SYSTEM on the customer's
@@ -25,6 +28,29 @@ const KINDS: Record<string, { label: string; ad?: boolean; destructive?: boolean
   'shell.reset': { label: 'Reset the console session' },
   'agent.update': { label: 'Pushed an agent update', destructive: true },
   'software.list': { label: 'Listed installed software' },
+  'inventory.software': { label: 'Refreshed the software inventory' },
+  'software.uninstall': { label: 'Uninstalled software', destructive: true },
+  'software.install': { label: 'Installed software', destructive: true },
+  'winget.search': { label: 'Searched WinGet' },
+  'winget.upgradable': { label: 'Listed WinGet updates' },
+  'winget.install': { label: 'Installed a WinGet package', destructive: true },
+  'winget.uninstall': { label: 'Uninstalled a WinGet package', destructive: true },
+  'winget.upgrade': { label: 'Upgraded WinGet packages', destructive: true },
+  'choco.search': { label: 'Searched Chocolatey' },
+  'choco.outdated': { label: 'Listed Chocolatey updates' },
+  'choco.install': { label: 'Installed a Chocolatey package', destructive: true },
+  'choco.uninstall': { label: 'Uninstalled a Chocolatey package', destructive: true },
+  'choco.upgrade': { label: 'Upgraded Chocolatey packages', destructive: true },
+  'choco.bootstrap': { label: 'Installed Chocolatey itself', destructive: true },
+  'files.search': { label: 'Searched the file system' },
+  'files.delete': { label: 'Deleted a file or folder', destructive: true },
+  'files.download': { label: 'Downloaded a file from the device' },
+  'files.upload': { label: 'Uploaded a file to the device', destructive: true },
+  'reg.list': { label: 'Browsed the registry' },
+  'reg.set': { label: 'Changed a registry value', destructive: true },
+  'reg.deleteValue': { label: 'Deleted a registry value', destructive: true },
+  'reg.newKey': { label: 'Created a registry key', destructive: true },
+  'reg.deleteKey': { label: 'Deleted a registry key', destructive: true },
   'services.list': { label: 'Listed services' },
   'services.restart': { label: 'Restarted a service', destructive: true },
   'services.start': { label: 'Started a service', destructive: true },
@@ -112,14 +138,73 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
       const script = String(b.script || '').trim();
       if (!script) { res.status(400).json({ ok: false, error: 'Type a command first.' }); return; }
       payload.script = script.slice(0, 8000);
+      // SYSTEM by default; 'user' runs in the signed-in user's session instead.
+      payload.run_as = String(b.run_as || '') === 'user' ? 'user' : 'system';
     }
     if (kind.startsWith('services.') && kind !== 'services.list') payload.name = String(b.name || '').slice(0, 200);
     if (kind === 'files.list') payload.path = String(b.path || '').slice(0, 500);
     if (kind.startsWith('users.') && kind !== 'users.list') payload.name = String(b.name || '').slice(0, 200);
     if (kind.startsWith('ad.user.')) payload.sam = String(b.sam || '').slice(0, 200);
     if (kind === 'ad.users.list') payload.q = String(b.q || '').slice(0, 100);
+    if (kind === 'files.delete' || kind === 'files.download') payload.path = String(b.path || '').slice(0, 500);
+    if (kind === 'files.upload') {
+      payload.transfer_id = String(b.transfer_id || '').replace(/[^a-f0-9]/gi, '').slice(0, 32);
+      payload.dest = String(b.dest || '').slice(0, 500);
+      payload.expand = b.expand === '1' || b.expand === true ? '1' : '0';
+    }
+    if (kind === 'winget.search' || kind === 'choco.search') payload.q = String(b.q || '').slice(0, 120);
+    if (kind.startsWith('choco.') && kind !== 'choco.search' && kind !== 'choco.bootstrap') {
+      payload.id = String(b.id || '').slice(0, 200);
+    }
+    if (kind === 'winget.install' || kind === 'winget.uninstall' || kind === 'winget.upgrade') {
+      payload.id = String(b.id || '').slice(0, 200);
+    }
+    if (kind === 'files.search') {
+      payload.path = String(b.path || '').slice(0, 500);
+      payload.pattern = String(b.pattern || '').slice(0, 120);
+      payload.depth = String(b.depth || '4');
+    }
+    if (kind.startsWith('reg.')) {
+      payload.key = String(b.key || '').slice(0, 500);
+      if (b.name != null) payload.name = String(b.name).slice(0, 300);
+      if (b.type != null) payload.type = String(b.type).slice(0, 20);
+      if (b.data != null) payload.data = String(b.data).slice(0, 4000);
+    }
+    if (kind === 'software.uninstall') {
+      payload.name = String(b.name || '').slice(0, 300);
+      payload.product_code = String(b.product_code || '').slice(0, 100);
+      payload.uninstall_cmd = String(b.uninstall_cmd || '').slice(0, 1000);
+    }
+    if (kind === 'software.install') {
+      // The URL is resolved HERE from the package id - never taken from the browser, so
+      // nobody can point a device at an arbitrary installer via a crafted request.
+      const pkgId = parseInt(String(b.package_id || ''), 10);
+      if (pkgId) {
+        const pkg = (await pool.query('SELECT id, name, url, file_name, install_args FROM agent_packages WHERE id=$1', [pkgId])).rows[0];
+        if (!pkg) { res.status(400).json({ ok: false, error: 'Unknown package.' }); return; }
+        payload.name = pkg.name;
+        payload.args = pkg.install_args || '/qn /norestart';
+        payload.url = pkg.url || `${req.protocol}://${req.get('host')}/agent/api/package/${pkg.id}`;
+      } else {
+        const url = String(b.url || '').trim();
+        if (!/^https:\/\//i.test(url)) { res.status(400).json({ ok: false, error: 'Package URL must be https://' }); return; }
+        payload.url = url.slice(0, 1000);
+        payload.args = String(b.args || '/qn /norestart').slice(0, 200);
+        payload.name = url.split('/').pop() || 'package';
+      }
+    }
     if (kind === 'users.resetpw' || kind === 'ad.user.resetpw') {
-      generated = generatePassword();
+      // Either generate one or take the admin's. A typed password is echoed back so the
+      // UI can show it once alongside a generated one; like a generated one it is never
+      // written to the activity log, and payload is NULLed the moment the command ends.
+      const typed = String(b.password || '');
+      if (typed) {
+        if (typed.length < 8) { res.status(400).json({ ok: false, error: 'That password is too short — 8 characters minimum.' }); return; }
+        if (typed.length > 127) { res.status(400).json({ ok: false, error: 'That password is too long.' }); return; }
+        generated = typed;
+      } else {
+        generated = generatePassword();
+      }
       payload.password = generated;
       payload.must_change = b.must_change === '1' || b.must_change === true ? '1' : '0';
     }
@@ -133,7 +218,7 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
     const target = payload.name || payload.sam || payload.path || '';
     await logActivity(req.session.user!.id, 'agent_tool', 'customer_assets', assetId,
       `${spec.label} on ${device.hostname || 'device'}${target ? ' (' + target + ')' : ''}` +
-      (kind.startsWith('shell.') ? ': ' + String(payload.script).slice(0, 200) : ''));
+      (kind.startsWith('shell.') ? ` [as ${payload.run_as}]: ` + String(payload.script).slice(0, 200) : ''));
 
     wakeAgent(device.id);   // long-poll returns immediately instead of waiting out its timer
     res.json({ ok: true, command_id: commandId, routed_to: routedTo, password: generated });
@@ -146,13 +231,18 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
 router.get('/assets/:id/tools/result/:commandId', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const commandId = parseInt(String(req.params.commandId), 10);
   try {
+    // Age is measured IN SQL on purpose. Comparing a database timestamp against the
+    // Node process clock silently breaks whenever the two disagree on timezone: every
+    // command then looks hours old and is expired the instant it is queued.
     const r = await pool.query(
-      'SELECT id, kind, status, exit_code, output, requested_at, finished_at FROM agent_commands WHERE id=$1', [commandId]);
+      `SELECT id, kind, status, exit_code, output, finished_at,
+              EXTRACT(EPOCH FROM (NOW() - requested_at)) AS age_secs
+         FROM agent_commands WHERE id=$1`, [commandId]);
     if (!r.rows.length) { res.status(404).json({ ok: false, error: 'Unknown command.' }); return; }
     const c = r.rows[0];
     // A device that went offline mid-command shouldn't leave the UI spinning forever.
-    const ageMs = Date.now() - new Date(c.requested_at).getTime();
-    if (['queued', 'running'].includes(c.status) && ageMs > 3 * 60 * 1000) {
+    const ageSecs = Number(c.age_secs) || 0;
+    if (['queued', 'running'].includes(c.status) && ageSecs > 180) {
       await pool.query("UPDATE agent_commands SET status='expired', payload=NULL WHERE id=$1 AND status IN ('queued','running')", [commandId]);
       res.json({ ok: true, status: 'expired', output: 'The device did not respond within 3 minutes. It may be offline or asleep.' });
       return;
@@ -161,6 +251,129 @@ router.get('/assets/:id/tools/result/:commandId', requireAuth, requireAdmin, asy
   } catch (e: any) {
     res.status(500).json({ ok: false, error: 'Could not read the result.' });
   }
+});
+
+// Serve a file the device sent up. Admin-only and one-shot-ish: the transfer folder is
+// swept of anything older than a day.
+router.get('/assets/:id/tools/file/:xfer', requireAuth, requireAdmin, (req: Request, res: Response) => {
+  const id = String(req.params.xfer || '').replace(/[^a-f0-9]/gi, '');
+  if (id.length !== 32) { res.status(400).send('Bad id'); return; }
+  try {
+    const match = fs.readdirSync(AGENT_XFER_DIR).find((f) => f.startsWith(id + '__'));
+    if (!match) { res.status(404).send('That file is no longer available.'); return; }
+    res.download(path.join(AGENT_XFER_DIR, match), match.split('__').slice(1).join('__'));
+  } catch { res.status(500).send('Download failed'); }
+});
+
+// Stage a file from the browser, ready to push to a device.
+const xferIn = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => { fs.mkdirSync(AGENT_XFER_DIR, { recursive: true }); cb(null, AGENT_XFER_DIR); },
+    filename: (_req, file, cb) => cb(null, crypto.randomBytes(16).toString('hex') + '__' +
+      (file.originalname || 'file').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80)),
+  }),
+  limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+});
+
+router.post('/assets/:id/tools/stage', requireAuth, requireAdmin, xferIn.single('file'), (req: Request, res: Response) => {
+  const f = (req as any).file;
+  if (!f) { res.status(400).json({ ok: false, error: 'No file received.' }); return; }
+  // Housekeeping: transfers are transient, so drop anything over a day old.
+  try {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const name of fs.readdirSync(AGENT_XFER_DIR)) {
+      const full = path.join(AGENT_XFER_DIR, name);
+      if (fs.statSync(full).mtimeMs < cutoff) { try { fs.unlinkSync(full); } catch { /* ignore */ } }
+    }
+  } catch { /* housekeeping only */ }
+  res.json({ ok: true, id: path.basename(f.filename).split('__')[0], name: (f.originalname || 'file') });
+});
+
+// Cached software list for a device — served from the database, so it works whether or
+// not the machine is on. Uninstalling still needs it online; knowing what is installed
+// does not.
+router.get('/assets/:id/software', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const assetId = parseInt(String(req.params.id), 10);
+  const q = String(req.query.q || '').trim();
+  try {
+    const device = await deviceForAsset(assetId);
+    if (!device) { res.json({ ok: true, rows: [], collected_at: null, no_agent: true }); return; }
+    const params: any[] = [device.id];
+    let where = 'device_id = $1';
+    if (q) { params.push('%' + q + '%'); where += ` AND (name ILIKE $${params.length} OR publisher ILIKE $${params.length})`; }
+    const rows = (await pool.query(
+      `SELECT id, name, version, publisher, size_mb, install_date, product_code, uninstall_cmd, scope,
+              EXTRACT(EPOCH FROM (NOW() - collected_at)) AS age_secs
+         FROM agent_software WHERE ${where} ORDER BY name LIMIT 1000`, params)).rows;
+    res.json({
+      ok: true,
+      rows: rows.map((r: any) => ({ ...r, removable: !!(r.product_code || (r.uninstall_cmd && /\/q|\/s/i.test(r.uninstall_cmd))) })),
+      age_secs: rows.length ? Number(rows[0].age_secs) : null,
+    });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: 'Could not read the software list.' });
+  }
+});
+
+// Deployable packages (an uploaded MSI, or a plain URL).
+router.get('/agent-packages.json', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  const rows = (await pool.query(
+    'SELECT id, name, version, file_name, url, size_bytes, install_args FROM agent_packages ORDER BY name')).rows;
+  res.json({ ok: true, rows });
+});
+
+const pkgUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => { fs.mkdirSync(AGENT_PKG_DIR, { recursive: true }); cb(null, AGENT_PKG_DIR); },
+    filename: (_req, file, cb) => cb(null, Date.now() + '-' + (file.originalname || 'package.msi').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80)),
+  }),
+  limits: { fileSize: 500 * 1024 * 1024, files: 1 },
+});
+
+router.post('/agent-packages', requireAuth, requireAdmin, pkgUpload.single('msi'), async (req: Request, res: Response) => {
+  const f = (req as any).file;
+  const name = String(req.body.name || '').trim() || (f?.originalname || 'Package');
+  const url = String(req.body.url || '').trim();
+  const args = String(req.body.args || '/qn /norestart').trim().slice(0, 200);
+  try {
+    if (!f && !url) { res.redirect('/agents?err=' + encodeURIComponent('Upload an MSI or give a URL.')); return; }
+    if (url && !/^https:\/\//i.test(url)) {
+      if (f) { try { fs.unlinkSync(f.path); } catch { /* ignore */ } }
+      res.redirect('/agents?err=' + encodeURIComponent('Package URL must be https://')); return;
+    }
+    let sha: string | null = null;
+    if (f) {
+      // Same signature check as the agent installer: refuse anything that is not an MSI
+      // before it can ever be pushed to a customer machine.
+      const fd = fs.openSync(f.path, 'r');
+      const head = Buffer.alloc(4); fs.readSync(fd, head, 0, 4, 0); fs.closeSync(fd);
+      if (head.toString('hex') !== 'd0cf11e0') {
+        try { fs.unlinkSync(f.path); } catch { /* ignore */ }
+        res.redirect('/agents?err=' + encodeURIComponent('That file is not an MSI.')); return;
+      }
+      sha = crypto.createHash('sha256').update(fs.readFileSync(f.path)).digest('hex');
+    }
+    await pool.query(
+      `INSERT INTO agent_packages (name, version, file_name, url, size_bytes, sha256, install_args, uploaded_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [name.slice(0, 200), String(req.body.version || '').trim().slice(0, 50) || null,
+       f ? path.basename(f.path) : null, url || null, f ? f.size : null, sha, args, req.session.user!.id]);
+    await logActivity(req.session.user!.id, 'agent_package', null, null, `Added deployable package: ${name}`);
+    res.redirect('/agents?msg=' + encodeURIComponent(`Package "${name}" is ready to deploy from any device's Tools tab.`));
+  } catch (e: any) {
+    res.redirect('/agents?err=' + encodeURIComponent('Could not save that package.'));
+  }
+});
+
+router.post('/agent-packages/:id/delete', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const p = (await pool.query('SELECT file_name, name FROM agent_packages WHERE id=$1', [id])).rows[0];
+  if (p) {
+    if (p.file_name) { try { fs.unlinkSync(path.join(AGENT_PKG_DIR, path.basename(p.file_name))); } catch { /* already gone */ } }
+    await pool.query('DELETE FROM agent_packages WHERE id=$1', [id]);
+    await logActivity(req.session.user!.id, 'agent_package', null, null, `Removed package: ${p.name}`);
+  }
+  res.redirect('/agents?msg=' + encodeURIComponent('Package removed.'));
 });
 
 // Mark/unmark a device as the customer's AD agent (the box that runs directory actions).

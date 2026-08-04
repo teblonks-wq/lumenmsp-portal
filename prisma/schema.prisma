@@ -442,6 +442,43 @@ model AgentDevice {
 // Remote-tool command queue (Portal asset Tools tab -> agent). The agent long-polls for
 // queued rows, runs them and posts the output back. `payload` is CLEARED on completion so
 // transient secrets (a reset password) don't linger in the database.
+// Cached software inventory, refreshed by the agent daily and on demand. Kept in the
+// database so the list is searchable and viewable when the machine is OFF - uninstalling
+// obviously still needs it online, but knowing what is installed should not.
+model AgentSoftware {
+  id           Int      @id @default(autoincrement())
+  deviceId     Int      @map("device_id")
+  name         String
+  version      String?
+  publisher    String?
+  sizeMb       Float?   @map("size_mb")
+  installDate  String?  @map("install_date")
+  uninstallCmd String?  @map("uninstall_cmd")  // QuietUninstallString, else UninstallString
+  productCode  String?  @map("product_code")   // MSI GUID when the registry key is one
+  scope        String?  // machine | user
+  collectedAt  DateTime @default(now()) @map("collected_at")
+
+  @@index([deviceId])
+  @@index([name])
+  @@map("agent_software")
+}
+
+// An MSI uploaded to the Portal (or a plain URL) that can be pushed to a device.
+model AgentPackage {
+  id          Int      @id @default(autoincrement())
+  name        String
+  version     String?
+  fileName    String?  @map("file_name")   // null = url-only package
+  url         String?                       // external URL instead of an upload
+  sizeBytes   Int?     @map("size_bytes")
+  sha256      String?
+  installArgs String   @default("/qn /norestart") @map("install_args")
+  uploadedBy  Int?     @map("uploaded_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("agent_packages")
+}
+
 model AgentCommand {
   id          Int       @id @default(autoincrement())
   deviceId    Int       @map("device_id")

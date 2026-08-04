@@ -35,12 +35,14 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
 
   const rows = (await pool.query(
     `SELECT a.*, c.name AS customer_name, ac.full_name AS assigned_name,
-            agd.id AS agent_device_id, agd.last_seen_at AS agent_last_seen, agd.agent_version AS agent_agent_version
+            agd.id AS agent_device_id, agd.last_seen_at AS agent_last_seen, agd.agent_version AS agent_agent_version,
+            agd.seen_secs AS agent_seen_secs
      FROM customer_assets a
      LEFT JOIN customers c ON c.id = a.customer_id
      LEFT JOIN customer_contacts ac ON ac.id = a.assigned_contact_id
      LEFT JOIN LATERAL (
-       SELECT ag.id, ag.last_seen_at, ag.agent_version FROM agent_devices ag
+       SELECT ag.id, ag.last_seen_at, ag.agent_version,
+              EXTRACT(EPOCH FROM (NOW() - ag.last_seen_at)) AS seen_secs FROM agent_devices ag
        WHERE ag.revoked = false AND ag.customer_id = a.customer_id
          AND ((a.serial_number IS NOT NULL AND ag.serial_number = a.serial_number)
            OR (a.hostname IS NOT NULL AND LOWER(ag.hostname) = LOWER(a.hostname)))
@@ -122,7 +124,8 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   let agentInfo: any = null;
   try {
     agentInfo = (await pool.query(
-      `SELECT id, last_seen_at, agent_version, logged_in_user, local_ips, public_ip, disk_info FROM agent_devices
+      `SELECT id, last_seen_at, agent_version, logged_in_user, local_ips, public_ip, disk_info,
+              EXTRACT(EPOCH FROM (NOW() - last_seen_at)) AS seen_secs FROM agent_devices
        WHERE revoked = false AND customer_id = $1
          AND (($2::text IS NOT NULL AND serial_number = $2)
            OR ($3::text IS NOT NULL AND LOWER(hostname) = LOWER($3)))
@@ -174,7 +177,9 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
 // site keys, per-customer RMM installer URLs and the global defaults.
 router.get('/agents', requireAuth, async (req: Request, res: Response) => {
   const rows = (await pool.query(
-    `SELECT d.*, c.name AS customer_name FROM agent_devices d
+    `SELECT d.*, c.name AS customer_name,
+            EXTRACT(EPOCH FROM (NOW() - d.last_seen_at)) AS seen_secs
+     FROM agent_devices d
      LEFT JOIN customers c ON c.id = d.customer_id
      ORDER BY c.name, d.hostname`)).rows;
   const isAdmin = req.session.user!.role === 'admin';
@@ -203,6 +208,8 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
   res.render('assets/agents', {
     user: req.session.user!, rows, customers, defaults, isAdmin,
     rollout, ringCounts, hostedSha: agentHostedSha256(),
+    packages: isAdmin ? (await pool.query(
+      'SELECT id, name, version, file_name, url, size_bytes, install_args FROM agent_packages ORDER BY name')).rows : [],
     msi: agentMsiInfo(), latestVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
     baseUrl: req.protocol + '://' + req.get('host'),
     notice: req.query.msg || null, error: req.query.err || null,

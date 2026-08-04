@@ -73,7 +73,7 @@
         <div class="dev-field-row"><div class="k">Date added</div><div class="v"><%= dt(asset.added_at) %></div></div>
       </div>
       <% if (typeof agentInfo !== 'undefined' && agentInfo) {
-           var agOnline = agentInfo.last_seen_at && (Date.now() - new Date(agentInfo.last_seen_at).getTime()) < 12*60*1000;
+           var agOnline = agentInfo.seen_secs != null && Number(agentInfo.seen_secs) < 12*60;
            var agDisks = [];
            try { agDisks = JSON.parse(agentInfo.disk_info || '[]') || []; } catch (e) { agDisks = []; }
       %>

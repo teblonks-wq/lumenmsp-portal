@@ -1,6 +1,8 @@
 <%- include('../partials/header', { title: 'LumenMSP Agents', user }) %>
 <% function dt(v){ return v ? new Date(v).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
-<% function isOnline(v){ return v && (Date.now() - new Date(v).getTime()) < 12*60*1000; } %>
+<% // Online-ness comes from the DATABASE clock (seen_secs), never from subtracting a
+   // db timestamp from this process's clock — that breaks on any timezone mismatch.
+   function isOnline(d){ return d.seen_secs != null && Number(d.seen_secs) < 12*60; } %>
 <%
   // 1.0.2 is the first build containing the self-update worker. Anything older can never
   // update itself, however the rollout is set - it is STRANDED until someone reinstalls
@@ -119,7 +121,7 @@
     <table class="table">
       <thead><tr><th></th><th>Device</th><th>Customer</th><th>User</th><th>Local IPs</th><th>Public IP</th><th>Version</th><th>Last seen</th><% if (isAdmin) { %><th>Ring</th><th>AD agent</th><th></th><% } %></tr></thead>
       <tbody>
-        <% rows.forEach(function(d){ var on = !d.revoked && isOnline(d.last_seen_at); %>
+        <% rows.forEach(function(d){ var on = !d.revoked && isOnline(d); %>
         <tr style="<%= d.revoked ? 'opacity:.5;' : '' %>">
           <td><span title="<%= d.revoked ? 'Revoked' : (on ? 'Online' : 'Offline') %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= d.revoked ? 'var(--bad-fg)' : (on ? 'var(--ok)' : 'var(--line-strong)') %>;"></span></td>
           <td><strong><%= d.hostname || '(unnamed)' %></strong><% if (d.serial_number) { %><div class="muted" style="font-size:11px;"><%= d.serial_number %></div><% } %></td>
@@ -205,6 +207,59 @@
   </form>
   <p class="muted" style="font-size:12px;margin:8px 0 0;">The version is how installed agents know to upgrade, so it must match the build. Leave it blank only to stage a build without pushing it out.</p>
 </div>
+
+<% if (isAdmin) { %>
+<div class="card" style="margin-bottom:20px;">
+  <h3 style="margin-top:0;">Software library</h3>
+  <p class="muted" style="font-size:13px;margin:0 0 10px;">
+    MSIs you can push to any device from its <strong>Tools &rarr; Installed software &rarr; Install software</strong> panel.
+    Upload the file, or point at an https URL if the vendor hosts it. MSI only for now.
+  </p>
+  <% if ((packages || []).length) { %>
+  <div style="overflow-x:auto;margin-bottom:12px;">
+    <table class="table">
+      <thead><tr><th>Package</th><th>Version</th><th>Source</th><th>Size</th><th>Args</th><th></th></tr></thead>
+      <tbody>
+        <% packages.forEach(function(p){ %>
+        <tr>
+          <td><strong><%= p.name %></strong></td>
+          <td><%= p.version || '—' %></td>
+          <td style="font-size:12px;"><%= p.file_name ? 'uploaded' : 'URL' %></td>
+          <td style="font-size:12px;"><%= p.size_bytes ? (p.size_bytes/1048576).toFixed(1) + ' MB' : '—' %></td>
+          <td style="font-size:12px;font-family:ui-monospace,Consolas,monospace;"><%= p.install_args %></td>
+          <td style="text-align:right;">
+            <form method="post" action="/agent-packages/<%= p.id %>/delete" style="display:inline;" onsubmit="return confirm('Remove <%= p.name %> from the library?');">
+              <button class="btn btn-small" type="submit">Remove</button>
+            </form>
+          </td>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+  <% } else { %>
+  <p class="muted" style="font-size:13px;">Nothing in the library yet.</p>
+  <% } %>
+  <form method="post" action="/agent-packages" enctype="multipart/form-data" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+    <label style="flex:1;min-width:170px;">Name
+      <input class="input" type="text" name="name" placeholder="7-Zip" required>
+    </label>
+    <label style="width:110px;">Version
+      <input class="input" type="text" name="version" placeholder="24.09">
+    </label>
+    <label style="flex:1;min-width:190px;">MSI file
+      <input class="input" type="file" name="msi" accept=".msi">
+    </label>
+    <label style="flex:1;min-width:190px;">…or https URL
+      <input class="input" type="url" name="url" placeholder="https://…/app.msi">
+    </label>
+    <label style="width:140px;">msiexec args
+      <input class="input" type="text" name="args" value="/qn /norestart">
+    </label>
+    <button class="btn btn-primary" type="submit">Add package</button>
+  </form>
+</div>
+<% } %>
 
 <div class="card" style="margin-bottom:20px;">
   <h3 style="margin-top:0;">Global defaults</h3>
