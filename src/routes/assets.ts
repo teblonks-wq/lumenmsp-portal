@@ -285,6 +285,46 @@ router.post('/agents/settings', requireAuth, requireAdmin, async (req: Request, 
   res.redirect('/agents?msg=' + encodeURIComponent('Agent defaults saved.'));
 });
 
+// Move a device to a different customer — the fix for an agent installed from the
+// wrong customer's download link. Its OPEN agent cases move with it (a case raised from
+// this machine belongs to whoever owns the machine), and the requester is cleared because
+// contacts are customer-scoped: leaving it would put another company's contact on the case.
+router.post('/agents/:id/customer', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const customerId = parseInt(String(req.body.customer_id), 10);
+  if (!customerId) { res.redirect('/agents?err=' + encodeURIComponent('Pick a customer.')); return; }
+  const client = await pool.connect();
+  try {
+    const d = (await client.query('SELECT hostname, customer_id FROM agent_devices WHERE id=$1', [id])).rows[0];
+    if (!d) { res.redirect('/agents?err=' + encodeURIComponent('Device not found.')); return; }
+    const c = (await client.query('SELECT id, name FROM customers WHERE id=$1 AND deleted_at IS NULL', [customerId])).rows[0];
+    if (!c) { res.redirect('/agents?err=' + encodeURIComponent('Unknown customer.')); return; }
+    if (d.customer_id === customerId) { res.redirect('/agents?msg=' + encodeURIComponent('Already assigned to that customer.')); return; }
+
+    await client.query('BEGIN');
+    // is_ad_agent is per-customer, so it can't survive the move.
+    await client.query('UPDATE agent_devices SET customer_id=$1, is_ad_agent=false, updated_at=NOW() WHERE id=$2', [customerId, id]);
+    const moved = await client.query(
+      `UPDATE inbox_tickets SET customer_id=$1, contact_id=NULL, updated_at=NOW()
+        WHERE agent_device_id=$2 AND deleted_at IS NULL AND status NOT IN ('resolved','closed')
+        RETURNING id`, [customerId, id]);
+    await client.query('COMMIT');
+
+    await logActivity(req.session.user!.id, 'agent_reassigned', 'agent_devices', id,
+      `${d.hostname} moved to ${c.name}${moved.rows.length ? ` (${moved.rows.length} open case(s) moved too)` : ''}`);
+    res.redirect('/agents?msg=' + encodeURIComponent(
+      `${d.hostname} moved to ${c.name}.` +
+      (moved.rows.length ? ` ${moved.rows.length} open case(s) moved with it — re-link the requester on each.` : '') +
+      ' Already-closed cases stay with the previous customer.'));
+  } catch (e: any) {
+    try { await client.query('ROLLBACK'); } catch { /* already gone */ }
+    console.error('[agents] reassign failed:', e.message);
+    res.redirect('/agents?err=' + encodeURIComponent('Could not move that device.'));
+  } finally {
+    client.release();
+  }
+});
+
 // Advance (or halt) the rollout of the hosted build. Publishing puts a build at stage 0
 // (internal only); this is how it reaches pilot customers and then everyone.
 router.post('/agents/rollout', requireAuth, requireAdmin, async (req: Request, res: Response) => {

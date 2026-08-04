@@ -12,6 +12,18 @@
   .tool-out { background:#0f172a; color:#e2e8f0; font-family:ui-monospace,Consolas,monospace; font-size:12px; line-height:1.5;
               padding:12px 14px; border-radius:8px; max-height:420px; overflow:auto; white-space:pre-wrap; word-break:break-word; margin-top:10px; }
   .tool-out:empty { display:none; }
+  .term { background:#0f172a; border-radius:8px; padding:12px 14px; max-height:460px; overflow:auto;
+          font-family:ui-monospace,Consolas,monospace; font-size:12.5px; line-height:1.55; color:#e2e8f0; cursor:text; }
+  .term-line { display:flex; gap:8px; align-items:baseline; }
+  .term-prompt { color:#38bdf8; white-space:pre; flex:none; }
+  .term-in { flex:1; background:transparent; border:none; outline:none; color:#e2e8f0;
+             font-family:inherit; font-size:inherit; padding:0; }
+  .term-in::placeholder { color:#475569; }
+  .term-echo { color:#94a3b8; }
+  .term-echo b { color:#38bdf8; font-weight:400; }
+  .term-err { color:#fca5a5; }
+  .term-note { color:#fbbf24; }
+  .term pre { margin:0 0 6px; white-space:pre-wrap; word-break:break-word; }
   .tool-busy { display:inline-block; font-size:12px; color:var(--muted); }
   .tool-tbl { width:100%; font-size:12.5px; border-collapse:collapse; margin-top:10px; }
   .tool-tbl th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); padding:6px 8px; border-bottom:1px solid var(--line); }
@@ -43,20 +55,22 @@
     <button type="button" data-tool="files">File system</button>
   </nav>
 
-  <!-- Console -->
+  <!-- Console: a real terminal, not a text box. The agent keeps a PowerShell session
+       alive per machine, so cd and variables persist between commands. -->
   <div class="tool-panel" data-panel="console">
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
       <label style="display:flex;gap:5px;align-items:center;font-size:13px;"><input type="radio" name="shellKind" value="shell.powershell" checked> PowerShell</label>
       <label style="display:flex;gap:5px;align-items:center;font-size:13px;"><input type="radio" name="shellKind" value="shell.cmd"> Command line</label>
-      <span class="muted" style="font-size:11.5px;">Ctrl+Enter to run &middot; 120s limit</span>
+      <button class="btn" type="button" id="shellReset" style="padding:2px 10px;font-size:11.5px;">Reset session</button>
+      <span class="muted" style="font-size:11.5px;">&uarr;&darr; history &middot; Ctrl+L clear &middot; 120s per command</span>
     </div>
-    <textarea id="shellScript" class="input" rows="4" placeholder="e.g. Get-ComputerInfo | Select-Object OsName, OsVersion, CsName"
-              style="font-family:ui-monospace,Consolas,monospace;font-size:12.5px;"></textarea>
-    <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
-      <button class="btn btn-primary" type="button" id="shellRun">Run</button>
-      <span class="tool-busy" id="shellBusy"></span>
+    <div class="term" id="term">
+      <div id="termOut"></div>
+      <div class="term-line">
+        <span class="term-prompt" id="termPrompt">PS&gt;</span>
+        <input class="term-in" id="termIn" spellcheck="false" autocomplete="off" placeholder="type a command and press Enter">
+      </div>
     </div>
-    <div class="tool-out" id="shellOut"></div>
   </div>
 
   <!-- Installed software -->
@@ -148,36 +162,117 @@
       });
     }
 
-    // Structured tools return JSON from PowerShell; a single row comes back as an
-    // object rather than an array, so normalise before rendering.
+    // Structured tools return JSON from PowerShell. Be tolerant: a stray warning or
+    // error line can share the stream, so slice from the first bracket rather than
+    // demanding the whole payload be clean. A single row arrives as an object, not an
+    // array. Returns null only when there is genuinely no JSON in there.
     function parseRows(out){
       var t = String(out || '').trim();
       if (!t) return [];
+      var starts = [t.indexOf('['), t.indexOf('{')].filter(function(n){ return n >= 0; });
+      if (!starts.length) return null;
+      var from = Math.min.apply(null, starts);
+      var last = Math.max(t.lastIndexOf(']'), t.lastIndexOf('}'));
+      if (last <= from) return null;
       try {
-        var v = JSON.parse(t);
+        var v = JSON.parse(t.slice(from, last + 1));
         if (v == null) return [];
         return Array.isArray(v) ? v : [v];
-      } catch (e) { return null; }   // null = not JSON, show as raw text
+      } catch (e) { return null; }
     }
 
     function fail(el, msg){ el.innerHTML = '<div class="tool-out">' + esc(msg) + '</div>'; }
 
-    // ── console ────────────────────────────────────────────────────────────────
-    var shellOut = document.getElementById('shellOut');
-    var shellBusy = document.getElementById('shellBusy');
-    function runShell(){
-      var kind = (document.querySelector('input[name="shellKind"]:checked') || {}).value || 'shell.powershell';
-      var script = document.getElementById('shellScript').value.trim();
-      if (!script) return;
-      shellOut.textContent = '';
-      run(kind, { script: script }, shellBusy).then(function(r){
-        shellOut.textContent = (r.output || '(no output)') + (r.exit_code ? '\n[exit code ' + r.exit_code + ']' : '');
-      }).catch(function(e){ shellOut.textContent = e.message; });
+    // ── terminal ───────────────────────────────────────────────────────────────
+    var term = document.getElementById('term');
+    var termOut = document.getElementById('termOut');
+    var termIn = document.getElementById('termIn');
+    var termPrompt = document.getElementById('termPrompt');
+    var history = [], histPos = -1, cwd = '';
+    var CWD_MARK = '___LMA_CWD___';
+
+    function promptText(){
+      var mode = (document.querySelector('input[name="shellKind"]:checked') || {}).value === 'shell.cmd' ? 'CMD' : 'PS';
+      return mode + ' ' + (cwd || '') + '>';
     }
-    document.getElementById('shellRun').addEventListener('click', runShell);
-    document.getElementById('shellScript').addEventListener('keydown', function(e){
-      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runShell(); }
+    function refreshPrompt(){ termPrompt.textContent = promptText(); }
+
+    function write(text, cls){
+      var pre = document.createElement('pre');
+      if (cls) pre.className = cls;
+      pre.textContent = text;
+      termOut.appendChild(pre);
+      term.scrollTop = term.scrollHeight;
+    }
+    function writeEcho(cmd){
+      var pre = document.createElement('pre');
+      pre.className = 'term-echo';
+      pre.innerHTML = '<b>' + esc(promptText()) + '</b> ' + esc(cmd);
+      termOut.appendChild(pre);
+      term.scrollTop = term.scrollHeight;
+    }
+
+    term.addEventListener('click', function(e){ if (!window.getSelection().toString()) termIn.focus(); });
+    document.querySelectorAll('input[name="shellKind"]').forEach(function(r){ r.addEventListener('change', refreshPrompt); });
+
+    function submitCommand(){
+      var cmd = termIn.value.trim();
+      if (!cmd) return;
+      var kind = (document.querySelector('input[name="shellKind"]:checked') || {}).value || 'shell.powershell';
+      writeEcho(cmd);
+      history.unshift(cmd); histPos = -1;
+      termIn.value = '';
+      termIn.disabled = true;
+      var waiting = document.createElement('pre');
+      waiting.className = 'term-note';
+      waiting.textContent = 'running...';
+      termOut.appendChild(waiting);
+      term.scrollTop = term.scrollHeight;
+
+      run(kind, { script: cmd }, null).then(function(r){
+        waiting.remove();
+        var out = String(r.output || '');
+        var k = out.lastIndexOf(CWD_MARK);
+        if (k >= 0) {
+          cwd = out.slice(k + CWD_MARK.length).trim();
+          out = out.slice(0, k).replace(/\s+$/, '');
+          refreshPrompt();
+        }
+        if (r.status === 'expired') write(out || 'The device did not respond.', 'term-err');
+        else if (out) write(out);
+      }).catch(function(e){
+        waiting.remove();
+        write(e.message, 'term-err');
+      }).then(function(){
+        termIn.disabled = false;
+        termIn.focus();
+      });
+    }
+
+    termIn.addEventListener('keydown', function(e){
+      if (e.key === 'Enter') { e.preventDefault(); submitCommand(); return; }
+      if (e.key === 'ArrowUp') {
+        if (histPos + 1 < history.length) { histPos++; termIn.value = history[histPos];
+          setTimeout(function(){ termIn.selectionStart = termIn.selectionEnd = termIn.value.length; }, 0); }
+        e.preventDefault(); return;
+      }
+      if (e.key === 'ArrowDown') {
+        if (histPos > 0) { histPos--; termIn.value = history[histPos]; }
+        else { histPos = -1; termIn.value = ''; }
+        e.preventDefault(); return;
+      }
+      if (e.key === 'l' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); termOut.innerHTML = ''; return; }
     });
+
+    document.getElementById('shellReset').addEventListener('click', function(){
+      write('resetting session...', 'term-note');
+      run('shell.reset', {}, null).then(function(r){
+        cwd = ''; refreshPrompt();
+        write(r.output || 'Session reset.', 'term-note');
+      }).catch(function(e){ write(e.message, 'term-err'); });
+    });
+
+    refreshPrompt();
 
     // ── generic table renderer with a live filter ──────────────────────────────
     function renderTable(container, rows, cols, filterInput, rowActions){

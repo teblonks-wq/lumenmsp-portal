@@ -1,6 +1,22 @@
 <%- include('../partials/header', { title: 'LumenMSP Agents', user }) %>
 <% function dt(v){ return v ? new Date(v).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
 <% function isOnline(v){ return v && (Date.now() - new Date(v).getTime()) < 12*60*1000; } %>
+<%
+  // 1.0.2 is the first build containing the self-update worker. Anything older can never
+  // update itself, however the rollout is set - it is STRANDED until someone reinstalls
+  // it by hand. Saying "update due" on those would imply it sorts itself out.
+  var SELF_UPDATE_FROM = [1, 0, 2];
+  function verParts(v){ return String(v || '').split('.').map(function(n){ return parseInt(n, 10) || 0; }); }
+  function olderThan(v, ref){
+    var a = verParts(v);
+    for (var i = 0; i < ref.length; i++) {
+      var x = a[i] || 0;
+      if (x !== ref[i]) return x < ref[i];
+    }
+    return false;
+  }
+  function stranded(v){ return !!v && olderThan(v, SELF_UPDATE_FROM); }
+%>
 
 <div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
   <div>
@@ -56,6 +72,14 @@
     <div><strong>Ring 1 &middot; pilot</strong><br><span class="muted"><%= ringN(1) %> device<%= ringN(1)===1?'':'s' %>, <%= ringBehind(1) %> to update</span></div>
     <div><strong>Ring 2 &middot; everyone</strong><br><span class="muted"><%= ringN(2) %> device<%= ringN(2)===1?'':'s' %>, <%= ringBehind(2) %> to update</span></div>
   </div>
+  <% var strandedRows = (rows || []).filter(function(d){ return !d.revoked && stranded(d.agent_version); }); %>
+  <% if (strandedRows.length) { %>
+  <div class="alert alert-error" style="margin:0 0 12px;font-size:12.5px;">
+    <strong><%= strandedRows.length %> device<%= strandedRows.length===1?'':'s' %> cannot self-update</strong> &mdash;
+    <%= strandedRows.map(function(d){ return d.hostname + ' (v' + d.agent_version + ')'; }).join(', ') %>.
+    Builds before 1.0.2 have no update worker, so they stay on their current version until the MSI is reinstalled on them by hand.
+  </div>
+  <% } %>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
     <% if (stage < 1) { %>
     <form method="post" action="/agents/rollout" style="display:inline;"><input type="hidden" name="stage" value="1">
@@ -92,11 +116,26 @@
         <tr style="<%= d.revoked ? 'opacity:.5;' : '' %>">
           <td><span title="<%= d.revoked ? 'Revoked' : (on ? 'Online' : 'Offline') %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= d.revoked ? 'var(--bad-fg)' : (on ? 'var(--ok)' : 'var(--line-strong)') %>;"></span></td>
           <td><strong><%= d.hostname || '(unnamed)' %></strong><% if (d.serial_number) { %><div class="muted" style="font-size:11px;"><%= d.serial_number %></div><% } %></td>
-          <td><% if (d.customer_id) { %><a class="row-link" href="/customers/<%= d.customer_id %>"><%= d.customer_name %></a><% } else { %>—<% } %></td>
+          <td>
+            <% if (d.customer_id) { %><a class="row-link" href="/customers/<%= d.customer_id %>"><%= d.customer_name %></a><% } else { %><span class="muted">—</span><% } %>
+            <% if (isAdmin) { var known = (customers || []).some(function(c){ return c.id === d.customer_id; }); %>
+            <form method="post" action="/agents/<%= d.id %>/customer" style="margin-top:3px;"
+                  onsubmit="return confirm('Move <%= d.hostname %> to another customer? Its open cases move with it.');">
+              <select class="input" name="customer_id" style="font-size:11px;padding:1px 4px;width:auto;max-width:150px;"
+                      onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit();" title="Move this device to another customer">
+                <% if (!known && d.customer_id) { %><option value="<%= d.customer_id %>" selected><%= d.customer_name %></option><% } %>
+                <% (customers || []).forEach(function(c){ %><option value="<%= c.id %>" <%= c.id === d.customer_id ? 'selected' : '' %>><%= c.name %></option><% }); %>
+              </select>
+            </form>
+            <% } %>
+          </td>
           <td><%= d.logged_in_user || '—' %></td>
           <td style="font-size:12px;"><%= d.local_ips || '—' %></td>
           <td style="font-size:12px;"><%= d.public_ip || '—' %></td>
-          <td><%= d.agent_version || '—' %><% if (latestVersion && d.agent_version && d.agent_version !== latestVersion && !d.revoked) { %> <span class="badge badge-inactive" title="Will self-update to <%= latestVersion %> within 6 hours">update due</span><% } %></td>
+          <td><%= d.agent_version || '—' %><% if (latestVersion && d.agent_version && d.agent_version !== latestVersion && !d.revoked) { %>
+            <% if (stranded(d.agent_version)) { %> <span class="badge badge-failed" title="This build predates self-update - it will NOT update itself. Reinstall the MSI on this machine once.">manual reinstall</span>
+            <% } else { %> <span class="badge badge-inactive" title="Self-updates to <%= latestVersion %> within 6 hours (once its ring is in scope)">update due</span><% } %>
+          <% } %></td>
           <td><%= dt(d.last_seen_at) %></td>
           <% if (isAdmin) { %>
           <td>
@@ -236,7 +275,8 @@
     var tmp = 'C:' + B + 'Windows' + B + 'Temp' + B + name;
     cmd.value = 'powershell -NoProfile -ExecutionPolicy Bypass -Command ' + Q
       + 'Invoke-WebRequest ' + A + url + A + ' -OutFile ' + A + tmp + A + ' -UseBasicParsing; '
-      + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',' + A + tmp + A + ',' + A + '/qn' + A + ' -Wait' + Q;
+      + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',' + A + tmp + A + ',' + A + '/qn' + A + ','
+      + A + '/l*v' + A + ',' + A + 'C:' + B + 'Windows' + B + 'Temp' + B + 'LumenMSPAgent-install.log' + A + ' -Wait' + Q;
   }
   sel.addEventListener('change', update);
   update();
@@ -261,7 +301,8 @@
       var tmp = 'C:' + B + 'Windows' + B + 'Temp' + B + name;
       var cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -Command ' + Q
         + 'Invoke-WebRequest ' + A + url + A + ' -OutFile ' + A + tmp + A + ' -UseBasicParsing; '
-        + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',' + A + tmp + A + ',' + A + '/qn' + A + ' -Wait' + Q;
+        + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',' + A + tmp + A + ',' + A + '/qn' + A + ','
+      + A + '/l*v' + A + ',' + A + 'C:' + B + 'Windows' + B + 'Temp' + B + 'LumenMSPAgent-install.log' + A + ' -Wait' + Q;
       (navigator.clipboard ? navigator.clipboard.writeText(cmd) : Promise.reject()).then(function(){
         b.textContent = 'Copied \u2713';
         setTimeout(function(){ b.textContent = 'Copy command'; }, 1600);

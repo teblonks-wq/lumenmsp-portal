@@ -22,6 +22,7 @@ const router = Router();
 const KINDS: Record<string, { label: string; ad?: boolean; destructive?: boolean }> = {
   'shell.powershell': { label: 'PowerShell command', destructive: true },
   'shell.cmd': { label: 'Command-line command', destructive: true },
+  'shell.reset': { label: 'Reset the console session' },
   'software.list': { label: 'Listed installed software' },
   'services.list': { label: 'Listed services' },
   'services.restart': { label: 'Restarted a service', destructive: true },
@@ -106,6 +107,7 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
     const payload: Record<string, any> = {};
     let generated: string | null = null;
     if (kind === 'shell.powershell' || kind === 'shell.cmd') {
+      // shell.reset carries no script - it just throws the session away.
       const script = String(b.script || '').trim();
       if (!script) { res.status(400).json({ ok: false, error: 'Type a command first.' }); return; }
       payload.script = script.slice(0, 8000);

@@ -50,7 +50,8 @@
     var tmp = 'C:' + B + 'Windows' + B + 'Temp' + B + name;
     var cmd = 'powershell -NoProfile -ExecutionPolicy Bypass -Command ' + Q
       + 'Invoke-WebRequest ' + A + url + A + ' -OutFile ' + A + tmp + A + ' -UseBasicParsing; '
-      + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',' + A + tmp + A + ',' + A + '/qn' + A + ' -Wait' + Q;
+      + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',' + A + tmp + A + ',' + A + '/qn' + A + ','
+      + A + '/l*v' + A + ',' + A + 'C:' + B + 'Windows' + B + 'Temp' + B + 'LumenMSPAgent-install.log' + A + ' -Wait' + Q;
     (navigator.clipboard ? navigator.clipboard.writeText(cmd) : Promise.reject()).then(function(){
       b.textContent = 'Copied \u2713'; setTimeout(function(){ b.textContent = 'Copy install command'; }, 1600);
     }).catch(function(){ window.prompt('Copy this command:', cmd); });
