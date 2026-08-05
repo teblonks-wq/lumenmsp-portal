@@ -73,7 +73,7 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
  * Run a meshctrl action. Arguments go across as an array so nothing is ever
  * parsed by a shell - group ids contain $ and @ and would not survive it.
  */
-async function meshctrl(action, args = []) {
+async function meshctrl(action, args = [], cwd = '/opt/meshcentral') {
   const argv = [
     MESHCTRL, action,
     '--url', CFG.meshUrl,
@@ -81,11 +81,24 @@ async function meshctrl(action, args = []) {
     '--loginpass', CFG.meshPass,
     ...args,
   ];
-  const { stdout } = await execFileAsync('node', argv, {
-    maxBuffer: 32 * 1024 * 1024,
-    cwd: '/opt/meshcentral',
-  });
-  return stdout;
+  try {
+    const { stdout } = await execFileAsync('node', argv, { maxBuffer: 32 * 1024 * 1024, cwd });
+    // meshctrl is inconsistent about exit codes: some failures exit 0 and only say so
+    // on stdout ("Invalid meshid."), others exit 1. Treat the text as authoritative.
+    if (/^(invalid|unknown|missing|access denied|unauthorized|file .* already exists)/i.test(stdout.trim())) {
+      throw new Error(`${action}: ${stdout.trim().slice(0, 200)}`);
+    }
+    return stdout;
+  } catch (err) {
+    // execFile puts the whole command line in the message, credentials and all - which
+    // would then land in the systemd journal for ever. Never let that happen.
+    throw new Error(redact(`${action} failed: ${err.stdout || ''} ${err.message}`).slice(0, 400));
+  }
+}
+
+/** Strip the MeshCentral password out of anything on its way to a log. */
+function redact(text) {
+  return String(text || '').split(CFG.meshPass).join('«redacted»');
 }
 
 async function meshctrlJson(action, args = []) {
@@ -178,23 +191,22 @@ async function ensureGroup(groups, customer) {
  * though the download here is unauthenticated.
  */
 async function pushAgentBinary(customer, group) {
+  // A FRESH directory per download, deliberately. meshctrl writes into its working
+  // directory, names the file after the group, and refuses outright if that name is
+  // already taken - so a single leftover file would poison every later run.
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'meshagent-'));
   try {
     await meshctrl('agentdownload', [
       '--id', bareId(group._id),
       '--type', CFG.agentType,
       '--installflags', CFG.installFlags,
-    ]);
+    ], dir);
 
-    // meshctrl writes into the process working directory, naming the file
-    // after the group. Take whatever .exe appeared rather than guessing at
-    // how it sanitised the name.
-    const cwdFiles = await fs.readdir('/opt/meshcentral');
-    const exe = cwdFiles.filter((f) => f.toLowerCase().endsWith('.exe'))
-      .map((f) => path.join('/opt/meshcentral', f))
-      .sort()
-      .pop();
-    if (!exe) throw new Error('agentdownload reported success but produced no .exe');
+    // Take whatever .exe appeared rather than guessing at how it sanitised the name.
+    const produced = await fs.readdir(dir);
+    const hit = produced.find((f) => f.toLowerCase().endsWith('.exe'));
+    if (!hit) throw new Error('agentdownload reported success but produced no .exe');
+    const exe = path.join(dir, hit);
 
     const buf = await fs.readFile(exe);
     if (buf.length < 1_000_000 || buf[0] !== 0x4d || buf[1] !== 0x5a) {
@@ -210,7 +222,6 @@ async function pushAgentBinary(customer, group) {
     await portal('POST', '/agent/api/mesh/agent-binary', form, true);
 
     log(`uploaded agent for customer ${customer.id} (${buf.length} bytes)`);
-    await fs.unlink(exe).catch(() => {});
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   }
@@ -239,7 +250,7 @@ async function main() {
       if (!customer.hasAgentBinary) await pushAgentBinary(customer, group);
     } catch (err) {
       // One broken customer must not stop the rest. The next run retries.
-      console.error(`customer ${customer.id} (${customer.name}): ${err.message}`);
+      console.error(`customer ${customer.id} (${customer.name}): ${redact(err.message)}`);
     }
   }
 
@@ -262,5 +273,5 @@ async function main() {
 
 main().then(
   () => process.exit(0),
-  (err) => { console.error('bridge run failed:', err.message); process.exit(1); },
+  (err) => { console.error('bridge run failed:', redact(err.message)); process.exit(1); },
 );

@@ -58,11 +58,17 @@ async function requireBridge(req: Request, res: Response, next: NextFunction): P
 // agent, so a quiet cycle costs one query and nothing else.
 router.get('/agent/api/mesh/customers', requireBridge, async (_req: Request, res: Response) => {
   try {
+    // Active customers only. Without this we make a MeshCentral device group for every
+    // lead and every website enquiry that ever landed in the CRM — and a new one each
+    // time someone fills the form in.
     const r = await pool.query(
       `SELECT c.id, c.name, c.mesh_group_id,
               (c.mesh_agent_package_id IS NOT NULL) AS has_agent_binary
          FROM customers c
-        WHERE c.deleted_at IS NULL AND COALESCE(c.mesh_enabled, true) = true
+        WHERE c.deleted_at IS NULL
+          AND COALESCE(c.mesh_enabled, true) = true
+          AND c.status = 'active'
+          AND COALESCE(c.is_placeholder, false) = false
         ORDER BY c.id`);
     res.json({
       ok: true,
