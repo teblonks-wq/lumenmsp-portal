@@ -44,6 +44,7 @@ import chatPublicRoutes from './routes/chat-public';
 import leadsApiRoutes from './routes/leads-api';
 import agentApiRoutes from './routes/agent-api';
 import agentToolsRoutes from './routes/agent-tools';
+import meshRoutes from './routes/mesh';
 import mcpRoutes from './routes/mcp';
 import marketingRoutes from './routes/marketing';
 import networkRoutes from './routes/network';
@@ -342,6 +343,7 @@ app.use('/', credentialRoutes);
 app.use('/', ateraRoutes);
 app.use('/', assetRoutes);
 app.use('/', agentToolsRoutes);  // remote tools on the asset page (admin-only)
+app.use('/', meshRoutes);        // MeshCentral: bridge API (shared-secret) + remote control
 app.use('/', reviewRoutes);
 app.use('/', insightsRoutes);
 app.use('/', itReportRoutes);     // Monthly IT Operations & Security Snapshot (staff)
