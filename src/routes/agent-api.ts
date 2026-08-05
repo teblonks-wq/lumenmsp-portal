@@ -201,6 +201,16 @@ router.post('/agent/api/enroll', async (req: Request, res: Response) => {
       deviceId = ins.rows[0].id;
     }
     await logActivity(null, existing ? 'agent_reenrolled' : 'agent_enrolled', 'agent_devices', deviceId, `${hostname} enrolled for ${cust.rows[0].name}`);
+
+    // Remote access rides along with enrollment — a device that arrives without
+    // MeshCentral is a device somebody has to remember to visit later, and nobody does.
+    // Dynamic import on purpose: mesh.ts imports AGENT_PKG_DIR and wakeAgent from here,
+    // so a top-level import would be a cycle.
+    try {
+      const { queueMeshInstall } = await import('./mesh');
+      await queueMeshInstall(deviceId, `${req.protocol}://${req.get('host')}`);
+    } catch (e: any) { console.error('[mesh] enrol hook:', e.message); }
+
     res.status(existing ? 200 : 201).json({ ok: true, device_id: deviceId, device_token: token, customer: cust.rows[0].name, config: await deviceConfig(customerId, 2) });
   } catch (e: any) {
     console.error('[agent] enroll failed:', e.message);
@@ -226,6 +236,16 @@ router.post('/agent/api/heartbeat', requireDevice, async (req: Request, res: Res
       [s(b.hostname, 200), s(b.os, 200), s(b.os_version, 100), s(b.agent_version, 50),
        s(b.logged_in_user, 200), localIps, diskInfo, clientIp(req), d.id]
     );
+    // Catches devices that enrolled before their customer had a MeshCentral group, and
+    // any machine where the install failed and was cleared. Cheap: returns immediately
+    // unless there is genuinely something to queue.
+    if (!d.mesh_installed) {
+      try {
+        const { queueMeshInstall } = await import('./mesh');
+        await queueMeshInstall(d.id, `${req.protocol}://${req.get('host')}`);
+      } catch { /* never let this break a heartbeat */ }
+    }
+
     res.json({ ok: true, public_ip: clientIp(req), config: await deviceConfig(d.customer_id, d.update_ring ?? 2) });
   } catch (e: any) {
     console.error('[agent] heartbeat failed:', e.message);

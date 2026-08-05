@@ -1,0 +1,283 @@
+import { Router, Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import multer from 'multer';
+import { pool } from '../db/pool';
+import { requireAuth, requireAdmin } from '../middleware/auth';
+import { getSetting } from '../lib/settings';
+import { logActivity } from '../lib/activity';
+import { AGENT_PKG_DIR, wakeAgent } from './agent-api';
+
+// ── MeshCentral integration ─────────────────────────────────────────────────────
+// Remote access. Two halves, and the direction of each matters:
+//
+//   • THE BRIDGE (mesh01 → here). A timer on the MeshCentral box asks us for the
+//     customer list, creates a device group for anyone who hasn't got one, sends the
+//     group id back, uploads that group's Windows agent, and reports every MeshCentral
+//     node id with its hostname. We never dial MeshCentral — its control interface
+//     stays unreachable from Azure, and the only credential crossing the wire is the
+//     bridge secret. Authenticated by header, never a session.
+//
+//   • THE INSTALL (here → device). A device enrols, we see its customer has an agent
+//     binary and the device hasn't got Mesh Agent, and we queue a mesh.install command.
+//     The agent fetches the binary from /agent/api/package/:id on its own device token —
+//     so nothing anonymous is used in normal running, even though the bridge's own
+//     download from MeshCentral is unauthenticated.
+//
+// Node ids are matched to devices BY HOSTNAME, which is why every group the bridge
+// creates has MeshCentral's Hostname Sync feature enabled.
+
+const router = Router();
+
+const sha256 = (b: Buffer) => crypto.createHash('sha256').update(b).digest('hex');
+
+/** MeshCentral's public base URL, e.g. https://mesh.lumenmsp.co.uk (no trailing slash). */
+export async function meshServerUrl(): Promise<string | null> {
+  const v = ((await getSetting('mesh', 'server_url')) || '').trim().replace(/\/+$/, '');
+  return /^https:\/\//i.test(v) ? v : null;
+}
+
+// ── Bridge auth ─────────────────────────────────────────────────────────────────
+// A shared secret in settings (mesh/bridge_secret), compared in constant time. This is
+// a server-to-server credential: no session, no CSRF, same posture as the agent API.
+async function requireBridge(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const given = String(req.headers['x-mesh-bridge-secret'] || '');
+  const want = ((await getSetting('mesh', 'bridge_secret')) || '').trim();
+  if (!want) { res.status(503).json({ ok: false, error: 'bridge secret not configured' }); return; }
+  const a = Buffer.from(given), b = Buffer.from(want);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    res.status(401).json({ ok: false, error: 'bad bridge secret' });
+    return;
+  }
+  next();
+}
+
+// ── Bridge: what customers exist? ───────────────────────────────────────────────
+// hasAgentBinary tells the bridge whether to bother downloading and uploading the
+// agent, so a quiet cycle costs one query and nothing else.
+router.get('/agent/api/mesh/customers', requireBridge, async (_req: Request, res: Response) => {
+  try {
+    const r = await pool.query(
+      `SELECT c.id, c.name, c.mesh_group_id,
+              (c.mesh_agent_package_id IS NOT NULL) AS has_agent_binary
+         FROM customers c
+        WHERE c.deleted_at IS NULL AND COALESCE(c.mesh_enabled, true) = true
+        ORDER BY c.id`);
+    res.json({
+      ok: true,
+      customers: r.rows.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        meshGroupId: c.mesh_group_id || null,
+        hasAgentBinary: c.has_agent_binary === true,
+      })),
+    });
+  } catch (e: any) {
+    console.error('[mesh] customer list failed:', e.message);
+    res.status(500).json({ ok: false, error: 'customer list failed' });
+  }
+});
+
+// ── Bridge: here is the group I made for that customer ──────────────────────────
+router.post('/agent/api/mesh/group', requireBridge, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const customerId = parseInt(String(b.customerId), 10);
+  const groupId = String(b.meshGroupId || '').trim().slice(0, 200);
+  const groupName = String(b.meshGroupName || '').trim().slice(0, 200) || null;
+  if (!customerId || !groupId) { res.status(400).json({ ok: false, error: 'customerId and meshGroupId are required' }); return; }
+  try {
+    const r = await pool.query(
+      'UPDATE customers SET mesh_group_id=$1, mesh_group_name=$2, updated_at=NOW() WHERE id=$3 RETURNING name',
+      [groupId, groupName, customerId]);
+    if (!r.rows.length) { res.status(404).json({ ok: false, error: 'unknown customer' }); return; }
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error('[mesh] group link failed:', e.message);
+    res.status(500).json({ ok: false, error: 'group link failed' });
+  }
+});
+
+// ── Bridge: here is that group's Windows agent ──────────────────────────────────
+// Stored as an ordinary agent_packages row so it rides the deployment machinery that
+// already exists — the agent downloads it from /agent/api/package/:id on its device
+// token, exactly like any other package.
+const meshUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => { fs.mkdirSync(AGENT_PKG_DIR, { recursive: true }); cb(null, AGENT_PKG_DIR); },
+    filename: (req, _file, cb) => cb(null, `meshagent64-c${parseInt(String((req.body || {}).customerId), 10) || 0}-${Date.now()}.exe`),
+  }),
+  limits: { fileSize: 64 * 1024 * 1024, files: 1 },
+});
+
+router.post('/agent/api/mesh/agent-binary', requireBridge, meshUpload.single('file'), async (req: Request, res: Response) => {
+  const f = (req as any).file;
+  const customerId = parseInt(String((req.body || {}).customerId), 10);
+  if (!f) { res.status(400).json({ ok: false, error: 'no file' }); return; }
+  const drop = () => { try { fs.unlinkSync(f.path); } catch { /* already gone */ } };
+
+  try {
+    if (!customerId) { drop(); res.status(400).json({ ok: false, error: 'customerId is required' }); return; }
+
+    // We are about to run this as SYSTEM on customer machines, so "it arrived" is
+    // nowhere near enough. Must be a real PE image, and a plausible size.
+    const buf = fs.readFileSync(f.path);
+    if (buf.length < 1_000_000 || buf[0] !== 0x4d || buf[1] !== 0x5a) {
+      drop();
+      res.status(400).json({ ok: false, error: 'not a Windows executable' });
+      return;
+    }
+
+    const cust = (await pool.query('SELECT id, name, mesh_agent_package_id FROM customers WHERE id=$1', [customerId])).rows[0];
+    if (!cust) { drop(); res.status(404).json({ ok: false, error: 'unknown customer' }); return; }
+
+    const name = `MeshCentral Agent — ${cust.name}`;
+    const args = '-fullinstall';
+    let packageId: number;
+
+    if (cust.mesh_agent_package_id) {
+      // Replace in place so the id stays stable and any queued command still resolves.
+      const old = (await pool.query('SELECT file_name FROM agent_packages WHERE id=$1', [cust.mesh_agent_package_id])).rows[0];
+      await pool.query(
+        `UPDATE agent_packages SET name=$1, file_name=$2, size_bytes=$3, sha256=$4, install_args=$5, url=NULL WHERE id=$6`,
+        [name, path.basename(f.path), buf.length, sha256(buf), args, cust.mesh_agent_package_id]);
+      packageId = cust.mesh_agent_package_id;
+      if (old?.file_name && old.file_name !== path.basename(f.path)) {
+        try { fs.unlinkSync(path.join(AGENT_PKG_DIR, path.basename(old.file_name))); } catch { /* already gone */ }
+      }
+    } else {
+      const ins = await pool.query(
+        `INSERT INTO agent_packages (name, file_name, size_bytes, sha256, install_args)
+         VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+        [name, path.basename(f.path), buf.length, sha256(buf), args]);
+      packageId = ins.rows[0].id;
+      await pool.query('UPDATE customers SET mesh_agent_package_id=$1, updated_at=NOW() WHERE id=$2', [packageId, customerId]);
+    }
+
+    await logActivity(null, 'mesh_agent_binary', 'customers', customerId,
+      `Remote-access agent published for ${cust.name} (${(buf.length / 1048576).toFixed(1)} MB)`);
+    res.json({ ok: true, packageId });
+  } catch (e: any) {
+    drop();
+    console.error('[mesh] agent binary failed:', e.message);
+    res.status(500).json({ ok: false, error: 'agent binary not stored' });
+  }
+});
+
+// ── Bridge: here is every device MeshCentral knows about ────────────────────────
+// Hostname is the join key. Match within the customer that owns the device group, so
+// two customers with a "RECEPTION" can never cross-contaminate.
+router.post('/agent/api/mesh/devices', requireBridge, async (req: Request, res: Response) => {
+  const list = (req.body || {}).devices;
+  if (!Array.isArray(list)) { res.status(400).json({ ok: false, error: 'devices must be an array' }); return; }
+  let matched = 0;
+  try {
+    for (const d of list.slice(0, 5000)) {
+      const nodeId = String(d?.nodeId || '').trim().slice(0, 200);
+      const groupId = String(d?.meshGroupId || '').trim().slice(0, 200);
+      const hostname = String(d?.hostname || '').trim().slice(0, 200);
+      if (!nodeId || !groupId || !hostname) continue;
+      const r = await pool.query(
+        `UPDATE agent_devices ad
+            SET mesh_node_id=$1, mesh_installed=true, mesh_last_seen_at=NOW(), updated_at=NOW()
+           FROM customers c
+          WHERE ad.customer_id = c.id
+            AND c.mesh_group_id = $2
+            AND LOWER(ad.hostname) = LOWER($3)`,
+        [nodeId, groupId, hostname]);
+      matched += r.rowCount || 0;
+    }
+    res.json({ ok: true, received: list.length, matched });
+  } catch (e: any) {
+    console.error('[mesh] device sync failed:', e.message);
+    res.status(500).json({ ok: false, error: 'device sync failed' });
+  }
+});
+
+// ── Queue a remote-access install ───────────────────────────────────────────────
+/**
+ * Called from enrolment and from the Agents page. Safe to call repeatedly: it does
+ * nothing when the device already has Mesh Agent, when its customer has no binary yet,
+ * or when an install is already sitting in the queue.
+ */
+export async function queueMeshInstall(deviceId: number, baseUrl: string): Promise<'queued' | 'skipped'> {
+  const d = (await pool.query(
+    `SELECT ad.id, ad.mesh_installed, c.name AS customer, c.mesh_agent_package_id, COALESCE(c.mesh_enabled, true) AS enabled
+       FROM agent_devices ad JOIN customers c ON c.id = ad.customer_id
+      WHERE ad.id=$1 AND ad.revoked=false`, [deviceId])).rows[0];
+  if (!d || !d.enabled || d.mesh_installed || !d.mesh_agent_package_id) return 'skipped';
+
+  const pending = await pool.query(
+    `SELECT 1 FROM agent_commands WHERE device_id=$1 AND kind='mesh.install' AND status IN ('queued','running') LIMIT 1`,
+    [deviceId]);
+  if (pending.rows.length) return 'skipped';
+
+  // Resolve the URL here, never from anything the device sent — same rule as
+  // software.install, so a device can't talk us into fetching an arbitrary installer.
+  const payload = {
+    name: `Remote access (${d.customer})`,
+    url: `${baseUrl.replace(/\/+$/, '')}/agent/api/package/${d.mesh_agent_package_id}`,
+    args: '-fullinstall',
+  };
+  await pool.query(
+    `INSERT INTO agent_commands (device_id, kind, payload, status) VALUES ($1,'mesh.install',$2,'queued')`,
+    [deviceId, JSON.stringify(payload)]);
+  wakeAgent(deviceId);
+  return 'queued';
+}
+
+// Manual trigger from the Agents page, for a device that missed the automatic pass.
+router.post('/agents/:id/mesh-install', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  try {
+    const r = await queueMeshInstall(id, `${req.protocol}://${req.get('host')}`);
+    res.redirect('/agents?msg=' + encodeURIComponent(
+      r === 'queued'
+        ? 'Remote access install queued — it will run on this device shortly.'
+        : 'Nothing to do: either it is already installed, or this customer has no remote-access agent yet.'));
+  } catch {
+    res.redirect('/agents?err=' + encodeURIComponent('Could not queue the remote-access install.'));
+  }
+});
+
+// ── Remote control ──────────────────────────────────────────────────────────────
+// One link from an asset straight into that machine's desktop. viewmode=11 opens the
+// desktop tab; hide=31 strips MeshCentral's own navigation, so it reads as part of the
+// Portal rather than a second product. The engineer signs in to MeshCentral once and
+// the session persists — in practice a login a week, not one per device.
+router.get('/assets/:id/remote-mesh', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const back = `/assets/${id}`;
+  try {
+    const base = await meshServerUrl();
+    if (!base) { res.redirect(back + '?err=' + encodeURIComponent('MeshCentral is not configured yet.')); return; }
+
+    // The asset and its agent device are joined the same way everywhere else in the
+    // Portal: serial first (survives renames), hostname second.
+    const r = await pool.query(
+      `SELECT ad.mesh_node_id, ad.hostname
+         FROM customer_assets a
+         JOIN agent_devices ad
+           ON ad.customer_id = a.customer_id
+          AND ( (a.serial_number IS NOT NULL AND ad.serial_number = a.serial_number)
+                OR LOWER(ad.hostname) = LOWER(a.hostname) )
+        WHERE a.id = $1 AND ad.revoked = false
+        ORDER BY (ad.mesh_node_id IS NOT NULL) DESC, ad.last_seen_at DESC NULLS LAST
+        LIMIT 1`, [id]);
+
+    const nodeId = r.rows[0]?.mesh_node_id;
+    if (!nodeId) {
+      res.redirect(back + '?err=' + encodeURIComponent(
+        'No remote-access session for this device yet. It appears once the MeshCentral agent has installed and checked in.'));
+      return;
+    }
+    await logActivity(req.session.user!.id, 'remote_control', 'customer_assets', id,
+      `Opened remote control for ${r.rows[0].hostname}`);
+    res.redirect(`${base}/?gotonode=${encodeURIComponent(nodeId)}&viewmode=11&hide=31`);
+  } catch (e: any) {
+    console.error('[mesh] remote control failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not open remote control.'));
+  }
+});
+
+export default router;
