@@ -54,11 +54,15 @@ const CFG = {
   // Windows x86-64 service agent, background-only.
   agentType: process.env.MESH_AGENT_TYPE || '4',
   installFlags: process.env.MESH_INSTALL_FLAGS || '2',
-  // Engineers' MeshCentral account. Groups are created by the service account, and
-  // MeshCentral grants rights to whoever created a group - so without this, the only
-  // login that can actually use remote control is the unattended one. That is exactly
-  // backwards, so every group gets granted to a real named account too.
-  adminUser: (process.env.MESH_ADMIN_USER || '').trim(),
+  // Engineers' MeshCentral accounts, comma-separated, in MeshCentral's internal form
+  // (user//name). Groups are created by the service account, and MeshCentral grants
+  // rights to whoever created a group - so without this, the only login that can
+  // actually use remote control is the unattended one, which is exactly backwards.
+  // Adding an engineer is one edit here plus one bridge run.
+  adminUsers: (process.env.MESH_ADMIN_USER || '')
+    .split(',')
+    .map((u) => u.trim())
+    .filter(Boolean),
 };
 
 function req(name) {
@@ -172,17 +176,19 @@ function findGroupFor(groups, customer) {
  * the first, so that particular complaint is swallowed rather than logged.
  */
 async function grantAdmin(group) {
-  if (!CFG.adminUser) return;
-  try {
-    await meshctrl('addusertodevicegroup', [
-      '--id', bareId(group._id),
-      '--userid', CFG.adminUser,
-      '--fullrights',
-    ]);
-    log(`granted ${CFG.adminUser} rights on "${group.name}"`);
-  } catch (err) {
-    if (!/already|exist/i.test(err.message)) {
-      console.error(`could not grant rights on "${group.name}": ${redact(err.message)}`);
+  for (const user of CFG.adminUsers) {
+    try {
+      await meshctrl('addusertodevicegroup', [
+        '--id', bareId(group._id),
+        '--userid', user,
+        '--fullrights',
+      ]);
+      log(`granted ${user} rights on "${group.name}"`);
+    } catch (err) {
+      // Already-a-member is the normal case on every run after the first.
+      if (!/already|exist/i.test(err.message)) {
+        console.error(`could not grant ${user} on "${group.name}": ${redact(err.message)}`);
+      }
     }
   }
 }

@@ -10,7 +10,7 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
   if (q.length < 2) return { q, groups: [] };
   const like = '%' + q + '%';
   try {
-    const [cust, cont, tick, quo, inv, svc] = await Promise.all([
+    const [cust, cont, tick, quo, inv, svc, ast] = await Promise.all([
       pool.query(
         `SELECT id, name, account_number, status, email
            FROM customers
@@ -54,6 +54,25 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
           WHERE si.product_reference IS NOT NULL
             AND (si.product_reference ILIKE $1 OR si.external_customer_id ILIKE $1)
           ORDER BY si.product_reference, si.customer_id LIMIT 10`, [like]),
+      // Devices. Serial matters as much as hostname here — it is what someone reads off
+      // the sticker on the machine in front of them, and often all they have.
+      pool.query(
+        `SELECT a.id, a.hostname, a.serial_number, a.model, a.device_type, a.online_status,
+                a.last_login_user, c.name AS customer_name,
+                (ad.id IS NOT NULL) AS has_agent
+           FROM customer_assets a
+           LEFT JOIN customers c ON c.id = a.customer_id
+           LEFT JOIN LATERAL (
+             SELECT ad.id FROM agent_devices ad
+              WHERE ad.customer_id = a.customer_id AND ad.revoked = false
+                AND ((a.serial_number IS NOT NULL AND ad.serial_number = a.serial_number)
+                     OR LOWER(ad.hostname) = LOWER(a.hostname))
+              LIMIT 1
+           ) ad ON true
+          WHERE a.customer_id IS NOT NULL
+            AND (a.hostname ILIKE $1 OR a.serial_number ILIKE $1 OR a.model ILIKE $1
+                 OR a.last_login_user ILIKE $1 OR c.name ILIKE $1)
+          ORDER BY a.online_status DESC NULLS LAST, a.hostname LIMIT 8`, [like]),
     ]);
 
     const money = (v: any) => '£' + (Number(v) || 0).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -88,6 +107,13 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
       label: r.invoice_number + ' — ' + (r.title || ''),
       sub: [r.customer_name, r.status, money(r.total)].filter(Boolean).join(' · '),
       url: '/invoices/' + r.id,
+    })) });
+
+    if (ast.rows.length) groups.push({ type: 'Devices', icon: '💻', items: ast.rows.map((r) => ({
+      label: (r.hostname || r.serial_number || 'Device') + (r.has_agent ? ' ●' : ''),
+      sub: [r.customer_name, r.model, r.serial_number,
+            r.last_login_user, r.online_status ? 'Online' : null].filter(Boolean).join(' · '),
+      url: '/assets/' + r.id,
     })) });
 
     if (svc.rows.length) groups.push({ type: 'Services (CLI / Ref)', icon: '📞', items: svc.rows.map((r) => ({
