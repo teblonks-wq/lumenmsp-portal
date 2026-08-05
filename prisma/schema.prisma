@@ -59,6 +59,12 @@ model Customer {
   ateraCustomerId      String?   @map("atera_customer_id")
   agentSiteKey         String?   @unique @map("agent_site_key") // LumenMSP Agent install key (MSI SITEKEY=...) — null disables new enrollments
   rmmInstallerUrl      String?   @map("rmm_installer_url") // per-customer RMM MSI for the agent's Reinstall RMM tool (null = global default)
+  // MeshCentral remote access. The bridge on mesh01 creates a device group per customer
+  // and writes these back. Must live in the schema or `prisma db push` drops them each deploy.
+  meshGroupId          String?   @map("mesh_group_id")           // MeshCentral device group, e.g. "mesh//abc…"
+  meshGroupName        String?   @map("mesh_group_name")
+  meshAgentPackageId   Int?      @map("mesh_agent_package_id")   // → agent_packages.id: that group's Windows agent
+  meshEnabled          Boolean?  @default(true) @map("mesh_enabled") // false = never deploy remote access here
   quickbooksCustomerId String?   @map("quickbooks_customer_id")
   gocardlessMandateId  String?   @map("gocardless_mandate_id")
   principalContactId   Int?      @map("principal_contact_id") // → customer_contacts.id (resolved in app, not a FK relation)
@@ -427,6 +433,11 @@ model AgentDevice {
   diskInfo     String?   @map("disk_info") // JSON: [{drive,total_gb,free_gb}]
   updateRing   Int       @default(2) @map("update_ring") // 0=internal, 1=pilot, 2=general - staged self-update
   isAdAgent    Boolean   @default(false) @map("is_ad_agent") // this device runs the customer's AD actions (a DC or management server)
+  // MeshCentral remote access. meshNodeId is written by the bridge, matched on hostname —
+  // it is what the asset page's Remote control button deep-links to.
+  meshNodeId     String?   @map("mesh_node_id")
+  meshInstalled  Boolean?  @default(false) @map("mesh_installed")
+  meshLastSeenAt DateTime? @map("mesh_last_seen_at")
   tokenHash    String    @unique @map("token_hash")
   revoked      Boolean   @default(false)
   enrolledAt   DateTime? @map("enrolled_at")
