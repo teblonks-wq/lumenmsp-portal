@@ -1,0 +1,116 @@
+<%- include('../partials/header', { title: customer.name + ' — Microsoft 365', user }) %>
+<%
+function when(d) { return d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
+%>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/customers/<%= customer.id %>">← Back to <%= customer.name %></a></p>
+  <h1 style="margin:0;">Microsoft 365</h1>
+  <p class="muted" style="margin:4px 0 0;">
+    Read-only view of <%= customer.name %>'s tenant.
+    <% if (customer.entra_tenant_id) { %><span style="font-family:ui-monospace,monospace;font-size:12px;"><%= customer.entra_tenant_id %></span><% } %>
+  </p>
+</div>
+
+<% if (error) { %>
+  <div class="alert" style="border:1px solid var(--bad-line);">
+    <strong>Could not read this tenant.</strong><br>
+    <span class="muted"><%= error %></span>
+    <p class="muted" style="margin:10px 0 0;font-size:13px;">
+      Most often this is consent: the customer's admin hasn't granted the reporting app, or granted it in a different tenant.
+      Check Settings → Integrations for their consent status.
+    </p>
+  </div>
+<% } else { %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+  <div class="card"><div class="card-header"><h2>People</h2></div><div class="stat" style="font-size:24px;"><%= summary.users %></div><p class="muted" style="margin:2px 0 0;"><%= summary.licensed %> licensed</p></div>
+  <div class="card"><div class="card-header"><h2>Disabled</h2></div><div class="stat" style="font-size:24px;"><%= summary.disabled %></div><p class="muted" style="margin:2px 0 0;">accounts</p></div>
+  <div class="card"><div class="card-header"><h2>Wasted licences</h2></div><div class="stat" style="font-size:24px;<%= summary.wasted ? 'color:var(--bad-fg);' : '' %>"><%= summary.wasted %></div><p class="muted" style="margin:2px 0 0;">disabled but licensed</p></div>
+  <div class="card"><div class="card-header"><h2>Spare licences</h2></div><div class="stat" style="font-size:24px;"><%= summary.spare %></div><p class="muted" style="margin:2px 0 0;">paid, unassigned</p></div>
+  <div class="card"><div class="card-header"><h2>Guests</h2></div><div class="stat" style="font-size:24px;"><%= summary.guests %></div></div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Licences</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Subscription</th><th style="text-align:right;">Assigned</th><th style="text-align:right;">Purchased</th><th style="text-align:right;">Spare</th></tr></thead>
+      <tbody>
+        <% if (!skus.length) { %><tr><td colspan="4"><div class="empty-state">No subscriptions visible.</div></td></tr><% } %>
+        <% skus.forEach(function (s) { %>
+          <tr>
+            <td><%= s.name %><% if (s.name !== s.partNumber) { %> <span class="muted" style="font-size:12px;"><%= s.partNumber %></span><% } %></td>
+            <td style="text-align:right;"><%= s.assigned %></td>
+            <td style="text-align:right;"><%= s.total %></td>
+            <td style="text-align:right;<%= s.spare > 0 ? 'font-weight:600;' : '' %>"><%= s.spare %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+    <h2>Users</h2>
+    <input class="input" type="search" id="userFilter" placeholder="Filter by name, email, licence…" style="max-width:280px;">
+  </div>
+  <div class="table-wrap">
+    <table class="table" id="userTable">
+      <thead><tr><th>Name</th><th>Email</th><th>Job title</th><th>Licences</th><th>Status</th><th>Created</th></tr></thead>
+      <tbody>
+        <% if (!users.length) { %><tr><td colspan="6"><div class="empty-state">No users returned.</div></td></tr><% } %>
+        <% users.forEach(function (u) { %>
+          <tr>
+            <td><%= u.displayName %><% if (u.isGuest) { %> <span class="badge badge-inactive">Guest</span><% } %></td>
+            <td class="muted"><%= u.email %></td>
+            <td class="muted"><%= u.jobTitle || (u.department || '') %></td>
+            <td><% if (u.licences.length) { %><%= u.licences.join(', ') %><% } else { %><span class="muted">—</span><% } %></td>
+            <td>
+              <% if (u.enabled) { %><span class="badge badge-sent">Active</span>
+              <% } else if (u.licences.length) { %><span class="badge badge-failed">Disabled · licensed</span>
+              <% } else { %><span class="badge badge-inactive">Disabled</span><% } %>
+            </td>
+            <td class="muted"><%= when(u.createdAt) %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<% if (groups.length) { %>
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Groups</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Name</th><th>Type</th><th>Email</th><th>Description</th></tr></thead>
+      <tbody>
+        <% groups.forEach(function (g) { %>
+          <tr><td><%= g.name %></td><td class="muted"><%= g.kind %></td><td class="muted"><%= g.mail || '—' %></td><td class="muted"><%= g.description %></td></tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<% } %>
+
+<script>
+// Plain client-side filter — the whole directory is already on the page, so there is no
+// reason to round-trip for a search box.
+(function () {
+  var box = document.getElementById('userFilter');
+  var rows = Array.prototype.slice.call(document.querySelectorAll('#userTable tbody tr'));
+  if (!box) return;
+  box.addEventListener('input', function () {
+    var q = box.value.trim().toLowerCase();
+    rows.forEach(function (r) {
+      r.style.display = !q || r.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+    });
+  });
+})();
+</script>
+
+<% } %>
+<%- include('../partials/footer') %>

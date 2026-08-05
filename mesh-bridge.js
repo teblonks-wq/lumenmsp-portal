@@ -34,13 +34,10 @@
 
 'use strict';
 
-const { execFile } = require('node:child_process');
-const { promisify } = require('node:util');
+const { spawn } = require('node:child_process');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
-
-const execFileAsync = promisify(execFile);
 
 const MESHCTRL = process.env.MESHCTRL_PATH
   || '/opt/meshcentral/node_modules/meshcentral/meshctrl';
@@ -88,6 +85,43 @@ const FAILED = /^(invalid|unknown|missing|access denied|unauthorized|not found|f
  * Run a meshctrl action. Arguments go across as an array so nothing is ever
  * parsed by a shell - group ids contain $ and @ and would not survive it.
  */
+/**
+ * Run meshctrl and hand back everything it printed.
+ *
+ * Deliberately spawn() rather than execFile(): meshctrl's exit codes cannot be trusted
+ * in either direction - agentdownload exits non-zero after a SUCCESSFUL download, and
+ * other failures exit zero and only say so in the text. execFile treats a non-zero exit
+ * as a rejection, and the stdout hung off that rejection is not reliably complete: it
+ * silently handed back half a 300 KB device list, which then failed to parse in a way
+ * that looked like MeshCentral emitting bad JSON. So: collect the stream ourselves,
+ * resolve on close whatever the code, and judge the OUTPUT.
+ */
+async function spawnMeshctrl(argv, cwd) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'meshctrl-'));
+  const outPath = path.join(dir, 'out.txt');
+  const fh = await fs.open(outPath, 'w');
+  try {
+    const err = await new Promise((resolve, reject) => {
+      // stdout goes straight to a FILE DESCRIPTOR, not a pipe. meshctrl ends with
+      // process.exit(), and Node discards whatever is still buffered on a piped stdout
+      // when that happens — which silently truncated a 309 KB device list to exactly
+      // half. Writes to a file are synchronous, so nothing is lost.
+      const child = spawn('node', argv, { cwd, stdio: ['ignore', fh.fd, 'pipe'] });
+      let e = '';
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (c) => { e += c; });
+      child.on('error', reject);
+      child.on('close', () => resolve(e));
+    });
+    await fh.close();
+    const out = await fs.readFile(outPath, 'utf8');
+    return { out, err };
+  } finally {
+    await fh.close().catch(() => {});          // already closed on the happy path
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function meshctrl(action, args = [], cwd = '/opt/meshcentral') {
   const argv = [
     MESHCTRL, action,
@@ -96,22 +130,19 @@ async function meshctrl(action, args = [], cwd = '/opt/meshcentral') {
     '--loginpass', CFG.meshPass,
     ...args,
   ];
+
+  let res;
   try {
-    const { stdout } = await execFileAsync('node', argv, { maxBuffer: 32 * 1024 * 1024, cwd });
-    // meshctrl is inconsistent about exit codes: some failures exit 0 and only say so
-    // on stdout ("Invalid meshid."), others exit 1. Treat the text as authoritative.
-    if (FAILED.test(stdout.trim())) throw new Error(`${action}: ${stdout.trim().slice(0, 200)}`);
-    return stdout;
+    res = await spawnMeshctrl(argv, cwd);
   } catch (err) {
-    // meshctrl's exit codes cannot be trusted in either direction: agentdownload exits
-    // non-zero even after reporting a successful download. So when there is output and
-    // it does not read like a failure, believe the output, not the exit code.
-    const out = String(err.stdout || '');
-    if (out.trim() && !FAILED.test(out.trim())) return out;
-    // execFile puts the whole command line in the message, credentials and all - which
-    // would then land in the systemd journal for ever. Never let that happen.
-    throw new Error(redact(`${action} failed: ${out} ${err.message}`).slice(0, 400));
+    // Never let the command line reach a log — it carries the password.
+    throw new Error(redact(`${action} could not start: ${err.message}`).slice(0, 300));
   }
+
+  const text = (res.out || '').trim();
+  if (!text && res.err) throw new Error(redact(`${action} failed: ${res.err}`).slice(0, 300));
+  if (FAILED.test(text)) throw new Error(`${action}: ${text.slice(0, 200)}`);
+  return res.out;
 }
 
 /** Strip the MeshCentral password out of anything on its way to a log. */
@@ -128,7 +159,18 @@ async function meshctrlJson(action, args = []) {
     // exit, so an unparseable response is the error message.
     throw new Error(`${action}: unexpected response: ${out.trim().slice(0, 200)}`);
   }
-  return JSON.parse(out.slice(from, to + 1));
+  const slice = out.slice(from, to + 1);
+  try {
+    return JSON.parse(slice);
+  } catch (err) {
+    // Say WHERE it broke. "Unexpected token" against a 300 KB document tells you
+    // nothing; the surrounding characters told us straight away we had half a file.
+    const at = Number((/position (\d+)/.exec(err.message) || [])[1]);
+    const near = Number.isFinite(at)
+      ? ` near ${JSON.stringify(slice.slice(Math.max(0, at - 50), at + 50))}`
+      : '';
+    throw new Error(`${action}: response was not valid JSON (${slice.length} chars)${near}`);
+  }
 }
 
 /** "mesh//abc" -> "abc". agentdownload rejects the prefixed form. */
