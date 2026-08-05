@@ -91,4 +91,21 @@ function filterAdmin(q){
   </a>
 </div>
 
+<h2 style="margin:32px 0 14px;font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);">Deployment</h2>
+
+<div class="hub-grid">
+  <a class="hub-card hub-blue" href="/agents">
+    <h2>Agents</h2>
+    <p class="muted">Every machine running the LumenMSP Agent — versions, staged rollout rings, "update now", installer download and deployable packages.</p>
+  </a>
+  <a class="hub-card hub-amber" href="/patching">
+    <h2>Patching</h2>
+    <p class="muted">Pending Windows Updates across the estate — what's missing, how long it's been missing, and which machines are waiting on a restart.</p>
+  </a>
+  <a class="hub-card hub-slate" href="/remote-sessions">
+    <h2>Remote Sessions</h2>
+    <p class="muted">Who connected to which machine, when and for how long — with the recording, kept 60 days.</p>
+  </a>
+</div>
+
 <%- include('../partials/footer') %>

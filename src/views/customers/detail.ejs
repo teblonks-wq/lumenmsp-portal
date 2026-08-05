@@ -77,7 +77,7 @@
     <div class="s"><%= hv.assetsTotal ? 'online now' : 'none synced' %></div>
   </a>
   <% if (hv.graph === 'ok') { %>
-  <a class="svc-tile" href="/it-report/<%= customer.id %>"><div class="t"><span class="svc-dot" style="background:var(--ok);"></span>Microsoft 365</div><div class="v">Connected</div><div class="s">Intune &amp; Secure Score flowing</div></a>
+  <a class="svc-tile" href="/customers/<%= customer.id %>/m365"><div class="t"><span class="svc-dot" style="background:var(--ok);"></span>Microsoft 365</div><div class="v">Connected</div><div class="s">users, licences &amp; groups</div></a>
   <% } else if (hv.graph === 'no-tenant') { %>
   <a class="svc-tile" href="/customers/<%= customer.id %>#integrations"><div class="t"><span class="svc-dot" style="background:var(--line-strong);"></span>Microsoft 365</div><div class="v">—</div><div class="s">no tenant recorded</div></a>
   <% } else { %>

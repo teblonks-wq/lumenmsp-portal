@@ -1,0 +1,63 @@
+<%- include('partials/header', { title: device.hostname + ' — Patching', user }) %>
+<%
+function sev(s) {
+  var t = String(s || '').toLowerCase();
+  if (t === 'critical') return 'badge-failed';
+  if (t === 'important') return 'badge-primary';
+  return 'badge-inactive';
+}
+function ago(s) {
+  if (s == null) return 'never';
+  var h = Math.round(Number(s) / 3600);
+  if (h < 24) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+%>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/patching">← Patching</a></p>
+  <h1 style="margin:0;"><%= device.hostname %></h1>
+  <p class="muted" style="margin:4px 0 0;">
+    <% if (device.customer_id) { %><a class="row-link" href="/customers/<%= device.customer_id %>"><%= device.customer_name %></a> · <% } %>
+    <%= device.os || 'Windows' %> · scanned <%= device.patch_scan_at ? ago(device.scan_age_secs) : 'never' %>
+    <% if (device.patch_last_installed) { %> · last update installed <%= device.patch_last_installed %><% } %>
+  </p>
+</div>
+
+<% if (device.reboot_required) { %>
+<div class="alert" style="border:1px solid var(--warn-line);">
+  <strong>A restart is outstanding.</strong>
+  <span class="muted">Updates have installed but won't take effect — and further updates often won't install — until this machine is restarted.</span>
+</div>
+<% } %>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2><%= patches.length %> update<%= patches.length === 1 ? '' : 's' %> pending</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Update</th><th>KB</th><th>Severity</th><th>Category</th><th style="text-align:right;">Size</th><th style="text-align:right;">Outstanding</th></tr></thead>
+      <tbody>
+        <% if (!patches.length) { %>
+          <tr><td colspan="6"><div class="empty-state"><%= device.patch_scan_at ? 'Nothing pending — this machine is up to date.' : 'Not scanned yet. The agent scans on its daily inventory pass.' %></div></td></tr>
+        <% } %>
+        <% patches.forEach(function (p) { %>
+          <tr>
+            <td><%= p.title %></td>
+            <td class="muted"><%= p.kb ? 'KB' + String(p.kb).replace(/^KB/i, '') : '—' %></td>
+            <td><% if (p.severity) { %><span class="badge <%= sev(p.severity) %>"><%= p.severity %></span><% } else { %><span class="muted">—</span><% } %></td>
+            <td class="muted" style="font-size:12px;"><%= p.categories || '—' %></td>
+            <td style="text-align:right;"><%= p.size_mb != null ? Number(p.size_mb).toFixed(1) + ' MB' : '—' %></td>
+            <td style="text-align:right;"><%= p.age_days %>d</td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="muted" style="margin:14px 0 0;font-size:12px;">
+  "Outstanding" is how long we have known about it, not how long since Microsoft released it —
+  it starts when this machine first reported the update as missing.
+</p>
+
+<%- include('partials/footer') %>

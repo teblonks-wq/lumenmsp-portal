@@ -1,0 +1,102 @@
+<%- include('partials/header', { title: 'Patching', user }) %>
+<%
+function ago(s) {
+  if (s == null) return 'never';
+  var m = Math.round(Number(s) / 60);
+  if (m < 60) return m + 'm ago';
+  var h = Math.round(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+function sev(s) {
+  var t = String(s || '').toLowerCase();
+  if (t === 'critical') return 'badge-failed';
+  if (t === 'important') return 'badge-primary';
+  return 'badge-inactive';
+}
+%>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <h1 style="margin:0;">Patching</h1>
+    <p class="muted" style="margin:4px 0 0;">Pending Windows Updates across every machine running the LumenMSP Agent. Scanned daily.</p>
+  </div>
+  <form method="get" action="/patching" style="display:flex;gap:8px;align-items:center;">
+    <select class="input" name="customer" onchange="this.form.submit()">
+      <option value="">All customers</option>
+      <% customers.forEach(function (c) { %><option value="<%= c.id %>" <%= customerId === c.id ? 'selected' : '' %>><%= c.name %></option><% }); %>
+    </select>
+    <input type="hidden" name="view" value="<%= view %>">
+  </form>
+</div>
+
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+  <div class="card"><div class="card-header"><h2>Machines</h2></div><div class="stat" style="font-size:24px;"><%= summary.devices %></div><p class="muted" style="margin:2px 0 0;"><%= summary.scanned %> scanned</p></div>
+  <div class="card"><div class="card-header"><h2>Critical missing</h2></div><div class="stat" style="font-size:24px;<%= summary.critical ? 'color:var(--bad-fg);' : '' %>"><%= summary.critical %></div><p class="muted" style="margin:2px 0 0;">across the estate</p></div>
+  <div class="card"><div class="card-header"><h2>Total pending</h2></div><div class="stat" style="font-size:24px;"><%= summary.pending %></div></div>
+  <div class="card"><div class="card-header"><h2>Awaiting restart</h2></div><div class="stat" style="font-size:24px;<%= summary.needReboot ? 'color:var(--warn-fg);' : '' %>"><%= summary.needReboot %></div><p class="muted" style="margin:2px 0 0;">patched, not finished</p></div>
+  <div class="card"><div class="card-header"><h2>Clean</h2></div><div class="stat" style="font-size:24px;"><%= summary.compliant %></div><p class="muted" style="margin:2px 0 0;">no critical, no restart</p></div>
+  <% if (summary.neverScanned) { %>
+  <div class="card"><div class="card-header"><h2>Never scanned</h2></div><div class="stat" style="font-size:24px;"><%= summary.neverScanned %></div><p class="muted" style="margin:2px 0 0;">no data yet</p></div>
+  <% } %>
+</div>
+
+<div style="display:flex;gap:8px;margin:0 0 14px;">
+  <a class="btn <%= view !== 'updates' ? 'btn-primary' : '' %>" href="/patching?view=devices<%= customerId ? '&customer=' + customerId : '' %>">By machine</a>
+  <a class="btn <%= view === 'updates' ? 'btn-primary' : '' %>" href="/patching?view=updates<%= customerId ? '&customer=' + customerId : '' %>">By update</a>
+</div>
+
+<% if (view === 'updates') { %>
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Update</th><th>KB</th><th>Severity</th><th style="text-align:right;">Machines</th><th style="text-align:right;">Outstanding</th></tr></thead>
+      <tbody>
+        <% if (!updates.length) { %><tr><td colspan="5"><div class="empty-state">Nothing pending — or nothing scanned yet.</div></td></tr><% } %>
+        <% updates.forEach(function (u) { %>
+          <tr>
+            <td><%= u.title %></td>
+            <td class="muted"><%= u.kb ? 'KB' + String(u.kb).replace(/^KB/i, '') : '—' %></td>
+            <td><% if (u.severity) { %><span class="badge <%= sev(u.severity) %>"><%= u.severity %></span><% } else { %><span class="muted">—</span><% } %></td>
+            <td style="text-align:right;"><%= u.devices %></td>
+            <td style="text-align:right;"><%= u.oldest_days %>d</td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<% } else { %>
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>Machine</th><th>Customer</th><th style="text-align:right;">Critical</th><th style="text-align:right;">Pending</th><th style="text-align:right;">Oldest</th><th>Restart</th><th>Last scan</th></tr>
+      </thead>
+      <tbody>
+        <% if (!devices.length) { %><tr><td colspan="7"><div class="empty-state">No agents reporting yet.</div></td></tr><% } %>
+        <% devices.forEach(function (d) { %>
+          <tr>
+            <td><a class="row-link" href="/patching/<%= d.id %>"><%= d.hostname %></a><% if (d.os) { %> <span class="muted" style="font-size:12px;"><%= d.os %></span><% } %></td>
+            <td class="muted"><% if (d.customer_id) { %><a class="row-link" href="/customers/<%= d.customer_id %>"><%= d.customer_name %></a><% } else { %>—<% } %></td>
+            <td style="text-align:right;<%= d.patch_critical ? 'color:var(--bad-fg);font-weight:600;' : '' %>"><%= d.patch_critical == null ? '—' : d.patch_critical %></td>
+            <td style="text-align:right;"><%= d.patch_pending == null ? '—' : d.patch_pending %></td>
+            <td style="text-align:right;"><%= d.oldest_critical_days != null ? d.oldest_critical_days + 'd' : '—' %></td>
+            <td><% if (d.reboot_required) { %><span class="badge badge-failed">Needed</span><% } else if (d.patch_scan_at) { %><span class="muted">—</span><% } else { %><span class="muted">—</span><% } %></td>
+            <td class="muted"><%= d.patch_scan_at ? ago(d.scan_age_secs) : 'never' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<% } %>
+
+<p class="muted" style="margin:14px 0 0;font-size:12px;">
+  Reporting only. Installing updates, maintenance windows and restart policy are the next step —
+  nothing on this page changes a machine.
+</p>
+
+<%- include('partials/footer') %>

@@ -31,6 +31,43 @@ function remoteHref(a){
 <% if (notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
 <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
 
+<%
+// Hero board. Counts come from the ROWS ON SCREEN, so they follow the filter rather than
+// silently describing the whole estate while you're looking at one customer — the labels
+// say "shown" for exactly that reason.
+var _online  = rows.filter(function (a) { return a.online_status; }).length;
+var _agent   = rows.filter(function (a) { return a.agent_device_id; }).length;
+var _servers = rows.filter(function (a) { return String(a.device_type || '').toLowerCase().indexOf('server') >= 0; }).length;
+var _nouser  = rows.filter(function (a) { return !a.assigned_name && !a.last_login_user; }).length;
+var _pct     = rows.length ? Math.round((_agent / rows.length) * 100) : 0;
+%>
+<style>
+  .hero { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin:0 0 14px; }
+  .hero .tile { background:var(--card,#fff); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .hero .tile .n { font-size:26px; font-weight:800; line-height:1.05; }
+  .hero .tile .l { font-size:12px; color:var(--muted); margin-top:2px; }
+  .hero-actions { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 18px; }
+</style>
+
+<div class="hero">
+  <div class="tile"><div class="n"><%= rows.length %></div><div class="l">devices shown</div></div>
+  <div class="tile"><div class="n" style="color:var(--ok-fg);"><%= _online %></div><div class="l">online now</div></div>
+  <div class="tile"><div class="n"><%= _agent %> <span style="font-size:14px;font-weight:600;color:var(--muted);"><%= _pct %>%</span></div><div class="l">running our agent</div></div>
+  <div class="tile"><div class="n"><%= _servers %></div><div class="l">servers</div></div>
+  <div class="tile"><div class="n" style="<%= _nouser ? 'color:var(--warn-fg);' : '' %>"><%= _nouser %></div><div class="l">no known user</div></div>
+  <% if (unmatchedCount > 0) { %>
+  <a class="tile" href="/assets/unmatched" style="text-decoration:none;color:inherit;"><div class="n" style="color:var(--warn-fg);"><%= unmatchedCount %></div><div class="l">unmatched — click to fix</div></a>
+  <% } %>
+</div>
+
+<div class="hero-actions">
+  <a class="btn btn-primary" href="/patching">🛡 Patch management</a>
+  <a class="btn" href="/remote-sessions">🖥 Remote sessions</a>
+  <% if (typeof user!=='undefined' && user.role==='admin') { %>
+  <a class="btn" href="/agents">📦 Agent deployment</a>
+  <% } %>
+</div>
+
 <div class="card" style="background:var(--tint-accent);border-color:var(--info-line);">
   <p style="margin:0;font-size:13px;color:var(--info-deep);">
     <strong>Read-only for now.</strong> Everything here comes straight from Atera — details are locked until we confirm Atera's API will
@@ -80,7 +117,8 @@ function remoteHref(a){
             <td class="muted" style="font-size:12px;" title="<%= a.assigned_name ? (a.assigned_name + ' (assigned)') : (a.last_login_user || '') %>"><% if (a.assigned_name) { %><span style="font-weight:600;color:var(--ink);"><%= a.assigned_name %></span><% } else if (a.last_login_user) { %><%= String(a.last_login_user).split('\\').pop() %><% } else { %><span class="muted" style="opacity:.55;">unallocated</span><% } %></td>
             <td class="muted" style="font-size:12px;"><%= timeAgo(a.last_seen_at) %></td>
             <td style="text-align:right;white-space:nowrap;">
-              <% if (a.external_id) { %><a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="<%= remoteHref(a) %>">🖥 Remote</a><% } %>
+              <% if (a.agent_device_id) { %><a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="/assets/<%= a.id %>/remote-mesh">🖥 Remote</a>
+              <% } else if (a.external_id) { %><a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="<%= remoteHref(a) %>">🖥 Remote</a><% } %>
             </td>
           </tr>
         <% }); %>

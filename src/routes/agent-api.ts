@@ -421,6 +421,71 @@ router.post('/agent/api/inventory', requireDevice, async (req: Request, res: Res
   } finally { client.release(); }
 });
 
+// ── Pending Windows Updates ─────────────────────────────────────────────────────
+// Posted on the daily inventory pass. Rows are UPSERTED rather than replaced so that
+// first_seen survives: "this machine has been missing a critical update for 40 days" is
+// the number that matters, and a wholesale replace would reset it every night.
+router.post('/agent/api/patches', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  const p = (req.body || {}).patches;
+  if (!p || typeof p !== 'object') { res.status(400).json({ ok: false, error: 'patches object required' }); return; }
+
+  // PowerShell's ConvertTo-Json collapses a single-element array into an object, so a
+  // machine with exactly one pending update arrives shaped differently from one with two.
+  let updates: any[] = Array.isArray(p.updates) ? p.updates : (p.updates ? [p.updates] : []);
+  updates = updates.filter((u) => u && String(u.update_id || '').trim());
+
+  const rebootRequired = p.reboot_required === true || p.reboot_required === 'True';
+  const lastInstalled = s(p.last_installed, 20);
+  const isUrgent = (sev: any) => ['critical', 'important'].includes(String(sev || '').toLowerCase());
+  const critical = updates.filter((u) => isUrgent(u.severity)).length;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const seen: string[] = [];
+
+    for (const u of updates.slice(0, 500)) {
+      const id = String(u.update_id).trim().slice(0, 100);
+      seen.push(id);
+      await client.query(
+        `INSERT INTO device_patches
+           (device_id, update_id, title, kb, severity, categories, size_mb, downloaded, first_seen, last_seen)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
+         ON CONFLICT (device_id, update_id) DO UPDATE SET
+           title = EXCLUDED.title, kb = EXCLUDED.kb, severity = EXCLUDED.severity,
+           categories = EXCLUDED.categories, size_mb = EXCLUDED.size_mb,
+           downloaded = EXCLUDED.downloaded, last_seen = NOW()`,
+        [d.id, id,
+         String(u.title || '').slice(0, 500),
+         String(u.kb || '').slice(0, 100) || null,
+         String(u.severity || '').slice(0, 40) || null,
+         String(u.categories || '').slice(0, 300) || null,
+         u.size_mb != null && !isNaN(Number(u.size_mb)) ? Number(u.size_mb) : null,
+         u.downloaded === true]);
+    }
+
+    // Anything not in this scan has been installed (or superseded) since the last one.
+    await client.query(
+      `DELETE FROM device_patches WHERE device_id = $1 AND NOT (update_id = ANY($2::text[]))`,
+      [d.id, seen]);
+
+    await client.query(
+      `UPDATE agent_devices
+          SET patch_scan_at = NOW(), reboot_required = $1, patch_pending = $2,
+              patch_critical = $3, patch_last_installed = $4, updated_at = NOW()
+        WHERE id = $5`,
+      [rebootRequired, updates.length, critical, lastInstalled, d.id]);
+
+    await client.query('COMMIT');
+    res.json({ ok: true, pending: updates.length, critical });
+  } catch (e: any) {
+    try { await client.query('ROLLBACK'); } catch { /* gone */ }
+    console.error('[agent] patch store failed:', e.message);
+    res.status(500).json({ ok: false, error: 'patches not stored' });
+  } finally { client.release(); }
+});
+
 // Package download for software deployment. Device-token auth: an uploaded MSI is not
 // public, and the agent runs whatever this returns as SYSTEM.
 router.get('/agent/api/package/:id', requireDevice, async (req: Request, res: Response) => {
