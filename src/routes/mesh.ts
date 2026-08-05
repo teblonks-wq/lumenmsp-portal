@@ -40,6 +40,15 @@ const sha256 = (b: Buffer) => crypto.createHash('sha256').update(b).digest('hex'
  */
 const bareNodeId = (id: unknown) => String(id || '').replace(/^node\/\//, '');
 
+/**
+ * Node ids use a base64-ish alphabet that includes `$` and `@`. Both are legal in a
+ * query string and MeshCentral's own UI emits them raw — percent-encoding them makes
+ * the id fail to match, and you land on a desktop panel that never connects. So instead
+ * of escaping, restrict to the known alphabet: nothing outside it can be an id, so
+ * dropping the rest is both safe and sufficient.
+ */
+const nodeIdForUrl = (id: unknown) => bareNodeId(id).replace(/[^A-Za-z0-9$@_-]/g, '');
+
 /** MeshCentral's public base URL, e.g. https://mesh.lumenmsp.co.uk (no trailing slash). */
 export async function meshServerUrl(): Promise<string | null> {
   const v = ((await getSetting('mesh', 'server_url')) || '').trim().replace(/\/+$/, '');
@@ -287,7 +296,7 @@ router.get('/assets/:id/remote-mesh', requireAuth, requireAdmin, async (req: Req
     }
     await logActivity(req.session.user!.id, 'remote_control', 'customer_assets', id,
       `Opened remote control for ${r.rows[0].hostname}`);
-    res.redirect(`${base}/?gotonode=${encodeURIComponent(bareNodeId(nodeId))}&viewmode=11&hide=31`);
+    res.redirect(`${base}/?gotonode=${nodeIdForUrl(nodeId)}&viewmode=11&hide=31`);
   } catch (e: any) {
     console.error('[mesh] remote control failed:', e.message);
     res.redirect(back + '?err=' + encodeURIComponent('Could not open remote control.'));
