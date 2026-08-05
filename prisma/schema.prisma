@@ -30,7 +30,7 @@ model User {
   @@map("users")
 }
 
-// â”€â”€ Customers (the anchor entity â€” everything attaches to a customer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Customers (the anchor entity — everything attaches to a customer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 model Customer {
   id                   Int       @id @default(autoincrement())
   accountNumber        String?   @unique @map("account_number") // e.g. lar-001
@@ -57,17 +57,20 @@ model Customer {
   entraTenantId        String?   @map("entra_tenant_id") // customer's Microsoft 365 / Entra tenant for directory sync
   lastReviewedAt       DateTime? @map("last_reviewed_at") // last Customer A-Z review
   ateraCustomerId      String?   @map("atera_customer_id")
-  agentSiteKey         String?   @unique @map("agent_site_key") // LumenMSP Agent install key (MSI SITEKEY=...) â€” null disables new enrollments
+  agentSiteKey         String?   @unique @map("agent_site_key") // LumenMSP Agent install key (MSI SITEKEY=...) — null disables new enrollments
   rmmInstallerUrl      String?   @map("rmm_installer_url") // per-customer RMM MSI for the agent's Reinstall RMM tool (null = global default)
   // MeshCentral remote access. The bridge on mesh01 creates a device group per customer
   // and writes these back. Must live in the schema or `prisma db push` drops them each deploy.
-  meshGroupId          String?   @map("mesh_group_id")           // MeshCentral device group, e.g. "mesh//abcâ€¦"
+  meshGroupId          String?   @map("mesh_group_id")           // MeshCentral device group, e.g. "mesh//abc…"
   meshGroupName        String?   @map("mesh_group_name")
-  meshAgentPackageId   Int?      @map("mesh_agent_package_id")   // â†’ agent_packages.id: that group's Windows agent
+  meshAgentPackageId   Int?      @map("mesh_agent_package_id")   // → agent_packages.id: that group's Windows agent
   meshEnabled          Boolean?  @default(true) @map("mesh_enabled") // false = never deploy remote access here
+  // Patch policy this customer inherits, per device class. Null = the built-in default.
+  patchPolicyWorkstationId Int? @map("patch_policy_workstation_id")
+  patchPolicyServerId      Int? @map("patch_policy_server_id")
   quickbooksCustomerId String?   @map("quickbooks_customer_id")
   gocardlessMandateId  String?   @map("gocardless_mandate_id")
-  principalContactId   Int?      @map("principal_contact_id") // â†’ customer_contacts.id (resolved in app, not a FK relation)
+  principalContactId   Int?      @map("principal_contact_id") // → customer_contacts.id (resolved in app, not a FK relation)
   billingContactId     Int?      @map("billing_contact_id")
   serviceContactId     Int?      @map("service_contact_id")
   portalEnabled        Boolean   @default(false) @map("portal_enabled") // customer-portal login master switch (must live in the schema or `prisma db push` drops it each deploy)
@@ -118,7 +121,7 @@ model Lead {
   customerId         Int       @map("customer_id")   // the prospect customer
   status             String    @default("new") // new | open | proposed | won | lost
   source             String?                          // where the lead came from
-  servicesInterested String?   @map("services_interested") // free text â€” what they're after
+  servicesInterested String?   @map("services_interested") // free text — what they're after
   details            String?                          // free-text notes / context
   reference          String?   @unique                 // website order ref - idempotency key (one per order)
   product            String?                            // e.g. simply_voip | broadband
@@ -172,7 +175,7 @@ model CustomerCredential {
   @@map("customer_credentials")
 }
 
-// Per-customer documents â€” uploaded files with a title + description, shown on the customer card
+// Per-customer documents — uploaded files with a title + description, shown on the customer card
 // next to the password vault. Files live PRIVATELY under uploads/customer-docs and are streamed
 // via an auth-gated route (never the public static dir).
 model CustomerDocument {
@@ -190,7 +193,7 @@ model CustomerDocument {
   @@map("customer_documents")
 }
 
-// Website logins for a supplier (multiple per supplier). Mirrors customer_credentials â€” the
+// Website logins for a supplier (multiple per supplier). Mirrors customer_credentials — the
 // password is AES-256-GCM encrypted at rest and only decrypted on an explicit reveal.
 model SupplierCredential {
   id              Int       @id @default(autoincrement())
@@ -209,7 +212,7 @@ model SupplierCredential {
   @@map("supplier_credentials")
 }
 
-// Files attached to a CustomerDocument â€” a document can hold many photos/files (resolved in app).
+// Files attached to a CustomerDocument — a document can hold many photos/files (resolved in app).
 model CustomerDocumentFile {
   id          Int      @id @default(autoincrement())
   documentId  Int      @map("document_id")
@@ -250,7 +253,7 @@ model Contact {
   customerId     Int      @map("customer_id")
   ateraContactId String?  @map("atera_contact_id")
   entraOid       String?  @map("entra_oid")   // Azure AD object id (directory sync match)
-  archived       Boolean  @default(false)     // user left/disabled in directory â€” hidden from lists
+  archived       Boolean  @default(false)     // user left/disabled in directory — hidden from lists
   fullName       String   @map("full_name")
   email          String?
   phone          String?
@@ -260,7 +263,7 @@ model Contact {
   isPrimary      Boolean  @default(false) @map("is_primary")
   isThirdParty   Boolean  @default(false) @map("is_third_party") // 3rd party (covered by the customer's support agreement)
   isServiceContact Boolean @default(false) @map("is_service_contact") // named SERVICE CONTACT on the service agreement; may view and sign agreements
-  protected      Boolean  @default(false)  // manually curated â€” directory sync must never update or archive this contact
+  protected      Boolean  @default(false)  // manually curated — directory sync must never update or archive this contact
   portalAccessLevel String? @map("portal_access_level") // customer-portal access: none|tickets|finance|service|full (null = none)
   insightsSites  Json?    @map("insights_sites") // site layer: insights site ids this contact may see in OneBoard/Wallboard/Insights (null = all)
   // Mass Mailer (Marketing): opt-out flag + one-click unsubscribe token. MUST live in the
@@ -279,7 +282,7 @@ model Contact {
   @@map("customer_contacts")
 }
 
-// "Ask Claude" on a ticket â€” saved questions & answers so the team never asks twice.
+// "Ask Claude" on a ticket — saved questions & answers so the team never asks twice.
 model TicketAiQuery {
   id        Int      @id @default(autoincrement())
   ticketId  Int      @map("ticket_id")
@@ -413,10 +416,10 @@ model CustomerExternalId {
 
 // â”€â”€ Customer assets / device inventory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // v1: one-way sync FROM Atera (RMM agents). Read-only in the Portal until we confirm
-// Atera's API accepts write-back â€” see lib/asset-sync.ts. `raw` keeps the full source
+// Atera's API accepts write-back — see lib/asset-sync.ts. `raw` keeps the full source
 // payload so new spec fields can be surfaced later without re-syncing the schema.
 
-// LumenMSP Agent (Windows tray + service) â€” one row per enrolled machine. The agent
+// LumenMSP Agent (Windows tray + service) — one row per enrolled machine. The agent
 // authenticates with a bearer token; only its SHA-256 hash is stored here. Revoking
 // kills the token instantly; a reinstall with the customer site key re-enrolls.
 model AgentDevice {
@@ -433,7 +436,7 @@ model AgentDevice {
   diskInfo     String?   @map("disk_info") // JSON: [{drive,total_gb,free_gb}]
   updateRing   Int       @default(2) @map("update_ring") // 0=internal, 1=pilot, 2=general - staged self-update
   isAdAgent    Boolean   @default(false) @map("is_ad_agent") // this device runs the customer's AD actions (a DC or management server)
-  // MeshCentral remote access. meshNodeId is written by the bridge, matched on hostname â€”
+  // MeshCentral remote access. meshNodeId is written by the bridge, matched on hostname —
   // it is what the asset page's Remote control button deep-links to.
   meshNodeId     String?   @map("mesh_node_id")
   meshInstalled  Boolean?  @default(false) @map("mesh_installed")
@@ -443,6 +446,11 @@ model AgentDevice {
   patchCritical      Int?      @map("patch_critical")
   rebootRequired     Boolean?  @default(false) @map("reboot_required")
   patchLastInstalled String?   @map("patch_last_installed")
+  // Patching. Every one of these has been dropped by `prisma db push` once already,
+  // because it was created with raw SQL and never declared here. Declare first, always.
+  patchExcluded      Boolean?  @default(false) @map("patch_excluded")
+  patchClass         String?   @map("patch_class")        // force workstation|server, else inferred from the OS
+  patchPolicyId      Int?      @map("patch_policy_id")    // per-device override; null = inherit the customer
   tokenHash    String    @unique @map("token_hash")
   revoked      Boolean   @default(false)
   enrolledAt   DateTime? @map("enrolled_at")
@@ -518,7 +526,7 @@ model CustomerAsset {
   customerId     Int?      @map("customer_id") // null = Atera agent not yet matched to a portal customer
   sourceSystem   String    @default("atera") @map("source_system")
   externalId     String    @map("external_id") // Atera AgentID
-  deviceGuid     String?   @map("device_guid") // Atera's device GUID â€” used by the new Atera web UI's device URL
+  deviceGuid     String?   @map("device_guid") // Atera's device GUID — used by the new Atera web UI's device URL
   hostname       String?
   deviceType     String?   @map("device_type") // Workstation | Server | Mobile Device | Network Device | ...
   os             String?
@@ -571,7 +579,7 @@ model CommsLineNote {
 }
 
 // IT & Cloud change-ledger. Tracks the last-known Giacom state per (customer, product, buy price)
-// so we can bill ADDS a month upfront and keep REMOVALS billing for a 30-day notice period â€” even
+// so we can bill ADDS a month upfront and keep REMOVALS billing for a 30-day notice period — even
 // though Giacom service_items are wiped & re-inserted nightly (no built-in history to diff).
 model ItCloudServiceState {
   id                Int       @id @default(autoincrement())
@@ -590,7 +598,7 @@ model ItCloudServiceState {
   @@map("it_cloud_service_state")
 }
 
-// Service history â€” every detected change to a customer's monthly IT&Cloud services, so staff can
+// Service history — every detected change to a customer's monthly IT&Cloud services, so staff can
 // see exactly what Giacom sent (adds / removals / qty changes). Recorded by syncItCloudDeltas.
 model ItCloudChangeLog {
   id          Int      @id @default(autoincrement())
@@ -606,7 +614,7 @@ model ItCloudChangeLog {
 }
 
 // Per-CLI extension/user label, derived OVERNIGHT from Insights call data (the extension that
-// most handles that number). Display-only â€” shows next to the CLI on the comms asset list.
+// most handles that number). Display-only — shows next to the CLI on the comms asset list.
 model CliExtensionLabel {
   id        Int      @id @default(autoincrement())
   cli       String   @unique // digits-only normalised number
@@ -649,18 +657,18 @@ model CustomerCallMarkup {
 
 // â”€â”€ Package Manager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // A Package is a customer-facing sell product that hides one or more underlying Giacom cost
-// lines behind one set price (e.g. Simply VoIP Seat, Simply Mobile â€” Unlimited). Cost comes
+// lines behind one set price (e.g. Simply VoIP Seat, Simply Mobile — Unlimited). Cost comes
 // from the live matched lines (tier floats); the customer sees the package name + set price.
 model Package {
   id            Int      @id @default(autoincrement())
-  name          String   // customer-facing, e.g. "Simply Mobile â€” Unlimited (EE) 24m"
+  name          String   // customer-facing, e.g. "Simply Mobile — Unlimited (EE) 24m"
   category      String   @default("voice") // internet|voice|mobile|additional (drives invoice bucket)
   kind          String   @default("per_cli") // per_cli (1 per matching CLI @ standard) | per_cli_priced (per-instance price) | flat (one per customer, manual price)
   matchPattern  String?  @map("match_pattern") // regex (case-insensitive) over the Giacom description; null = manual-only
   requiresSeat  Boolean  @default(false) @map("requires_seat") // add-on: only bills on a CLI that also carries a seat package
   standardPrice Decimal  @default(0) @map("standard_price") @db.Decimal(12, 2) // default sell (override per customer)
   termLabel     String?  @map("term_label") // e.g. "12m" / "24m"
-  bundledNote   String?  @map("bundled_note") // what's included free (handset, Webexâ€¦) â€” display only
+  bundledNote   String?  @map("bundled_note") // what's included free (handset, Webex…) — display only
   sortOrder     Int      @default(100) @map("sort_order")
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at")
@@ -705,7 +713,7 @@ model PackageCliOverride {
   @@map("package_cli_overrides")
 }
 
-// â”€â”€ Purchase Ledger â€” our managed list of accounts (bank / card) money is spent from â”€â”€
+// â”€â”€ Purchase Ledger — our managed list of accounts (bank / card) money is spent from â”€â”€
 model BankAccountRef {
   id            Int      @id @default(autoincrement())
   name          String   // e.g. "Barclays Current", "Amex Business"
@@ -717,7 +725,7 @@ model BankAccountRef {
   @@map("bank_account_refs")
 }
 
-// â”€â”€ Purchase Ledger â€” bank transactions to reconcile into expenses â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Purchase Ledger — bank transactions to reconcile into expenses â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 model BankTransaction {
   id             Int       @id @default(autoincrement())
   source         String    @default("csv") // openbanking | csv | qb
@@ -746,7 +754,7 @@ model BankTransaction {
   @@map("bank_transactions")
 }
 
-// â”€â”€ Purchase Ledger â€” pooled supplier invoices (invoice@ mailbox + manual uploads) â”€
+// â”€â”€ Purchase Ledger — pooled supplier invoices (invoice@ mailbox + manual uploads) â”€
 model PurchaseDocument {
   id                Int       @id @default(autoincrement())
   source            String    @default("email") // email | upload
@@ -766,7 +774,7 @@ model PurchaseDocument {
   parsedInvoiceNo   String?   @map("parsed_invoice_no")
   parsedDate        String?   @map("parsed_date")
   parseStatus       String?   @map("parse_status") // ok | no_text | error | null(=not tried)
-  // Category chosen at capture (mobile receipt logger) â€” carried onto the matched txn.
+  // Category chosen at capture (mobile receipt logger) — carried onto the matched txn.
   categoryId        String?   @map("category_id")
   categoryName      String?   @map("category_name")
   archivedAt        DateTime? @map("archived_at")   // hidden from the inbox; still findable on the Archived tab
@@ -778,7 +786,7 @@ model PurchaseDocument {
   @@map("purchase_documents")
 }
 
-// â”€â”€ Purchase Ledger â€” split a single bank transaction across several categories â”€â”€â”€â”€â”€
+// â”€â”€ Purchase Ledger — split a single bank transaction across several categories â”€â”€â”€â”€â”€
 model BankTransactionSplit {
   id             Int      @id @default(autoincrement())
   transactionId  Int      @map("transaction_id")
@@ -793,7 +801,7 @@ model BankTransactionSplit {
   @@map("bank_transaction_splits")
 }
 
-// â”€â”€ Service items (billing lines pulled from suppliers â€” Giacom now, Comms later) â”€
+// â”€â”€ Service items (billing lines pulled from suppliers — Giacom now, Comms later) â”€
 model ServiceItem {
   id                   Int       @id @default(autoincrement())
   source               String    @default("giacom") // giacom | comms | ...
@@ -812,12 +820,12 @@ model ServiceItem {
   billingPeriod        String?   @map("billing_period") // YYYY-MM of the line (from billing_from)
   isProrata            Boolean   @default(false) @map("is_prorata") // true = part-period (mid-month start/end), not a full recurring month
   location             String?   // customer-set label for a circuit/CLI (e.g. broadband site/office)
-  isManual             Boolean   @default(false) @map("is_manual") // added by hand (not from Giacom) â€” survives the import wipe
-  isProjected          Boolean   @default(false) @map("is_projected") // rolled forward from the last actual month (advance billing) â€” replaced when the supplier file lands
-  isOneOff             Boolean   @default(false) @map("is_one_off") // install/cease/connection fee â€” bill once
+  isManual             Boolean   @default(false) @map("is_manual") // added by hand (not from Giacom) — survives the import wipe
+  isProjected          Boolean   @default(false) @map("is_projected") // rolled forward from the last actual month (advance billing) — replaced when the supplier file lands
+  isOneOff             Boolean   @default(false) @map("is_one_off") // install/cease/connection fee — bill once
   billedAt             DateTime? @map("billed_at") // when a one-off was billed; once set it drops off the rate card
   invoiceCategory      String?   @map("invoice_category") // internet|voice|mobile|additional|oneoff|call (override; else classified from description)
-  vatStatus            String?   @map("vat_status") // supplier VAT flag (e.g. "VAT 20%" | "DRC 20%") â€” sell is always 20% standard
+  vatStatus            String?   @map("vat_status") // supplier VAT flag (e.g. "VAT 20%" | "DRC 20%") — sell is always 20% standard
   syncedAt             DateTime  @default(now()) @map("synced_at") // last import that included this line ("live")
   createdAt            DateTime  @default(now()) @map("created_at")
 
@@ -864,7 +872,7 @@ model DwsFile {
   @@map("dws_files")
 }
 
-// â”€â”€ Itemized call records (CDRs) â€” for billing customers (cost + markup) â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Itemized call records (CDRs) — for billing customers (cost + markup) â”€â”€â”€â”€â”€â”€â”€â”€â”€
 model CallRecord {
   id            Int       @id @default(autoincrement())
   source        String    @default("landline") // landline | mobile
@@ -877,7 +885,7 @@ model CallRecord {
   description   String?
   cost          Decimal   @default(0) @db.Decimal(12, 4) // what the carrier charges us
   billingPeriod String?   @map("billing_period")          // YYYY-MM
-  billedAt      DateTime? @map("billed_at") // stamped when the call went out on a sent invoice â€” billing selects by THIS flag, never period arithmetic
+  billedAt      DateTime? @map("billed_at") // stamped when the call went out on a sent invoice — billing selects by THIS flag, never period arithmetic
   createdAt     DateTime  @default(now()) @map("created_at")
 
   @@index([customerId])
@@ -890,7 +898,7 @@ model CallRecord {
 // â”€â”€ Durable sell prices for supplier service lines â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // service_items are refreshed from suppliers (Giacom is wiped & re-inserted nightly),
 // so the SELL price can't live there. This table persists the sale price per
-// customer + product + BUY PRICE â€” a different buy price for the same product is a
+// customer + product + BUY PRICE — a different buy price for the same product is a
 // distinct row (so it bills/reports on its own line). Billing & reports resolve sale
 // here; a missing row means the service is uncosted (surfaces in the bureau queue).
 model ServicePricing {
@@ -965,7 +973,7 @@ model RegisterChange {
 model Quote {
   id              Int       @id @default(autoincrement())
   customerId      Int?      @map("customer_id")
-  inboxTicketId   Int?      @map("inbox_ticket_id") // â†’ future helpdesk module (no FK yet)
+  inboxTicketId   Int?      @map("inbox_ticket_id") // → future helpdesk module (no FK yet)
   quoteNumber     String    @unique @map("quote_number")
   title           String
   status          String    @default("draft") // draft | sent | accepted | lost
@@ -1004,7 +1012,7 @@ model Quote {
 model QuoteItem {
   id           Int      @id @default(autoincrement())
   quoteId      Int      @map("quote_id")
-  productId    Int?     @map("product_id")  // â†’ future catalogue (no FK yet)
+  productId    Int?     @map("product_id")  // → future catalogue (no FK yet)
   supplierId   Int?     @map("supplier_id")
   sortOrder    Int      @default(1) @map("sort_order")
   description  String
@@ -1037,7 +1045,7 @@ model Invoice {
   gocardlessPayoutRef String?   @map("gocardless_payout_ref")  // bank-statement ref of the GC payout that included this payment
   gocardlessPaidOutAt DateTime? @db.Date @map("gocardless_paid_out_at") // payout arrival date
   paymentStatus       String    @default("unpaid") @map("payment_status") // unpaid | pending | paid | failed
-  invoiceNumber       String?   @unique @map("invoice_number") // NULL while staged â€” allocated at Complete
+  invoiceNumber       String?   @unique @map("invoice_number") // NULL while staged — allocated at Complete
   staged              Boolean   @default(false) // staged in Bureau (no number, hidden from Invoices list) until completed
   approvedAt          DateTime? @map("approved_at") // ticked off in Bureau, ready to complete
   invoiceScheme       String    @default("IT") @map("invoice_scheme") // IT | CS
@@ -1055,13 +1063,13 @@ model Invoice {
   balance             Decimal   @default(0) @db.Decimal(12, 2) // outstanding, synced from QuickBooks
   paymentSyncedAt     DateTime? @map("payment_synced_at")      // last time payment state was pulled from QB
   syncedAt            DateTime? @map("synced_at")              // last IT&Cloud Giacom sync run for this invoice
-  // Recurring billing â€” any invoice can become a monthly template.
+  // Recurring billing — any invoice can become a monthly template.
   isRecurring         Boolean   @default(false) @map("is_recurring")
-  contractType        String?   @map("contract_type") // IT | Comms | Cloud â€” the customer's contract invoice (one per type)
+  contractType        String?   @map("contract_type") // IT | Comms | Cloud — the customer's contract invoice (one per type)
   billingPeriod       String?   @map("billing_period") // YYYY-MM the bill run produced this for (comms)
   recurringName       String?   @map("recurring_name")
   recurringActive     Boolean   @default(true)  @map("recurring_active")
-  recurringParentId   Int?      @map("recurring_parent_id")  // set on generated invoices â†’ their template
+  recurringParentId   Int?      @map("recurring_parent_id")  // set on generated invoices → their template
   sendDay             Int?      @map("send_day")  // day of month it generates/sends/collects (e.g. 23)
   dueDay              Int?      @map("due_day")   // day of month due / issue date (e.g. 1, next month)
   autoSend            Boolean   @default(false) @map("auto_send")
@@ -1091,17 +1099,17 @@ model InvoiceItem {
   id          Int      @id @default(autoincrement())
   invoiceId   Int      @map("invoice_id")
   productId   Int?     @map("product_id")
-  source      String   @default("manual") // manual | giacom | contract | product â€” drives selective refresh
-  invoiceCategory String? @map("invoice_category") // internet|voice|mobile|additional|oneoff|call â€” page-1 summary bucket
+  source      String   @default("manual") // manual | giacom | contract | product — drives selective refresh
+  invoiceCategory String? @map("invoice_category") // internet|voice|mobile|additional|oneoff|call — page-1 summary bucket
   sortOrder   Int      @default(1) @map("sort_order")
   description String
   quantity    Decimal  @default(1) @db.Decimal(12, 2)
   unitPrice   Decimal  @default(0) @map("unit_price") @db.Decimal(12, 2)
   taxRate     Decimal  @default(20) @map("tax_rate") @db.Decimal(6, 2)
   lineTotal   Decimal  @default(0) @map("line_total") @db.Decimal(12, 2)
-  isOneOff    Boolean  @default(false) @map("is_one_off") // ad-hoc one-off â€” stripped on template roll-over
+  isOneOff    Boolean  @default(false) @map("is_one_off") // ad-hoc one-off — stripped on template roll-over
   // â”€â”€ Hybrid IT&Cloud sync (source='giacom' = synced line) â”€â”€
-  syncLocked  Boolean  @default(false) @map("sync_locked")  // manually edited synced line â€” sync won't overwrite
+  syncLocked  Boolean  @default(false) @map("sync_locked")  // manually edited synced line — sync won't overwrite
   syncRef     String?  @map("sync_ref")                     // Giacom match key (product_reference|unit_cost)
   syncDrift   String?  @map("sync_drift")                   // note when a locked override differs from current Giacom
   lastSyncedAt DateTime? @map("last_synced_at")
@@ -1181,11 +1189,11 @@ model Ticket {
   postponedUntil        DateTime? @map("postponed_until") // when a 'postponed' case auto-returns to awaiting_engineer
   escalatedToUserId     Int?      @map("escalated_to_user_id")
   teamsConversation     String?   @map("teams_conversation") // JSON: Bot Framework conversation reference for Teams replies
-  prevStatus            String?   @map("prev_status")          // status before a Teams/WhatsApp message bumped the case â€” used to restore on "move message"
+  prevStatus            String?   @map("prev_status")          // status before a Teams/WhatsApp message bumped the case — used to restore on "move message"
   prevActivityStatus    String?   @map("prev_activity_status")
   persistentCc          String?   @map("persistent_cc")        // CC kept for every reply on this case (engineer ticked "remember")
   persistentBcc         String?   @map("persistent_bcc")
-  agentDeviceId         Int?      @map("agent_device_id") // LumenMSP Agent chat case â€” the enrolled device it came from
+  agentDeviceId         Int?      @map("agent_device_id") // LumenMSP Agent chat case — the enrolled device it came from
 
   customer Customer?       @relation(fields: [customerId], references: [id])
   messages TicketMessage[]
@@ -1208,7 +1216,7 @@ model TicketMessage {
   internetMessageId String?   @map("internet_message_id")
   conversationId    String?   @map("conversation_id")
   messageDirection  String    @default("inbound") @map("message_direction") // inbound | outbound
-  channel           String    @default("email") // email | teams | whatsapp â€” how this message travelled
+  channel           String    @default("email") // email | teams | whatsapp — how this message travelled
   processingStatus  String    @default("new") @map("processing_status") // new | matched | unmatched | suppressed | error
   suppressionReason String?   @map("suppression_reason")
   autoReplyScore    Decimal?  @map("auto_reply_score") @db.Decimal(5, 2)
@@ -1241,7 +1249,7 @@ model TicketNote {
   ticketId  Int      @map("ticket_id")
   userId    Int?     @map("user_id")
   noteType  String   @default("private_note") @map("note_type") // public_reply | private_note | system_log | bot | side_convo
-  channel   String?  // email | teams | whatsapp â€” the rail an outbound reply used (null for internal/system)
+  channel   String?  // email | teams | whatsapp — the rail an outbound reply used (null for internal/system)
   body      String
   toRaw     String?  @map("to_raw")
   ccRaw     String?  @map("cc_raw")
@@ -1278,9 +1286,9 @@ model Contract {
   // â”€â”€ Renewal behaviour (decided per contract) â”€â”€
   renewalMode     String    @default("auto") @map("renewal_mode") // auto | signed_extension
   // Which document is currently in play. Once extended, the thing being signed is the
-  // extension, not the original agreement â€” the renderer needs to know which to produce.
+  // extension, not the original agreement — the renderer needs to know which to produce.
   currentDocKind  String    @default("agreement") @map("current_doc_kind") // agreement | extension
-  // Support cover is a tiered offering, not a house standard â€” business hours, extended
+  // Support cover is a tiered offering, not a house standard — business hours, extended
   // hours or 24/7. It drives the helpdesk hours in the inclusions AND the Service Levels
   // section, so the two can never again disagree the way the manual template did.
   supportCover    String    @default("business") @map("support_cover") // business | extended | always
@@ -1337,7 +1345,7 @@ model ContractLine {
   quantity         Decimal  @default(1) @db.Decimal(12, 2)
   unitPrice        Decimal  @default(0) @map("unit_price") @db.Decimal(12, 2)
   billingFrequency String   @default("monthly") @map("billing_frequency") // monthly | annual | one_off
-  section          String   @default("IT")  // IT | Cloud | Backup | Comms | Hardware â€” groups lines into document sections
+  section          String   @default("IT")  // IT | Cloud | Backup | Comms | Hardware — groups lines into document sections
   // Licence/backup blocks in the MSA carry their own annual term, which need not line up with the
   // contract term (Staybrook: contract 01/08, licences 01/07). Kept separate rather than flattened.
   termStart        DateTime? @map("term_start") @db.Date
@@ -1357,7 +1365,7 @@ model ContractLine {
 // â”€â”€ Contract document template â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // The ~70% of the Multi Service Agreement that is boilerplate, held as ordered editable
 // sections so wording is changed once rather than per customer. Bumping `version` leaves
-// already-signed documents untouched â€” those are frozen in contract_documents.
+// already-signed documents untouched — those are frozen in contract_documents.
 model ContractTemplate {
   id        Int      @id @default(autoincrement())
   code      String   @unique          // msa
@@ -1567,7 +1575,7 @@ model EmailLog {
   @@map("email_log")
 }
 
-// Non-email message log (WhatsApp, Teams) â€” inbound + outbound, mirrors email_log for the
+// Non-email message log (WhatsApp, Teams) — inbound + outbound, mirrors email_log for the
 // Comms Log admin views. Email keeps its own email_log; this covers the other channels.
 model ChannelLog {
   id         Int      @id @default(autoincrement())
@@ -1576,7 +1584,7 @@ model ChannelLog {
   status     String   @default("received") // received | sent | failed | recorded
   ticketId   Int?     @map("ticket_id")
   contactId  Int?     @map("contact_id")
-  peer       String?  // the other party â€” wa number or teams user/email
+  peer       String?  // the other party — wa number or teams user/email
   peerName   String?  @map("peer_name")
   preview    String?  // short text preview of the message body
   externalId String?  @map("external_id") // provider message id
@@ -1591,7 +1599,7 @@ model ChannelLog {
   @@map("channel_log")
 }
 
-// Blocked senders â€” inbound mail from these never creates/updates a ticket.
+// Blocked senders — inbound mail from these never creates/updates a ticket.
 // kind = 'email' (exact match) or 'domain' (matches anything @domain). Release = delete the row.
 model SpamSender {
   id          Int      @id @default(autoincrement())
@@ -1605,7 +1613,7 @@ model SpamSender {
   @@map("spam_senders")
 }
 
-// Audit trail â€” who did what (deletes, restores, status changes, etc.).
+// Audit trail — who did what (deletes, restores, status changes, etc.).
 model ActivityLog {
   id         Int      @id @default(autoincrement())
   userId     Int?     @map("user_id")
@@ -1620,7 +1628,7 @@ model ActivityLog {
   @@map("activity_log")
 }
 
-// Customer A-Z review items â€” a living log of concerns / projects / notes per customer.
+// Customer A-Z review items — a living log of concerns / projects / notes per customer.
 model CustomerReviewItem {
   id              Int       @id @default(autoincrement())
   customerId      Int       @map("customer_id")
@@ -1658,7 +1666,7 @@ model Notification {
   @@map("notifications")
 }
 
-// â”€â”€ Settings (key-value, grouped) â€” integration tokens, defaults, etc. â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Settings (key-value, grouped) — integration tokens, defaults, etc. â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 model Setting {
   id        Int      @id @default(autoincrement())
   group     String
@@ -1785,7 +1793,7 @@ model WebView {
   @@map("web_views")
 }
 
-// â”€â”€ N3twrx network/comms alerts (UniFi, Giacom, â€¦) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ N3twrx network/comms alerts (UniFi, Giacom, …) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 model Alert {
   id         BigInt    @id @default(autoincrement())
   source     String
@@ -1808,7 +1816,7 @@ model Alert {
 
 // â”€â”€ E-waste / IT recycling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Collection batches of end-of-life IT kit (computers, laptops, mobiles, printers,
-// monitors, networking, peripherals â€” anything) audited with photos + condition, then
+// monitors, networking, peripherals — anything) audited with photos + condition, then
 // submitted as a PDF manifest to the e-waste recycling firm.
 model ERecyclingBatch {
   id           Int       @id @default(autoincrement())
@@ -1846,7 +1854,7 @@ model ERecyclingItem {
   @@map("erecycling_items")
 }
 
-// â”€â”€ Marketing â†’ Socials â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Marketing → Socials â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // These two tables were originally raw-SQL only (see lib/socials.ts), on the assumption that
 // `prisma db push` wouldn't touch them. It does: `db push --accept-data-loss` DROPS any table not
 // in this schema, which wiped social_posts on deploy. They are declared here so db push KEEPS them.
@@ -1938,7 +1946,7 @@ model ItReportNote {
   @@map("it_report_notes")
 }
 
-// Bookmarks â€” shared staff quick-links (sidebar dropdown). Raw-SQL managed in routes/tools.ts;
+// Bookmarks — shared staff quick-links (sidebar dropdown). Raw-SQL managed in routes/tools.ts;
 // declared here so `prisma db push` keeps the table.
 model Bookmark {
   id        Int       @id @default(autoincrement())
@@ -1950,7 +1958,7 @@ model Bookmark {
   @@map("bookmarks")
 }
 
-// Reply templates â€” canned composer messages. Raw-SQL managed by lib/reply-templates.ts;
+// Reply templates — canned composer messages. Raw-SQL managed by lib/reply-templates.ts;
 // declared here so `prisma db push` keeps the table.
 model ReplyTemplate {
   id        Int       @id @default(autoincrement())
@@ -1964,7 +1972,7 @@ model ReplyTemplate {
   @@map("reply_templates")
 }
 
-// â”€â”€ LITS-DMARC â€” email authentication monitoring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ LITS-DMARC — email authentication monitoring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Raw-SQL managed by lib/dmarc/store.ts (ensureDmarcTables). Declared here so
 // `prisma db push --accept-data-loss` KEEPS them instead of dropping them each deploy
 // (same lesson as social_posts / it_report_*). Keep in sync with the DDL in store.ts.
@@ -2026,7 +2034,7 @@ model DmarcRecord {
   @@map("dmarc_records")
 }
 
-// â”€â”€ Mass Mailer (Marketing â†’ Mass Mailer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â”€â”€ Mass Mailer (Marketing → Mass Mailer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // A campaign is a one-off bulk email to customer contacts whose address is on their
 // customer's DEFAULT (primary) domain. The recipient list is snapshotted at creation
 // so the campaign page always shows exactly who was/will be emailed. Sending happens
@@ -2054,7 +2062,7 @@ model MailCampaign {
 model MailCampaignRecipient {
   id           Int       @id @default(autoincrement())
   campaignId   Int       @map("campaign_id")
-  contactId    Int?      @map("contact_id")            // â†’ customer_contacts.id (informational)
+  contactId    Int?      @map("contact_id")            // → customer_contacts.id (informational)
   customerId   Int?      @map("customer_id")
   email        String
   fullName     String?   @map("full_name")
@@ -2071,7 +2079,7 @@ model MailCampaignRecipient {
 }
 
 // â”€â”€ MSP360 / backup-provider integration (raw-SQL managed in src/lib/msp360.ts) â”€â”€
-// No-op mirrors so `prisma db push --accept-data-loss` KEEPS the tables on deploy â€”
+// No-op mirrors so `prisma db push --accept-data-loss` KEEPS the tables on deploy —
 // same pattern as the DMARC tables. If the DDL in msp360.ts changes, mirror it here.
 model BackupProviderLink {
   id          Int       @id @default(autoincrement())
@@ -2184,4 +2192,32 @@ model DevicePatch {
   @@index([deviceId])
   @@index([severity])
   @@map("device_patches")
+}
+
+// Patch policies are a LIBRARY of named templates, not rows welded to a customer. Two ship
+// as defaults ("Default Windows Desktop", "Default Windows Server"); anything unusual is a
+// clone. A device resolves: its own override, then its customer's policy for its class,
+// then the default. Everything is created disabled, so the end of that chain does nothing.
+model PatchPolicy {
+  id                  Int       @id @default(autoincrement())
+  name                String
+  deviceClass         String    @default("workstation") @map("device_class")
+  isDefault           Boolean?  @default(false) @map("is_default")
+  enabled             Boolean?  @default(false)
+  installScope        String?   @default("security") @map("install_scope")
+  windowDays          String?   @default("0") @map("window_days")
+  windowStart         String?   @default("02:00") @map("window_start")
+  windowMinutes       Int?      @default(180) @map("window_minutes")
+  rebootMode          String?   @default("never") @map("reboot_mode")
+  rebootDeferrals     Int?      @default(3) @map("reboot_deferrals")
+  rebootDeadlineHours Int?      @default(72) @map("reboot_deadline_hours")
+  notifyMinutes       Int?      @default(15) @map("notify_minutes")
+  notifyMessage       String?   @map("notify_message")
+  createdBy           Int?      @map("created_by")
+  createdAt           DateTime? @default(now()) @map("created_at")
+  updatedBy           Int?      @map("updated_by")
+  updatedAt           DateTime? @default(now()) @map("updated_at")
+
+  @@index([deviceClass])
+  @@map("patch_policies")
 }
