@@ -43,9 +43,10 @@ function sev(s) {
   <% } %>
 </div>
 
-<div style="display:flex;gap:8px;margin:0 0 14px;">
+<div style="display:flex;gap:8px;margin:0 0 14px;flex-wrap:wrap;">
   <a class="btn <%= view !== 'updates' ? 'btn-primary' : '' %>" href="/patching?view=devices<%= customerId ? '&customer=' + customerId : '' %>">By machine</a>
   <a class="btn <%= view === 'updates' ? 'btn-primary' : '' %>" href="/patching?view=updates<%= customerId ? '&customer=' + customerId : '' %>">By update</a>
+  <a class="btn" href="/patching/policies" style="margin-left:auto;">⚙ Policies</a>
 </div>
 
 <% if (view === 'updates') { %>

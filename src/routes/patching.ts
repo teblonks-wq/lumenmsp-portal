@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
+import { logActivity } from '../lib/activity';
 
 // ── Patch management (reporting) ────────────────────────────────────────────────
 // What every machine is missing, and how long it has been missing it. Read-only for
@@ -80,6 +81,126 @@ router.get('/patching', requireAuth, requireAdmin, async (req: Request, res: Res
       customerId, view, summary: { devices: 0, scanned: 0, neverScanned: 0, pending: 0, critical: 0, needReboot: 0, compliant: 0 },
       error: e.message,
     });
+  }
+});
+
+// ── Policies ────────────────────────────────────────────────────────────────────
+// Two policies per customer — workstations and servers — because they want opposite
+// answers. A workstation can restart at 2am unattended; a domain controller cannot.
+//
+// EVERYTHING DEFAULTS TO DISABLED. Nothing here installs anything yet either: this is
+// the definition layer, so policies can be set up and read back before the estate has
+// any capability to act on them. Enforcement is a separate change, deliberately.
+
+const CLASSES = ['workstation', 'server'];
+const REBOOT_MODES = ['never', 'prompt', 'if_idle'];
+const INSTALL_SCOPES = ['security', 'all'];
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** A customer's policies, creating the two defaults (off) the first time we look. */
+async function policiesFor(customerId: number): Promise<any[]> {
+  for (const cls of CLASSES) {
+    await pool.query(
+      `INSERT INTO patch_policies (customer_id, device_class) VALUES ($1,$2)
+       ON CONFLICT (customer_id, device_class) DO NOTHING`, [customerId, cls]);
+  }
+  return (await pool.query(
+    `SELECT * FROM patch_policies WHERE customer_id=$1 ORDER BY device_class DESC`, [customerId])).rows;
+}
+
+router.get('/patching/policies', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const rows = (await pool.query(
+    `SELECT c.id, c.name,
+            count(ad.id)::int AS devices,
+            COALESCE(bool_or(pw.enabled), false) AS workstations_on,
+            COALESCE(bool_or(ps.enabled), false) AS servers_on
+       FROM customers c
+       JOIN agent_devices ad ON ad.customer_id = c.id AND ad.revoked = false
+       LEFT JOIN patch_policies pw ON pw.customer_id = c.id AND pw.device_class = 'workstation'
+       LEFT JOIN patch_policies ps ON ps.customer_id = c.id AND ps.device_class = 'server'
+      WHERE c.deleted_at IS NULL
+      GROUP BY c.id, c.name
+      ORDER BY c.name`)).rows;
+
+  res.render('patching-policies', { user: req.session.user!, rows, msg: req.query.msg || null });
+});
+
+router.get('/patching/policies/:customerId', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.params.customerId), 10);
+  const cust = (await pool.query('SELECT id, name FROM customers WHERE id=$1', [customerId])).rows[0];
+  if (!cust) { res.status(404).render('error', { message: 'Customer not found.' }); return; }
+
+  const policies = await policiesFor(customerId);
+  const devices = (await pool.query(
+    `SELECT id, hostname, os, patch_class, patch_excluded FROM agent_devices
+      WHERE customer_id=$1 AND revoked=false ORDER BY hostname`, [customerId])).rows;
+
+  res.render('patching-policy', {
+    user: req.session.user!, customer: cust, policies, devices,
+    dayNames: DAY_NAMES, msg: req.query.msg || null,
+  });
+});
+
+router.post('/patching/policies/:customerId', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.params.customerId), 10);
+  const b = req.body || {};
+
+  const clean = (v: any, allowed: string[], fallback: string) =>
+    allowed.includes(String(v)) ? String(v) : fallback;
+  const int = (v: any, min: number, max: number, fallback: number) => {
+    const n = parseInt(String(v), 10);
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+  };
+
+  try {
+    for (const cls of CLASSES) {
+      // Days arrive as either a single value or an array depending on how many are
+      // ticked — normalise before it reaches the database.
+      const raw = b[`${cls}_days`];
+      const days = (Array.isArray(raw) ? raw : raw === undefined ? [] : [raw])
+        .map((d: any) => parseInt(String(d), 10))
+        .filter((d: number) => d >= 0 && d <= 6)
+        .sort()
+        .join(',');
+
+      await pool.query(
+        `UPDATE patch_policies SET
+           enabled = $1, install_scope = $2, window_days = $3, window_start = $4,
+           window_minutes = $5, reboot_mode = $6, reboot_deferrals = $7,
+           reboot_deadline_hours = $8, notify_minutes = $9, notify_message = $10,
+           updated_by = $11, updated_at = NOW()
+         WHERE customer_id = $12 AND device_class = $13`,
+        [b[`${cls}_enabled`] === '1',
+         clean(b[`${cls}_scope`], INSTALL_SCOPES, 'security'),
+         days,
+         /^\d{2}:\d{2}$/.test(String(b[`${cls}_start`] || '')) ? String(b[`${cls}_start`]) : '02:00',
+         int(b[`${cls}_minutes`], 30, 720, 180),
+         clean(b[`${cls}_reboot`], REBOOT_MODES, 'never'),
+         int(b[`${cls}_deferrals`], 0, 10, 3),
+         int(b[`${cls}_deadline`], 1, 720, 72),
+         int(b[`${cls}_notify`], 0, 240, 15),
+         String(b[`${cls}_message`] || '').slice(0, 500) || null,
+         req.session.user!.id, customerId, cls]);
+    }
+
+    // Per-device exceptions: the awkward machine every customer has.
+    const excluded = new Set(
+      (Array.isArray(b.excluded) ? b.excluded : b.excluded === undefined ? [] : [b.excluded])
+        .map((v: any) => parseInt(String(v), 10)));
+    const all = (await pool.query(
+      'SELECT id FROM agent_devices WHERE customer_id=$1 AND revoked=false', [customerId])).rows;
+    for (const d of all) {
+      await pool.query('UPDATE agent_devices SET patch_excluded=$1 WHERE id=$2',
+        [excluded.has(d.id), d.id]);
+    }
+
+    await logActivity(req.session.user!.id, 'patch_policy', 'customers', customerId,
+      `Updated patching policy for customer ${customerId}`);
+    res.redirect(`/patching/policies/${customerId}?msg=` + encodeURIComponent('Policy saved.'));
+  } catch (e: any) {
+    console.error('[patching] policy save failed:', e.message);
+    res.redirect(`/patching/policies/${customerId}?msg=` + encodeURIComponent('Could not save: ' + e.message));
   }
 });
 

@@ -1,0 +1,40 @@
+<%- include('partials/header', { title: 'Patch policies', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/patching">← Patching</a></p>
+  <h1 style="margin:0;">Patch policies</h1>
+  <p class="muted" style="margin:4px 0 0;">
+    One policy for workstations and one for servers, per customer. Everything starts switched off.
+  </p>
+</div>
+
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+
+<div class="alert" style="border:1px solid var(--info-line);background:var(--tint-accent);">
+  <p style="margin:0;font-size:13px;color:var(--info-deep);">
+    <strong>Policies are recorded but not yet enforced.</strong> Nothing installs updates or restarts a machine
+    at present — this screen is here so the rules can be agreed and checked before anything is capable of acting on them.
+  </p>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Customer</th><th style="text-align:right;">Machines</th><th>Workstations</th><th>Servers</th><th></th></tr></thead>
+      <tbody>
+        <% if (!rows.length) { %><tr><td colspan="5"><div class="empty-state">No customers have agents installed yet.</div></td></tr><% } %>
+        <% rows.forEach(function (r) { %>
+          <tr>
+            <td><a class="row-link" href="/patching/policies/<%= r.id %>"><%= r.name %></a></td>
+            <td style="text-align:right;"><%= r.devices %></td>
+            <td><% if (r.workstations_on) { %><span class="badge badge-sent">On</span><% } else { %><span class="badge badge-inactive">Off</span><% } %></td>
+            <td><% if (r.servers_on) { %><span class="badge badge-sent">On</span><% } else { %><span class="badge badge-inactive">Off</span><% } %></td>
+            <td style="text-align:right;"><a class="btn" style="padding:3px 10px;font-size:12px;" href="/patching/policies/<%= r.id %>">Edit</a></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('partials/footer') %>
