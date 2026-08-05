@@ -109,37 +109,51 @@ async function policiesFor(customerId: number): Promise<any[]> {
     `SELECT * FROM patch_policies WHERE customer_id=$1 ORDER BY device_class DESC`, [customerId])).rows;
 }
 
+// Every handler here is wrapped: Express 4 does not catch a rejected promise from an
+// async route, so an unhandled query failure leaves the browser spinning for ever
+// instead of returning an error anyone can read.
 router.get('/patching/policies', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const rows = (await pool.query(
-    `SELECT c.id, c.name,
-            count(ad.id)::int AS devices,
-            COALESCE(bool_or(pw.enabled), false) AS workstations_on,
-            COALESCE(bool_or(ps.enabled), false) AS servers_on
-       FROM customers c
-       JOIN agent_devices ad ON ad.customer_id = c.id AND ad.revoked = false
-       LEFT JOIN patch_policies pw ON pw.customer_id = c.id AND pw.device_class = 'workstation'
-       LEFT JOIN patch_policies ps ON ps.customer_id = c.id AND ps.device_class = 'server'
-      WHERE c.deleted_at IS NULL
-      GROUP BY c.id, c.name
-      ORDER BY c.name`)).rows;
+  try {
+    const rows = (await pool.query(
+      `SELECT c.id, c.name,
+              count(ad.id)::int AS devices,
+              COALESCE(bool_or(pw.enabled), false) AS workstations_on,
+              COALESCE(bool_or(ps.enabled), false) AS servers_on
+         FROM customers c
+         JOIN agent_devices ad ON ad.customer_id = c.id AND ad.revoked = false
+         LEFT JOIN patch_policies pw ON pw.customer_id = c.id AND pw.device_class = 'workstation'
+         LEFT JOIN patch_policies ps ON ps.customer_id = c.id AND ps.device_class = 'server'
+        WHERE c.deleted_at IS NULL
+        GROUP BY c.id, c.name
+        ORDER BY c.name`)).rows;
 
-  res.render('patching-policies', { user: req.session.user!, rows, msg: req.query.msg || null });
+    res.render('patching-policies', { user: req.session.user!, rows, msg: req.query.msg || null, error: null });
+  } catch (e: any) {
+    console.error('[patching] policies list failed:', e.message);
+    res.render('patching-policies', { user: req.session.user!, rows: [], msg: null, error: e.message });
+  }
 });
 
 router.get('/patching/policies/:customerId', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const customerId = parseInt(String(req.params.customerId), 10);
-  const cust = (await pool.query('SELECT id, name FROM customers WHERE id=$1', [customerId])).rows[0];
-  if (!cust) { res.status(404).render('error', { message: 'Customer not found.' }); return; }
+  if (!customerId) { res.status(404).render('error', { message: 'Customer not found.' }); return; }
+  try {
+    const cust = (await pool.query('SELECT id, name FROM customers WHERE id=$1', [customerId])).rows[0];
+    if (!cust) { res.status(404).render('error', { message: 'Customer not found.' }); return; }
 
-  const policies = await policiesFor(customerId);
-  const devices = (await pool.query(
-    `SELECT id, hostname, os, patch_class, patch_excluded FROM agent_devices
-      WHERE customer_id=$1 AND revoked=false ORDER BY hostname`, [customerId])).rows;
+    const policies = await policiesFor(customerId);
+    const devices = (await pool.query(
+      `SELECT id, hostname, os, patch_class, patch_excluded FROM agent_devices
+        WHERE customer_id=$1 AND revoked=false ORDER BY hostname`, [customerId])).rows;
 
-  res.render('patching-policy', {
-    user: req.session.user!, customer: cust, policies, devices,
-    dayNames: DAY_NAMES, msg: req.query.msg || null,
-  });
+    res.render('patching-policy', {
+      user: req.session.user!, customer: cust, policies, devices,
+      dayNames: DAY_NAMES, msg: req.query.msg || null,
+    });
+  } catch (e: any) {
+    console.error('[patching] policy page failed:', e.message);
+    res.status(500).render('error', { message: 'Could not load the policy: ' + e.message });
+  }
 });
 
 router.post('/patching/policies/:customerId', requireAuth, requireAdmin, async (req: Request, res: Response) => {

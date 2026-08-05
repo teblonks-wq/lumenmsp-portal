@@ -9,6 +9,7 @@
 </div>
 
 <% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error">Could not load policies: <%= error %></div><% } %>
 
 <div class="alert" style="border:1px solid var(--info-line);background:var(--tint-accent);">
   <p style="margin:0;font-size:13px;color:var(--info-deep);">

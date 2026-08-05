@@ -55,7 +55,13 @@ export function agentHostedVersion(): string | null {
 }
 
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
-const s = (v: any, max = 300): string | null => { const t = String(v ?? '').trim(); return t ? t.slice(0, max) : null; };
+
+// Strip NUL bytes. Postgres `text` cannot hold 0x00 and rejects the whole statement —
+// and Windows registry values genuinely contain them (a null-terminated string read
+// slightly too long). One embedded NUL in one publisher name was silently killing the
+// entire software inventory for every device, every night.
+const noNul = (v: string) => v.replace(/\u0000/g, '');
+const s = (v: any, max = 300): string | null => { const t = noNul(String(v ?? '')).trim(); return t ? t.slice(0, max) : null; };
 
 // Real client IP — the app sets trust proxy 1, so req.ip is already the nginx-forwarded address.
 function clientIp(req: Request): string {
@@ -398,19 +404,19 @@ router.post('/agent/api/inventory', requireDevice, async (req: Request, res: Res
     // for ever, which is worse than briefly having none.
     await client.query('DELETE FROM agent_software WHERE device_id=$1', [d.id]);
     for (const a of list.slice(0, 2000)) {
-      const name = String(a?.name || '').trim();
+      const name = s(a?.name, 300);
       if (!name) continue;
       await client.query(
         `INSERT INTO agent_software (device_id, name, version, publisher, size_mb, install_date, uninstall_cmd, product_code, scope)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [d.id, name.slice(0, 300),
-         a.version ? String(a.version).slice(0, 100) : null,
-         a.publisher ? String(a.publisher).slice(0, 200) : null,
+        [d.id, s(name, 300),
+         s(a.version, 100),
+         s(a.publisher, 200),
          a.size_mb != null && !isNaN(Number(a.size_mb)) ? Number(a.size_mb) : null,
-         a.install_date ? String(a.install_date).slice(0, 20) : null,
-         a.uninstall_cmd ? String(a.uninstall_cmd).slice(0, 1000) : null,
-         a.product_code ? String(a.product_code).slice(0, 100) : null,
-         a.scope ? String(a.scope).slice(0, 20) : null]);
+         s(a.install_date, 20),
+         s(a.uninstall_cmd, 1000),
+         s(a.product_code, 100),
+         s(a.scope, 20)]);
     }
     await client.query('COMMIT');
     res.json({ ok: true, stored: list.length });
@@ -457,10 +463,10 @@ router.post('/agent/api/patches', requireDevice, async (req: Request, res: Respo
            categories = EXCLUDED.categories, size_mb = EXCLUDED.size_mb,
            downloaded = EXCLUDED.downloaded, last_seen = NOW()`,
         [d.id, id,
-         String(u.title || '').slice(0, 500),
-         String(u.kb || '').slice(0, 100) || null,
-         String(u.severity || '').slice(0, 40) || null,
-         String(u.categories || '').slice(0, 300) || null,
+         s(u.title, 500) || '',
+         s(u.kb, 100),
+         s(u.severity, 40),
+         s(u.categories, 300),
          u.size_mb != null && !isNaN(Number(u.size_mb)) ? Number(u.size_mb) : null,
          u.downloaded === true]);
     }
