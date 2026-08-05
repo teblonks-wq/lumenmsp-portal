@@ -178,10 +178,79 @@ router.get('/quotes/:id', requireAuth, async (req: Request, res: Response) => {
     : [];
   const comms = await getComms('quote', id);
   const commsTo = quote.sent_to || (contacts[0]?.email) || '';
+  // For the Duplicate control — the common reason to copy a quote is to send the same
+  // specification to a different customer, so the picker lives right next to the button.
+  const customers = (await pool.query(
+    `SELECT id, name FROM customers WHERE deleted_at IS NULL AND is_placeholder=false ORDER BY name`)).rows;
   // Optional same-site return path (e.g. the customer screen's Quotes tab).
   const backQ = String(req.query.back || '');
-  res.render('quotes/detail', { user, quote, items: items.rows, contacts, comms, commsTo,
+  res.render('quotes/detail', { user, quote, items: items.rows, contacts, comms, commsTo, customers,
     back: /^\/(?!\/)/.test(backQ) ? backQ : null, events: await getDocEvents('quote', quote.id) });
+});
+
+// ── Duplicate ─────────────────────────────────────────────────────────────────
+// Same specification, new number, today's date — and optionally a different customer,
+// which is the usual reason for copying one.
+//
+// Deliberately NOT carried across: status, the accept token, view count, acceptance
+// details and who it was sent to. A copy is a fresh draft nobody has seen; bringing any
+// of that with it would make the audit trail claim things that never happened.
+router.post('/quotes/:id/duplicate', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  if (!id) { res.status(404).render('error', { message: 'Quote not found.' }); return; }
+
+  const src = (await pool.query('SELECT * FROM quotes WHERE id=$1 AND deleted_at IS NULL LIMIT 1', [id])).rows[0];
+  if (!src) { res.status(404).render('error', { message: 'Quote not found.' }); return; }
+
+  const picked = parseInt(String((req.body || {}).customer_id || ''), 10);
+  const customerId = Number.isFinite(picked) && picked > 0 ? picked : src.customer_id;
+
+  // Keep the same validity WINDOW rather than the same expiry date — a quote copied in
+  // August that inherited a July expiry would be born already out of date.
+  let validDays: number | null = null;
+  if (src.issue_date && src.valid_until) {
+    const ms = new Date(src.valid_until).getTime() - new Date(src.issue_date).getTime();
+    if (ms > 0) validDays = Math.round(ms / 86400000);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const quoteNumber = await nextQuoteNumber();
+
+    // Dates come from the database, not from Node — the server runs Europe/London while
+    // Postgres stores UTC, and computing "today" in the wrong one is off by a day for an
+    // hour every night through BST.
+    const ins = await client.query(
+      `INSERT INTO quotes (customer_id, quote_number, title, status, issue_date, valid_until,
+                           currency_code, notes, terms, subtotal, tax_total, total, created_by)
+       VALUES ($1,$2,$3,'draft', CURRENT_DATE, CURRENT_DATE + $4::int,
+               $5,$6,$7,$8,$9,$10,$11)
+       RETURNING id`,
+      [customerId, quoteNumber, src.title, validDays,
+       src.currency_code || 'GBP', src.notes, src.terms,
+       src.subtotal, src.tax_total, src.total, user.id]);
+    const newId = ins.rows[0].id;
+
+    // Copy the lines in SQL so nothing is lost in translation — buy prices, supplier
+    // links and sort order all come across exactly as they were.
+    await client.query(
+      `INSERT INTO quote_items (quote_id, product_id, supplier_id, sort_order, description, quantity,
+                                unit_price, tax_rate, line_total, buy_price, supplier_name, supplier_url)
+       SELECT $1, product_id, supplier_id, sort_order, description, quantity,
+              unit_price, tax_rate, line_total, buy_price, supplier_name, supplier_url
+         FROM quote_items WHERE quote_id = $2`, [newId, id]);
+
+    await client.query('COMMIT');
+    await logActivity(user.id, 'created', 'quotes', newId, `Duplicated ${src.quote_number} as ${quoteNumber}`);
+    res.redirect('/quotes/' + newId);
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
 });
 
 // ── Edit ──────────────────────────────────────────────────────────────────────

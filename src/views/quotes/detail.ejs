@@ -20,6 +20,14 @@
       <select class="input" name="status"><% ['draft','sent','accepted','lost'].forEach(function(s){ %><option value="<%= s %>" <%= quote.status===s?'selected':'' %>><%= s.charAt(0).toUpperCase()+s.slice(1) %></option><% }); %></select>
       <button class="btn" type="submit">Set status</button>
     </form>
+    <form method="post" action="/quotes/<%= quote.id %>/duplicate" style="margin:0;display:flex;gap:6px;align-items:center;">
+      <select class="input" name="customer_id" title="Copy this quote to which customer?">
+        <% (typeof customers !== 'undefined' ? customers : []).forEach(function(c){ %>
+          <option value="<%= c.id %>" <%= quote.customer_id === c.id ? 'selected' : '' %>><%= c.name %></option>
+        <% }); %>
+      </select>
+      <button class="btn" type="submit">Duplicate</button>
+    </form>
     <form method="post" action="/quotes/<%= quote.id %>/delete" onsubmit="return confirm('Move this quote to the recycle bin?');" style="margin:0;"><button class="btn" type="submit" style="color:var(--lumen-dark);">Delete</button></form>
   </div>
 </div>
