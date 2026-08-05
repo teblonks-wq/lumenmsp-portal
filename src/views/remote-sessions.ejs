@@ -1,0 +1,115 @@
+<%- include('partials/header', { title: 'Remote Sessions', user }) %>
+<%
+function dur(s) {
+  if (s == null) return '—';
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60), r = s % 60;
+  if (m < 60) return m + 'm' + (r ? ' ' + r + 's' : '');
+  return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+}
+function mb(b) { return b == null ? '—' : (Number(b) / 1048576).toFixed(1) + ' MB'; }
+function when(d) {
+  return d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+}
+function person(e) { return String(e || '').replace(/^user\/\//, '') || '—'; }
+%>
+
+<div class="page-header">
+  <h1 style="margin:0;">Remote Sessions</h1>
+  <p class="muted" style="margin:4px 0 0;">
+    Every remote-control and terminal session, recorded on the MeshCentral server.
+    Recordings are kept for 60 days; the log of who connected to what is kept indefinitely.
+  </p>
+</div>
+
+<% if (error) { %>
+  <div class="alert" style="border:1px solid var(--bad-line);">Could not load sessions: <%= error %></div>
+<% } %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+  <div class="card"><div class="card-header"><h2>Sessions</h2></div><div class="stat" style="font-size:24px;"><%= totals.sessions %></div><p class="muted" style="margin:2px 0 0;">last <%= days %> days</p></div>
+  <div class="card"><div class="card-header"><h2>Time connected</h2></div><div class="stat" style="font-size:24px;"><%= dur(totals.seconds) %></div></div>
+  <div class="card"><div class="card-header"><h2>Recording storage</h2></div><div class="stat" style="font-size:24px;"><%= mb(totals.bytes) %></div><p class="muted" style="margin:2px 0 0;">on mesh01</p></div>
+</div>
+
+<form method="get" action="/remote-sessions" class="card" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+  <div>
+    <label class="muted" style="display:block;font-size:12px;">Search</label>
+    <input class="input" type="search" name="q" value="<%= q %>" placeholder="Device, engineer or customer">
+  </div>
+  <div>
+    <label class="muted" style="display:block;font-size:12px;">Engineer</label>
+    <select class="input" name="engineer">
+      <option value="">Anyone</option>
+      <% engineers.forEach(function (e) { %><option value="<%= e %>" <%= engineer === e ? 'selected' : '' %>><%= person(e) %></option><% }); %>
+    </select>
+  </div>
+  <div>
+    <label class="muted" style="display:block;font-size:12px;">Customer</label>
+    <select class="input" name="customer">
+      <option value="">All customers</option>
+      <% customers.forEach(function (c) { %><option value="<%= c.id %>" <%= customerId === c.id ? 'selected' : '' %>><%= c.name %></option><% }); %>
+    </select>
+  </div>
+  <div>
+    <label class="muted" style="display:block;font-size:12px;">Period</label>
+    <select class="input" name="days">
+      <% [7, 30, 60, 90].forEach(function (d) { %><option value="<%= d %>" <%= days === d ? 'selected' : '' %>>Last <%= d %> days</option><% }); %>
+    </select>
+  </div>
+  <button class="btn btn-primary" type="submit">Apply</button>
+  <% if (q || engineer || customerId || days !== 30) { %><a class="btn" href="/remote-sessions">Clear</a><% } %>
+</form>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Engineer</th>
+          <th>Device</th>
+          <th>Customer</th>
+          <th>Started</th>
+          <th style="text-align:right;">Duration</th>
+          <th style="text-align:right;">Size</th>
+          <th style="text-align:right;">Recording</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (!rows.length) { %>
+          <tr><td colspan="7"><div class="empty-state">No sessions in this period.</div></td></tr>
+        <% } %>
+        <% rows.forEach(function (r) { %>
+          <tr>
+            <td><%= person(r.engineer) %></td>
+            <td>
+              <% if (r.asset_id) { %><a class="row-link" href="/assets/<%= r.asset_id %>"><%= r.device_name %></a>
+              <% } else { %><%= r.device_name || '—' %><% } %>
+            </td>
+            <td>
+              <% if (r.customer_id) { %><a class="row-link" href="/customers/<%= r.customer_id %>"><%= r.customer_name %></a>
+              <% } else { %><span class="muted">—</span><% } %>
+            </td>
+            <td><%= when(r.started_at) %></td>
+            <td style="text-align:right;"><%= dur(r.duration_seconds) %></td>
+            <td style="text-align:right;"><%= mb(r.size_bytes) %></td>
+            <td style="text-align:right;">
+              <% if (r.file_present && meshUrl) { %>
+                <a class="row-link" href="<%= meshUrl %>/player.htm?stream=<%= encodeURIComponent(r.file_name) %>" target="_blank" rel="noopener">Play</a>
+              <% } else if (!r.file_present) { %>
+                <span class="muted" title="Recording deleted after 60 days; the session log is kept">Expired</span>
+              <% } else { %><span class="muted">—</span><% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="muted" style="margin:14px 0 0;font-size:12px;">
+  Recordings capture whatever was on the customer's screen. Treat access to this page as you would
+  access to the customer's own systems.
+</p>
+
+<%- include('partials/footer') %>

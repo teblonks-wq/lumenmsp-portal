@@ -2135,3 +2135,27 @@ model GraphConsentStatus {
 
   @@map("graph_consent_status")
 }
+
+// MeshCentral session recordings index. The .mcrec files live on mesh01 and are
+// pruned at 60 days by the bridge; these rows are the audit trail and are kept.
+model RemoteSession {
+  id              Int       @id @default(autoincrement())
+  fileName        String    @unique @map("file_name")
+  engineer        String?
+  deviceName      String?   @map("device_name")
+  meshNodeId      String?   @map("mesh_node_id")
+  meshGroupId     String?   @map("mesh_group_id")
+  customerId      Int?      @map("customer_id")
+  agentDeviceId   Int?      @map("agent_device_id")
+  startedAt       DateTime? @map("started_at")
+  endedAt         DateTime? @map("ended_at")
+  durationSeconds Int?      @map("duration_seconds")
+  sizeBytes       BigInt?   @map("size_bytes")
+  filePresent     Boolean?  @default(true) @map("file_present")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@index([startedAt(sort: Desc)])
+  @@index([engineer])
+  @@index([customerId])
+  @@map("remote_sessions")
+}

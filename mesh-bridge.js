@@ -63,6 +63,9 @@ const CFG = {
     .split(',')
     .map((u) => u.trim())
     .filter(Boolean),
+  // Session recordings: where MeshCentral writes them, and how long we keep them.
+  recordingsDir: process.env.MESH_RECORDINGS_DIR || '/opt/meshcentral/meshcentral-recordings',
+  retentionDays: parseInt(process.env.MESH_RETENTION_DAYS || '60', 10),
 };
 
 function req(name) {
@@ -265,6 +268,109 @@ async function pushAgentBinary(customer, group) {
   }
 }
 
+/* ------------------------------------------------------------- recordings */
+
+/**
+ * MeshCentral names recordings:
+ *
+ *   relaysession-2026-08-05-17-50-22-terry.okelly-RDS001-vvajcn3ggil.mcrec
+ *                └──── UTC ────┘ └engineer┘ └device┘ └session┘
+ *
+ * Everything we need is in the name, so there is no reason to parse the binary
+ * format. Two things to be careful about:
+ *
+ *  - The timestamp is UTC, while the file's mtime is local. Mixing them is an hour
+ *    out for eight months of the year, which is exactly the bug that had agents
+ *    showing offline last night.
+ *  - Both the engineer ("terry.okelly") and the device ("LVG-AD2") can contain the
+ *    separator, so splitting on "-" is ambiguous. We resolve it against the device
+ *    names MeshCentral just told us about, and only guess if that fails.
+ */
+function parseRecording(fileName, knownDevices) {
+  const m = /^relaysession-(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(.+)\.mcrec$/i.exec(fileName);
+  if (!m) return null;
+
+  const [, y, mo, d, h, mi, s, rest] = m;
+  const startedAt = new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi, +s));
+
+  // rest = "<engineer>-<device>-<sessionid>"
+  const lastDash = rest.lastIndexOf('-');
+  if (lastDash < 0) return null;
+  const withoutSession = rest.slice(0, lastDash);
+
+  let engineer = null, deviceName = null;
+  const hit = knownDevices.find((n) => withoutSession.toLowerCase().endsWith('-' + n.toLowerCase()));
+  if (hit) {
+    deviceName = withoutSession.slice(withoutSession.length - hit.length);
+    engineer = withoutSession.slice(0, withoutSession.length - hit.length - 1);
+  } else {
+    // Device has since been renamed or removed — fall back to the first separator.
+    const i = withoutSession.indexOf('-');
+    if (i < 0) return null;
+    engineer = withoutSession.slice(0, i);
+    deviceName = withoutSession.slice(i + 1);
+  }
+
+  return { fileName, engineer, deviceName, startedAt };
+}
+
+/**
+ * Index the recordings and hand the metadata to the Portal, then delete anything
+ * past the retention window. The files stay here — they are far too big to be worth
+ * shipping to Azure just to render a list, and the Portal only ever needs the index.
+ */
+async function syncRecordings(devices) {
+  let names = [];
+  try { names = await fs.readdir(CFG.recordingsDir); }
+  catch { return; }   // recording not enabled yet — nothing to do, and not an error
+
+  const knownDevices = devices.map((d) => d.hostname).filter(Boolean);
+  const cutoff = Date.now() - CFG.retentionDays * 86400000;
+  const byName = new Map(devices.map((d) => [d.hostname.toLowerCase(), d]));
+
+  const sessions = [];
+  let pruned = 0;
+
+  for (const name of names) {
+    if (!name.toLowerCase().endsWith('.mcrec')) continue;
+    const full = path.join(CFG.recordingsDir, name);
+
+    let st;
+    try { st = await fs.stat(full); } catch { continue; }
+
+    const parsed = parseRecording(name, knownDevices);
+    if (!parsed) { log(`unrecognised recording filename, skipping: ${name}`); continue; }
+
+    if (parsed.startedAt.getTime() < cutoff) {
+      try { await fs.unlink(full); pruned++; } catch { /* next run */ }
+      continue;
+    }
+
+    // The file is appended to for the life of the session, so its mtime is when the
+    // session ended. Clamp at zero — a clock adjustment mid-session shouldn't produce
+    // a negative duration in the audit trail.
+    const endedAt = st.mtime;
+    const durationSeconds = Math.max(0, Math.round((endedAt.getTime() - parsed.startedAt.getTime()) / 1000));
+
+    const dev = byName.get(parsed.deviceName.toLowerCase());
+    sessions.push({
+      fileName: parsed.fileName,
+      engineer: parsed.engineer,
+      deviceName: parsed.deviceName,
+      meshNodeId: dev ? dev.nodeId : null,
+      meshGroupId: dev ? dev.meshGroupId : null,
+      startedAt: parsed.startedAt.toISOString(),
+      endedAt: endedAt.toISOString(),
+      durationSeconds,
+      sizeBytes: st.size,
+    });
+  }
+
+  if (pruned) log(`pruned ${pruned} recording(s) older than ${CFG.retentionDays} days`);
+  await portal('POST', '/agent/api/mesh/sessions', { sessions, retentionDays: CFG.retentionDays });
+  log(`indexed ${sessions.length} recording(s)`);
+}
+
 /* -------------------------------------------------------------------- main */
 
 async function main() {
@@ -308,6 +414,9 @@ async function main() {
 
   await portal('POST', '/agent/api/mesh/devices', { devices: mapped });
   log(`reported ${mapped.length} device(s) to the Portal`);
+
+  try { await syncRecordings(mapped); }
+  catch (err) { console.error(`recording sync failed: ${redact(err.message)}`); }
 }
 
 main().then(

@@ -217,6 +217,124 @@ router.post('/agent/api/mesh/devices', requireBridge, async (req: Request, res: 
   }
 });
 
+// ── Session recordings index ────────────────────────────────────────────────────
+// The bridge reports what recordings exist on mesh01; the files themselves stay
+// there. This is the index, not the archive — a list of who connected to what, when,
+// and for how long, which is the bit anyone actually needs to search.
+router.post('/agent/api/mesh/sessions', requireBridge, async (req: Request, res: Response) => {
+  const list = (req.body || {}).sessions;
+  if (!Array.isArray(list)) { res.status(400).json({ ok: false, error: 'sessions must be an array' }); return; }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const seen: string[] = [];
+
+    for (const s of list.slice(0, 5000)) {
+      const fileName = String(s?.fileName || '').trim().slice(0, 400);
+      if (!fileName) continue;
+      seen.push(fileName);
+
+      await client.query(
+        `INSERT INTO remote_sessions
+           (file_name, engineer, device_name, mesh_node_id, mesh_group_id,
+            started_at, ended_at, duration_seconds, size_bytes, file_present,
+            customer_id, agent_device_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,
+                 (SELECT id FROM customers WHERE mesh_group_id = $5 AND deleted_at IS NULL LIMIT 1),
+                 (SELECT id FROM agent_devices WHERE mesh_node_id = $4 AND revoked = false LIMIT 1))
+         ON CONFLICT (file_name) DO UPDATE SET
+           ended_at         = EXCLUDED.ended_at,
+           duration_seconds = EXCLUDED.duration_seconds,
+           size_bytes       = EXCLUDED.size_bytes,
+           file_present     = true,
+           customer_id      = COALESCE(remote_sessions.customer_id, EXCLUDED.customer_id),
+           agent_device_id  = COALESCE(remote_sessions.agent_device_id, EXCLUDED.agent_device_id)`,
+        [fileName,
+         String(s.engineer || '').slice(0, 200) || null,
+         String(s.deviceName || '').slice(0, 200) || null,
+         String(s.meshNodeId || '').slice(0, 200) || null,
+         String(s.meshGroupId || '').slice(0, 200) || null,
+         s.startedAt ? new Date(s.startedAt) : null,
+         s.endedAt ? new Date(s.endedAt) : null,
+         Number.isFinite(Number(s.durationSeconds)) ? Number(s.durationSeconds) : null,
+         Number.isFinite(Number(s.sizeBytes)) ? Number(s.sizeBytes) : null]);
+    }
+
+    // Anything we knew about that is no longer on disk has aged out of the retention
+    // window. The ROW stays — it costs a few bytes and it is the audit trail; only the
+    // recording itself is subject to the sixty days.
+    await client.query(
+      `UPDATE remote_sessions SET file_present = false
+        WHERE file_present = true AND NOT (file_name = ANY($1::text[]))`, [seen]);
+
+    await client.query('COMMIT');
+    res.json({ ok: true, indexed: seen.length });
+  } catch (e: any) {
+    try { await client.query('ROLLBACK'); } catch { /* gone */ }
+    console.error('[mesh] session index failed:', e.message);
+    res.status(500).json({ ok: false, error: 'session index failed' });
+  } finally { client.release(); }
+});
+
+// ── Remote Sessions panel ───────────────────────────────────────────────────────
+router.get('/remote-sessions', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const q = String(req.query.q || '').trim();
+  const engineer = String(req.query.engineer || '').trim();
+  const customerId = parseInt(String(req.query.customer || ''), 10) || null;
+  const days = Math.min(365, Math.max(1, parseInt(String(req.query.days || '30'), 10) || 30));
+
+  const where: string[] = [`rs.started_at > NOW() - ($1 || ' days')::interval`];
+  const params: any[] = [String(days)];
+
+  if (q) { params.push('%' + q + '%'); where.push(`(rs.device_name ILIKE $${params.length} OR rs.engineer ILIKE $${params.length} OR c.name ILIKE $${params.length})`); }
+  if (engineer) { params.push(engineer); where.push(`rs.engineer = $${params.length}`); }
+  if (customerId) { params.push(customerId); where.push(`rs.customer_id = $${params.length}`); }
+
+  try {
+    const rows = (await pool.query(
+      `SELECT rs.*, c.name AS customer_name, a.id AS asset_id
+         FROM remote_sessions rs
+         LEFT JOIN customers c ON c.id = rs.customer_id
+         LEFT JOIN LATERAL (
+           SELECT ca.id FROM customer_assets ca
+            WHERE ca.customer_id = rs.customer_id
+              AND LOWER(ca.hostname) = LOWER(rs.device_name)
+            LIMIT 1
+         ) a ON true
+        WHERE ${where.join(' AND ')}
+        ORDER BY rs.started_at DESC
+        LIMIT 500`, params)).rows;
+
+    const [engineers, customers, totals] = await Promise.all([
+      pool.query(`SELECT DISTINCT engineer FROM remote_sessions WHERE engineer IS NOT NULL ORDER BY engineer`),
+      pool.query(`SELECT DISTINCT c.id, c.name FROM remote_sessions rs JOIN customers c ON c.id = rs.customer_id ORDER BY c.name`),
+      pool.query(
+        `SELECT count(*)::int AS sessions,
+                COALESCE(sum(duration_seconds), 0)::int AS seconds,
+                COALESCE(sum(size_bytes), 0)::bigint AS bytes
+           FROM remote_sessions
+          WHERE started_at > NOW() - ($1 || ' days')::interval`, [String(days)]),
+    ]);
+
+    res.render('remote-sessions', {
+      user: req.session.user!, rows, q, engineer, customerId, days,
+      engineers: engineers.rows.map((r: any) => r.engineer),
+      customers: customers.rows,
+      totals: totals.rows[0] || { sessions: 0, seconds: 0, bytes: 0 },
+      meshUrl: await meshServerUrl(),
+      error: null,
+    });
+  } catch (e: any) {
+    console.error('[mesh] remote sessions page failed:', e.message);
+    res.render('remote-sessions', {
+      user: req.session.user!, rows: [], q, engineer, customerId, days,
+      engineers: [], customers: [], totals: { sessions: 0, seconds: 0, bytes: 0 },
+      meshUrl: null, error: e.message,
+    });
+  }
+});
+
 // ── Queue a remote-access install ───────────────────────────────────────────────
 /**
  * Called from enrolment and from the Agents page. Safe to call repeatedly: it does
