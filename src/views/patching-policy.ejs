@@ -1,61 +1,65 @@
-<%- include('partials/header', { title: customer.name + ' — Patch policy', user }) %>
-<%
-function pol(cls) { return policies.filter(function (p) { return p.device_class === cls; })[0] || {}; }
-function hasDay(p, d) { return String(p.window_days || '').split(',').indexOf(String(d)) >= 0; }
-function isServer(d) {
-  if (d.patch_class) return d.patch_class === 'server';
-  return String(d.os || '').toLowerCase().indexOf('server') >= 0;
-}
-%>
+<%- include('partials/header', { title: policy.name, user }) %>
+<% function hasDay(d) { return String(policy.window_days || '').split(',').indexOf(String(d)) >= 0; } %>
 
 <div class="page-header">
   <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/patching/policies">← Patch policies</a></p>
-  <h1 style="margin:0;"><%= customer.name %></h1>
-  <p class="muted" style="margin:4px 0 0;"><%= devices.length %> machine<%= devices.length === 1 ? '' : 's' %> with the agent installed.</p>
+  <h1 style="margin:0;"><%= policy.name %><% if (policy.is_default) { %> <span class="badge badge-inactive">default</span><% } %></h1>
+  <p class="muted" style="margin:4px 0 0;">
+    <% if (usedBy.length) { %>Used by <%= usedBy.length %> customer/device<%= usedBy.length === 1 ? '' : 's' %>.
+    <% } else { %>Not assigned to anything yet.<% } %>
+  </p>
 </div>
 
 <% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
 
-<form method="post" action="/patching/policies/<%= customer.id %>">
+<form method="post" action="/patching/policies/<%= policy.id %>">
   <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
 
-  <% ['workstation', 'server'].forEach(function (cls) { var p = pol(cls); %>
   <div class="card">
-    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
-      <h2><%= cls === 'server' ? 'Servers' : 'Workstations' %></h2>
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+      <h2>Policy</h2>
       <label style="display:flex;align-items:center;gap:8px;font-size:14px;">
-        <input type="checkbox" name="<%= cls %>_enabled" value="1" <%= p.enabled ? 'checked' : '' %>>
+        <input type="checkbox" name="enabled" value="1" <%= policy.enabled ? 'checked' : '' %>>
         <strong>Patching enabled</strong>
       </label>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;">
       <div class="form-group">
-        <label>Install</label>
-        <select class="input" name="<%= cls %>_scope" style="width:100%;">
-          <option value="security" <%= p.install_scope !== 'all' ? 'selected' : '' %>>Security &amp; critical only</option>
-          <option value="all" <%= p.install_scope === 'all' ? 'selected' : '' %>>Everything Windows offers</option>
+        <label>Name</label>
+        <input class="input" name="name" value="<%= policy.name %>" maxlength="120" style="width:100%;" <%= policy.is_default ? 'readonly' : '' %>>
+        <% if (policy.is_default) { %><p class="muted" style="font-size:12px;margin:6px 0 0;">Defaults keep their names so they stay recognisable — clone it to make a variant.</p><% } %>
+      </div>
+
+      <div class="form-group">
+        <label>Applies to</label>
+        <select class="input" name="device_class" style="width:100%;" <%= policy.is_default ? 'disabled' : '' %>>
+          <option value="workstation" <%= policy.device_class !== 'server' ? 'selected' : '' %>>Workstations</option>
+          <option value="server" <%= policy.device_class === 'server' ? 'selected' : '' %>>Servers</option>
         </select>
-        <p class="muted" style="font-size:12px;margin:6px 0 0;">Security-only is the safer default: it is the set that matters and the set least likely to break something.</p>
+        <% if (policy.is_default) { %><input type="hidden" name="device_class" value="<%= policy.device_class %>"><% } %>
       </div>
 
       <div class="form-group">
-        <label>Window starts</label>
-        <input class="input" type="time" name="<%= cls %>_start" value="<%= p.window_start || '02:00' %>" style="width:100%;">
-      </div>
-
-      <div class="form-group">
-        <label>Window length (minutes)</label>
-        <input class="input" type="number" name="<%= cls %>_minutes" min="30" max="720" value="<%= p.window_minutes || 180 %>" style="width:100%;">
+        <label>Install</label>
+        <select class="input" name="install_scope" style="width:100%;">
+          <option value="security" <%= policy.install_scope !== 'all' ? 'selected' : '' %>>Security &amp; critical only</option>
+          <option value="all" <%= policy.install_scope === 'all' ? 'selected' : '' %>>Everything Windows offers</option>
+        </select>
+        <p class="muted" style="font-size:12px;margin:6px 0 0;">Security-only is the set that matters and the set least likely to break something.</p>
       </div>
     </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>Maintenance window</h2></div>
 
     <div class="form-group">
       <label>Days</label>
       <div style="display:flex;gap:14px;flex-wrap:wrap;">
         <% dayNames.forEach(function (d, i) { %>
           <label style="display:flex;align-items:center;gap:5px;font-size:13px;">
-            <input type="checkbox" name="<%= cls %>_days" value="<%= i %>" <%= hasDay(p, i) ? 'checked' : '' %>> <%= d.slice(0, 3) %>
+            <input type="checkbox" name="days" value="<%= i %>" <%= hasDay(i) ? 'checked' : '' %>> <%= d.slice(0, 3) %>
           </label>
         <% }); %>
       </div>
@@ -63,65 +67,53 @@ function isServer(d) {
 
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;">
       <div class="form-group">
+        <label>Starts</label>
+        <input class="input" type="time" name="window_start" value="<%= policy.window_start || '02:00' %>" style="width:100%;">
+      </div>
+      <div class="form-group">
+        <label>Length (minutes)</label>
+        <input class="input" type="number" name="window_minutes" min="30" max="720" value="<%= policy.window_minutes || 180 %>" style="width:100%;">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2>Restarts &amp; messaging</h2></div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;">
+      <div class="form-group">
         <label>Restarts</label>
-        <select class="input" name="<%= cls %>_reboot" style="width:100%;">
-          <option value="never"   <%= (p.reboot_mode || 'never') === 'never' ? 'selected' : '' %>>Never — flag it and leave it to us</option>
-          <option value="prompt"  <%= p.reboot_mode === 'prompt' ? 'selected' : '' %>>Ask the user, allow deferrals, then force</option>
-          <option value="if_idle" <%= p.reboot_mode === 'if_idle' ? 'selected' : '' %>>Only when nobody is signed in</option>
+        <select class="input" name="reboot_mode" style="width:100%;">
+          <option value="never"   <%= (policy.reboot_mode || 'never') === 'never' ? 'selected' : '' %>>Never — flag it, leave it to us</option>
+          <option value="prompt"  <%= policy.reboot_mode === 'prompt' ? 'selected' : '' %>>Ask the user, allow deferrals, then force</option>
+          <option value="if_idle" <%= policy.reboot_mode === 'if_idle' ? 'selected' : '' %>>Only when nobody is signed in</option>
         </select>
         <p class="muted" style="font-size:12px;margin:6px 0 0;">
-          <%= cls === 'server' ? 'For servers, "never" is almost always right — a restart is a change, and changes get scheduled.' : 'Prompting respects the user\'s work without letting a restart drift for weeks.' %>
+          For servers, "never" is almost always right — a restart is a change, and changes get scheduled.
         </p>
       </div>
-
       <div class="form-group">
         <label>Deferrals allowed</label>
-        <input class="input" type="number" name="<%= cls %>_deferrals" min="0" max="10" value="<%= p.reboot_deferrals == null ? 3 : p.reboot_deferrals %>" style="width:100%;">
-        <p class="muted" style="font-size:12px;margin:6px 0 0;">Only applies when restarts are set to ask.</p>
+        <input class="input" type="number" name="reboot_deferrals" min="0" max="10" value="<%= policy.reboot_deferrals == null ? 3 : policy.reboot_deferrals %>" style="width:100%;">
       </div>
-
       <div class="form-group">
         <label>Force after (hours)</label>
-        <input class="input" type="number" name="<%= cls %>_deadline" min="1" max="720" value="<%= p.reboot_deadline_hours == null ? 72 : p.reboot_deadline_hours %>" style="width:100%;">
+        <input class="input" type="number" name="reboot_deadline_hours" min="1" max="720" value="<%= policy.reboot_deadline_hours == null ? 72 : policy.reboot_deadline_hours %>" style="width:100%;">
       </div>
-
       <div class="form-group">
         <label>Warn user (minutes before)</label>
-        <input class="input" type="number" name="<%= cls %>_notify" min="0" max="240" value="<%= p.notify_minutes == null ? 15 : p.notify_minutes %>" style="width:100%;">
+        <input class="input" type="number" name="notify_minutes" min="0" max="240" value="<%= policy.notify_minutes == null ? 15 : policy.notify_minutes %>" style="width:100%;">
       </div>
     </div>
 
     <div class="form-group">
       <label>Message shown to the user</label>
-      <input class="input" type="text" name="<%= cls %>_message" maxlength="500" style="width:100%;"
-             value="<%= p.notify_message || '' %>"
-             placeholder="Leave blank for the default: 'Your computer needs to restart to finish installing updates.'">
-      <p class="muted" style="font-size:12px;margin:6px 0 0;">Shown in the LumenMSP Agent tray prompt — so it reads as you, not as Windows.</p>
-    </div>
-  </div>
-  <% }); %>
-
-  <div class="card">
-    <div class="card-header"><h2>Exceptions</h2></div>
-    <p class="muted" style="margin:0 0 12px;font-size:13px;">
-      Tick any machine that should be left alone entirely — the one running the till, the one with the ancient
-      line-of-business app. Class is worked out from the operating system; a ticked machine is excluded whatever its class.
-    </p>
-    <div class="table-wrap">
-      <table class="table">
-        <thead><tr><th style="width:40px;">Skip</th><th>Machine</th><th>Class</th><th>OS</th></tr></thead>
-        <tbody>
-          <% if (!devices.length) { %><tr><td colspan="4"><div class="empty-state">No agents for this customer yet.</div></td></tr><% } %>
-          <% devices.forEach(function (d) { %>
-            <tr>
-              <td><input type="checkbox" name="excluded" value="<%= d.id %>" <%= d.patch_excluded ? 'checked' : '' %>></td>
-              <td><%= d.hostname %></td>
-              <td><span class="badge badge-inactive"><%= isServer(d) ? 'Server' : 'Workstation' %></span></td>
-              <td class="muted" style="font-size:12px;"><%= d.os || '—' %></td>
-            </tr>
-          <% }); %>
-        </tbody>
-      </table>
+      <input class="input" type="text" name="notify_message" maxlength="500" style="width:100%;"
+             value="<%= policy.notify_message || '' %>"
+             placeholder="Default: 'Your computer needs to restart to finish installing updates.'">
+      <p class="muted" style="font-size:12px;margin:6px 0 0;">
+        Shown in the LumenMSP Agent tray prompt — so it reads as you, not as Windows.
+      </p>
     </div>
   </div>
 
@@ -130,5 +122,24 @@ function isServer(d) {
     <a class="btn" href="/patching/policies">Cancel</a>
   </div>
 </form>
+
+<% if (usedBy.length) { %>
+<div class="card" style="padding:0;margin-top:22px;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Assigned to</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <tbody>
+        <% usedBy.forEach(function (u) { %>
+          <tr>
+            <td><% if (u.kind === 'customer') { %><a class="row-link" href="/customers/<%= u.id %>"><%= u.name %></a>
+                <% } else { %><a class="row-link" href="/patching/device/<%= u.id %>"><%= u.name %></a><% } %></td>
+            <td class="muted" style="text-align:right;"><%= u.kind %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<% } %>
 
 <%- include('partials/footer') %>

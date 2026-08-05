@@ -80,7 +80,7 @@ function sev(s) {
         <% if (!devices.length) { %><tr><td colspan="7"><div class="empty-state">No agents reporting yet.</div></td></tr><% } %>
         <% devices.forEach(function (d) { %>
           <tr>
-            <td><a class="row-link" href="/patching/<%= d.id %>"><%= d.hostname %></a><% if (d.os) { %> <span class="muted" style="font-size:12px;"><%= d.os %></span><% } %></td>
+            <td><a class="row-link" href="/patching/device/<%= d.id %>"><%= d.hostname %></a><% if (d.os) { %> <span class="muted" style="font-size:12px;"><%= d.os %></span><% } %></td>
             <td class="muted"><% if (d.customer_id) { %><a class="row-link" href="/customers/<%= d.customer_id %>"><%= d.customer_name %></a><% } else { %>—<% } %></td>
             <td style="text-align:right;<%= d.patch_critical ? 'color:var(--bad-fg);font-weight:600;' : '' %>"><%= d.patch_critical == null ? '—' : d.patch_critical %></td>
             <td style="text-align:right;"><%= d.patch_pending == null ? '—' : d.patch_pending %></td>

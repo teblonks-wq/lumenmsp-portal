@@ -1,36 +1,111 @@
 <%- include('partials/header', { title: 'Patch policies', user }) %>
+<%
+function cls(c) { return c === 'server' ? 'Servers' : 'Workstations'; }
+function days(p) {
+  var names = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var d = String(p.window_days || '').split(',').filter(function (x) { return x !== ''; });
+  if (!d.length) return 'no days set';
+  if (d.length === 7) return 'every day';
+  return d.map(function (i) { return names[Number(i)]; }).join(', ');
+}
+function reboot(m) {
+  return m === 'prompt' ? 'ask, then force' : m === 'if_idle' ? 'only when signed out' : 'never';
+}
+%>
 
-<div class="page-header">
-  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/patching">← Patching</a></p>
-  <h1 style="margin:0;">Patch policies</h1>
-  <p class="muted" style="margin:4px 0 0;">
-    One policy for workstations and one for servers, per customer. Everything starts switched off.
-  </p>
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/patching">← Patching</a></p>
+    <h1 style="margin:0;">Patch policies</h1>
+    <p class="muted" style="margin:4px 0 0;">Named templates. Clone a default, change what you need, assign it.</p>
+  </div>
 </div>
 
 <% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
-<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error">Could not load policies: <%= error %></div><% } %>
+<% if (error) { %><div class="alert alert-error">Could not load policies: <%= error %></div><% } %>
 
 <div class="alert" style="border:1px solid var(--info-line);background:var(--tint-accent);">
   <p style="margin:0;font-size:13px;color:var(--info-deep);">
-    <strong>Policies are recorded but not yet enforced.</strong> Nothing installs updates or restarts a machine
-    at present — this screen is here so the rules can be agreed and checked before anything is capable of acting on them.
+    <strong>Recorded, not yet enforced.</strong> Nothing installs updates or restarts a machine at present.
+    This is here so the rules can be agreed and checked before anything is capable of acting on them.
   </p>
 </div>
 
 <div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Policies</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>Name</th><th>Applies to</th><th>State</th><th>Window</th><th>Restarts</th><th style="text-align:right;">In use</th><th></th></tr>
+      </thead>
+      <tbody>
+        <% if (!policies.length) { %><tr><td colspan="7"><div class="empty-state">No policies yet — the two defaults are created on first load.</div></td></tr><% } %>
+        <% policies.forEach(function (p) { %>
+          <tr>
+            <td>
+              <a class="row-link" href="/patching/policies/<%= p.id %>"><%= p.name %></a>
+              <% if (p.is_default) { %> <span class="badge badge-inactive">default</span><% } %>
+            </td>
+            <td class="muted"><%= cls(p.device_class) %></td>
+            <td><% if (p.enabled) { %><span class="badge badge-sent">On</span><% } else { %><span class="badge badge-inactive">Off</span><% } %></td>
+            <td class="muted" style="font-size:12px;"><%= days(p) %> · <%= p.window_start %> for <%= p.window_minutes %>m</td>
+            <td class="muted" style="font-size:12px;"><%= reboot(p.reboot_mode) %></td>
+            <td style="text-align:right;" class="muted"><%= p.customers %>c / <%= p.devices %>d</td>
+            <td style="text-align:right;white-space:nowrap;">
+              <form method="post" action="/patching/policies/<%= p.id %>/clone" style="display:inline;">
+                <button class="btn" style="padding:3px 10px;font-size:12px;" type="submit">Clone</button>
+              </form>
+              <% if (!p.is_default) { %>
+              <form method="post" action="/patching/policies/<%= p.id %>/delete" style="display:inline;"
+                    onsubmit="return confirm('Delete this policy? Anything using it falls back to the default.');">
+                <button class="btn" style="padding:3px 10px;font-size:12px;color:var(--bad-fg);" type="submit">Delete</button>
+              </form>
+              <% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;">
+    <h2>Who gets what</h2>
+    <p class="muted" style="margin:4px 0 0;font-size:13px;">
+      Leave a customer on "Default" to inherit. A device can still override its customer on its own page.
+    </p>
+  </div>
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th>Customer</th><th style="text-align:right;">Machines</th><th>Workstations</th><th>Servers</th><th></th></tr></thead>
       <tbody>
-        <% if (!rows.length) { %><tr><td colspan="5"><div class="empty-state">No customers have agents installed yet.</div></td></tr><% } %>
-        <% rows.forEach(function (r) { %>
+        <% if (!customers.length) { %><tr><td colspan="5"><div class="empty-state">No customers have agents installed yet.</div></td></tr><% } %>
+        <% customers.forEach(function (c) { %>
           <tr>
-            <td><a class="row-link" href="/patching/policies/<%= r.id %>"><%= r.name %></a></td>
-            <td style="text-align:right;"><%= r.devices %></td>
-            <td><% if (r.workstations_on) { %><span class="badge badge-sent">On</span><% } else { %><span class="badge badge-inactive">Off</span><% } %></td>
-            <td><% if (r.servers_on) { %><span class="badge badge-sent">On</span><% } else { %><span class="badge badge-inactive">Off</span><% } %></td>
-            <td style="text-align:right;"><a class="btn" style="padding:3px 10px;font-size:12px;" href="/patching/policies/<%= r.id %>">Edit</a></td>
+            <form method="post" action="/patching/assign">
+              <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+              <input type="hidden" name="customer_id" value="<%= c.id %>">
+              <td><a class="row-link" href="/customers/<%= c.id %>"><%= c.name %></a></td>
+              <td style="text-align:right;" class="muted"><%= c.devices %></td>
+              <td>
+                <select class="input" name="ws_id" style="min-width:190px;">
+                  <option value="">Default</option>
+                  <% policies.filter(function(p){return p.device_class==='workstation';}).forEach(function (p) { %>
+                    <option value="<%= p.id %>" <%= c.ws_id === p.id ? 'selected' : '' %>><%= p.name %></option>
+                  <% }); %>
+                </select>
+              </td>
+              <td>
+                <select class="input" name="srv_id" style="min-width:190px;">
+                  <option value="">Default</option>
+                  <% policies.filter(function(p){return p.device_class==='server';}).forEach(function (p) { %>
+                    <option value="<%= p.id %>" <%= c.srv_id === p.id ? 'selected' : '' %>><%= p.name %></option>
+                  <% }); %>
+                </select>
+              </td>
+              <td style="text-align:right;"><button class="btn" style="padding:3px 10px;font-size:12px;" type="submit">Save</button></td>
+            </form>
           </tr>
         <% }); %>
       </tbody>

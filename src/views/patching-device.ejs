@@ -24,6 +24,50 @@ function ago(s) {
   </p>
 </div>
 
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+
+<div class="card">
+  <div class="card-header"><h2>Policy</h2></div>
+  <p class="muted" style="margin:0 0 12px;font-size:13px;">
+    <% if (resolved) { %>
+      Currently governed by <strong><%= resolved.name %></strong>
+      (<%= resolved.source === 'device' ? 'set on this machine' : resolved.source === 'customer' ? 'inherited from the customer' : 'the built-in default' %>)
+      — <%= resolved.enabled ? 'patching enabled' : 'patching off' %>.
+    <% } else { %>
+      No policy resolves for this machine.
+    <% } %>
+    <% if (device.patch_excluded) { %> <strong style="color:var(--warn-fg);">This machine is excluded from patching entirely.</strong><% } %>
+  </p>
+
+  <form method="post" action="/patching/device/<%= device.id %>" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;align-items:end;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <div class="form-group" style="margin:0;">
+      <label>Override policy</label>
+      <select class="input" name="patch_policy_id" style="width:100%;">
+        <option value="">Inherit from customer</option>
+        <% policies.forEach(function (p) { %>
+          <option value="<%= p.id %>" <%= device.patch_policy_id === p.id ? 'selected' : '' %>><%= p.name %><%= p.enabled ? '' : ' (off)' %></option>
+        <% }); %>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label>Treat as</label>
+      <select class="input" name="patch_class" style="width:100%;">
+        <option value="">Work it out from the OS (<%= deviceClass %>)</option>
+        <option value="workstation" <%= device.patch_class === 'workstation' ? 'selected' : '' %>>Workstation</option>
+        <option value="server" <%= device.patch_class === 'server' ? 'selected' : '' %>>Server</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+        <input type="checkbox" name="patch_excluded" value="1" <%= device.patch_excluded ? 'checked' : '' %>>
+        Skip this machine entirely
+      </label>
+    </div>
+    <div><button class="btn btn-primary" type="submit">Save</button></div>
+  </form>
+</div>
+
 <% if (device.reboot_required) { %>
 <div class="alert" style="border:1px solid var(--warn-line);">
   <strong>A restart is outstanding.</strong>
