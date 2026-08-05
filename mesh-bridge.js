@@ -67,6 +67,9 @@ function req(name) {
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
+/** How meshctrl reports a real failure — always as prose, never reliably as an exit code. */
+const FAILED = /^(invalid|unknown|missing|access denied|unauthorized|not found|file .* already exists)/i;
+
 /* ---------------------------------------------------------------- meshctrl */
 
 /**
@@ -85,14 +88,17 @@ async function meshctrl(action, args = [], cwd = '/opt/meshcentral') {
     const { stdout } = await execFileAsync('node', argv, { maxBuffer: 32 * 1024 * 1024, cwd });
     // meshctrl is inconsistent about exit codes: some failures exit 0 and only say so
     // on stdout ("Invalid meshid."), others exit 1. Treat the text as authoritative.
-    if (/^(invalid|unknown|missing|access denied|unauthorized|file .* already exists)/i.test(stdout.trim())) {
-      throw new Error(`${action}: ${stdout.trim().slice(0, 200)}`);
-    }
+    if (FAILED.test(stdout.trim())) throw new Error(`${action}: ${stdout.trim().slice(0, 200)}`);
     return stdout;
   } catch (err) {
+    // meshctrl's exit codes cannot be trusted in either direction: agentdownload exits
+    // non-zero even after reporting a successful download. So when there is output and
+    // it does not read like a failure, believe the output, not the exit code.
+    const out = String(err.stdout || '');
+    if (out.trim() && !FAILED.test(out.trim())) return out;
     // execFile puts the whole command line in the message, credentials and all - which
     // would then land in the systemd journal for ever. Never let that happen.
-    throw new Error(redact(`${action} failed: ${err.stdout || ''} ${err.message}`).slice(0, 400));
+    throw new Error(redact(`${action} failed: ${out} ${err.message}`).slice(0, 400));
   }
 }
 
