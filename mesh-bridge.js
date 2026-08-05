@@ -54,6 +54,11 @@ const CFG = {
   // Windows x86-64 service agent, background-only.
   agentType: process.env.MESH_AGENT_TYPE || '4',
   installFlags: process.env.MESH_INSTALL_FLAGS || '2',
+  // Engineers' MeshCentral account. Groups are created by the service account, and
+  // MeshCentral grants rights to whoever created a group - so without this, the only
+  // login that can actually use remote control is the unattended one. That is exactly
+  // backwards, so every group gets granted to a real named account too.
+  adminUser: (process.env.MESH_ADMIN_USER || '').trim(),
 };
 
 function req(name) {
@@ -161,6 +166,27 @@ function findGroupFor(groups, customer) {
     || (customer.meshGroupId ? groups.find((g) => g._id === customer.meshGroupId) : undefined);
 }
 
+/**
+ * Give the named human account full rights on a group. Idempotent — MeshCentral
+ * complains if the link already exists, which is fine and expected on every run after
+ * the first, so that particular complaint is swallowed rather than logged.
+ */
+async function grantAdmin(group) {
+  if (!CFG.adminUser) return;
+  try {
+    await meshctrl('addusertodevicegroup', [
+      '--id', bareId(group._id),
+      '--userid', CFG.adminUser,
+      '--fullrights',
+    ]);
+    log(`granted ${CFG.adminUser} rights on "${group.name}"`);
+  } catch (err) {
+    if (!/already|exist/i.test(err.message)) {
+      console.error(`could not grant rights on "${group.name}": ${redact(err.message)}`);
+    }
+  }
+}
+
 async function ensureGroup(groups, customer) {
   const existing = findGroupFor(groups, customer);
   if (existing) {
@@ -245,6 +271,7 @@ async function main() {
   for (const customer of customers) {
     try {
       const group = await ensureGroup(groups, customer);
+      await grantAdmin(group);
 
       if (customer.meshGroupId !== group._id || !customer.hasAgentBinary) {
         await portal('POST', '/agent/api/mesh/group', {

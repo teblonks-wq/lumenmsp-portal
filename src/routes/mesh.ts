@@ -32,6 +32,14 @@ const router = Router();
 
 const sha256 = (b: Buffer) => crypto.createHash('sha256').update(b).digest('hex');
 
+/**
+ * MeshCentral's API returns identifiers prefixed by type — "node//abc", "mesh//abc" —
+ * but its own web UI's ?gotonode= expects the bare form, and silently lands you on a
+ * dead desktop panel if you give it the prefixed one. Strip on the way in and again on
+ * the way out, because a row stored before this existed shouldn't stay broken.
+ */
+const bareNodeId = (id: unknown) => String(id || '').replace(/^node\/\//, '');
+
 /** MeshCentral's public base URL, e.g. https://mesh.lumenmsp.co.uk (no trailing slash). */
 export async function meshServerUrl(): Promise<string | null> {
   const v = ((await getSetting('mesh', 'server_url')) || '').trim().replace(/\/+$/, '');
@@ -179,7 +187,7 @@ router.post('/agent/api/mesh/devices', requireBridge, async (req: Request, res: 
   let matched = 0;
   try {
     for (const d of list.slice(0, 5000)) {
-      const nodeId = String(d?.nodeId || '').trim().slice(0, 200);
+      const nodeId = bareNodeId(String(d?.nodeId || '').trim()).slice(0, 200);
       const groupId = String(d?.meshGroupId || '').trim().slice(0, 200);
       const hostname = String(d?.hostname || '').trim().slice(0, 200);
       if (!nodeId || !groupId || !hostname) continue;
@@ -279,7 +287,7 @@ router.get('/assets/:id/remote-mesh', requireAuth, requireAdmin, async (req: Req
     }
     await logActivity(req.session.user!.id, 'remote_control', 'customer_assets', id,
       `Opened remote control for ${r.rows[0].hostname}`);
-    res.redirect(`${base}/?gotonode=${encodeURIComponent(nodeId)}&viewmode=11&hide=31`);
+    res.redirect(`${base}/?gotonode=${encodeURIComponent(bareNodeId(nodeId))}&viewmode=11&hide=31`);
   } catch (e: any) {
     console.error('[mesh] remote control failed:', e.message);
     res.redirect(back + '?err=' + encodeURIComponent('Could not open remote control.'));
