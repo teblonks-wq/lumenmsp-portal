@@ -23,6 +23,7 @@ router.get('/customers/:id/m365', requireAuth, requireAdmin, async (req: Request
     users: [] as any[], skus: [] as any[], groups: [] as any[],
     summary: { users: 0, guests: 0, licensed: 0, disabled: 0, wasted: 0, spare: 0 },
     error: null as string | null,
+    warnings: [] as string[],
   };
 
   if (!cust.entra_tenant_id) {
@@ -31,19 +32,26 @@ router.get('/customers/:id/m365', requireAuth, requireAdmin, async (req: Request
     return;
   }
 
-  try {
-    // Users needs the SKU list to name licences, so fetch that first and reuse it.
-    const skus = await listSkus(cust.entra_tenant_id);
-    const [users, groups] = await Promise.all([
-      listUsers(cust.entra_tenant_id),
-      listGroups(cust.entra_tenant_id).catch(() => []),   // groups are a bonus, not a blocker
-    ]);
-    res.render('customers/m365', { ...base, users, skus, groups, summary: summarise(users, skus) });
-  } catch (e: any) {
-    // The common failures are honest and worth showing verbatim: consent not granted,
-    // consent granted to the wrong app, or the tenant id being wrong.
-    res.render('customers/m365', { ...base, error: e.message });
+  // Each section is fetched independently. The scopes on the reporting app vary by what
+  // has actually been granted, and one refused endpoint should cost you that section —
+  // not the whole page. A missing licence read is a note; it is not an outage.
+  const tenant = cust.entra_tenant_id;
+  const warnings: string[] = [];
+
+  const [skus, users, groups] = await Promise.all([
+    listSkus(tenant).catch((e: any) => { warnings.push(`Licences unavailable — ${e.message}`); return []; }),
+    listUsers(tenant).catch((e: any) => { warnings.push(`Users unavailable — ${e.message}`); return []; }),
+    listGroups(tenant).catch((e: any) => { warnings.push(`Groups unavailable — ${e.message}`); return []; }),
+  ]);
+
+  if (!users.length && warnings.length === 3) {
+    res.render('customers/m365', { ...base, error: warnings[1] || warnings[0] });
+    return;
   }
+
+  res.render('customers/m365', {
+    ...base, users, skus, groups, warnings, summary: summarise(users, skus),
+  });
 });
 
 export default router;

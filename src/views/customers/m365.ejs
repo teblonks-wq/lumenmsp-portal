@@ -23,6 +23,20 @@ function when(d) { return d ? new Date(d).toLocaleDateString('en-GB', { day: '2-
   </div>
 <% } else { %>
 
+<% if (typeof warnings !== 'undefined' && warnings.length) { %>
+  <div class="alert" style="border:1px solid var(--warn-line);">
+    <strong>Some of this tenant is not readable.</strong>
+    <ul style="margin:8px 0 0;padding-left:18px;">
+      <% warnings.forEach(function (w) { %><li class="muted" style="font-size:13px;"><%= w %></li><% }); %>
+    </ul>
+    <p class="muted" style="margin:10px 0 0;font-size:13px;">
+      Usually a scope the reporting app doesn't hold. Licence figures need <code>Organization.Read.All</code>
+      or <code>Directory.Read.All</code> granted on the app registration — adding a permission also needs
+      re-consent from the customer before it takes effect.
+    </p>
+  </div>
+<% } %>
+
 <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
   <div class="card"><div class="card-header"><h2>People</h2></div><div class="stat" style="font-size:24px;"><%= summary.users %></div><p class="muted" style="margin:2px 0 0;"><%= summary.licensed %> licensed</p></div>
   <div class="card"><div class="card-header"><h2>Disabled</h2></div><div class="stat" style="font-size:24px;"><%= summary.disabled %></div><p class="muted" style="margin:2px 0 0;">accounts</p></div>
