@@ -1,0 +1,126 @@
+<%- include('partials/header', { title: 'Cyber Essentials — History', user }) %>
+<%
+function scoreColour(v) {
+  if (v == null) return '';
+  if (v >= 90) return 'color:var(--ok-fg);';
+  if (v >= 70) return 'color:var(--warn-fg);';
+  return 'color:var(--bad-fg);';
+}
+function bandStroke(v) {
+  if (v == null) return 'var(--muted)';
+  if (v >= 90) return 'var(--ok-fg)';
+  if (v >= 70) return 'var(--warn-fg)';
+  return 'var(--bad-fg)';
+}
+function q(extra) {
+  var p = [];
+  if (customerId) p.push('customer=' + customerId);
+  for (var k in extra) p.push(k + '=' + extra[k]);
+  return p.length ? '?' + p.join('&') : '';
+}
+// Trend geometry — a simple score-over-time line. Oldest on the left.
+var pts = (trend || []).filter(function (t) { return t.score != null; });
+var W = 720, H = 170, padL = 34, padR = 14, padT = 14, padB = 26;
+function tx(i) { return pts.length <= 1 ? padL : padL + (W - padL - padR) * (i / (pts.length - 1)); }
+function ty(v) { return padT + (H - padT - padB) * (1 - (Math.max(0, Math.min(100, v)) / 100)); }
+var poly = pts.map(function (t, i) { return tx(i).toFixed(1) + ',' + ty(t.score).toFixed(1); }).join(' ');
+%>
+
+<style>
+  .ce-trend { width:100%; height:auto; display:block; }
+  .ce-trend .grid { stroke:var(--line); stroke-width:1; }
+  .ce-trend .gtext { fill:var(--muted); font-size:11px; }
+  .ce-trend .tline { fill:none; stroke:var(--accent, #0ea5b7); stroke-width:2; }
+</style>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/ce">← Cyber Essentials</a></p>
+    <h1 style="margin:0;">Assessment history</h1>
+    <p class="muted" style="margin:4px 0 0;">
+      Every scan we have run<%= cust ? ' for ' + cust.name : '' %> — the whole trail, oldest kept, so you can
+      go back and show where a customer started and how far they have come.
+    </p>
+  </div>
+  <form method="get" action="/ce/history" style="display:flex;gap:8px;align-items:center;">
+    <select class="input" name="customer" onchange="this.form.submit()">
+      <option value="">All customers</option>
+      <% customers.forEach(function (c) { %>
+        <option value="<%= c.id %>" <%= customerId === c.id ? 'selected' : '' %>><%= c.name %></option>
+      <% }); %>
+    </select>
+  </form>
+</div>
+
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<div class="card">
+  <div class="card-header" style="display:flex;align-items:baseline;justify-content:space-between;">
+    <h2>Score over time</h2>
+    <span class="muted" style="font-size:12px;">
+      <% if (pts.length) { %>last <%= pts.length %> completed run<%= pts.length === 1 ? '' : 's' %><% } %>
+    </span>
+  </div>
+  <% if (pts.length < 2) { %>
+    <div class="empty-state">Not enough completed runs yet to draw a trend — it appears once there are at least two.</div>
+  <% } else { %>
+    <svg class="ce-trend" viewBox="0 0 <%= W %> <%= H %>" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Score trend">
+      <% [0,70,90,100].forEach(function (g) { %>
+        <line class="grid" x1="<%= padL %>" y1="<%= ty(g).toFixed(1) %>" x2="<%= W - padR %>" y2="<%= ty(g).toFixed(1) %>"></line>
+        <text class="gtext" x="<%= padL - 6 %>" y="<%= (ty(g) + 3).toFixed(1) %>" text-anchor="end"><%= g %></text>
+      <% }); %>
+      <polyline class="tline" points="<%= poly %>"></polyline>
+      <% pts.forEach(function (t, i) { %>
+        <circle cx="<%= tx(i).toFixed(1) %>" cy="<%= ty(t.score).toFixed(1) %>" r="3.5" fill="<%= bandStroke(t.score) %>">
+          <title>#<%= t.id %> · <%= t.score %> · <%= new Date(t.started_at).toLocaleDateString('en-GB') %></title>
+        </circle>
+      <% }); %>
+    </svg>
+    <p class="muted" style="margin:8px 0 0;font-size:12px;">
+      Earliest <%= new Date(pts[0].started_at).toLocaleDateString('en-GB') %>
+      · latest <%= new Date(pts[pts.length - 1].started_at).toLocaleDateString('en-GB') %>.
+      Dots are coloured by score band (90+ good, 70+ fair, below poor).
+    </p>
+  <% } %>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;display:flex;align-items:baseline;justify-content:space-between;">
+    <h2>All runs</h2>
+    <span class="muted" style="font-size:12px;"><%= total %> run<%= total === 1 ? '' : 's' %></span>
+  </div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Run</th><th>Scope</th><th>Customer</th><th>Status</th><th style="text-align:right;">Machines</th><th style="text-align:right;">Fails</th><th style="text-align:right;">Warnings</th><th style="text-align:right;">Score</th><th>Started</th><th>Finished</th></tr></thead>
+      <tbody>
+        <% if (!runs.length) { %><tr><td colspan="10"><div class="empty-state">No scans recorded<%= cust ? ' for this customer' : '' %> yet.</div></td></tr><% } %>
+        <% runs.forEach(function (r) { %>
+          <tr>
+            <td><a class="row-link" href="/ce/run/<%= r.id %>">#<%= r.id %> <%= r.label || '' %></a></td>
+            <td class="muted"><%= r.scope === 'all' ? 'Everything' : r.scope === 'customer' ? 'Customer' : (r.hostname || 'Machine') %></td>
+            <td class="muted"><%= r.customer_name || (r.scope === 'all' ? 'Whole estate' : '—') %></td>
+            <td><span class="badge <%= r.status === 'complete' ? 'badge-active' : r.status === 'running' ? 'badge-primary' : r.status === 'partial' ? 'badge-primary' : 'badge-inactive' %>"><%= r.status %></span></td>
+            <td style="text-align:right;"><%= r.devices_done %>/<%= r.devices_total %></td>
+            <td style="text-align:right;<%= Number(r.fail_count) ? 'color:var(--bad-fg);' : '' %>"><%= r.fail_count %></td>
+            <td style="text-align:right;"><%= r.warn_count %></td>
+            <td style="text-align:right;font-weight:600;<%= scoreColour(r.score) %>"><%= r.score == null ? '—' : r.score %></td>
+            <td class="muted"><%= r.started_at ? new Date(r.started_at).toLocaleString('en-GB') : '' %></td>
+            <td class="muted"><%= r.finished_at ? new Date(r.finished_at).toLocaleString('en-GB') : '—' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+  <% if (pages > 1) { %>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 24px;border-top:1px solid var(--line);">
+    <span class="muted" style="font-size:12px;">Page <%= page %> of <%= pages %></span>
+    <div style="display:flex;gap:8px;">
+      <% if (page > 1) { %><a class="btn" href="/ce/history<%= q({ page: page - 1 }) %>">← Newer</a><% } %>
+      <% if (page < pages) { %><a class="btn" href="/ce/history<%= q({ page: page + 1 }) %>">Older →</a><% } %>
+    </div>
+  </div>
+  <% } %>
+</div>
+
+<%- include('partials/footer') %>

@@ -69,12 +69,15 @@ router.get('/ce', requireAuth, requireAdmin, async (req: Request, res: Response)
         ORDER BY (f.status='fail') DESC, count(*) DESC
         LIMIT 25`, params)).rows;
 
+    // Runs now honour the customer filter — a run belongs to a customer when it was
+    // scoped to them, or when it was a single-machine run against one of their devices.
     const runs = (await pool.query(
       `SELECT a.*, c.name AS customer_name, d.hostname
          FROM ce_assessments a
          LEFT JOIN customers c ON c.id = a.customer_id
          LEFT JOIN agent_devices d ON d.id = a.device_id
-        ORDER BY a.started_at DESC LIMIT 12`)).rows;
+        WHERE $1::int IS NULL OR a.customer_id = $1 OR d.customer_id = $1
+        ORDER BY a.started_at DESC LIMIT 12`, [customerId])).rows;
 
     const assessed = devices.filter((d: any) => d.collected_at).length;
     const summary = {
@@ -97,6 +100,69 @@ router.get('/ce', requireAuth, requireAdmin, async (req: Request, res: Response)
       user: req.session.user!, customers: [], devices: [], actions: [], runs: [],
       summary: { devices: 0, assessed: 0, never: 0, failing: 0, avgScore: null, eolItems: 0 },
       customerId, controls: CONTROLS, msg: null, error: e.message,
+    });
+  }
+});
+
+// ── History ─────────────────────────────────────────────────────────────────────
+// Every assessment ever run, so you can go back through a customer's scans over months
+// rather than the last dozen — the thing a support customer wants to see is the line
+// going the right way. All read; the runs are already stored, this only lists them.
+router.get('/ce/history', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.query.customer || ''), 10) || null;
+  const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
+  const perPage = 50;
+  try {
+    const customers = (await pool.query(
+      `SELECT DISTINCT c.id, c.name
+         FROM customers c
+         JOIN ce_assessments a ON a.customer_id = c.id
+        WHERE c.deleted_at IS NULL
+        ORDER BY c.name`)).rows;
+
+    const cust = customerId
+      ? (await pool.query('SELECT id, name FROM customers WHERE id=$1', [customerId])).rows[0] || null
+      : null;
+
+    // The full list, newest first, paged — a customer that has been assessed weekly for a
+    // year is a lot of rows, and the recent ones are the ones anyone opens.
+    const total = Number((await pool.query(
+      `SELECT COUNT(*)::int AS n FROM ce_assessments a
+         LEFT JOIN agent_devices d ON d.id = a.device_id
+        WHERE $1::int IS NULL OR a.customer_id = $1 OR d.customer_id = $1`, [customerId])).rows[0].n);
+
+    const runs = (await pool.query(
+      `SELECT a.*, c.name AS customer_name, d.hostname
+         FROM ce_assessments a
+         LEFT JOIN customers c ON c.id = a.customer_id
+         LEFT JOIN agent_devices d ON d.id = a.device_id
+        WHERE $1::int IS NULL OR a.customer_id = $1 OR d.customer_id = $1
+        ORDER BY a.started_at DESC
+        LIMIT ${perPage} OFFSET ${(page - 1) * perPage}`, [customerId])).rows;
+
+    // The trend: the average score of each finished run over time, oldest → newest, so the
+    // view can draw a line. Capped at the most recent 40 points — enough to read a
+    // direction without turning into a smear. Estate-wide, single-machine and one-customer
+    // runs all carry a score, so this stays honest whatever the filter.
+    const trend = (await pool.query(
+      `SELECT a.id, a.started_at, a.score, a.label, a.scope
+         FROM ce_assessments a
+         LEFT JOIN agent_devices d ON d.id = a.device_id
+        WHERE a.score IS NOT NULL
+          AND a.status IN ('complete','partial')
+          AND ($1::int IS NULL OR a.customer_id = $1 OR d.customer_id = $1)
+        ORDER BY a.started_at DESC LIMIT 40`, [customerId])).rows.reverse();
+
+    res.render('ce-history', {
+      user: req.session.user!, customers, cust, customerId, runs, trend,
+      page, perPage, total, pages: Math.max(1, Math.ceil(total / perPage)),
+      msg: req.query.msg || null, error: null,
+    });
+  } catch (e: any) {
+    console.error('[ce] history failed:', e.message);
+    res.render('ce-history', {
+      user: req.session.user!, customers: [], cust: null, customerId, runs: [], trend: [],
+      page: 1, perPage, total: 0, pages: 1, msg: null, error: e.message,
     });
   }
 });

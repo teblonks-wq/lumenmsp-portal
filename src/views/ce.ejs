@@ -138,7 +138,10 @@ ceScope();
 </div>
 
 <div class="card" style="padding:0;">
-  <div class="card-header" style="padding:20px 24px 0;"><h2>Recent runs</h2></div>
+  <div class="card-header" style="padding:20px 24px 0;display:flex;align-items:baseline;justify-content:space-between;">
+    <h2>Recent runs</h2>
+    <a class="row-link" href="/ce/history<%= customerId ? '?customer=' + customerId : '' %>" style="font-size:13px;">View all history →</a>
+  </div>
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th>Run</th><th>Scope</th><th>Status</th><th style="text-align:right;">Machines</th><th style="text-align:right;">Fails</th><th style="text-align:right;">Score</th><th>Started</th></tr></thead>
