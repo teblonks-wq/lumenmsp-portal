@@ -40,21 +40,40 @@ var _agent   = rows.filter(function (a) { return a.agent_device_id; }).length;
 var _servers = rows.filter(function (a) { return String(a.device_type || '').toLowerCase().indexOf('server') >= 0; }).length;
 var _nouser  = rows.filter(function (a) { return !a.assigned_name && !a.last_login_user; }).length;
 var _pct     = rows.length ? Math.round((_agent / rows.length) * 100) : 0;
+var _anyFilter = !!(filters.q || filters.customer || filters.type || filters.online || filters.nouser || filters.agent || filters.servers);
+// Each tile is a filter you can click. Carries the other filters through (so "servers" inside
+// one customer works) and clicking an active tile clears just that one.
+function tileHref(over){
+  var f = { q: filters.q, customer: filters.customer, type: filters.type,
+            online: filters.online ? '1' : '', agent: filters.agent,
+            nouser: filters.nouser ? '1' : '', servers: filters.servers ? '1' : '' };
+  Object.keys(over).forEach(function (k) { f[k] = over[k]; });
+  var parts = [];
+  ['q','customer','type','online','agent','nouser','servers'].forEach(function (k) {
+    if (f[k]) parts.push(k + '=' + encodeURIComponent(f[k]));
+  });
+  return '/assets' + (parts.length ? '?' + parts.join('&') : '');
+}
 %>
 <style>
   .hero { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin:0 0 14px; }
-  .hero .tile { background:var(--card,#fff); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .hero .tile { background:var(--card,#fff); border:1px solid var(--line); border-radius:12px; padding:14px 16px; display:block; text-decoration:none; color:inherit; transition:border-color .12s, box-shadow .12s, transform .12s; }
+  .hero a.tile:hover { border-color:var(--accent); box-shadow:0 3px 10px rgba(0,0,0,.07); transform:translateY(-1px); }
+  .hero a.tile:focus-visible { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--focus-ring); }
+  .hero .tile.on { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
+  .hero .tile .h { font-size:11px; font-weight:600; color:var(--accent); margin-top:6px; visibility:hidden; }
+  .hero a.tile:hover .h, .hero .tile.on .h { visibility:visible; }
   .hero .tile .n { font-size:26px; font-weight:800; line-height:1.05; }
   .hero .tile .l { font-size:12px; color:var(--muted); margin-top:2px; }
   .hero-actions { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 18px; }
 </style>
 
 <div class="hero">
-  <div class="tile"><div class="n"><%= rows.length %></div><div class="l">devices shown</div></div>
-  <div class="tile"><div class="n" style="color:var(--ok-fg);"><%= _online %></div><div class="l">online now</div></div>
-  <div class="tile"><div class="n"><%= _agent %> <span style="font-size:14px;font-weight:600;color:var(--muted);"><%= _pct %>%</span></div><div class="l">running our agent</div></div>
-  <div class="tile"><div class="n"><%= _servers %></div><div class="l">servers</div></div>
-  <div class="tile"><div class="n" style="<%= _nouser ? 'color:var(--warn-fg);' : '' %>"><%= _nouser %></div><div class="l">no known user</div></div>
+  <a class="tile" href="/assets" title="Show every device - clears every filter"><div class="n"><%= rows.length %></div><div class="l">devices shown</div><div class="h"><%= _anyFilter ? 'show all devices' : 'all devices' %></div></a>
+  <a class="tile<%= filters.online ? ' on' : '' %>" href="<%= tileHref({ online: filters.online ? '' : '1' }) %>" title="Only devices Atera currently reports as online"><div class="n" style="color:var(--ok-fg);"><%= _online %></div><div class="l">online now</div><div class="h"><%= filters.online ? 'filtering - click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= filters.agent === '1' ? ' on' : '' %>" href="<%= tileHref({ agent: filters.agent === '1' ? '' : '1' }) %>" title="Only devices with the LumenMSP Agent installed"><div class="n"><%= _agent %> <span style="font-size:14px;font-weight:600;color:var(--muted);"><%= _pct %>%</span></div><div class="l">running our agent</div><div class="h"><%= filters.agent === '1' ? 'filtering - click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= filters.servers ? ' on' : '' %>" href="<%= tileHref({ servers: filters.servers ? '' : '1', type: '' }) %>" title="Only devices Atera types as a server"><div class="n"><%= _servers %></div><div class="l">servers</div><div class="h"><%= filters.servers ? 'filtering - click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= filters.nouser ? ' on' : '' %>" href="<%= tileHref({ nouser: filters.nouser ? '' : '1' }) %>" title="Devices with no assigned contact and no last logged-in user"><div class="n" style="<%= _nouser ? 'color:var(--warn-fg);' : '' %>"><%= _nouser %></div><div class="l">no known user</div><div class="h"><%= filters.nouser ? 'filtering - click to clear' : 'click to filter' %></div></a>
   <% if (unmatchedCount > 0) { %>
   <a class="tile" href="/assets/unmatched" style="text-decoration:none;color:inherit;"><div class="n" style="color:var(--warn-fg);"><%= unmatchedCount %></div><div class="l">unmatched — click to fix</div></a>
   <% } %>
@@ -94,8 +113,9 @@ var _pct     = rows.length ? Math.round((_agent / rows.length) * 100) : 0;
       <option value="0" <%= filters.agent==='0'?'selected':'' %>>Without agent</option>
     </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Devices with no last logged-in user reported by Atera"><input type="checkbox" name="nouser" value="1" <%= filters.nouser?'checked':'' %>> No known user</label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Anything Atera types as a server"><input type="checkbox" name="servers" value="1" <%= filters.servers?'checked':'' %>> Servers only</label>
     <button class="btn" type="submit">Filter</button>
-    <% if (filters.q || filters.customer || filters.type || filters.online || filters.nouser || filters.agent) { %><a class="btn" href="/assets">Clear</a><% } %>
+    <% if (_anyFilter) { %><a class="btn" href="/assets">Clear</a><% } %>
   </form>
 </div>
 

@@ -55,6 +55,16 @@ router.post('/settings/bookmarks/:id/delete', requireAuth, async (req: Request, 
   res.redirect('/settings/bookmarks?saved=1');
 });
 
+// ── Master brand page ─────────────────────────────────────────────────────────
+// The single source of truth for the Portal's look: the live theme tokens, the type
+// scale, the components, the status/data ramps, and the logo rules (including the
+// software vendor marks and the Microsoft four-square). Staff reference — it reads the
+// same CSS variables every page does, so a swatch here can never drift from the real
+// value in a given theme.
+router.get('/brand', requireAuth, (req: Request, res: Response) => {
+  res.render('brand', { user: req.session.user });
+});
+
 // Insights is a NATIVE Portal section now (2026-07-07) — its views render inside the Portal
 // chrome via insights/_layout.ejs, so the iframe embed shell is retired. Keep the old URL
 // working for bookmarks with a redirect. (Learn still opens in a new tab — Microsoft SSO

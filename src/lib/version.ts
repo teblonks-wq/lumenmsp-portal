@@ -1,6 +1,6 @@
 // App version + changelog. Bump APP_VERSION and prepend a new CHANGELOG entry on each release.
 // Minor work accumulates under the current version; ship a new MAJOR (v2, v3…) after a big batch.
-export const APP_VERSION = 'v3.0';
+export const APP_VERSION = 'v4.0';
 
 export interface ChangelogGroup { area: string; items: string[]; }
 export interface ChangelogEntry {
@@ -11,6 +11,47 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: 'v4.0',
+    date: '2026-08-06',
+    title: 'RMM: the LumenMSP Agent, Cyber Essentials, patching, software & servers — plus the V4 look, VoiceBox and the Finance Agent',
+    groups: [
+      { area: 'Remote monitoring & management — NEW (Admin → Agents / Assets)', items: [
+        'The LumenMSP Agent for Windows (and Linux): reports system info to the Portal, carries end-user chat to the helpdesk, and gives engineers a real remote toolbox on the asset page — a live terminal, cached software inventory with install/uninstall, services, local and Active Directory users, a file browser, registry editor and file transfer.',
+        'Self-updating and safe to ship: one version source, signed MSI, SHA-256 verified before install, and a staged rollout in rings (internal → pilot → everyone) with per-device "Update now" and a Halt button.',
+        'Discovery + deploy: the server console finds the unmanaged Windows machines on a customer\'s network and installs the agent over WinRM with per-host progress, generating a GPO where WinRM is off — so nothing is forced.',
+        'Remote control rides along: MeshCentral is installed at enrolment, so a new machine is reachable from the moment it appears; every session is recorded and kept 60 days under Admin → Remote Sessions.',
+      ] },
+      { area: 'Cyber Essentials — NEW (Admin → Cyber Essentials)', items: [
+        'Assess one machine, one customer or the whole estate against the five controls. The agent gathers the evidence; the Portal makes every judgement, so tightening the standard never touches a customer machine.',
+        'Every finding comes with the fix — the report is a work-list, not a score card — grouped so the same failure on eight machines reads as one job.',
+        'End-of-life list auto-synced nightly from endoflife.date (hand-added rows are never overwritten), and full scan history with a score-over-time trend per customer.',
+      ] },
+      { area: 'Patching & software estate — NEW (Admin → Patching / Software)', items: [
+        'Pending Windows Updates across every managed machine — what is missing, how long it has been missing, and which machines are waiting on a restart — with maintenance-window policies and manual deploy. Nothing is ever rebooted automatically.',
+        'The whole software estate grouped by title: how many installs, what is behind (per machine, via WinGet or Chocolatey) and what is out of support — with one button to update a title across the estate, a customer or selected machines.',
+      ] },
+      { area: 'Servers — NEW (Admin → Servers)', items: [
+        'Active Directory, SQL, Hyper-V, DNS, DHCP, IIS, shares, certificates and disk on every server running the agent — replication failures, stale accounts, backup dates, checkpoints and expiring certificates surfaced with plain judgements.',
+      ] },
+      { area: 'Look & feel — the V4 refresh', items: [
+        'Three per-user themes on a Theme button: Aurora (light, brand glow), Carbon (dark) and Solstice (editorial light). Every page is built from one shared token set, so the whole estate reads as one product and inherits all three.',
+        'Zoom-proof navigation, highlighted search, and a new Design system reference (Admin → Design system) documenting the tokens, components, data ramps and the software/Microsoft logo rules.',
+      ] },
+      { area: 'Calls & Insights', items: [
+        'VoiceBox — NEW: voicemail transcription (Whisper) into the helpdesk, with departments, audit and a check-now.',
+        'Site logic is the boundary end-to-end: per-contact site scoping on OneBoard, the Wallboard and my-insights; call-flow counted once per call (a queue hop no longer double-counts); a guard against comparing against stale data.',
+        'Ask Claude on a ticket: whole-case Q&A that reads the hidden email text and jumps you to the moment in the timeline.',
+      ] },
+      { area: 'Finance', items: [
+        'Finance Agent: an Ask-Claude on the invoice and case pages for billing questions — live GoCardless payment checks, credits, sibling invoices and the customer thread, in one place.',
+        'GoCardless payout reconciliation fixed and back-filled, so outstanding balances reflect money actually collected.',
+      ] },
+      { area: 'Website', items: [
+        'Rebuilt remote-support page: detects the caller\'s operating system and walks them through exactly what will happen on Windows, Mac or Linux — a run-once session that leaves nothing behind.',
+      ] },
+    ],
+  },
   {
     version: 'v3.0',
     date: '2026-07-09',

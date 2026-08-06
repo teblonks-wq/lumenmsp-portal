@@ -1,0 +1,255 @@
+<%- include('partials/header', { title: 'Brand', user }) %>
+<%
+// One source of truth. The swatches read the SAME CSS variables every page uses, so what
+// you see here is exactly what a component gets in the theme you are viewing — switch the
+// theme (top bar) and this whole page moves with it.
+var groups = [
+  { name: 'Brand & accent', note: 'The teal is the Lumen accent. Never introduce a new teal — reuse --accent.',
+    tokens: ['--accent','--accent-dark','--accent-deep','--accent-soft','--lumen-teal','--lumen-blue','--lumen-green','--lumen-navy','--lumen-dark'] },
+  { name: 'Surfaces', note: 'Page, cards and raised panels. Depth is surface → surface-2 → surface-3.',
+    tokens: ['--page-bg','--surface','--surface-2','--surface-3','--card','--card-border','--topbar-bg'] },
+  { name: 'Text & ink', note: 'Headings use --text-strong; body --text; secondary --muted; the quietest --faint.',
+    tokens: ['--text-strong','--text','--text-soft','--ink','--muted','--faint','--th-color'] },
+  { name: 'Lines & focus', note: 'Borders and the keyboard focus ring.',
+    tokens: ['--line','--line-soft','--line-strong','--focus-ring'] },
+  { name: 'Status', note: 'Good / warning / bad, with their soft washes. Same trio everywhere — badges, stats, charts.',
+    tokens: ['--ok','--ok-bg','--warn','--warn-bg','--bad','--bad-bright','--bad-bg'] },
+  { name: 'Tints', note: 'Soft fills behind chips, selected rows and callouts.',
+    tokens: ['--tint-accent','--tint-teal','--tint-ok','--tint-warn','--tint-bad','--tint-info','--tint-indigo','--tint-yellow'] },
+  { name: 'Sidebar', note: 'The navigation rail. Its own set so the chrome can be bold without touching page tokens.',
+    tokens: ['--sb-bg','--sb-text','--sb-sec','--sb-hover-bg','--sb-active-bg','--sb-active-text','--sb-badge','--sb-badge-amber'] },
+  { name: 'Controls', note: 'Primary button, secondary button, search box, inputs.',
+    tokens: ['--primary-bg','--primary-fg','--btn-bg','--btn-border','--btn-hover-bg','--search-bg','--search-line','--input-bg'] },
+  { name: 'Extra data hues', note: 'For categorical series only — status meaning always comes from the trio above.',
+    tokens: ['--blue','--indigo','--violet','--rose','--green-bright'] },
+];
+// Canonical chart ramps (validated — monotone lightness, single hue). Hard-set here because
+// they are the customer-facing chart language, not theme chrome.
+var tealRamp = ['#f8fafc','#d7eef3','#a5dbe6','#5cb8ca','#1f8fa6','#0e6377'];
+var redRamp  = ['#f8fafc','#fee2e2','#fca5a5','#f87171','#dc2626','#7f1d1d'];
+%>
+
+<style>
+  .bp-swatches { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+  .bp-sw { border:1px solid var(--line); border-radius:10px; overflow:hidden; cursor:pointer; background:var(--card); }
+  .bp-sw .chip { height:52px; }
+  .bp-sw .lab { padding:7px 9px; font:12px/1.3 ui-monospace,Consolas,monospace; color:var(--muted); border-top:1px solid var(--line); word-break:break-all; }
+  .bp-ramp { display:flex; border-radius:10px; overflow:hidden; border:1px solid var(--line); }
+  .bp-ramp span { flex:1; height:44px; }
+  .bp-type > * { margin:0 0 6px; }
+  .bp-mark { display:flex; align-items:center; gap:14px; padding:12px 0; border-top:1px solid var(--line); }
+  .bp-mark:first-of-type { border-top:0; }
+  .bp-mark .meta { font-size:13px; }
+  .bp-mark .meta b { display:block; }
+  .vmark { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px;
+           border-radius:7px; background:var(--tint-accent); color:var(--accent-deep);
+           font-weight:700; font-size:13px; border:1px solid var(--line); }
+  .swrow { display:flex; align-items:center; gap:10px; }
+  .swrow .name { font-weight:600; }
+  .bp-copied { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:var(--text-strong);
+               color:var(--surface); padding:8px 14px; border-radius:8px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none; z-index:50; }
+  .bp-copied.on { opacity:1; }
+</style>
+
+<div class="page-header">
+  <h1 style="margin:0;">Brand</h1>
+  <p class="muted" style="margin:4px 0 0;">
+    The Portal design system — one place that defines the look so every page reads as one product.
+    These swatches are live: they read the same theme tokens the app does, so switch the theme in the
+    top bar and everything here moves with it. Click any swatch to copy its <code>var()</code>.
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Themes</h2></div>
+  <p class="muted" style="margin:0 0 12px;font-size:13px;">
+    Three per-user themes, chosen on the Theme button in the top bar. Pages are built from tokens, never
+    raw hex, so a new page inherits all three for free — that is the rule that keeps the estate consistent.
+  </p>
+  <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+    <div class="card" style="margin:0;"><b>Aurora</b><p class="muted" style="margin:4px 0 0;font-size:12.5px;">Default. Light with a brand glow — the boldness the home page leads with.</p></div>
+    <div class="card" style="margin:0;"><b>Carbon</b><p class="muted" style="margin:4px 0 0;font-size:12.5px;">Dark. For long sessions and wall displays.</p></div>
+    <div class="card" style="margin:0;"><b>Solstice</b><p class="muted" style="margin:4px 0 0;font-size:12.5px;">Editorial light — quieter, higher contrast type.</p></div>
+  </div>
+</div>
+
+<% groups.forEach(function (g) { %>
+<div class="card">
+  <div class="card-header"><h2><%= g.name %></h2></div>
+  <% if (g.note) { %><p class="muted" style="margin:0 0 12px;font-size:12.5px;"><%= g.note %></p><% } %>
+  <div class="bp-swatches">
+    <% g.tokens.forEach(function (t) { %>
+      <div class="bp-sw" data-var="<%= t %>" title="Click to copy var(<%= t %>)">
+        <div class="chip" style="background:var(<%= t %>);"></div>
+        <div class="lab"><%= t %></div>
+      </div>
+    <% }); %>
+  </div>
+</div>
+<% }); %>
+
+<div class="card">
+  <div class="card-header"><h2>Status & data ramps</h2></div>
+  <p class="muted" style="margin:0 0 12px;font-size:12.5px;">
+    The chart language, shared by OneBoard, Insights reports and the IT Snapshot. Neutral magnitude uses the
+    teal ramp; a <em>bad</em> magnitude (missed calls, failures) uses the red ramp so the two can never be
+    confused. Meaning colours are always the status trio.
+  </p>
+  <div style="display:grid;gap:14px;">
+    <div>
+      <div class="swrow" style="margin:0 0 6px;"><span class="name">Neutral / teal ramp</span><span class="muted" style="font-size:12px;">magnitude, e.g. call volume</span></div>
+      <div class="bp-ramp"><% tealRamp.forEach(function (c) { %><span style="background:<%= c %>" title="<%= c %>"></span><% }); %></div>
+    </div>
+    <div>
+      <div class="swrow" style="margin:0 0 6px;"><span class="name">Bad / red ramp</span><span class="muted" style="font-size:12px;">missed, overdue, failing</span></div>
+      <div class="bp-ramp"><% redRamp.forEach(function (c) { %><span style="background:<%= c %>" title="<%= c %>"></span><% }); %></div>
+    </div>
+    <div>
+      <div class="swrow" style="margin:0 0 6px;"><span class="name">Status trio</span><span class="muted" style="font-size:12px;">good / warning / bad</span></div>
+      <div style="display:flex;gap:8px;">
+        <span class="badge badge-active">Good</span>
+        <span class="badge badge-primary">Warning</span>
+        <span class="badge badge-failed">Bad</span>
+        <span style="width:120px;border-radius:8px;background:linear-gradient(90deg,#10b981,#2563eb);"></span>
+        <span class="muted" style="font-size:12px;align-self:center;">report gradient #10b981 → #2563eb</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card bp-type">
+  <div class="card-header"><h2>Type</h2></div>
+  <p class="muted" style="margin:0 0 12px;font-size:12.5px;">System font stack. Headings carry the weight; body stays calm; --muted for secondary; --faint for the quietest.</p>
+  <h1 style="margin:0;">H1 — page title</h1>
+  <h2 style="margin:8px 0 0;">H2 — card heading</h2>
+  <h3 style="margin:8px 0 0;">H3 — sub-heading</h3>
+  <p style="margin:8px 0 0;">Body text — the default reading size for tables, forms and prose.</p>
+  <p class="muted" style="margin:4px 0 0;">Muted — secondary detail, timestamps, hints.</p>
+  <p style="margin:4px 0 0;color:var(--faint);font-size:12px;">Faint / small — the quietest supporting note.</p>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Components</h2></div>
+  <p class="muted" style="margin:0 0 14px;font-size:12.5px;">The building blocks every page should reuse rather than restyle.</p>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 16px;">
+    <button class="btn btn-primary" type="button">Primary</button>
+    <button class="btn" type="button">Secondary</button>
+    <button class="btn" type="button" disabled>Disabled</button>
+    <span class="badge badge-active">active</span>
+    <span class="badge badge-primary">primary</span>
+    <span class="badge badge-failed">failed</span>
+    <span class="badge badge-inactive">inactive</span>
+  </div>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 16px;">
+    <input class="input" type="text" placeholder="Text input" style="max-width:220px;">
+    <input class="input" type="search" placeholder="Search box (highlighted)" style="max-width:240px;">
+    <select class="input" style="width:auto;"><option>Select</option></select>
+  </div>
+
+  <div class="alert alert-success" style="margin:0 0 10px;">Success alert — a saved / done confirmation.</div>
+  <div class="alert alert-error" style="margin:0 0 16px;">Error alert — something needs attention.</div>
+
+  <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin:0 0 16px;">
+    <div class="card" style="margin:0;"><div class="card-header"><h2>Stat</h2></div><div class="stat" style="font-size:24px;">128</div><p class="muted" style="margin:2px 0 0;">a metric</p></div>
+    <div class="card" style="margin:0;"><div class="card-header"><h2>Good</h2></div><div class="stat" style="font-size:24px;color:var(--ok);">98</div></div>
+    <div class="card" style="margin:0;"><div class="card-header"><h2>Bad</h2></div><div class="stat" style="font-size:24px;color:var(--bad);">3</div></div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Column</th><th>Status</th><th style="text-align:right;">Value</th></tr></thead>
+      <tbody>
+        <tr><td><a class="row-link" href="#" onclick="return false;">A linked row</a></td><td><span class="badge badge-active">active</span></td><td style="text-align:right;">42</td></tr>
+        <tr><td class="muted">A muted row</td><td><span class="badge badge-failed">failed</span></td><td style="text-align:right;">7</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Logos & marks</h2></div>
+  <p class="muted" style="margin:0 0 6px;font-size:12.5px;">The Lumen marks, and the software vendor rule below them.</p>
+
+  <div class="bp-mark">
+    <img src="/static/lumen-crest.png" alt="Lumen crest" style="height:40px;width:auto;">
+    <div class="meta"><b>Crest</b><span class="muted">Favicon, PWA icon, tight spaces. <code>/static/lumen-crest.png</code></span></div>
+  </div>
+  <div class="bp-mark">
+    <img src="/static/lumen-msp-logo.png" alt="LumenMSP wordmark" style="height:34px;width:auto;background:#fff;padding:4px 8px;border-radius:6px;">
+    <div class="meta"><b>Wordmark</b><span class="muted">Full logo for headers, PDFs, external docs. <code>/static/lumen-msp-logo.png</code></span></div>
+  </div>
+  <div class="bp-mark">
+    <img src="/static/img/lumen-agent-32.png" alt="LumenMSP Agent" style="height:32px;width:32px;">
+    <div class="meta"><b>Agent mark</b><span class="muted">The LumenMSP Agent. <code>/static/img/lumen-agent-32.png</code></span></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Software vendor marks</h2></div>
+  <p class="muted" style="margin:0 0 14px;font-size:12.5px;">
+    On the Software and Asset pages a small vendor mark sits to the left of a product's name so the list
+    scans by eye, not by reading. The rule: <strong>a Microsoft or Windows publisher gets the Microsoft
+    four-square</strong>; every other vendor gets a lettered tile in brand tint. Marks are bundled — no
+    external logo calls on a customer-facing page.
+  </p>
+
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Mark</th><th>Product</th><th>Publisher</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>
+            <svg viewBox="0 0 24 24" width="24" height="24" aria-label="Microsoft" role="img">
+              <rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="13" y="1" width="10" height="10" fill="#7FBA00"/>
+              <rect x="1" y="13" width="10" height="10" fill="#00A4EF"/><rect x="13" y="13" width="10" height="10" fill="#FFB900"/>
+            </svg>
+          </td>
+          <td>Microsoft 365 Apps</td><td class="muted">Microsoft Corporation</td>
+        </tr>
+        <tr>
+          <td>
+            <svg viewBox="0 0 24 24" width="24" height="24" aria-label="Windows" role="img">
+              <rect x="1" y="1" width="10" height="10" fill="#00A4EF"/><rect x="13" y="1" width="10" height="10" fill="#00A4EF"/>
+              <rect x="1" y="13" width="10" height="10" fill="#00A4EF"/><rect x="13" y="13" width="10" height="10" fill="#00A4EF"/>
+            </svg>
+          </td>
+          <td>Windows components / update</td><td class="muted">Microsoft Windows</td>
+        </tr>
+        <tr><td><span class="vmark">G</span></td><td>Chrome</td><td class="muted">Google LLC</td></tr>
+        <tr><td><span class="vmark">A</span></td><td>Acrobat Reader</td><td class="muted">Adobe Inc.</td></tr>
+        <tr><td><span class="vmark">7</span></td><td>7-Zip</td><td class="muted">Igor Pavlov</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>The rules</h2></div>
+  <ul style="margin:0;padding-left:18px;line-height:1.7;">
+    <li>Build from <strong>tokens</strong>, never raw hex — that is what carries a page through all three themes.</li>
+    <li><strong>Never add a new teal.</strong> The accent is <code>--accent</code> (#0ea5b7); reuse it.</li>
+    <li>Meaning comes from the <strong>status trio</strong> (good/warn/bad); magnitude from the <strong>ramps</strong> (teal neutral, red bad).</li>
+    <li>Lead with the <strong>boldness of the home page</strong> — strong headings, generous cards, one clear primary action per view.</li>
+    <li>Microsoft / Windows software → the <strong>four-square</strong>; other vendors → a lettered tint tile. No external logo fetches.</li>
+    <li>New page? Start from these components. If a colour is missing a token, add the token — don't hardcode.</li>
+  </ul>
+</div>
+
+<div class="bp-copied" id="bpCopied">Copied</div>
+
+<script>
+document.querySelectorAll('.bp-sw').forEach(function (el) {
+  el.addEventListener('click', function () {
+    var v = 'var(' + el.getAttribute('data-var') + ')';
+    (navigator.clipboard ? navigator.clipboard.writeText(v) : Promise.reject()).then(function () {
+      var t = document.getElementById('bpCopied');
+      t.textContent = 'Copied ' + v; t.classList.add('on');
+      setTimeout(function () { t.classList.remove('on'); }, 1100);
+    }).catch(function () {});
+  });
+});
+</script>
+
+<%- include('partials/footer') %>

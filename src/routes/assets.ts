@@ -25,6 +25,9 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   const type = String(req.query.type || '').trim();
   const onlineOnly = req.query.online === '1';
   const noUser = req.query.nouser === '1'; // "unallocated" - no last logged-in user known
+  // Hero tile "servers". Substring match so it agrees with the tile's own count, which also
+  // matches on the substring rather than one exact device_type value.
+  const serversOnly = req.query.servers === '1';
   // Tri-state agent filter: '1' = has the LumenMSP Agent, '0' = without it (the machines
   // to target for a rollout), '' = either. Kept as a string so "without" is expressible.
   const agentFilter = String(req.query.agent || '').trim();
@@ -36,6 +39,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   if (type) { params.push(type); where.push(`a.device_type = $${params.length}`); }
   if (onlineOnly) where.push('a.online_status = true');
   if (noUser) where.push("(a.assigned_contact_id IS NULL AND (a.last_login_user IS NULL OR a.last_login_user = ''))");
+  if (serversOnly) where.push("a.device_type ILIKE '%server%'");
   // agd is the LATERAL agent match below, so it can be filtered on here.
   if (agentFilter === '1') where.push('agd.id IS NOT NULL');
   else if (agentFilter === '0') where.push('agd.id IS NULL');
@@ -68,7 +72,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
 
   res.render('assets/list', {
     user: req.session.user!, rows, unmatchedCount, types, customers, backupState,
-    filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentFilter },
+    filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentFilter, servers: serversOnly },
     lastSynced: await lastAssetSyncAt(),
     remoteTemplate: await remoteUrlTemplate(),
     notice: req.query.msg || null, error: req.query.err || null,
