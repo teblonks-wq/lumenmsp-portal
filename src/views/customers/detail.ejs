@@ -803,13 +803,23 @@
     <p class="muted" style="margin:8px 24px 0;font-size:13px;">Synced from Atera, read-only for now.</p>
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th></th><th>Hostname</th><th>Type</th><th>OS</th><th>Manufacturer / Model</th><th>Last seen</th><th></th></tr></thead>
+        <thead><tr><th></th><th>Hostname</th><th>Agent</th><th>Type</th><th>OS</th><th>Manufacturer / Model</th><th>Last seen</th><th></th></tr></thead>
         <tbody>
-          <% if (custAssets.length===0) { %><tr><td colspan="7"><div class="empty-state">No devices synced for this customer yet.</div></td></tr><% } %>
+          <% if (custAssets.length===0) { %><tr><td colspan="8"><div class="empty-state">No devices synced for this customer yet.</div></td></tr><% } %>
           <% custAssets.forEach(function(a){ %>
             <tr>
               <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
               <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/customers/' + customer.id + '#assets') %>"><%= a.hostname || '(unnamed device)' %></a></td>
+              <td>
+                <% if (a.agent_installed) { %>
+                  <span class="badge badge-active" title="LumenMSP Agent <%= a.agent_version || '' %><%= a.remote_ready ? ' · remote control ready' : ' · remote control not installed' %>">
+                    ✓<%= a.agent_version ? ' ' + a.agent_version : '' %>
+                  </span>
+                  <% if (!a.remote_ready) { %><span class="badge badge-primary" title="The agent is here but MeshCentral has not checked in yet">no remote</span><% } %>
+                <% } else { %>
+                  <span class="badge badge-failed" title="This machine is not running the LumenMSP Agent">none</span>
+                <% } %>
+              </td>
               <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span></td>
               <td class="muted"><%= a.os || '—' %></td>
               <td class="muted"><%= [a.manufacturer, a.model].filter(Boolean).join(' ') || '—' %></td>

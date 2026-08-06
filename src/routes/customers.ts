@@ -576,7 +576,26 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
   // Device inventory (Assets tab) — synced from Atera, read-only.
   let assets: any[] = []; let remoteTemplate = '';
   try {
-    assets = (await pool.query("SELECT * FROM customer_assets WHERE customer_id=$1 ORDER BY hostname", [customer.id])).rows;
+    // Matched to our own agent the same way as everywhere else in the Portal: serial
+    // first because it survives a rename, hostname second. Atera's list is the roll of
+    // machines that exist; this says which of them we can actually do anything with.
+    assets = (await pool.query(
+      `SELECT a.*,
+              ad.id AS agent_device_id,
+              (ad.id IS NOT NULL) AS agent_installed,
+              ad.agent_version,
+              (ad.mesh_node_id IS NOT NULL) AS remote_ready,
+              EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at))::int AS agent_seen_secs
+         FROM customer_assets a
+         LEFT JOIN LATERAL (
+              SELECT d.* FROM agent_devices d
+               WHERE d.customer_id = a.customer_id AND d.revoked = false
+                 AND ( (a.serial_number IS NOT NULL AND d.serial_number = a.serial_number)
+                       OR LOWER(d.hostname) = LOWER(a.hostname) )
+               ORDER BY (d.mesh_node_id IS NOT NULL) DESC, d.last_seen_at DESC NULLS LAST
+               LIMIT 1) ad ON true
+        WHERE a.customer_id = $1
+        ORDER BY a.hostname`, [customer.id])).rows;
     const { remoteUrlTemplate } = await import('../lib/asset-sync');
     remoteTemplate = await remoteUrlTemplate();
   } catch { /* not migrated yet */ }
