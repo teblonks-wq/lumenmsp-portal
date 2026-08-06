@@ -1,0 +1,168 @@
+<%- include('partials/header', { title: 'Cyber Essentials', user }) %>
+<%
+function ago(s) {
+  if (s == null) return 'never';
+  var h = Math.round(Number(s) / 3600);
+  if (h < 1) return 'just now';
+  if (h < 24) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+function scoreColour(v) {
+  if (v == null) return '';
+  if (v >= 90) return 'color:var(--ok-fg);';
+  if (v >= 70) return 'color:var(--warn-fg);';
+  return 'color:var(--bad-fg);';
+}
+var controlLabel = {};
+controls.forEach(function (c) { controlLabel[c.key] = c.label; });
+%>
+
+<div class="page-header">
+  <h1 style="margin:0;">Cyber Essentials</h1>
+  <p class="muted" style="margin:4px 0 0;">
+    What an assessor would pick on, and what to do about it. Evidence is gathered by the agent;
+    every judgement is made here, so tightening the standard never means touching a customer machine.
+  </p>
+</div>
+
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+  <div class="card"><div class="card-header"><h2>Machines</h2></div><div class="stat" style="font-size:24px;"><%= summary.devices %></div><p class="muted" style="margin:2px 0 0;"><%= summary.assessed %> assessed</p></div>
+  <div class="card"><div class="card-header"><h2>Average score</h2></div><div class="stat" style="font-size:24px;<%= scoreColour(summary.avgScore) %>"><%= summary.avgScore == null ? '—' : summary.avgScore %></div><p class="muted" style="margin:2px 0 0;">out of 100</p></div>
+  <div class="card"><div class="card-header"><h2>Machines failing</h2></div><div class="stat" style="font-size:24px;<%= summary.failing ? 'color:var(--bad-fg);' : '' %>"><%= summary.failing %></div><p class="muted" style="margin:2px 0 0;">at least one hard fail</p></div>
+  <div class="card"><div class="card-header"><h2>Out of support</h2></div><div class="stat" style="font-size:24px;<%= summary.eolItems ? 'color:var(--warn-fg);' : '' %>"><%= summary.eolItems %></div><p class="muted" style="margin:2px 0 0;">end-of-life findings</p></div>
+  <% if (summary.never) { %>
+  <div class="card"><div class="card-header"><h2>Never assessed</h2></div><div class="stat" style="font-size:24px;"><%= summary.never %></div><p class="muted" style="margin:2px 0 0;">no evidence yet</p></div>
+  <% } %>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Run an assessment</h2></div>
+  <p class="muted" style="margin:0 0 12px;font-size:13px;">
+    Machines that are switched off keep their instruction and report in when they next come online,
+    so a run against a whole customer finishes over the following hours rather than failing at the first laptop in a bag.
+  </p>
+  <form method="post" action="/ce/run" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;align-items:end;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <div class="form-group" style="margin:0;">
+      <label>Scope</label>
+      <select class="input" name="scope" id="ce-scope" style="width:100%;" onchange="ceScope()">
+        <option value="customer">One customer</option>
+        <option value="device">One machine</option>
+        <option value="all">Everything we manage</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;" id="ce-customer">
+      <label>Customer</label>
+      <select class="input" name="customer_id" style="width:100%;">
+        <% customers.forEach(function (c) { %><option value="<%= c.id %>" <%= customerId === c.id ? 'selected' : '' %>><%= c.name %> (<%= c.devices %>)</option><% }); %>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;display:none;" id="ce-device">
+      <label>Machine</label>
+      <select class="input" name="device_id" style="width:100%;">
+        <% devices.forEach(function (d) { %><option value="<%= d.id %>"><%= d.hostname %><%= d.customer_name ? ' — ' + d.customer_name : '' %></option><% }); %>
+      </select>
+    </div>
+    <div><button class="btn btn-primary" type="submit">Run assessment</button></div>
+  </form>
+</div>
+<script>
+function ceScope() {
+  var v = document.getElementById('ce-scope').value;
+  document.getElementById('ce-customer').style.display = v === 'customer' ? '' : 'none';
+  document.getElementById('ce-device').style.display   = v === 'device'   ? '' : 'none';
+}
+ceScope();
+</script>
+
+<div style="display:flex;gap:8px;margin:0 0 14px;flex-wrap:wrap;align-items:center;">
+  <form method="get" action="/ce" style="display:flex;gap:8px;align-items:center;">
+    <select class="input" name="customer" onchange="this.form.submit()">
+      <option value="">All customers</option>
+      <% customers.forEach(function (c) { %><option value="<%= c.id %>" <%= customerId === c.id ? 'selected' : '' %>><%= c.name %></option><% }); %>
+    </select>
+  </form>
+  <a class="btn" href="/ce/eol" style="margin-left:auto;">📋 End-of-life list</a>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;">
+    <h2>What to fix first</h2>
+  </div>
+  <p class="muted" style="margin:6px 24px 0;font-size:13px;">The same failure on eight machines is one job, not eight.</p>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Finding</th><th>Control</th><th>Action</th><th style="text-align:right;">Machines</th></tr></thead>
+      <tbody>
+        <% if (!actions.length) { %><tr><td colspan="4"><div class="empty-state">Nothing outstanding — or nothing assessed yet.</div></td></tr><% } %>
+        <% actions.forEach(function (a) { %>
+          <tr>
+            <td>
+              <span class="badge <%= a.status === 'fail' ? 'badge-failed' : 'badge-primary' %>"><%= a.status === 'fail' ? 'Fail' : 'Warn' %></span>
+              <%= a.title %>
+              <% if (a.remediation) { %><div class="muted" style="font-size:12px;margin-top:3px;"><%= a.remediation %></div><% } %>
+            </td>
+            <td class="muted" style="font-size:12px;"><%= controlLabel[a.control] || a.control %></td>
+            <td class="muted" style="font-size:12px;"><%= a.action || '—' %></td>
+            <td style="text-align:right;"><%= a.devices %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Machines</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Machine</th><th>Customer</th><th style="text-align:right;">Score</th><th style="text-align:right;">Fails</th><th style="text-align:right;">Warnings</th><th>Assessed</th></tr></thead>
+      <tbody>
+        <% if (!devices.length) { %><tr><td colspan="6"><div class="empty-state">No machines are running the agent yet.</div></td></tr><% } %>
+        <% devices.forEach(function (d) { %>
+          <tr>
+            <td><a class="row-link" href="/ce/device/<%= d.id %>"><%= d.hostname %></a><% if (d.os) { %> <span class="muted" style="font-size:12px;"><%= d.os %></span><% } %></td>
+            <td class="muted"><% if (d.customer_id) { %><a class="row-link" href="/customers/<%= d.customer_id %>"><%= d.customer_name %></a><% } else { %>—<% } %></td>
+            <td style="text-align:right;font-weight:600;<%= scoreColour(d.score) %>"><%= d.score == null ? '—' : d.score %></td>
+            <td style="text-align:right;<%= Number(d.fail_count) ? 'color:var(--bad-fg);font-weight:600;' : '' %>"><%= d.fail_count == null ? '—' : d.fail_count %></td>
+            <td style="text-align:right;"><%= d.warn_count == null ? '—' : d.warn_count %></td>
+            <td class="muted"><%= d.collected_at ? ago(d.age_secs) : 'never' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Recent runs</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Run</th><th>Scope</th><th>Status</th><th style="text-align:right;">Machines</th><th style="text-align:right;">Fails</th><th style="text-align:right;">Score</th><th>Started</th></tr></thead>
+      <tbody>
+        <% if (!runs.length) { %><tr><td colspan="7"><div class="empty-state">Nothing has been run yet.</div></td></tr><% } %>
+        <% runs.forEach(function (r) { %>
+          <tr>
+            <td><a class="row-link" href="/ce/run/<%= r.id %>">#<%= r.id %> <%= r.label || '' %></a></td>
+            <td class="muted"><%= r.scope === 'all' ? 'Everything' : r.scope === 'customer' ? (r.customer_name || 'Customer') : (r.hostname || 'Machine') %></td>
+            <td><span class="badge <%= r.status === 'complete' ? 'badge-active' : r.status === 'running' ? 'badge-primary' : 'badge-inactive' %>"><%= r.status %></span></td>
+            <td style="text-align:right;"><%= r.devices_done %>/<%= r.devices_total %></td>
+            <td style="text-align:right;<%= Number(r.fail_count) ? 'color:var(--bad-fg);' : '' %>"><%= r.fail_count %></td>
+            <td style="text-align:right;<%= scoreColour(r.score) %>"><%= r.score == null ? '—' : r.score %></td>
+            <td class="muted"><%= r.started_at ? new Date(r.started_at).toLocaleString('en-GB') : '' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="muted" style="margin:14px 0 0;font-size:12px;">
+  This is our own view of the five controls, not a certification. It exists so nothing is a surprise
+  on the day — the score ranks machines against each other, it does not predict an assessor's verdict.
+</p>
+
+<%- include('partials/footer') %>

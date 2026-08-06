@@ -6,6 +6,7 @@ import multer from 'multer';
 import { pool } from '../db/pool';
 import { getSetting, setSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
+import { ingestCeResult } from '../lib/ce-ingest';
 import { htmlToPlain } from '../lib/whatsapp';
 import { nextTicketNumber } from './tickets';
 
@@ -441,6 +442,12 @@ router.post('/agent/api/patches', requireDevice, async (req: Request, res: Respo
   let updates: any[] = Array.isArray(p.updates) ? p.updates : (p.updates ? [p.updates] : []);
   updates = updates.filter((u) => u && String(u.update_id || '').trim());
 
+  // Third-party updates arrive alongside the Windows ones and share the same table,
+  // separated by `source` — one list is what anyone actually wants to look at.
+  const rawApps = (req.body || {}).apps;
+  const apps: any[] = (Array.isArray(rawApps) ? rawApps : (rawApps ? [rawApps] : []))
+    .filter((a) => a && String(a.id || '').trim());
+
   const rebootRequired = p.reboot_required === true || p.reboot_required === 'True';
   const lastInstalled = s(p.last_installed, 20);
   const isUrgent = (sev: any) => ['critical', 'important'].includes(String(sev || '').toLowerCase());
@@ -456,8 +463,8 @@ router.post('/agent/api/patches', requireDevice, async (req: Request, res: Respo
       seen.push(id);
       await client.query(
         `INSERT INTO device_patches
-           (device_id, update_id, title, kb, severity, categories, size_mb, downloaded, first_seen, last_seen)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())
+           (device_id, update_id, title, kb, severity, categories, size_mb, downloaded, source, first_seen, last_seen)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'windows',NOW(),NOW())
          ON CONFLICT (device_id, update_id) DO UPDATE SET
            title = EXCLUDED.title, kb = EXCLUDED.kb, severity = EXCLUDED.severity,
            categories = EXCLUDED.categories, size_mb = EXCLUDED.size_mb,
@@ -471,6 +478,22 @@ router.post('/agent/api/patches', requireDevice, async (req: Request, res: Respo
          u.downloaded === true]);
     }
 
+    for (const a of apps.slice(0, 500)) {
+      // Namespaced so a WinGet id can never collide with a Chocolatey one.
+      const id = `${String(a.source || 'app')}:${String(a.id).trim()}`.slice(0, 100);
+      seen.push(id);
+      await client.query(
+        `INSERT INTO device_patches
+           (device_id, update_id, title, severity, source, current_version, available_version, first_seen, last_seen)
+         VALUES ($1,$2,$3,NULL,$4,$5,$6,NOW(),NOW())
+         ON CONFLICT (device_id, update_id) DO UPDATE SET
+           title = EXCLUDED.title, source = EXCLUDED.source,
+           current_version = EXCLUDED.current_version,
+           available_version = EXCLUDED.available_version, last_seen = NOW()`,
+        [d.id, id, s(a.name, 300) || id, s(a.source, 20) || 'app',
+         s(a.current, 60), s(a.available, 60)]);
+    }
+
     // Anything not in this scan has been installed (or superseded) since the last one.
     await client.query(
       `DELETE FROM device_patches WHERE device_id = $1 AND NOT (update_id = ANY($2::text[]))`,
@@ -481,10 +504,10 @@ router.post('/agent/api/patches', requireDevice, async (req: Request, res: Respo
           SET patch_scan_at = NOW(), reboot_required = $1, patch_pending = $2,
               patch_critical = $3, patch_last_installed = $4, updated_at = NOW()
         WHERE id = $5`,
-      [rebootRequired, updates.length, critical, lastInstalled, d.id]);
+      [rebootRequired, updates.length + apps.length, critical, lastInstalled, d.id]);
 
     await client.query('COMMIT');
-    res.json({ ok: true, pending: updates.length, critical });
+    res.json({ ok: true, pending: updates.length, apps: apps.length, critical });
   } catch (e: any) {
     try { await client.query('ROLLBACK'); } catch { /* gone */ }
     console.error('[agent] patch store failed:', e.message);
@@ -578,6 +601,12 @@ router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request
         WHERE id=$4 AND device_id=$5 RETURNING kind`,
       [exitCode === 0 ? 'done' : 'failed', exitCode, output, id, d.id]);
     if (!r.rows.length) { res.status(404).json({ ok: false, error: 'unknown command' }); return; }
+    // A Cyber Essentials run comes back as ordinary command output. Turn it into
+    // findings here and now, but never let that failure reach the machine - the
+    // agent is waiting on this response and has done its part correctly.
+    if (r.rows[0].kind === 'ce.assess') {
+      ingestCeResult(id).catch((err: any) => console.error('[ce] ingest failed:', err.message));
+    }
     res.json({ ok: true });
   } catch (e: any) {
     console.error('[agent] command result failed:', e.message);

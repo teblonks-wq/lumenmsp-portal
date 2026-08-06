@@ -2185,12 +2185,18 @@ model DevicePatch {
   categories String?
   sizeMb     Decimal?  @map("size_mb") @db.Decimal(10, 1)
   downloaded Boolean?  @default(false)
+  // Windows Update, WinGet or Chocolatey. One table, because "what is out of date on this
+  // machine" is one question and nobody wants to look at three screens to answer it.
+  source           String?   @default("windows")
+  currentVersion   String?   @map("current_version")   // third-party only
+  availableVersion String?   @map("available_version") // third-party only
   firstSeen  DateTime? @default(now()) @map("first_seen")
   lastSeen   DateTime? @default(now()) @map("last_seen")
 
   @@unique([deviceId, updateId])
   @@index([deviceId])
   @@index([severity])
+  @@index([source])
   @@map("device_patches")
 }
 
@@ -2220,4 +2226,102 @@ model PatchPolicy {
 
   @@index([deviceClass])
   @@map("patch_policies")
+}
+
+// ── Cyber Essentials ────────────────────────────────────────────────────────────
+// The agent collects facts; everything below is the Portal's judgement of them. That
+// split is deliberate: the standard changes yearly and the software list changes
+// weekly, and neither should mean pushing a new agent to every customer machine.
+
+// The hand-maintained end-of-life list. Vendors publish these dates inconsistently and
+// change them, so this is a table we own rather than a feed we trust — one row per
+// thing that stops being supported, with the practical action attached.
+model EolProduct {
+  id          Int       @id @default(autoincrement())
+  category    String    @default("app") // os | dotnet | runtime | browser | app | database | server
+  vendor      String?
+  name        String                     // as shown in the report
+  matchType   String    @default("contains") @map("match_type") // contains | exact | regex | os_build | dotnet_release
+  matchValue  String    @map("match_value")
+  versionMax  String?   @map("version_max")  // matches only when the installed version is at or below this
+  eolDate     DateTime? @map("eol_date") @db.Date
+  severity    String    @default("fail")     // fail | warn
+  action      String    @default("upgrade")  // remove | upgrade | replace | isolate
+  replacement String?                        // what to move to
+  guidance    String?                        // the practical sentence an engineer acts on
+  ceControl   String    @default("patch") @map("ce_control") // firewall | config | access | malware | patch
+  active      Boolean   @default(true)
+  notes       String?
+  createdAt   DateTime? @default(now()) @map("created_at")
+  updatedAt   DateTime? @default(now()) @map("updated_at")
+
+  @@index([category])
+  @@index([active])
+  @@map("eol_products")
+}
+
+// One run of the tool: a single device, a customer, or the whole estate.
+model CeAssessment {
+  id           Int       @id @default(autoincrement())
+  scope        String    @default("device") // device | customer | all
+  customerId   Int?      @map("customer_id")
+  deviceId     Int?      @map("device_id")
+  label        String?
+  status       String    @default("running") // running | complete | partial | failed
+  devicesTotal Int?      @default(0) @map("devices_total")
+  devicesDone  Int?      @default(0) @map("devices_done")
+  failCount    Int?      @default(0) @map("fail_count")
+  warnCount    Int?      @default(0) @map("warn_count")
+  passCount    Int?      @default(0) @map("pass_count")
+  score        Int?
+  startedBy    Int?      @map("started_by")
+  startedAt    DateTime? @default(now()) @map("started_at")
+  finishedAt   DateTime? @map("finished_at")
+
+  @@index([customerId])
+  @@index([startedAt])
+  @@map("ce_assessments")
+}
+
+// One machine's part of a run. The raw facts are kept so a rule added next month can be
+// re-run against last month's evidence without going back to the machine.
+model CeDeviceResult {
+  id           Int       @id @default(autoincrement())
+  assessmentId Int       @map("assessment_id")
+  deviceId     Int       @map("device_id")
+  commandId    Int?      @map("command_id")
+  status       String    @default("queued") // queued | complete | failed | offline
+  facts        Json?
+  score        Int?
+  failCount    Int?      @default(0) @map("fail_count")
+  warnCount    Int?      @default(0) @map("warn_count")
+  passCount    Int?      @default(0) @map("pass_count")
+  error        String?
+  collectedAt  DateTime? @map("collected_at")
+
+  @@unique([assessmentId, deviceId])
+  @@index([deviceId])
+  @@map("ce_device_results")
+}
+
+// One judgement about one machine. Remediation is stored with the finding rather than
+// generated at render time, so a report printed today still says what we told them.
+model CeFinding {
+  id           Int      @id @default(autoincrement())
+  assessmentId Int      @map("assessment_id")
+  deviceId     Int      @map("device_id")
+  control      String   // firewall | config | access | malware | patch
+  rule         String   // stable id, e.g. cfg.autorun
+  title        String
+  status       String   @default("fail") // fail | warn | pass
+  action       String?  // remove | upgrade | configure | review | none
+  detail       String?  // what we found
+  remediation  String?  // what to do about it, in enough detail to act on
+  evidence     String?  // the raw value behind the judgement
+  eolDate      DateTime? @map("eol_date") @db.Date
+  createdAt    DateTime? @default(now()) @map("created_at")
+
+  @@index([assessmentId, status])
+  @@index([deviceId])
+  @@map("ce_findings")
 }

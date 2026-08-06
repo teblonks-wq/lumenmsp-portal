@@ -1,0 +1,125 @@
+<%- include('partials/header', { title: 'End-of-life list', user }) %>
+<%
+function d(v) { return v ? new Date(v).toISOString().slice(0, 10) : ''; }
+var today = new Date().toISOString().slice(0, 10);
+%>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/ce">← Cyber Essentials</a></p>
+  <h1 style="margin:0;">End-of-life list</h1>
+  <p class="muted" style="margin:4px 0 0;">
+    Hand-maintained on purpose. Vendors publish these dates inconsistently, move them, and bury them in
+    release notes — a list we own is one we can defend to an assessor. Every assessment run reads it fresh.
+  </p>
+</div>
+
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<div class="card">
+  <div class="card-header"><h2>Add an entry</h2></div>
+  <form method="post" action="/ce/eol" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;align-items:end;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <div class="form-group" style="margin:0;">
+      <label>What it is</label>
+      <input class="input" name="name" placeholder="Java 8" required style="width:100%;">
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label>Category</label>
+      <select class="input" name="category" style="width:100%;">
+        <option value="app">Application</option>
+        <option value="os">Operating system</option>
+        <option value="runtime">Runtime</option>
+        <option value="browser">Browser</option>
+        <option value="database">Database</option>
+        <option value="server">Server product</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label>Match on</label>
+      <select class="input" name="match_type" style="width:100%;">
+        <option value="contains">Name contains</option>
+        <option value="exact">Name is exactly</option>
+        <option value="regex">Name matches (regex)</option>
+        <option value="os_build">Windows build number</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label>Text to match</label>
+      <input class="input" name="match_value" placeholder="Java 8" required style="width:100%;">
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label>Only up to version</label>
+      <input class="input" name="version_max" placeholder="optional, e.g. 8.999" style="width:100%;">
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label>Support ends</label>
+      <input class="input" type="date" name="eol_date" style="width:100%;">
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label>Severity once past</label>
+      <select class="input" name="severity" style="width:100%;">
+        <option value="fail">Fail</option>
+        <option value="warn">Warning</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label>Action</label>
+      <select class="input" name="action" style="width:100%;">
+        <option value="upgrade">Upgrade</option>
+        <option value="remove">Remove</option>
+        <option value="replace">Replace</option>
+        <option value="isolate">Isolate</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;grid-column:1/-1;">
+      <label>What to actually do about it</label>
+      <input class="input" name="guidance" placeholder="Uninstall it — anything that still needs Java 8 should be on the vendor's current build." style="width:100%;">
+    </div>
+    <div><button class="btn btn-primary" type="submit">Add</button></div>
+  </form>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2><%= rows.length %> entries</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>What</th><th>Category</th><th>Matches</th><th>Support ends</th><th>Then</th><th></th></tr></thead>
+      <tbody>
+        <% if (!rows.length) { %><tr><td colspan="6"><div class="empty-state">Nothing in the list yet.</div></td></tr><% } %>
+        <% rows.forEach(function (r) { %>
+          <tr style="<%= r.active ? '' : 'opacity:.5;' %>">
+            <td>
+              <%= r.name %>
+              <% if (r.guidance) { %><div class="muted" style="font-size:12px;margin-top:3px;"><%= r.guidance %></div><% } %>
+            </td>
+            <td class="muted"><%= r.category %></td>
+            <td class="muted" style="font-size:12px;">
+              <%= r.match_type %>: <code><%= r.match_value %></code>
+              <% if (r.version_max) { %> (≤ <%= r.version_max %>)<% } %>
+            </td>
+            <td class="<%= d(r.eol_date) && d(r.eol_date) <= today ? '' : 'muted' %>" style="<%= d(r.eol_date) && d(r.eol_date) <= today ? 'color:var(--bad-fg);font-weight:600;' : '' %>">
+              <%= d(r.eol_date) || '—' %>
+            </td>
+            <td><span class="badge <%= r.severity === 'fail' ? 'badge-failed' : 'badge-primary' %>"><%= r.severity %></span> <span class="muted" style="font-size:12px;"><%= r.action %></span></td>
+            <td style="text-align:right;">
+              <form method="post" action="/ce/eol" style="display:inline;" onsubmit="return confirm('Remove this entry?');">
+                <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+                <input type="hidden" name="id" value="<%= r.id %>">
+                <input type="hidden" name="action_kind" value="delete">
+                <button class="btn btn-sm" type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="muted" style="margin:14px 0 0;font-size:12px;">
+  Dates here are ours to keep right. Worth a look every few months, and any time a vendor announces
+  an extension — an entry with a stale date turns into a job nobody needed to do.
+</p>
+
+<%- include('partials/footer') %>

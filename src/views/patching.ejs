@@ -8,6 +8,10 @@ function ago(s) {
   if (h < 24) return h + 'h ago';
   return Math.round(h / 24) + 'd ago';
 }
+function src(s) {
+  var t = String(s || 'windows').toLowerCase();
+  return t === 'winget' ? 'WinGet' : t === 'choco' ? 'Chocolatey' : 'Windows';
+}
 function sev(s) {
   var t = String(s || '').toLowerCase();
   if (t === 'critical') return 'badge-failed';
@@ -53,12 +57,13 @@ function sev(s) {
 <div class="card" style="padding:0;">
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Update</th><th>KB</th><th>Severity</th><th style="text-align:right;">Machines</th><th style="text-align:right;">Outstanding</th></tr></thead>
+      <thead><tr><th>Update</th><th>Source</th><th>KB</th><th>Severity</th><th style="text-align:right;">Machines</th><th style="text-align:right;">Outstanding</th></tr></thead>
       <tbody>
-        <% if (!updates.length) { %><tr><td colspan="5"><div class="empty-state">Nothing pending — or nothing scanned yet.</div></td></tr><% } %>
+        <% if (!updates.length) { %><tr><td colspan="6"><div class="empty-state">Nothing pending — or nothing scanned yet.</div></td></tr><% } %>
         <% updates.forEach(function (u) { %>
           <tr>
             <td><%= u.title %></td>
+            <td class="muted" style="font-size:12px;"><%= src(u.source) %></td>
             <td class="muted"><%= u.kb ? 'KB' + String(u.kb).replace(/^KB/i, '') : '—' %></td>
             <td><% if (u.severity) { %><span class="badge <%= sev(u.severity) %>"><%= u.severity %></span><% } else { %><span class="muted">—</span><% } %></td>
             <td style="text-align:right;"><%= u.devices %></td>

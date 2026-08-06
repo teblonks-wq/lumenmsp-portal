@@ -79,7 +79,7 @@ function ago(s) {
   <div class="card-header" style="padding:20px 24px 0;"><h2><%= patches.length %> update<%= patches.length === 1 ? '' : 's' %> pending</h2></div>
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Update</th><th>KB</th><th>Severity</th><th>Category</th><th style="text-align:right;">Size</th><th style="text-align:right;">Outstanding</th></tr></thead>
+      <thead><tr><th>Update</th><th>Source</th><th>Version</th><th>Severity</th><th style="text-align:right;">Size</th><th style="text-align:right;">Outstanding</th></tr></thead>
       <tbody>
         <% if (!patches.length) { %>
           <tr><td colspan="6"><div class="empty-state"><%= device.patch_scan_at ? 'Nothing pending — this machine is up to date.' : 'Not scanned yet. The agent scans on its daily inventory pass.' %></div></td></tr>
@@ -87,9 +87,9 @@ function ago(s) {
         <% patches.forEach(function (p) { %>
           <tr>
             <td><%= p.title %></td>
-            <td class="muted"><%= p.kb ? 'KB' + String(p.kb).replace(/^KB/i, '') : '—' %></td>
+            <td class="muted" style="font-size:12px;"><%= String(p.source || 'windows') === 'winget' ? 'WinGet' : String(p.source) === 'choco' ? 'Chocolatey' : 'Windows' %></td>
+            <td class="muted" style="font-size:12px;"><% if (p.available_version) { %><%= p.current_version || '?' %> → <%= p.available_version %><% } else { %><%= p.kb ? 'KB' + String(p.kb).replace(/^KB/i, '') : '—' %><% } %></td>
             <td><% if (p.severity) { %><span class="badge <%= sev(p.severity) %>"><%= p.severity %></span><% } else { %><span class="muted">—</span><% } %></td>
-            <td class="muted" style="font-size:12px;"><%= p.categories || '—' %></td>
             <td style="text-align:right;"><%= p.size_mb != null ? Number(p.size_mb).toFixed(1) + ' MB' : '—' %></td>
             <td style="text-align:right;"><%= p.age_days %>d</td>
           </tr>

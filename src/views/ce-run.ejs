@@ -1,0 +1,124 @@
+<%- include('partials/header', { title: 'Assessment #' + a.id, user }) %>
+<%
+var controlLabel = {};
+controls.forEach(function (c) { controlLabel[c.key] = c.label; });
+function scoreColour(v) {
+  if (v == null) return '';
+  if (v >= 90) return 'color:var(--ok-fg);';
+  if (v >= 70) return 'color:var(--warn-fg);';
+  return 'color:var(--bad-fg);';
+}
+var byControl = {};
+controls.forEach(function (c) { byControl[c.key] = []; });
+findings.forEach(function (f) { (byControl[f.control] = byControl[f.control] || []).push(f); });
+var running = a.status === 'running';
+%>
+
+<style>
+  .ce-f { border-top:1px solid var(--line); padding:14px 0; }
+  .ce-f:first-child { border-top:0; }
+  .ce-f .t { font-weight:600; }
+  .ce-f .r { font-size:13px; margin-top:6px; }
+  .ce-f .e { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; color:var(--muted); margin-top:6px; word-break:break-all; }
+  .ce-count { font-size:12px; color:var(--muted); }
+  @media print {
+    .no-print { display:none !important; }
+    .card { break-inside:avoid; }
+  }
+</style>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted no-print" style="margin:0 0 4px;"><a class="row-link" href="/ce">← Cyber Essentials</a></p>
+    <h1 style="margin:0;"><%= a.label || ('Assessment #' + a.id) %></h1>
+    <p class="muted" style="margin:4px 0 0;">
+      <%= a.scope === 'all' ? 'Whole estate' : a.scope === 'customer' ? (a.customer_name || 'Customer') : 'Single machine' %>
+      · started <%= a.started_at ? new Date(a.started_at).toLocaleString('en-GB') : '' %>
+      · <%= a.devices_done %> of <%= a.devices_total %> machines reported
+    </p>
+  </div>
+  <div class="no-print" style="display:flex;gap:8px;">
+    <% if (results.some(function (r) { return r.status === 'offline' || r.status === 'failed'; })) { %>
+    <form method="post" action="/ce/run/<%= a.id %>/retry" style="display:inline;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <button class="btn" type="submit">Retry the machines that missed it</button>
+    </form>
+    <% } %>
+    <a class="btn" href="#" onclick="window.print();return false;">🖨 Print</a>
+  </div>
+</div>
+
+<% if (running) { %>
+<div class="alert" style="border:1px solid var(--info-line);">
+  <strong>Still gathering evidence.</strong>
+  <span class="muted">Machines report as they check in — this page refreshes itself every 20 seconds.</span>
+</div>
+<meta http-equiv="refresh" content="20">
+<% } %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+  <div class="card"><div class="card-header"><h2>Score</h2></div><div class="stat" style="font-size:24px;<%= scoreColour(a.score) %>"><%= a.score == null ? '—' : a.score %></div><p class="muted" style="margin:2px 0 0;">average across machines</p></div>
+  <div class="card"><div class="card-header"><h2>Fails</h2></div><div class="stat" style="font-size:24px;<%= Number(a.fail_count) ? 'color:var(--bad-fg);' : '' %>"><%= a.fail_count %></div></div>
+  <div class="card"><div class="card-header"><h2>Warnings</h2></div><div class="stat" style="font-size:24px;"><%= a.warn_count %></div></div>
+  <div class="card"><div class="card-header"><h2>Passes</h2></div><div class="stat" style="font-size:24px;color:var(--ok-fg);"><%= a.pass_count %></div></div>
+</div>
+
+<% controls.forEach(function (c) { var list = (byControl[c.key] || []); if (!list.length) return; %>
+<div class="card">
+  <div class="card-header" style="display:flex;align-items:baseline;justify-content:space-between;">
+    <h2><%= c.label %></h2>
+    <span class="ce-count">
+      <%= list.filter(function (f) { return f.status === 'fail'; }).length %> fail ·
+      <%= list.filter(function (f) { return f.status === 'warn'; }).length %> warn ·
+      <%= list.filter(function (f) { return f.status === 'pass'; }).length %> pass
+    </span>
+  </div>
+  <% list.forEach(function (f) { %>
+    <div class="ce-f">
+      <div class="t">
+        <span class="badge <%= f.status === 'fail' ? 'badge-failed' : f.status === 'warn' ? 'badge-primary' : 'badge-active' %>"><%= f.status %></span>
+        <%= f.title %>
+        <% if (f.devices > 1) { %><span class="ce-count">— <%= f.devices %> machines</span><% } %>
+        <% if (f.eol_date) { %><span class="ce-count">— end of support <%= new Date(f.eol_date).toLocaleDateString('en-GB') %></span><% } %>
+      </div>
+      <% if (f.detail) { %><div class="muted" style="font-size:13px;margin-top:4px;"><%= f.detail %></div><% } %>
+      <% if (f.status !== 'pass' && f.remediation) { %>
+        <div class="r"><strong>Do this:</strong> <%= f.remediation %></div>
+      <% } %>
+      <% if (f.devices <= 6) { %><div class="ce-count" style="margin-top:5px;"><%= f.hostnames %></div><% } %>
+      <% if (f.evidence && f.status !== 'pass') { %><div class="e"><%= f.evidence %></div><% } %>
+    </div>
+  <% }); %>
+</div>
+<% }); %>
+
+<% if (!findings.length && !running) { %>
+<div class="card"><div class="empty-state">No findings — no machine in this run returned any evidence.</div></div>
+<% } %>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Machines in this run</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Machine</th><th>Customer</th><th>Status</th><th style="text-align:right;">Score</th><th style="text-align:right;">Fails</th><th style="text-align:right;">Warnings</th><th>Reported</th></tr></thead>
+      <tbody>
+        <% results.forEach(function (r) { %>
+          <tr>
+            <td><a class="row-link" href="/ce/device/<%= r.device_id %>"><%= r.hostname %></a></td>
+            <td class="muted"><%= r.customer_name || '—' %></td>
+            <td>
+              <span class="badge <%= r.status === 'complete' ? 'badge-active' : r.status === 'queued' ? 'badge-primary' : 'badge-inactive' %>"><%= r.status %></span>
+              <% if (r.error) { %><div class="muted" style="font-size:12px;margin-top:3px;"><%= r.error %></div><% } %>
+            </td>
+            <td style="text-align:right;font-weight:600;<%= scoreColour(r.score) %>"><%= r.score == null ? '—' : r.score %></td>
+            <td style="text-align:right;<%= Number(r.fail_count) ? 'color:var(--bad-fg);' : '' %>"><%= r.status === 'complete' ? r.fail_count : '—' %></td>
+            <td style="text-align:right;"><%= r.status === 'complete' ? r.warn_count : '—' %></td>
+            <td class="muted"><%= r.collected_at ? new Date(r.collected_at).toLocaleString('en-GB') : '—' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('partials/footer') %>

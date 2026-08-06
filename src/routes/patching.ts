@@ -60,13 +60,13 @@ router.get('/patching', requireAuth, requireAdmin, async (req: Request, res: Res
     // The same data cut by update — "what is this month's problem across the estate"
     // rather than "which box is behind".
     const updates = (await pool.query(
-      `SELECT dp.title, dp.kb, dp.severity,
+      `SELECT dp.title, dp.kb, dp.severity, dp.source,
               count(*)::int AS devices,
               MAX(EXTRACT(DAY FROM (NOW() - dp.first_seen)))::int AS oldest_days
          FROM device_patches dp
          JOIN agent_devices ad ON ad.id = dp.device_id AND ad.revoked = false
         ${customerId ? 'WHERE ad.customer_id = $1' : ''}
-        GROUP BY dp.title, dp.kb, dp.severity
+        GROUP BY dp.title, dp.kb, dp.severity, dp.source
         ORDER BY (LOWER(COALESCE(dp.severity,'')) IN ('critical','important')) DESC, count(*) DESC
         LIMIT 200`, customerId ? [customerId] : [])).rows;
 
