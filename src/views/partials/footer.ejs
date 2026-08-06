@@ -92,9 +92,9 @@
 
 <% if (typeof user !== 'undefined' && user) { %>
   <!-- WhatsApp softphone (staff): rings here when a customer calls the WhatsApp number -->
-  <script src="/static/js/call-widget.js" defer></script>
+  <script src="/static/js/call-widget.js?v=<%= typeof assetV !== 'undefined' ? assetV : '0' %>" defer></script>
   <!-- Lumen Chat: the AGENT end of the website chat bot — staff answer web chats from here -->
-  <script src="/static/js/agent-chat.js" defer></script>
+  <script src="/static/js/agent-chat.js?v=<%= typeof assetV !== 'undefined' ? assetV : '0' %>" defer></script>
   <!-- N3twrx nav badge: live open-alert count, coloured by worst current severity -->
   <script>
   (function(){

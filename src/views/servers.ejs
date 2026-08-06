@@ -1,0 +1,98 @@
+<%- include('partials/header', { title: 'Servers', user }) %>
+<%
+function ago(s) {
+  if (s == null) return 'never';
+  var m = Math.round(Number(s) / 60);
+  if (m < 60) return m + 'm ago';
+  var h = Math.round(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+%>
+
+<style>
+  .role-chip { display:inline-block; font-size:11px; font-weight:600; border-radius:5px;
+               padding:1px 7px; margin:1px 3px 1px 0; background:var(--tint-accent);
+               color:var(--info-deep); border:1px solid var(--info-line); }
+</style>
+
+<div class="page-header">
+  <h1 style="margin:0;">Servers</h1>
+  <p class="muted" style="margin:4px 0 0;">
+    The same agent as everywhere else, running in server mode — a machine is a server because Windows
+    says so, and that turns on collectors a workstation has nothing to answer. Everything here is read-only;
+    the agent gathers facts and the Portal decides what is worth a look.
+  </p>
+</div>
+
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+<% if (queued) { %>
+<div class="alert" style="border:1px solid var(--info-line);">
+  <strong>Asked <%= queued %> server<%= queued === 1 ? '' : 's' %> to report.</strong>
+  <span class="muted">Anything that has not checked in for a day gets topped up when this page loads. The numbers fill in as they answer.</span>
+</div>
+<% } %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
+  <div class="card"><div class="card-header"><h2>Servers</h2></div><div class="stat" style="font-size:24px;"><%= summary.servers %></div><p class="muted" style="margin:2px 0 0;"><%= summary.reported %> reporting</p></div>
+  <div class="card"><div class="card-header"><h2>Domain controllers</h2></div><div class="stat" style="font-size:24px;"><%= summary.dcs %></div></div>
+  <div class="card"><div class="card-header"><h2>SQL instances</h2></div><div class="stat" style="font-size:24px;"><%= summary.sql %></div></div>
+  <div class="card"><div class="card-header"><h2>Virtual machines</h2></div><div class="stat" style="font-size:24px;"><%= summary.vms %></div></div>
+  <div class="card"><div class="card-header"><h2>Worth a look</h2></div><div class="stat" style="font-size:24px;<%= summary.alerts ? 'color:var(--warn-fg);' : '' %>"><%= summary.alerts %></div></div>
+</div>
+
+<div class="card" style="padding:16px 20px;">
+  <form method="get" action="/servers" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <select class="input" name="customer" onchange="this.form.submit()" style="width:auto;">
+      <option value="">All customers</option>
+      <% customers.forEach(function (c) { %><option value="<%= c.id %>" <%= customerId === c.id ? 'selected' : '' %>><%= c.name %></option><% }); %>
+    </select>
+    <span class="muted" style="font-size:12px;margin-left:auto;">Collected daily, and whenever you open this page after a day's gap.</span>
+  </form>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Server</th><th>Customer</th><th>Runs</th><th>Domain</th><th style="text-align:right;">Worth a look</th><th>Reported</th><th>Agent seen</th></tr></thead>
+      <tbody>
+        <% if (!rows.length) { %>
+          <tr><td colspan="7"><div class="empty-state">
+            No servers yet. A machine appears here once the agent is on it and Windows reports a server edition.
+          </div></td></tr>
+        <% } %>
+        <% rows.forEach(function (r) { %>
+          <tr>
+            <td>
+              <a class="row-link" href="/servers/<%= r.id %>"><%= r.hostname %></a>
+              <% if (r.server_role === 'domain controller') { %><span class="badge badge-primary">DC</span><% } %>
+              <div class="muted" style="font-size:11px;"><%= r.os || '' %></div>
+            </td>
+            <td class="muted"><% if (r.customer_id) { %><a class="row-link" href="/customers/<%= r.customer_id %>"><%= r.customer_name %></a><% } else { %>—<% } %></td>
+            <td>
+              <% if (r.role_labels && r.role_labels.length) { %>
+                <% r.role_labels.forEach(function (x) { %><span class="role-chip"><%= x %></span><% }); %>
+              <% } else { %><span class="muted">—</span><% } %>
+            </td>
+            <td class="muted" style="font-size:12px;"><%= r.domain || '—' %></td>
+            <td style="text-align:right;<%= Number(r.alerts) ? 'color:var(--warn-fg);font-weight:600;' : '' %>"><%= r.collected_at ? r.alerts : '—' %></td>
+            <td class="muted" style="font-size:12px;">
+              <% if (r.error) { %><span class="badge badge-failed" title="<%= r.error %>">failed</span>
+              <% } else { %><%= r.collected_at ? ago(r.facts_age_secs) : 'not yet' %><% } %>
+            </td>
+            <td class="muted" style="font-size:12px;"><%= ago(r.seen_secs) %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="muted" style="margin:14px 0 0;font-size:12px;">
+  What gets collected depends on what is installed: Active Directory, DNS, DHCP, SQL Server, Hyper-V, IIS,
+  file shares, certificates and disk. Nothing is changed and nothing is restarted — this is the picture,
+  not the controls.
+</p>
+
+<%- include('partials/footer') %>

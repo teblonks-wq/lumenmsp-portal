@@ -40,16 +40,22 @@ router.post('/customers/:id/credentials', async (req: Request, res: Response) =>
 router.post('/credentials/:cid/edit', async (req: Request, res: Response) => {
   const cid = parseInt(String(req.params.cid), 10);
   const b = req.body;
-  const cur = await pool.query('SELECT customer_id FROM customer_credentials WHERE id=$1 AND deleted_at IS NULL', [cid]);
+  const cur = await pool.query('SELECT customer_id, username, name, system_managed FROM customer_credentials WHERE id=$1 AND deleted_at IS NULL', [cid]);
   if (!cur.rows.length) { res.redirect('/customers'); return; }
   const customerId = cur.rows[0].customer_id;
+  // A credential the server agent owns is found by account name, so renaming it would
+  // quietly orphan it and the next deployment would run with nothing. The password is
+  // freely changeable and the whole row can be deleted — it is the name that is fixed.
+  const locked = !!cur.rows[0].system_managed;
   if (nz(b.password)) {
     if (!vaultConfigured()) { res.redirect('/customers/' + customerId + '?err=' + encodeURIComponent('Password vault key not configured') + '#passwords'); return; }
     await pool.query('UPDATE customer_credentials SET secret_encrypted=$1 WHERE id=$2', [encryptSecret(String(b.password)), cid]);
   }
   await pool.query(
     `UPDATE customer_credentials SET name=$1, login_url=$2, username=$3, domain=$4, category=$5, extra_value=$6, note=$7, updated_at=NOW() WHERE id=$8`,
-    [nz(b.name) || 'Untitled', nz(b.login_url), nz(b.username), nz(b.domain), nz(b.category), nz(b.extra_value), nz(b.note), cid]
+    [locked ? cur.rows[0].name : (nz(b.name) || 'Untitled'), nz(b.login_url),
+     locked ? cur.rows[0].username : nz(b.username),
+     nz(b.domain), nz(b.category), nz(b.extra_value), nz(b.note), cid]
   );
   await logActivity(req.session.user!.id, 'updated', 'credentials', cid, `Updated password "${nz(b.name) || ''}"`);
   res.redirect('/customers/' + customerId + '?msg=' + encodeURIComponent('Password updated') + '#passwords');

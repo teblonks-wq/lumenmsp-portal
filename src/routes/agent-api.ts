@@ -6,7 +6,9 @@ import multer from 'multer';
 import { pool } from '../db/pool';
 import { getSetting, setSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
+import { vaultConfigured, encryptSecret } from '../lib/vault';
 import { ingestCeResult } from '../lib/ce-ingest';
+import { ingestServerFacts } from '../lib/server-facts';
 import { htmlToPlain } from '../lib/whatsapp';
 import { nextTicketNumber } from './tickets';
 
@@ -70,6 +72,189 @@ function clientIp(req: Request): string {
 }
 
 // ── Keyed installer download ────────────────────────────────────────────────────
+// ── Server agent console ────────────────────────────────────────────────────────
+// The small web interface the server agent puts on the server's own desktop. It binds to
+// localhost only, so everything below is reached from that machine, by an engineer who is
+// already signed into it, over the device's own token.
+//
+// Two jobs: keep the list of subnets this customer actually has, and hold one domain
+// credential. The credential itself lives in the customer's vault in the Portal — the
+// same AES-256-GCM store as every other password, with the key held outside the database
+// — because a secret on a domain controller's disk is a worse place for it than a secret
+// in a vault we already protect and audit.
+
+/** A six-digit PIN is not a security boundary — root on that server can read anything the
+ *  console can. It is there to stop a passing colleague poking at it. So it is sent as a
+ *  salted hash rather than in the clear: cheap, and it keeps the PIN itself off every
+ *  server's disk. */
+function pinHash(pin: string, salt: string): string {
+  return crypto.createHash('sha256').update(salt + ':' + pin).digest('hex');
+}
+
+router.get('/agent/api/console', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  try {
+    if (!d.customer_id) { res.status(409).json({ ok: false, error: 'This device is not linked to a customer yet.' }); return; }
+
+    const cust = (await pool.query('SELECT id, name FROM customers WHERE id=$1', [d.customer_id])).rows[0];
+    const pin = (await getSetting('agent', 'console_pin')) || '486826';
+    const salt = crypto.randomBytes(8).toString('hex');
+
+    const nets = (await pool.query(
+      `SELECT id, cidr, label, source, scan FROM customer_networks
+        WHERE customer_id=$1 ORDER BY source, cidr`, [d.customer_id])).rows;
+
+    // Username and state only. The console never receives a password back — it can set
+    // one and it can replace one, but it cannot read one.
+    const cred = (await pool.query(
+      `SELECT id, username, validation_state, validated_at, (secret_encrypted IS NOT NULL) AS has_password
+         FROM customer_credentials
+        WHERE customer_id=$1 AND system_managed=true AND deleted_at IS NULL
+        ORDER BY id LIMIT 1`, [d.customer_id])).rows[0] || null;
+
+    res.json({
+      ok: true,
+      customer: cust?.name || '',
+      hostname: d.hostname,
+      pin_salt: salt,
+      pin_hash: pinHash(String(pin), salt),
+      networks: nets,
+      credential: cred,
+      vault_ready: vaultConfigured(),
+    });
+  } catch (e: any) {
+    console.error('[console] bootstrap failed:', e.message);
+    res.status(500).json({ ok: false, error: 'could not load' });
+  }
+});
+
+// Subnets. The agent seeds what it can see from its own interfaces on first run; anything
+// else is added by hand, because a server rarely sits on every network a customer has.
+router.post('/agent/api/console/networks', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  const b = req.body || {};
+  try {
+    if (!d.customer_id) { res.status(409).json({ ok: false, error: 'no customer' }); return; }
+
+    if (b.remove) {
+      await pool.query('DELETE FROM customer_networks WHERE id=$1 AND customer_id=$2',
+        [parseInt(String(b.remove), 10), d.customer_id]);
+      res.json({ ok: true });
+      return;
+    }
+
+    const raw = Array.isArray(b.add) ? b.add : b.add ? [b.add] : [];
+    const added: string[] = [];
+    for (const one of raw) {
+      const cidr = String(one).trim();
+      // Validate here rather than trusting the console's own check — the console is a
+      // client like any other, and a bad range is a scan of something that isn't ours.
+      if (!/^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/.test(cidr)) continue;
+      const [ip, bits] = cidr.split('/');
+      if (ip.split('.').some((o) => Number(o) > 255) || Number(bits) < 8 || Number(bits) > 32) continue;
+      await pool.query(
+        `INSERT INTO customer_networks (customer_id, cidr, label, source, device_id)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (customer_id, cidr) DO NOTHING`,
+        [d.customer_id, cidr, s(b.label, 80), String(b.source) === 'detected' ? 'detected' : 'manual', d.id]);
+      added.push(cidr);
+    }
+    res.json({ ok: true, added });
+  } catch (e: any) {
+    console.error('[console] networks failed:', e.message);
+    res.status(500).json({ ok: false, error: 'could not save' });
+  }
+});
+
+// The domain credential. One per customer, and the username is fixed once it exists —
+// the agent finds this credential by account name, so renaming it would orphan it.
+router.post('/agent/api/console/credential', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  const b = req.body || {};
+  const username = s(b.username, 200);
+  const password = String(b.password ?? '');
+  const state = ['valid', 'invalid', 'unchecked'].includes(String(b.validation_state)) ? String(b.validation_state) : 'unchecked';
+
+  try {
+    if (!d.customer_id) { res.status(409).json({ ok: false, error: 'no customer' }); return; }
+    if (!vaultConfigured()) { res.status(503).json({ ok: false, error: 'The password vault is not configured on the Portal.' }); return; }
+
+    const existing = (await pool.query(
+      `SELECT id, username FROM customer_credentials
+        WHERE customer_id=$1 AND system_managed=true AND deleted_at IS NULL ORDER BY id LIMIT 1`,
+      [d.customer_id])).rows[0];
+
+    if (existing) {
+      if (username && username !== existing.username) {
+        res.status(409).json({
+          ok: false,
+          error: `This customer already has a system credential for ${existing.username}. The account name cannot be changed — delete it in the Portal and add the new one.`,
+        });
+        return;
+      }
+      if (!password) { res.status(400).json({ ok: false, error: 'Enter the password.' }); return; }
+      await pool.query(
+        `UPDATE customer_credentials
+            SET secret_encrypted=$1, validation_state=$2, validated_at=NOW(), updated_at=NOW()
+          WHERE id=$3`, [encryptSecret(password), state, existing.id]);
+      await logActivity(null, 'updated', 'credentials', existing.id,
+        `Domain password for ${existing.username} updated from the server console on ${d.hostname}`);
+      res.json({ ok: true, id: existing.id, username: existing.username });
+      return;
+    }
+
+    if (!username || !password) { res.status(400).json({ ok: false, error: 'Both the account name and the password are needed.' }); return; }
+    const ins = await pool.query(
+      `INSERT INTO customer_credentials
+         (customer_id, name, username, secret_encrypted, category, note,
+          system_managed, validation_state, validated_at)
+       VALUES ($1,'Domain account (server agent)',$2,$3,'Domain',
+               'Added by the server agent console. Used to deploy the agent to machines on this network.',
+               true,$4,NOW())
+       RETURNING id`,
+      [d.customer_id, username, encryptSecret(password), state]);
+    await logActivity(null, 'created', 'credentials', ins.rows[0].id,
+      `Domain credential for ${username} added from the server console on ${d.hostname}`);
+    res.json({ ok: true, id: ins.rows[0].id, username });
+  } catch (e: any) {
+    console.error('[console] credential failed:', e.message);
+    res.status(500).json({ ok: false, error: 'could not save' });
+  }
+});
+
+// ── Linux agent ─────────────────────────────────────────────────────────────────
+// Public, unauthenticated, and that is fine: the installer and the binary are the same
+// files anybody could take off a machine that already runs them. The secret is the site
+// key, which the person installing supplies — it is never in these URLs.
+//
+//   curl -fsSL https://portal/agent/linux/install.sh | sudo bash -s -- --site-key KEY
+const LINUX_DIR = path.join(AGENT_MSI_DIR, 'linux');
+const LINUX_RIDS = ['linux-x64', 'linux-arm64'];
+
+router.get('/agent/linux/install.sh', (_req: Request, res: Response) => {
+  const f = path.join(LINUX_DIR, 'install.sh');
+  if (!fs.existsSync(f)) { res.status(404).type('text/plain').send('# No Linux agent has been published yet.\n'); return; }
+  res.type('text/x-shellscript').sendFile(f);
+});
+
+router.get('/agent/linux/version.txt', (_req: Request, res: Response) => {
+  const f = path.join(LINUX_DIR, 'version.txt');
+  if (!fs.existsSync(f)) { res.status(404).type('text/plain').send(''); return; }
+  res.type('text/plain').sendFile(f);
+});
+
+router.get('/agent/linux/:rid/:file', (req: Request, res: Response) => {
+  const rid = String(req.params.rid);
+  const file = String(req.params.file);
+  // Allow-list both halves. Anything reaching a path segment straight from a URL onto the
+  // filesystem is one ".." away from being a file server for the whole app.
+  if (!LINUX_RIDS.includes(rid) || !['lumenmsp-agent', 'sha256.txt'].includes(file)) {
+    res.status(404).send('Not found'); return;
+  }
+  const f = path.join(LINUX_DIR, rid, file);
+  if (!fs.existsSync(f)) { res.status(404).send('Not published yet'); return; }
+  res.download(f, file);
+});
+
 // GET /agent/download/LumenMSPAgent-<sitekey>.msi — public capability URL: the key in
 // the filename both authorises the download AND enrolls the install (the MSI records
 // its own launch path, and the service parses the key back out of the filename), so a
@@ -590,6 +775,29 @@ router.get('/agent/api/commands', requireDevice, async (req: Request, res: Respo
   }
 });
 
+// Progress while a command is still running. The agent streams the tail of the output as
+// it appears; a script that knows how far along it is says so with a [[progress:n]]
+// marker, which the agent strips out and sends as a percentage. Nothing here changes the
+// command's status — this is only so a ten-minute install stops looking like a hung window.
+router.post('/agent/api/commands/:id/progress', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  const id = parseInt(String(req.params.id), 10);
+  const b = req.body || {};
+  const pctRaw = parseInt(String(b.pct), 10);
+  const pct = Number.isFinite(pctRaw) ? Math.max(0, Math.min(100, pctRaw)) : null;
+  const text = noNul(String(b.text ?? '')).slice(-4000);
+  try {
+    await pool.query(
+      `UPDATE agent_commands SET progress=$1, progress_pct=$2, progress_at=NOW()
+        WHERE id=$3 AND device_id=$4 AND status IN ('queued','running')`,
+      [text || null, pct, id, d.id]);
+    res.json({ ok: true });
+  } catch {
+    // Progress is decoration. Never fail the command over it.
+    res.json({ ok: true });
+  }
+});
+
 router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request, res: Response) => {
   const d = (req as any).agentDevice;
   const id = parseInt(String(req.params.id), 10);
@@ -608,6 +816,9 @@ router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request
     // agent is waiting on this response and has done its part correctly.
     if (r.rows[0].kind === 'ce.assess') {
       ingestCeResult(id).catch((err: any) => console.error('[ce] ingest failed:', err.message));
+    }
+    if (r.rows[0].kind === 'server.facts') {
+      ingestServerFacts(id).catch((err: any) => console.error('[servers] ingest failed:', err.message));
     }
     res.json({ ok: true });
   } catch (e: any) {

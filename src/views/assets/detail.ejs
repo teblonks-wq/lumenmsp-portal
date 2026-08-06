@@ -40,7 +40,73 @@
 </div>
 
 <% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
-<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error"><%= error %></div><% } %>
+<% if (typeof error !== 'undefined' && error && String(error).indexOf('No remote-access session') !== 0) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<%
+// Remote access banner. Every state here is something an engineer can act on — the old
+// version said "not yet" and left you with a machine in front of you and no next step.
+var _ms = (typeof meshState !== 'undefined') ? meshState : null;
+function _ago(d) {
+  if (!d) return '';
+  var m = Math.round((Date.now() - new Date(d).getTime()) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + ' minute' + (m === 1 ? '' : 's') + ' ago';
+  var h = Math.round(m / 60);
+  return h < 24 ? h + ' hour' + (h === 1 ? '' : 's') + ' ago' : Math.round(h / 24) + ' days ago';
+}
+%>
+<% if (_ms && !_ms.hasNode) { %>
+  <% if (_ms.pendingSince) { %>
+    <div class="alert" style="border:1px solid var(--info-line);background:var(--tint-accent);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+      <span>
+        <strong>Installing remote access…</strong>
+        <span class="muted">Queued <%= _ago(_ms.pendingSince) %>. It runs at the machine's next check-in — about a minute if it is switched on, otherwise when it next comes online. This page refreshes itself.</span>
+      </span>
+    </div>
+    <meta http-equiv="refresh" content="20">
+  <% } else if (_ms.failed) { %>
+    <div class="alert alert-error" style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+      <span style="flex:1;min-width:280px;">
+        <strong>The last remote-access install failed<%= _ms.failed.at ? ' ' + _ago(_ms.failed.at) : '' %>.</strong>
+        <div class="muted" style="font-size:12px;margin-top:5px;font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;"><%= _ms.failed.output || 'No output was returned.' %></div>
+      </span>
+      <form method="post" action="/assets/<%= asset.id %>/mesh-install" style="margin:0;">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <button class="btn" type="submit">Try again</button>
+      </form>
+    </div>
+  <% } else if (!_ms.enabled) { %>
+    <div class="alert" style="border:1px solid var(--warn-line);">
+      <strong>Remote access is switched off for <%= _ms.customer || 'this customer' %>.</strong>
+      <span class="muted">Turn it on for the customer and it installs everywhere automatically.</span>
+    </div>
+  <% } else if (!_ms.hasPackage) { %>
+    <div class="alert" style="border:1px solid var(--warn-line);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+      <span><strong><%= _ms.customer || 'This customer' %> has no remote-access agent yet.</strong>
+      <span class="muted">One gets built per customer, then installs itself on every machine they have.</span></span>
+      <a class="btn" href="/agents" style="margin-left:auto;">Agents page</a>
+    </div>
+  <% } else if (_ms.installed) { %>
+    <div class="alert" style="border:1px solid var(--info-line);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+      <span><strong>Remote access is installed, waiting for its first check-in.</strong>
+      <span class="muted">The machine appears for remote control once it has reached the remote-access server. If it has been like this for a while, the install may not have taken — reinstall below.</span></span>
+      <form method="post" action="/assets/<%= asset.id %>/mesh-install" style="margin:0 0 0 auto;">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <button class="btn" type="submit">Reinstall</button>
+      </form>
+    </div>
+  <% } else { %>
+    <div class="alert" style="border:1px solid var(--warn-line);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+      <span><strong>Remote control is not installed on this machine yet.</strong>
+      <span class="muted">Installing takes a minute and needs nobody at the far end — the LumenMSP agent does it.</span></span>
+      <form method="post" action="/assets/<%= asset.id %>/mesh-install" style="margin:0 0 0 auto;">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <button class="btn btn-primary" type="submit">🖥 Install remote control</button>
+      </form>
+    </div>
+  <% } %>
+<% } %>
+
 
 <div class="card" style="background:var(--tint-accent);border-color:var(--info-line);">
   <p style="margin:0;font-size:13px;color:var(--info-deep);">

@@ -1,0 +1,269 @@
+<%- include('partials/header', { title: device.hostname + ' — Server', user }) %>
+<%
+function ago(s) {
+  if (s == null) return 'never';
+  var m = Math.round(Number(s) / 60);
+  if (m < 60) return m + 'm ago';
+  var h = Math.round(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+function n(v) { return v == null ? '—' : v; }
+var ad = facts && facts.ad ? facts.ad : null;
+var sql = facts && Array.isArray(facts.sql) ? facts.sql : [];
+var vms = facts && Array.isArray(facts.hyperv) ? facts.hyperv : [];
+var dhcp = facts && Array.isArray(facts.dhcp) ? facts.dhcp : [];
+var dns = facts && Array.isArray(facts.dns) ? facts.dns : [];
+var iis = facts && Array.isArray(facts.iis) ? facts.iis : [];
+var shares = facts && Array.isArray(facts.shares) ? facts.shares : [];
+var certs = facts && Array.isArray(facts.certificates) ? facts.certificates : [];
+var vols = facts && Array.isArray(facts.volumes) ? facts.volumes : [];
+%>
+
+<style>
+  .kv { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px 20px; }
+  .kv .k { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .kv .v { font-size:13.5px; font-weight:600; overflow-wrap:anywhere; }
+  .role-chip { display:inline-block; font-size:11px; font-weight:600; border-radius:5px;
+               padding:1px 7px; margin:1px 3px 1px 0; background:var(--tint-accent);
+               color:var(--info-deep); border:1px solid var(--info-line); }
+  .al { border-top:1px solid var(--line); padding:11px 0; }
+  .al:first-child { border-top:0; }
+</style>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/servers">← Servers</a></p>
+    <h1 style="margin:0;"><%= device.hostname %></h1>
+    <p class="muted" style="margin:4px 0 0;">
+      <% if (device.customer_id) { %><a class="row-link" href="/customers/<%= device.customer_id %>"><%= device.customer_name %></a> · <% } %>
+      <%= device.os || 'Windows Server' %>
+      <% if (sf && sf.server_role) { %> · <%= sf.server_role %><% } %>
+      · agent seen <%= ago(device.seen_secs) %>
+      · <a class="row-link" href="/patching/device/<%= device.id %>">patching</a>
+      · <a class="row-link" href="/ce/device/<%= device.id %>">Cyber Essentials</a>
+    </p>
+    <p style="margin:8px 0 0;">
+      <% roleLabels.forEach(function (r) { %><span class="role-chip"><%= r %></span><% }); %>
+    </p>
+  </div>
+  <form method="post" action="/servers/<%= device.id %>/refresh" style="margin:0;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <button class="btn btn-primary" type="submit" <%= pending ? 'disabled' : '' %>><%= pending ? 'Queued…' : '↻ Scan now' %></button>
+  </form>
+</div>
+
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+
+<% if (!sf || !facts) { %>
+<div class="card"><div class="empty-state">
+  <% if (sf && sf.error) { %>
+    The last scan failed: <%= sf.error %>
+  <% } else if (pending) { %>
+    A scan is queued. A server that is switched on answers within a minute or two; a domain with a lot of objects takes longer.
+  <% } else { %>
+    This server has not reported yet. Press Scan now — it needs agent 1.0.9 or later.
+  <% } %>
+</div></div>
+<% } else { %>
+
+<p class="muted" style="margin:0 0 14px;font-size:12px;">Collected <%= ago(sf.age_secs) %>.</p>
+
+<% if (alerts.length) { %>
+<div class="card">
+  <div class="card-header"><h2><%= alerts.length %> worth a look</h2></div>
+  <% alerts.forEach(function (a) { %>
+    <div class="al">
+      <span class="badge <%= a.level === 'bad' ? 'badge-failed' : 'badge-primary' %>"><%= a.area %></span>
+      <strong style="font-size:13.5px;"><%= a.title %></strong>
+      <% if (a.detail) { %><div class="muted" style="font-size:12.5px;margin-top:4px;"><%= a.detail %></div><% } %>
+    </div>
+  <% }); %>
+</div>
+<% } else { %>
+<div class="alert" style="background:var(--tint-teal);border:1px solid var(--ok-line);">
+  <strong>Nothing outstanding.</strong> <span class="muted">Backups, replication, checkpoints, certificates and disk all look reasonable.</span>
+</div>
+<% } %>
+
+<% if (ad) { %>
+<div class="card">
+  <div class="card-header"><h2>Active Directory</h2></div>
+  <div class="kv">
+    <div><div class="k">Domain</div><div class="v"><%= ad.domain %> <span class="muted" style="font-weight:400;">(<%= ad.netbios %>)</span></div></div>
+    <div><div class="k">Functional level</div><div class="v"><%= ad.domainMode %><% if (ad.forestMode && ad.forestMode !== ad.domainMode) { %> / <%= ad.forestMode %><% } %></div></div>
+    <div><div class="k">Domain controllers</div><div class="v"><%= n(ad.dcCount) %></div></div>
+    <div><div class="k">Recycle Bin</div><div class="v"><%= ad.recycleBin ? 'Enabled' : 'Not enabled' %></div></div>
+    <div><div class="k">Computers</div><div class="v"><%= n(ad.computers) %> <span class="muted" style="font-weight:400;"><%= n(ad.staleComputers) %> stale</span></div></div>
+    <div><div class="k">Users</div><div class="v"><%= n(ad.users) %> <span class="muted" style="font-weight:400;"><%= n(ad.usersDisabled) %> disabled, <%= n(ad.usersStale) %> stale</span></div></div>
+    <div><div class="k">Group policies</div><div class="v"><%= n(ad.gpoCount) %></div></div>
+    <div><div class="k">PDC emulator</div><div class="v" style="font-size:12.5px;"><%= ad.pdc %></div></div>
+  </div>
+
+  <% if (ad.domainAdmins && ad.domainAdmins.length) { %>
+    <p class="muted" style="margin:14px 0 0;font-size:12.5px;"><strong>Domain Admins:</strong> <%= ad.domainAdmins.join(', ') %></p>
+  <% } %>
+
+  <% if (ad.dcs && ad.dcs.length) { %>
+  <div class="table-wrap" style="margin-top:14px;">
+    <table class="table">
+      <thead><tr><th>Domain controller</th><th>Site</th><th>Global catalogue</th><th>Operating system</th></tr></thead>
+      <tbody><% ad.dcs.forEach(function (d) { %>
+        <tr><td><%= d.name %></td><td class="muted"><%= d.site %></td><td class="muted"><%= d.gc ? 'Yes' : 'No' %></td><td class="muted"><%= d.os %></td></tr>
+      <% }); %></tbody>
+    </table>
+  </div>
+  <% } %>
+
+  <% if (ad.computerOs && ad.computerOs.length) { %>
+    <p class="muted" style="margin:14px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;">Computer accounts by operating system</p>
+    <p style="margin:0;font-size:12.5px;">
+      <% ad.computerOs.forEach(function (o, i) { %><%= i ? ' · ' : '' %><%= o.os || 'unknown' %> <strong><%= o.count %></strong><% }); %>
+    </p>
+  <% } %>
+</div>
+<% } %>
+
+<% if (sql.length) { %>
+<div class="card">
+  <div class="card-header"><h2>SQL Server</h2></div>
+  <% sql.forEach(function (inst) { %>
+    <div style="border-top:1px solid var(--line);padding:14px 0;">
+      <strong style="font-size:13.5px;"><%= inst.instance %></strong>
+      <span class="muted" style="font-size:12.5px;"><%= inst.edition || '' %> <%= inst.version || '' %><% if (inst.patchLevel) { %> (<%= inst.patchLevel %>)<% } %></span>
+      <% if (inst.accessError) { %>
+        <p class="muted" style="margin:6px 0 0;font-size:12.5px;">
+          Version and edition come from the registry. Databases and backup dates need a login —
+          since SQL 2012 the agent account is not sysadmin by default. Grant it a read-only login to fill this in.
+        </p>
+      <% } %>
+      <% if (inst.databases && inst.databases.length) { %>
+      <div class="table-wrap" style="margin-top:10px;">
+        <table class="table">
+          <thead><tr><th>Database</th><th style="text-align:right;">Size</th><th>Recovery</th><th>Last full backup</th><th>Last log backup</th></tr></thead>
+          <tbody><% inst.databases.forEach(function (db) { %>
+            <tr>
+              <td><%= db.name %></td>
+              <td style="text-align:right;"><%= db.sizeMb != null ? (Number(db.sizeMb) >= 1024 ? (Number(db.sizeMb)/1024).toFixed(1) + ' GB' : Number(db.sizeMb).toFixed(0) + ' MB') : '—' %></td>
+              <td class="muted"><%= db.recovery %></td>
+              <td class="<%= db.lastFull ? 'muted' : '' %>" style="<%= db.lastFull ? '' : 'color:var(--bad-fg);font-weight:600;' %>"><%= db.lastFull || 'never' %></td>
+              <td class="muted"><%= String(db.recovery || '').toUpperCase() === 'FULL' ? (db.lastLog || 'never') : '—' %></td>
+            </tr>
+          <% }); %></tbody>
+        </table>
+      </div>
+      <% } %>
+    </div>
+  <% }); %>
+</div>
+<% } %>
+
+<% if (vms.length) { %>
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Hyper-V — <%= vms.length %> virtual machine<%= vms.length === 1 ? '' : 's' %></h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Virtual machine</th><th>State</th><th style="text-align:right;">vCPU</th><th style="text-align:right;">Memory</th><th style="text-align:right;">Uptime</th><th>Checkpoints</th></tr></thead>
+      <tbody><% vms.forEach(function (v) { %>
+        <tr>
+          <td><%= v.name %></td>
+          <td><span class="badge <%= v.state === 'Running' ? 'badge-active' : 'badge-inactive' %>"><%= v.state %></span></td>
+          <td style="text-align:right;"><%= n(v.cpu) %></td>
+          <td style="text-align:right;"><%= v.memoryMb != null ? (v.memoryMb >= 1024 ? (v.memoryMb/1024).toFixed(1) + ' GB' : v.memoryMb + ' MB') : '—' %></td>
+          <td style="text-align:right;" class="muted"><%= v.uptimeHours != null ? (v.uptimeHours >= 48 ? Math.round(v.uptimeHours/24) + 'd' : v.uptimeHours + 'h') : '—' %></td>
+          <td class="<%= v.checkpoints ? '' : 'muted' %>"><%= v.checkpoints || '—' %><% if (v.oldestCheckpoint) { %> <span class="muted" style="font-size:11px;">oldest <%= v.oldestCheckpoint %></span><% } %></td>
+        </tr>
+      <% }); %></tbody>
+    </table>
+  </div>
+</div>
+<% } %>
+
+<% if (dhcp.length || dns.length) { %>
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));">
+  <% if (dhcp.length) { %>
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;"><h2>DHCP</h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Scope</th><th>Range</th><th style="text-align:right;">Used</th></tr></thead>
+      <tbody><% dhcp.forEach(function (s) { %>
+        <tr><td><%= s.name || s.id %></td><td class="muted" style="font-size:12px;"><%= s.range %></td>
+        <td style="text-align:right;<%= Number(s.pctUsed) > 85 ? 'color:var(--warn-fg);font-weight:600;' : '' %>"><%= s.pctUsed != null ? s.pctUsed + '%' : '—' %></td></tr>
+      <% }); %></tbody>
+    </table></div>
+  </div>
+  <% } %>
+  <% if (dns.length) { %>
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;"><h2>DNS zones</h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Zone</th><th>Type</th><th>AD integrated</th></tr></thead>
+      <tbody><% dns.forEach(function (z) { %>
+        <tr><td><%= z.name %></td><td class="muted"><%= z.type %></td><td class="muted"><%= z.adIntegrated ? 'Yes' : 'No' %></td></tr>
+      <% }); %></tbody>
+    </table></div>
+  </div>
+  <% } %>
+</div>
+<% } %>
+
+<% if (vols.length || certs.length) { %>
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));">
+  <% if (vols.length) { %>
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;"><h2>Storage</h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Volume</th><th style="text-align:right;">Size</th><th style="text-align:right;">Free</th></tr></thead>
+      <tbody><% vols.forEach(function (v) { %>
+        <tr><td><%= v.drive %> <span class="muted" style="font-size:12px;"><%= v.label || '' %></span></td>
+        <td style="text-align:right;"><%= v.sizeGb %> GB</td>
+        <td style="text-align:right;<%= Number(v.pctFree) < 10 ? 'color:var(--bad-fg);font-weight:600;' : '' %>"><%= v.freeGb %> GB (<%= v.pctFree %>%)</td></tr>
+      <% }); %></tbody>
+    </table></div>
+  </div>
+  <% } %>
+  <% if (certs.length) { %>
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;"><h2>Certificates</h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Subject</th><th>Expires</th></tr></thead>
+      <tbody><% certs.forEach(function (c) { %>
+        <tr><td style="font-size:12px;overflow-wrap:anywhere;"><%= c.subject %></td>
+        <td style="<%= Number(c.daysLeft) < 30 ? 'color:var(--bad-fg);font-weight:600;' : '' %>"><%= c.expires %> <span class="muted" style="font-weight:400;font-size:11px;"><%= c.daysLeft %>d</span></td></tr>
+      <% }); %></tbody>
+    </table></div>
+  </div>
+  <% } %>
+</div>
+<% } %>
+
+<% if (iis.length || shares.length) { %>
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr));">
+  <% if (iis.length) { %>
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;"><h2>IIS sites</h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Site</th><th>State</th><th>Bindings</th></tr></thead>
+      <tbody><% iis.forEach(function (s) { %>
+        <tr><td><%= s.name %></td><td class="muted"><%= s.state %></td><td class="muted" style="font-size:11.5px;overflow-wrap:anywhere;"><%= s.bindings %></td></tr>
+      <% }); %></tbody>
+    </table></div>
+  </div>
+  <% } %>
+  <% if (shares.length) { %>
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;"><h2>Shares</h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Share</th><th>Path</th></tr></thead>
+      <tbody><% shares.forEach(function (s) { %>
+        <tr><td><%= s.name %></td><td class="muted" style="font-size:12px;overflow-wrap:anywhere;"><%= s.path %></td></tr>
+      <% }); %></tbody>
+    </table></div>
+  </div>
+  <% } %>
+</div>
+<% } %>
+
+<% } %>
+
+<%- include('partials/footer') %>

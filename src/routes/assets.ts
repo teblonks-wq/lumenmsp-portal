@@ -9,6 +9,7 @@ import { getSetting, setSetting } from '../lib/settings';
 import { AGENT_MSI_DIR, AGENT_MSI_PATH, AGENT_VERSION_PATH, agentMsiInfo, agentHostedVersion, agentHostedSha256, rolloutState, wakeAgent } from './agent-api';
 import { syncAssetsFromAtera, lastAssetSyncAt, remoteUrlTemplate, saveRemoteUrlTemplate, buildRemoteUrl } from '../lib/asset-sync';
 import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
+import { meshStatus } from './mesh';
 
 const router = Router();
 
@@ -170,6 +171,9 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     remoteUrl: row.external_id ? buildRemoteUrl(tpl, { agentId: row.external_id, deviceGuid: row.device_guid }) : null,
     back: safeBack(req.query.back, '/assets'), contactOptions,
     rawJson: showDebug ? JSON.stringify(row.raw, null, 2) : null,
+    // Whether remote control is ready on this machine, and if not, which of the several
+    // possible reasons it is — so the page can offer the install rather than a dead end.
+    meshState: await meshStatus(row.id).catch(() => null),
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });

@@ -164,6 +164,13 @@ model CustomerCredential {
   extraValue      String?   @map("extra_value")
   note            String?
   createdBy       Int?      @map("created_by")
+  // Put here by the server agent's console rather than typed into the Portal. The username
+  // is fixed once set: the agent looks this credential up by account name to know which
+  // one is "the" domain credential for this customer, and letting someone rename it would
+  // quietly orphan it. The password can be changed, and the whole row can be deleted.
+  systemManaged   Boolean   @default(false) @map("system_managed")
+  validatedAt     DateTime? @map("validated_at")
+  validationState String?   @map("validation_state") // valid | invalid | unchecked
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
   deletedAt       DateTime? @map("deleted_at")
@@ -513,6 +520,12 @@ model AgentCommand {
   // maintenance window. The agent is never told about it; the poll simply does not hand
   // the command over until the time passes, so an offline machine still behaves correctly.
   runAfter    DateTime? @map("run_after")
+  // Live progress while a command runs. The agent streams the tail of the output as it
+  // appears, and a script that knows how far along it is says so with a [[progress:n]]
+  // marker — so a ten-minute install stops looking like a hung window.
+  progress    String?                          // the last few lines, as they happen
+  progressPct Int?      @map("progress_pct")   // 0-100 when the script can say
+  progressAt  DateTime? @map("progress_at")
   exitCode    Int?      @map("exit_code")
   output      String?
   requestedBy Int?      @map("requested_by")
@@ -2366,4 +2379,24 @@ model ServerFact {
 
   @@index([serverRole])
   @@map("server_facts")
+}
+
+// ── Networks a customer actually has ────────────────────────────────────────────
+// Seeded by the server agent from the interfaces it can see, and added to by hand in its
+// console when there are subnets the server does not sit on. Discovery reads this list;
+// nothing is ever scanned that is not in it.
+model CustomerNetwork {
+  id         Int       @id @default(autoincrement())
+  customerId Int       @map("customer_id")
+  cidr       String                            // 192.168.10.0/24
+  label      String?
+  source     String    @default("manual")      // manual | detected
+  deviceId   Int?      @map("device_id")       // which server reported it, when detected
+  scan       Boolean   @default(true)          // include it when we look for unmanaged machines
+  createdBy  Int?      @map("created_by")
+  createdAt  DateTime? @default(now()) @map("created_at")
+
+  @@unique([customerId, cidr])
+  @@index([customerId])
+  @@map("customer_networks")
 }

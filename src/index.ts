@@ -3,6 +3,7 @@ import express from 'express';
 import helmet from 'helmet';
 import session from 'express-session';
 import path from 'path';
+import fs from 'fs';
 import crypto from 'crypto';
 import { config } from './config';
 import { pool } from './db/pool';
@@ -49,6 +50,7 @@ import m365Routes from './routes/m365';
 import patchingRoutes from './routes/patching';
 import ceRoutes from './routes/ce';
 import softwareRoutes from './routes/software';
+import serverRoutes from './routes/servers';
 import mcpRoutes from './routes/mcp';
 import marketingRoutes from './routes/marketing';
 import networkRoutes from './routes/network';
@@ -161,7 +163,19 @@ app.get('/static/js/chat-widget.js', (_req, res, next) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
 });
-app.use('/static', express.static(path.join(__dirname, '../static')));
+// Static assets are versioned by content, not by hope. Serving /static/app.css with no
+// version on the URL meant every browser held whatever copy it last fetched — so a deploy
+// left one person with new markup and old CSS, another with both new, and a third with
+// neither, and the three of them disagreeing about what the Portal looks like. The stamp
+// is the mtime of app.css, so it changes exactly when the stylesheet does.
+let ASSET_V = 'dev';
+try {
+  ASSET_V = String(Math.floor(fs.statSync(path.join(__dirname, '../static/app.css')).mtimeMs)).slice(-9);
+} catch { /* falls back to 'dev' — worst case we are where we were before */ }
+app.use((_req, res, next) => { res.locals.assetV = ASSET_V; next(); });
+
+// Now that the URL changes when the file does, it is safe to let browsers keep it.
+app.use('/static', express.static(path.join(__dirname, '../static'), { maxAge: '30d', etag: true }));
 
 // ── PWA: manifest + service worker (SW served at root so it can scope the whole app) ─
 // cacheControl:false stops sendFile from setting its own cacheable Cache-Control that would
@@ -353,6 +367,7 @@ app.use('/', m365Routes);        // Microsoft 365 read-only panel per customer
 app.use('/', patchingRoutes);    // Windows Update reporting across the estate
 app.use('/', ceRoutes);          // Cyber Essentials assessment, actions and the end-of-life list
 app.use('/', softwareRoutes);    // Software across the estate: installed, behind, out of support
+app.use('/', serverRoutes);      // Servers: roles, AD, SQL, Hyper-V and what is worth a look
 app.use('/', reviewRoutes);
 app.use('/', insightsRoutes);
 app.use('/', itReportRoutes);     // Monthly IT Operations & Security Snapshot (staff)

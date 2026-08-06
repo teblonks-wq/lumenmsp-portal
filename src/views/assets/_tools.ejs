@@ -1,4 +1,18 @@
 <style>
+  /* Command progress. A determinate bar when the script can say how far along it is,
+     and a moving one when it cannot — the point is to distinguish "working" from
+     "hung", which a static spinner never did. */
+  .tool-prog { display:inline-flex; align-items:center; gap:8px; vertical-align:middle; }
+  .tool-prog-bar { position:relative; display:inline-block; width:130px; height:6px;
+                   background:var(--line); border-radius:3px; overflow:hidden; }
+  .tool-prog-bar i { position:absolute; inset:0 auto 0 0; display:block; height:100%;
+                     background:var(--lumen, #0ea5e9); border-radius:3px; transition:width .4s ease; }
+  .tool-prog-bar.indet i { width:40% !important; animation:toolProg 1.1s ease-in-out infinite; }
+  @keyframes toolProg { 0% { left:-40%; } 100% { left:100%; } }
+  .tool-prog-txt { font-size:11.5px; color:var(--muted); }
+  .tool-prog-tail { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11px; }
+</style>
+<style>
   /* Install-software lightbox. Fixed overlay rather than an inline panel: the search
      results are the whole job while it is open, and the page behind it is not. */
   .sw-modal { position:fixed; inset:0; z-index:900; background:rgba(15,23,42,.45);
@@ -344,14 +358,37 @@
       });
     }
 
+    // Live progress. Determinate when the script says how far along it is, a moving
+    // barber-pole when it does not — and the last line of output either way, because
+    // "Extracting cabinet 3 of 7" tells you more than any percentage.
+    function renderProgress(el, j, secs){
+      var pct = (j.progress_pct === 0 || j.progress_pct) ? Number(j.progress_pct) : null;
+      var tail = String(j.progress || '').split(/\r?\n/).filter(function(l){ return l.trim(); }).pop() || '';
+      var label = j.status === 'queued'
+        ? 'Waiting for the device to pick it up…'
+        : (pct !== null ? pct + '%' : 'Running');
+      var mins = Math.floor(secs / 60), t = mins ? mins + 'm ' + (secs % 60) + 's' : secs + 's';
+      el.innerHTML =
+        '<span class="tool-prog">' +
+          '<span class="tool-prog-bar' + (pct === null ? ' indet' : '') + '">' +
+            '<i style="width:' + (pct === null ? 100 : pct) + '%"></i>' +
+          '</span>' +
+          '<span class="tool-prog-txt">' + esc(label) + ' · ' + esc(t) +
+            (tail ? ' · <span class="tool-prog-tail">' + esc(tail.slice(0, 120)) + '</span>' : '') +
+          '</span>' +
+        '</span>';
+    }
+
     function poll(id, busyEl, tries){
       return new Promise(function(resolve, reject){
         function attempt(n){
           jsonFetch(BASE + '/result/' + id).then(function(j){
             if (!j.ok) return reject(new Error(j.error || 'Lost track of that command.'));
             if (j.status === 'queued' || j.status === 'running') {
-              if (n > 180) return reject(new Error('Timed out waiting for the device.'));
-              if (busyEl) busyEl.textContent = n < 3 ? 'Running on the device…' : 'Still running… (' + n + 's)';
+              // No hard ceiling here any more. The server expires a command that has gone
+              // quiet for three minutes; one that is still reporting is still working, and
+              // a patch install or a big MSI legitimately takes far longer than that.
+              if (busyEl) renderProgress(busyEl, j, n);
               return setTimeout(function(){ attempt(n + 1); }, 1000);
             }
             if (busyEl) busyEl.textContent = '';
@@ -443,7 +480,10 @@
       termOut.appendChild(waiting);
       term.scrollTop = term.scrollHeight;
 
-      run(kind, { script: cmd, run_as: runAsMode() }, null).then(function(r){
+      // The waiting line doubles as the progress element, so a long deployment typed in
+      // here shows the bar and its own last line of output instead of sitting on
+      // "running..." for ten minutes looking hung.
+      run(kind, { script: cmd, run_as: runAsMode() }, waiting).then(function(r){
         waiting.remove();
         var out = String(r.output || '');
         var k = out.lastIndexOf(CWD_MARK);

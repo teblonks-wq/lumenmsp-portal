@@ -248,18 +248,26 @@ router.get('/assets/:id/tools/result/:commandId', requireAuth, requireAdmin, asy
     // command then looks hours old and is expired the instant it is queued.
     const r = await pool.query(
       `SELECT id, kind, status, exit_code, output, finished_at,
-              EXTRACT(EPOCH FROM (NOW() - requested_at)) AS age_secs
+              progress, progress_pct, progress_at,
+              EXTRACT(EPOCH FROM (NOW() - requested_at)) AS age_secs,
+              -- Silence, not elapsed time, is what says a device has gone away. A patch
+              -- install can legitimately run for twenty minutes; what it does not do is
+              -- go three minutes without saying anything.
+              EXTRACT(EPOCH FROM (NOW() - COALESCE(progress_at, requested_at))) AS quiet_secs
          FROM agent_commands WHERE id=$1`, [commandId]);
     if (!r.rows.length) { res.status(404).json({ ok: false, error: 'Unknown command.' }); return; }
     const c = r.rows[0];
     // A device that went offline mid-command shouldn't leave the UI spinning forever.
-    const ageSecs = Number(c.age_secs) || 0;
-    if (['queued', 'running'].includes(c.status) && ageSecs > 180) {
+    const quietSecs = Number(c.quiet_secs) || 0;
+    if (['queued', 'running'].includes(c.status) && quietSecs > 180) {
       await pool.query("UPDATE agent_commands SET status='expired', payload=NULL WHERE id=$1 AND status IN ('queued','running')", [commandId]);
       res.json({ ok: true, status: 'expired', output: 'The device did not respond within 3 minutes. It may be offline or asleep.' });
       return;
     }
-    res.json({ ok: true, status: c.status, exit_code: c.exit_code, output: c.output || '' });
+    res.json({
+      ok: true, status: c.status, exit_code: c.exit_code, output: c.output || '',
+      progress: c.progress || '', progress_pct: c.progress_pct == null ? null : Number(c.progress_pct),
+    });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: 'Could not read the result.' });
   }

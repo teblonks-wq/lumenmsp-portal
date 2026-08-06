@@ -381,6 +381,100 @@ router.post('/agents/:id/mesh-install', requireAuth, requireAdmin, async (req: R
   }
 });
 
+// ── Is remote access ready on this machine, and if not, why not ─────────────────
+// The old answer was a red banner saying "not yet" and nothing you could do about it,
+// which left an engineer with a machine in front of them and no way forward. This works
+// out which of the several possible "not yet"s it actually is, so the page can either
+// offer the install or explain what is missing.
+export interface MeshStatus {
+  deviceId: number | null;
+  hostname: string | null;
+  hasNode: boolean;        // MeshCentral knows this machine — remote control will work
+  installed: boolean;      // we pushed the agent, but it may not have checked in yet
+  enabled: boolean;        // remote access switched on for this customer
+  hasPackage: boolean;     // this customer has an agent package built
+  customer: string | null;
+  pendingSince: Date | null;
+  failed: { at: Date | null; output: string } | null;
+}
+
+export async function meshStatus(assetId: number): Promise<MeshStatus | null> {
+  // Asset to agent device, matched the same way as everywhere else in the Portal:
+  // serial first because it survives a rename, hostname second.
+  const d = (await pool.query(
+    `SELECT ad.id, ad.hostname, ad.mesh_node_id, ad.mesh_installed,
+            COALESCE(c.mesh_enabled, true) AS enabled, c.mesh_agent_package_id, c.name AS customer
+       FROM customer_assets a
+       JOIN agent_devices ad
+         ON ad.customer_id = a.customer_id
+        AND ( (a.serial_number IS NOT NULL AND ad.serial_number = a.serial_number)
+              OR LOWER(ad.hostname) = LOWER(a.hostname) )
+       LEFT JOIN customers c ON c.id = ad.customer_id
+      WHERE a.id = $1 AND ad.revoked = false
+      ORDER BY (ad.mesh_node_id IS NOT NULL) DESC, ad.last_seen_at DESC NULLS LAST
+      LIMIT 1`, [assetId])).rows[0];
+
+  if (!d) return null;   // no agent on this machine at all — nothing to install onto
+
+  const pending = (await pool.query(
+    `SELECT requested_at FROM agent_commands
+      WHERE device_id=$1 AND kind='mesh.install' AND status IN ('queued','running')
+      ORDER BY id DESC LIMIT 1`, [d.id])).rows[0];
+
+  // Only worth surfacing a failure if nothing has succeeded since.
+  const failed = pending ? null : (await pool.query(
+    `SELECT finished_at, output FROM agent_commands
+      WHERE device_id=$1 AND kind='mesh.install' AND status='failed'
+        AND NOT EXISTS (SELECT 1 FROM agent_commands ok
+                         WHERE ok.device_id=$1 AND ok.kind='mesh.install'
+                           AND ok.status='done' AND ok.id > agent_commands.id)
+      ORDER BY id DESC LIMIT 1`, [d.id])).rows[0];
+
+  return {
+    deviceId: d.id,
+    hostname: d.hostname || null,
+    hasNode: !!d.mesh_node_id,
+    installed: !!d.mesh_installed,
+    enabled: !!d.enabled,
+    hasPackage: !!d.mesh_agent_package_id,
+    customer: d.customer || null,
+    pendingSince: pending ? pending.requested_at : null,
+    failed: failed ? { at: failed.finished_at, output: String(failed.output || '').slice(-600) } : null,
+  };
+}
+
+// Install it from the machine's own page — which is where you are standing when you find
+// out it is missing, rather than the Agents list.
+router.post('/assets/:id/mesh-install', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const back = `/assets/${id}`;
+  try {
+    const st = await meshStatus(id);
+    if (!st) { res.redirect(back + '?err=' + encodeURIComponent('This machine is not running the LumenMSP agent, so there is nothing to install onto yet.')); return; }
+    if (!st.enabled) { res.redirect(back + '?err=' + encodeURIComponent(`Remote access is switched off for ${st.customer || 'this customer'}.`)); return; }
+    if (!st.hasPackage) { res.redirect(back + '?err=' + encodeURIComponent(`${st.customer || 'This customer'} has no remote-access agent built yet — create it on the Agents page and it will install everywhere automatically.`)); return; }
+    if (st.hasNode) { res.redirect(back + '?msg=' + encodeURIComponent('Remote access is already working on this machine.')); return; }
+    if (st.pendingSince) { res.redirect(back + '?msg=' + encodeURIComponent('Already queued — it runs at the next check-in.')); return; }
+
+    // mesh_installed is set when the install command succeeds, so a machine that was
+    // installed but never appeared in MeshCentral needs the flag cleared to be retried.
+    if (st.installed) {
+      await pool.query('UPDATE agent_devices SET mesh_installed=false WHERE id=$1', [st.deviceId]);
+    }
+
+    const r = await queueMeshInstall(st.deviceId!, `${req.protocol}://${req.get('host')}`);
+    await logActivity(req.session.user!.id, 'mesh_install', 'customer_assets', id,
+      `Queued remote-access install on ${st.hostname}`);
+    res.redirect(back + '?msg=' + encodeURIComponent(
+      r === 'queued'
+        ? 'Installing remote access. It runs at the next check-in — about a minute on a machine that is switched on — and this page will show when it lands.'
+        : 'Could not queue it. Check the customer has a remote-access agent on the Agents page.'));
+  } catch (e: any) {
+    console.error('[mesh] asset install failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not queue the remote-access install.'));
+  }
+});
+
 // ── Remote control ──────────────────────────────────────────────────────────────
 // One link from an asset straight into that machine's desktop. viewmode=11 opens the
 // desktop tab; hide=31 strips MeshCentral's own navigation, so it reads as part of the

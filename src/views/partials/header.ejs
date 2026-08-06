@@ -10,7 +10,7 @@
   <meta name="theme-color" content="#0ea5b7">
   <meta name="application-name" content="Lumen MSP Portal">
   <link rel="manifest" href="/portal.webmanifest">
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v=<%= typeof assetV !== 'undefined' ? assetV : '0' %>">
   <style>
     /* Flash the Chat nav red while a website chat is waiting to be claimed. */
     @keyframes navChatFlash { 0%, 100% { background: transparent; } 50% { background: var(--bad-bright); } }
