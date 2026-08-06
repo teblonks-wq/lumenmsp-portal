@@ -347,11 +347,19 @@ router.post('/agent-packages', requireAuth, requireAdmin, pkgUpload.single('msi'
   const name = String(req.body.name || '').trim() || (f?.originalname || 'Package');
   const url = String(req.body.url || '').trim();
   const args = String(req.body.args || '/qn /norestart').trim().slice(0, 200);
+  // The Agents page posts this as a normal form and wants a redirect; the Install
+  // software lightbox posts it with fetch() and wants the new package's id back so it can
+  // deploy it straight away. Same endpoint, because they are the same operation.
+  const wantsJson = String(req.query.json || '') === '1' || req.get('x-requested-with') === 'XMLHttpRequest';
+  const fail = (m: string) => {
+    if (wantsJson) res.status(400).json({ ok: false, error: m });
+    else res.redirect('/agents?err=' + encodeURIComponent(m));
+  };
   try {
-    if (!f && !url) { res.redirect('/agents?err=' + encodeURIComponent('Upload an MSI or give a URL.')); return; }
+    if (!f && !url) { fail('Upload an MSI or give a URL.'); return; }
     if (url && !/^https:\/\//i.test(url)) {
       if (f) { try { fs.unlinkSync(f.path); } catch { /* ignore */ } }
-      res.redirect('/agents?err=' + encodeURIComponent('Package URL must be https://')); return;
+      fail('Package URL must be https://'); return;
     }
     let sha: string | null = null;
     if (f) {
@@ -361,19 +369,21 @@ router.post('/agent-packages', requireAuth, requireAdmin, pkgUpload.single('msi'
       const head = Buffer.alloc(4); fs.readSync(fd, head, 0, 4, 0); fs.closeSync(fd);
       if (head.toString('hex') !== 'd0cf11e0') {
         try { fs.unlinkSync(f.path); } catch { /* ignore */ }
-        res.redirect('/agents?err=' + encodeURIComponent('That file is not an MSI.')); return;
+        fail('That file is not an MSI.'); return;
       }
       sha = crypto.createHash('sha256').update(fs.readFileSync(f.path)).digest('hex');
     }
-    await pool.query(
+    const ins = await pool.query(
       `INSERT INTO agent_packages (name, version, file_name, url, size_bytes, sha256, install_args, uploaded_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
       [name.slice(0, 200), String(req.body.version || '').trim().slice(0, 50) || null,
        f ? path.basename(f.path) : null, url || null, f ? f.size : null, sha, args, req.session.user!.id]);
     await logActivity(req.session.user!.id, 'agent_package', null, null, `Added deployable package: ${name}`);
+    if (wantsJson) { res.json({ ok: true, id: ins.rows[0].id, name: name.slice(0, 200) }); return; }
     res.redirect('/agents?msg=' + encodeURIComponent(`Package "${name}" is ready to deploy from any device's Tools tab.`));
   } catch (e: any) {
-    res.redirect('/agents?err=' + encodeURIComponent('Could not save that package.'));
+    console.error('[agent-packages] save failed:', e.message);
+    fail('Could not save that package.');
   }
 });
 

@@ -552,11 +552,15 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
       )).rows.map((d: any) => ({ ...d, remote_url: d.external_id ? buildRemoteUrl(assetTpl, { agentId: d.external_id, deviceGuid: d.device_guid }) : null }));
     } catch { /* assigned_contact_id ships in the same deploy as this code */ }
   }
+  // Our own mailboxes, so Reply-to-all on a message doesn't put us in our own To line
+  // and start a loop with the inbox sync.
+  const ourDomains = Array.from(new Set([config.GRAPH_SYNC_MAILBOX, config.GRAPH_SEND_FROM, config.GRAPH_TEAMS_SENDER]
+    .map((a) => String(a || '').split('@')[1] || '').filter(Boolean).map((d) => d.toLowerCase())));
   const aiCatOn = await aiTicketCategoryEnabled();
   await ensureReplyTemplates().catch(() => {});
   const replyTemplates = await listReplyTemplates().catch(() => [] as any[]);
 
-  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, requesterAssets, subjectInvoice, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, agentSendOk, teamsChatId, aiCatOn, replyTemplates, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
+  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, requesterAssets, subjectInvoice, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, agentSendOk, teamsChatId, aiCatOn, replyTemplates, ourDomains, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
 });
 
 // ── Update fields ────────────────────────────────────────────────────────────────

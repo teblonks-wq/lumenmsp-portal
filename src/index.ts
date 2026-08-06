@@ -48,6 +48,7 @@ import meshRoutes from './routes/mesh';
 import m365Routes from './routes/m365';
 import patchingRoutes from './routes/patching';
 import ceRoutes from './routes/ce';
+import softwareRoutes from './routes/software';
 import mcpRoutes from './routes/mcp';
 import marketingRoutes from './routes/marketing';
 import networkRoutes from './routes/network';
@@ -63,6 +64,7 @@ import { startMsp360Sync } from './lib/msp360';
 import { startGraphConsentCheck } from './lib/graph-consent';
 import { startAzureBackupSync } from './lib/azure-backup';
 import { startAcronisSync } from './lib/acronis';
+import { startEolSync } from './lib/eol-sync';
 import { resumeMassMailer } from './lib/mass-mailer';
 import { hasFinanceAccess, hasVaultAccess } from './middleware/auth';
 import { startRecurringBilling } from './lib/recurring-billing';
@@ -350,6 +352,7 @@ app.use('/', meshRoutes);        // MeshCentral: bridge API (shared-secret) + re
 app.use('/', m365Routes);        // Microsoft 365 read-only panel per customer
 app.use('/', patchingRoutes);    // Windows Update reporting across the estate
 app.use('/', ceRoutes);          // Cyber Essentials assessment, actions and the end-of-life list
+app.use('/', softwareRoutes);    // Software across the estate: installed, behind, out of support
 app.use('/', reviewRoutes);
 app.use('/', insightsRoutes);
 app.use('/', itReportRoutes);     // Monthly IT Operations & Security Snapshot (staff)
@@ -431,4 +434,5 @@ server.listen(config.PORT, () => {
   startGraphConsentCheck(); // Graph: which customer tenants have consented the portal app (Customers list badge)
   startAzureBackupSync();   // Azure Backup: Recovery Services vaults per customer tenant (needs Reader RBAC per subscription)
   startAcronisSync();       // Acronis: per-tenant protected workloads + storage (linked like MSP360)
+  startEolSync();           // End-of-life dates pulled nightly from endoflife.date
 });

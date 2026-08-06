@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
+import { resolvePolicy, nextWindowStart } from '../lib/patch-policy';
 
 // ── Patch management ────────────────────────────────────────────────────────────
 // Reporting is live; enforcement is not. Nothing in this file installs an update or
@@ -61,6 +62,7 @@ router.get('/patching', requireAuth, requireAdmin, async (req: Request, res: Res
     // rather than "which box is behind".
     const updates = (await pool.query(
       `SELECT dp.title, dp.kb, dp.severity, dp.source,
+              MAX(dp.categories) AS categories,
               count(*)::int AS devices,
               MAX(EXTRACT(DAY FROM (NOW() - dp.first_seen)))::int AS oldest_days
          FROM device_patches dp
@@ -95,6 +97,69 @@ router.get('/patching', requireAuth, requireAdmin, async (req: Request, res: Res
       summary: { devices: 0, scanned: 0, neverScanned: 0, pending: 0, critical: 0, needReboot: 0, compliant: 0 },
       error: e.message,
     });
+  }
+});
+
+
+// ── Deploy, by hand ─────────────────────────────────────────────────────────────
+// Separate from the policy engine on purpose. A policy decides what happens on its own
+// schedule; this is an engineer deciding it happens now, and the second has to work
+// whether or not the first is switched on — which, today, it is not.
+//
+// Nothing here reboots anything. Windows reports that a restart is outstanding, the
+// Portal shows it, and choosing when to restart a customer's server stays a human call.
+router.post('/patching/device/:id/install', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  const when = String(req.body.when || 'now') === 'window' ? 'window' : 'now';
+  const raw = req.body.update_ids;
+  const picked = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((v: any) => String(v)).filter(Boolean);
+  const back = `/patching/device/${id}`;
+  const go = (m: string) => res.redirect(back + '?msg=' + encodeURIComponent(m));
+
+  try {
+    const rows = picked.length
+      ? (await pool.query(
+          `SELECT update_id, source, title FROM device_patches
+            WHERE device_id=$1 AND update_id = ANY($2::text[])`, [id, picked])).rows
+      : (await pool.query(
+          `SELECT update_id, source, title FROM device_patches WHERE device_id=$1`, [id])).rows;
+
+    if (!rows.length) { go('Nothing selected, and nothing pending.'); return; }
+
+    const at = when === 'window' ? nextWindowStart(await resolvePolicy(id)) : null;
+    const windows = rows.filter((r: any) => (r.source || 'windows') === 'windows').map((r: any) => r.update_id);
+    const apps = rows.filter((r: any) => r.source === 'winget' || r.source === 'choco');
+
+    let queued = 0;
+    if (windows.length) {
+      // One command for the whole set: Windows Update downloads and installs a batch far
+      // better than it handles the same updates one at a time.
+      await pool.query(
+        `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by, run_after)
+         VALUES ($1,'patch.install',$2,'queued',$3,$4)`,
+        [id, JSON.stringify({ update_ids: windows }), user.id, at]);
+      queued++;
+    }
+    for (const a of apps) {
+      const bare = String(a.update_id).replace(/^(winget|choco):/, '');
+      await pool.query(
+        `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by, run_after)
+         VALUES ($1,$2,$3,'queued',$4,$5)`,
+        [id, a.source === 'choco' ? 'choco.upgrade' : 'winget.upgrade',
+         JSON.stringify({ id: bare, name: a.title }), user.id, at]);
+      queued++;
+    }
+
+    await logActivity(user.id, 'patch_install', 'agent_devices', id,
+      `Queued ${windows.length} Windows update(s) and ${apps.length} application update(s)`);
+
+    go(`Queued ${windows.length} Windows update${windows.length === 1 ? '' : 's'} and ${apps.length} application update${apps.length === 1 ? '' : 's'}. `
+      + (at ? `Held until ${at.toLocaleString('en-GB')}.` : 'Going out at the next check-in — within a minute for a machine that is on.')
+      + ' Nothing will be restarted.');
+  } catch (e: any) {
+    console.error('[patching] install failed:', e.message);
+    go('Could not queue: ' + e.message);
   }
 });
 

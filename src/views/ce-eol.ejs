@@ -2,27 +2,117 @@
 <%
 function d(v) { return v ? new Date(v).toISOString().slice(0, 10) : ''; }
 var today = new Date().toISOString().slice(0, 10);
+var autoRows = rows.filter(function (r) { return r.source === 'endoflife.date'; }).length;
 %>
 
-<div class="page-header">
-  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/ce">← Cyber Essentials</a></p>
-  <h1 style="margin:0;">End-of-life list</h1>
-  <p class="muted" style="margin:4px 0 0;">
-    Hand-maintained on purpose. Vendors publish these dates inconsistently, move them, and bury them in
-    release notes — a list we own is one we can defend to an assessor. Every assessment run reads it fresh.
-  </p>
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/ce">← Cyber Essentials</a></p>
+    <h1 style="margin:0;">End-of-life dates</h1>
+    <p class="muted" style="margin:4px 0 0;">
+      Pulled nightly at 04:20 from endoflife.date — nothing here is typed by hand unless we add it.
+      This answers "is it still supported", which is a different question from "is there a newer version";
+      WinGet and Chocolatey answer that one per machine on the <a class="row-link" href="/software">Software</a> page.
+    </p>
+  </div>
+  <form method="post" action="/ce/eol/sync" style="margin:0;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <button class="btn btn-primary" type="submit">↻ Sync now</button>
+  </form>
 </div>
 
 <% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
 <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
 
+<% if (!autoRows) { %>
+<div class="alert" style="border:1px solid var(--warn-line);">
+  <strong>The feed has never run.</strong>
+  <span class="muted">Press Sync now — until it does, only hand-written rows are being checked, and most software will read as supported when it is not.</span>
+</div>
+<% } else if (typeof lastSync !== 'undefined' && lastSync && lastSync.at) { %>
+<p class="muted" style="margin:0 0 14px;font-size:12px;">
+  Last synced <%= new Date(lastSync.at).toLocaleString('en-GB') %> — <%= lastSync.rows %> entries from <%= lastSync.products %> products<% if (lastSync.failed && lastSync.failed.length) { %>, no data for <%= lastSync.failed.join(', ') %><% } %>.
+</p>
+<% } %>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:20px 24px 0;"><h2><%= rows.length %> entries</h2></div>
+  <p class="muted" style="margin:6px 24px 0;font-size:12px;">
+    Editing an automatic row freezes it, so the nightly sync leaves it alone — that is for when a vendor
+    announces an extension before the feed catches up. Anything else you change would simply be undone overnight.
+  </p>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>What</th><th>Source</th><th>Matches</th><th>Support ends</th><th>Then</th><th></th></tr></thead>
+      <tbody>
+        <% if (!rows.length) { %><tr><td colspan="6"><div class="empty-state">Nothing in the list yet — press Sync now.</div></td></tr><% } %>
+        <% rows.forEach(function (r) { %>
+          <tr style="<%= r.active ? '' : 'opacity:.45;' %>">
+            <td>
+              <%= r.name %>
+              <% if (!r.active) { %><span class="badge badge-inactive">off</span><% } %>
+              <% if (r.overridden) { %><span class="badge badge-primary" title="Frozen — the nightly sync will not change this row">frozen</span><% } %>
+              <% if (r.guidance) { %><div class="muted" style="font-size:12px;margin-top:3px;"><%= r.guidance %></div><% } %>
+            </td>
+            <td class="muted" style="font-size:12px;">
+              <% if (r.source === 'endoflife.date') { %><span class="badge badge-active">auto</span><% } else { %><span class="badge badge-inactive">ours</span><% } %>
+              <div style="margin-top:2px;"><%= r.category %></div>
+            </td>
+            <td class="muted" style="font-size:12px;">
+              <code><%= r.match_value %></code>
+              <% if (r.version_max) { %> (≤ <%= r.version_max %>)<% } %>
+            </td>
+            <td style="<%= d(r.eol_date) && d(r.eol_date) <= today ? 'color:var(--bad-fg);font-weight:600;' : '' %>">
+              <%= d(r.eol_date) || '—' %>
+            </td>
+            <td><span class="badge <%= r.severity === 'fail' ? 'badge-failed' : 'badge-primary' %>"><%= r.severity %></span> <span class="muted" style="font-size:12px;"><%= r.action %></span></td>
+            <td style="text-align:right;white-space:nowrap;">
+              <form method="post" action="/ce/eol" style="display:inline;">
+                <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+                <input type="hidden" name="id" value="<%= r.id %>">
+                <input type="hidden" name="category" value="<%= r.category %>">
+                <input type="hidden" name="vendor" value="<%= r.vendor || '' %>">
+                <input type="hidden" name="name" value="<%= r.name %>">
+                <input type="hidden" name="match_type" value="<%= r.match_type %>">
+                <input type="hidden" name="match_value" value="<%= r.match_value %>">
+                <input type="hidden" name="version_max" value="<%= r.version_max || '' %>">
+                <input type="hidden" name="eol_date" value="<%= d(r.eol_date) %>">
+                <input type="hidden" name="severity" value="<%= r.severity %>">
+                <input type="hidden" name="action" value="<%= r.action %>">
+                <input type="hidden" name="replacement" value="<%= r.replacement || '' %>">
+                <input type="hidden" name="guidance" value="<%= r.guidance || '' %>">
+                <input type="hidden" name="ce_control" value="<%= r.ce_control %>">
+                <input type="hidden" name="active" value="<%= r.active ? '' : '1' %>">
+                <input type="hidden" name="overridden" value="<%= r.overridden ? '' : '1' %>">
+                <button class="btn btn-sm" type="submit" title="<%= r.active ? 'Stop checking for this' : 'Start checking for this again' %>"><%= r.active ? 'Turn off' : 'Turn on' %></button>
+              </form>
+              <% if (r.source !== 'endoflife.date') { %>
+              <form method="post" action="/ce/eol" style="display:inline;" onsubmit="return confirm('Remove this entry?');">
+                <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+                <input type="hidden" name="id" value="<%= r.id %>">
+                <input type="hidden" name="action_kind" value="delete">
+                <button class="btn btn-sm" type="submit">Remove</button>
+              </form>
+              <% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <div class="card">
-  <div class="card-header"><h2>Add an entry</h2></div>
+  <div class="card-header"><h2>Add something the feed has never heard of</h2></div>
+  <p class="muted" style="margin:0 0 12px;font-size:13px;">
+    Line-of-business software — Sage, a vendor's own utility, a bespoke app. endoflife.date will never
+    carry these, so they stay ours. The nightly sync does not touch anything added here.
+  </p>
   <form method="post" action="/ce/eol" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;align-items:end;">
     <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
     <div class="form-group" style="margin:0;">
       <label>What it is</label>
-      <input class="input" name="name" placeholder="Java 8" required style="width:100%;">
+      <input class="input" name="name" placeholder="Sage 50 v27" required style="width:100%;">
     </div>
     <div class="form-group" style="margin:0;">
       <label>Category</label>
@@ -30,7 +120,6 @@ var today = new Date().toISOString().slice(0, 10);
         <option value="app">Application</option>
         <option value="os">Operating system</option>
         <option value="runtime">Runtime</option>
-        <option value="browser">Browser</option>
         <option value="database">Database</option>
         <option value="server">Server product</option>
       </select>
@@ -46,11 +135,11 @@ var today = new Date().toISOString().slice(0, 10);
     </div>
     <div class="form-group" style="margin:0;">
       <label>Text to match</label>
-      <input class="input" name="match_value" placeholder="Java 8" required style="width:100%;">
+      <input class="input" name="match_value" placeholder="Sage 50" required style="width:100%;">
     </div>
     <div class="form-group" style="margin:0;">
       <label>Only up to version</label>
-      <input class="input" name="version_max" placeholder="optional, e.g. 8.999" style="width:100%;">
+      <input class="input" name="version_max" placeholder="optional — e.g. 27.9999" style="width:100%;">
     </div>
     <div class="form-group" style="margin:0;">
       <label>Support ends</label>
@@ -74,52 +163,10 @@ var today = new Date().toISOString().slice(0, 10);
     </div>
     <div class="form-group" style="margin:0;grid-column:1/-1;">
       <label>What to actually do about it</label>
-      <input class="input" name="guidance" placeholder="Uninstall it — anything that still needs Java 8 should be on the vendor's current build." style="width:100%;">
+      <input class="input" name="guidance" placeholder="Upgrade to v30 — the v27 database format is not supported on Server 2022." style="width:100%;">
     </div>
     <div><button class="btn btn-primary" type="submit">Add</button></div>
   </form>
 </div>
-
-<div class="card" style="padding:0;">
-  <div class="card-header" style="padding:20px 24px 0;"><h2><%= rows.length %> entries</h2></div>
-  <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>What</th><th>Category</th><th>Matches</th><th>Support ends</th><th>Then</th><th></th></tr></thead>
-      <tbody>
-        <% if (!rows.length) { %><tr><td colspan="6"><div class="empty-state">Nothing in the list yet.</div></td></tr><% } %>
-        <% rows.forEach(function (r) { %>
-          <tr style="<%= r.active ? '' : 'opacity:.5;' %>">
-            <td>
-              <%= r.name %>
-              <% if (r.guidance) { %><div class="muted" style="font-size:12px;margin-top:3px;"><%= r.guidance %></div><% } %>
-            </td>
-            <td class="muted"><%= r.category %></td>
-            <td class="muted" style="font-size:12px;">
-              <%= r.match_type %>: <code><%= r.match_value %></code>
-              <% if (r.version_max) { %> (≤ <%= r.version_max %>)<% } %>
-            </td>
-            <td class="<%= d(r.eol_date) && d(r.eol_date) <= today ? '' : 'muted' %>" style="<%= d(r.eol_date) && d(r.eol_date) <= today ? 'color:var(--bad-fg);font-weight:600;' : '' %>">
-              <%= d(r.eol_date) || '—' %>
-            </td>
-            <td><span class="badge <%= r.severity === 'fail' ? 'badge-failed' : 'badge-primary' %>"><%= r.severity %></span> <span class="muted" style="font-size:12px;"><%= r.action %></span></td>
-            <td style="text-align:right;">
-              <form method="post" action="/ce/eol" style="display:inline;" onsubmit="return confirm('Remove this entry?');">
-                <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
-                <input type="hidden" name="id" value="<%= r.id %>">
-                <input type="hidden" name="action_kind" value="delete">
-                <button class="btn btn-sm" type="submit">Remove</button>
-              </form>
-            </td>
-          </tr>
-        <% }); %>
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<p class="muted" style="margin:14px 0 0;font-size:12px;">
-  Dates here are ours to keep right. Worth a look every few months, and any time a vendor announces
-  an extension — an entry with a stale date turns into a job nobody needed to do.
-</p>
 
 <%- include('partials/footer') %>

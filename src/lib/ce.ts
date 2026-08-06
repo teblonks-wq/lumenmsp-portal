@@ -118,6 +118,27 @@ export function eolMatches(row: EolRow, name: string, version: string | null): b
   return true;
 }
 
+/**
+ * The one end-of-life row that actually describes this installation.
+ *
+ * Several rows can match the same name — "Node.js" has a row per major version, all of
+ * them matching the word "Node.js" and differing only in version_max. Reporting every
+ * match would tell you the machine is running four end-of-life versions of one product.
+ * The most specific row wins: the tightest version ceiling that still covers what is
+ * installed, and failing that the longest name match.
+ */
+export function bestEolMatch(rows: EolRow[], name: string, version: string | null): EolRow | null {
+  const hits = (rows || []).filter((r) => r.category !== 'os' && eolMatches(r, name, version));
+  if (!hits.length) return null;
+
+  const capped = hits.filter((r) => r.version_max);
+  if (capped.length && version) {
+    return capped.reduce((best, r) => (vcmp(r.version_max!, best.version_max!) < 0 ? r : best));
+  }
+  return hits.reduce((best, r) =>
+    (String(r.match_value).length > String(best.match_value).length ? r : best));
+}
+
 // ── the rules ───────────────────────────────────────────────────────────────────
 
 export function evaluate(facts: any, ctx: CeContext): CeFinding[] {
@@ -449,14 +470,15 @@ export function evaluate(facts: any, ctx: CeContext): CeFinding[] {
     }
   }
 
-  // Installed software against the end-of-life list
+  // Installed software against the end-of-life list. One finding per row, not per
+  // machine-copy: a title installed twice is still one thing to deal with.
   const sw = ctx.software || [];
   const hit = new Set<number>();
   for (const app of sw) {
-    for (const row of eol) {
-      if (row.category === 'os' || row.category === 'runtime') continue;
+    const row = bestEolMatch(eol, app.name, app.version || null);
+    {
+      if (!row) continue;
       if (hit.has(row.id)) continue;
-      if (!eolMatches(row, app.name, app.version)) continue;
       hit.add(row.id);
       const past = isPast(row.eol_date);
       add({ control: (row.ce_control as any) || 'patch', rule: `eol.${row.id}`,

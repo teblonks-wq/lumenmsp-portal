@@ -1,3 +1,32 @@
+<style>
+  /* Install-software lightbox. Fixed overlay rather than an inline panel: the search
+     results are the whole job while it is open, and the page behind it is not. */
+  .sw-modal { position:fixed; inset:0; z-index:900; background:rgba(15,23,42,.45);
+              align-items:flex-start; justify-content:center; padding:6vh 16px; }
+  .sw-sheet { background:var(--surface,#fff); border-radius:14px; width:min(760px,100%);
+              max-height:88vh; display:flex; flex-direction:column; overflow:hidden;
+              box-shadow:0 24px 60px rgba(15,23,42,.28); }
+  .sw-head  { display:flex; align-items:center; justify-content:space-between; gap:12px;
+              padding:16px 20px; border-bottom:1px solid var(--line); }
+  .sw-body  { padding:16px 20px 20px; overflow:auto; }
+  .sw-searchrow { display:flex; gap:8px; }
+  .sw-searchrow .input { flex:1; }
+  .sw-row   { display:flex; align-items:center; gap:12px; padding:10px 4px;
+              border-bottom:1px solid var(--line); }
+  .sw-row.done { opacity:.55; }
+  .sw-name  { flex:1; min-width:0; font-size:13.5px; font-weight:600; display:flex; flex-direction:column; }
+  .sw-id    { font-weight:400; font-size:11.5px; color:var(--muted);
+              font-family:ui-monospace,Menlo,Consolas,monospace; overflow-wrap:anywhere; }
+  .sw-ver   { font-size:12px; color:var(--muted); white-space:nowrap; }
+  .sw-install { padding:4px 14px; font-size:12px; }
+  .sw-badge { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600;
+              border-radius:6px; padding:3px 9px; white-space:nowrap; }
+  .sw-wg    { background:#e8f1fb; color:#1a5fb4; border:1px solid #bcd7f5; }
+  .sw-ch    { background:#f4ece4; color:#6b4423; border:1px solid #e0cdb8; }
+  .sw-note  { font-size:12px; color:var(--warn-fg); padding:8px 4px; }
+  .sw-msi   { margin-top:18px; border-top:1px solid var(--line); padding-top:12px; }
+  .sw-msi summary { cursor:pointer; font-size:13px; font-weight:600; }
+</style>
 <%
   // Remote Tools tab — admin only. Everything here runs as SYSTEM on the customer's
   // machine via the LumenMSP Agent, so the whole panel is hidden for non-admins and
@@ -103,63 +132,65 @@
     <p class="muted" id="softAge" style="font-size:11.5px;margin:0;"></p>
     <div id="softwareResult"></div>
 
-    <div id="installBox" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:8px;">
-      <h4 style="margin:0 0 8px;font-size:13px;">Install an MSI</h4>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-        <label style="flex:2;min-width:240px;font-size:12px;">From the package library
-          <select class="input" id="pkgSelect" style="font-size:12.5px;"><option value="">— choose —</option></select>
-        </label>
-        <span class="muted" style="font-size:12px;">or</span>
-        <label style="flex:2;min-width:240px;font-size:12px;">Direct MSI URL (https)
-          <input class="input" id="pkgUrl" placeholder="https://…/app.msi" style="font-size:12.5px;">
-        </label>
-        <label style="width:150px;font-size:12px;">msiexec args
-          <input class="input" id="pkgArgs" value="/qn /norestart" style="font-size:12.5px;">
-        </label>
-        <button class="btn btn-primary" type="button" id="pkgGo">Install</button>
-      </div>
-      <p class="muted" style="font-size:11.5px;margin:8px 0 0;">Upload MSIs to the library on the <a class="row-link" href="/agents">Agents page</a>.</p>
+    <!-- Install software.
+         One search box, both package managers at once. The old screen had three separate
+         sections and made you copy a package id from a wall of text into a second box,
+         which is precisely the sort of thing nobody does twice. -->
+    <div id="swModal" class="sw-modal" style="display:none;">
+      <div class="sw-sheet" role="dialog" aria-modal="true" aria-label="Install software">
+        <div class="sw-head">
+          <div>
+            <h3 style="margin:0;font-size:15px;">Install software</h3>
+            <p class="muted" style="margin:2px 0 0;font-size:12px;">on <%= asset.hostname %></p>
+          </div>
+          <button type="button" class="btn" id="swClose" title="Close" style="padding:2px 10px;">&#10005;</button>
+        </div>
 
-      <hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">
-      <h4 style="margin:0 0 8px;font-size:13px;">Or install from WinGet</h4>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-        <label style="flex:2;min-width:220px;font-size:12px;">Search the WinGet repository
-          <input class="input" id="wgQuery" placeholder="e.g. 7zip, notepad++, adobe reader" style="font-size:12.5px;">
-        </label>
-        <button class="btn" type="button" id="wgSearch">Search</button>
-        <label style="flex:2;min-width:220px;font-size:12px;">Package id to install
-          <input class="input" id="wgId" placeholder="e.g. 7zip.7zip" style="font-size:12.5px;">
-        </label>
-        <button class="btn btn-primary" type="button" id="wgInstall">Install</button>
-        <button class="btn" type="button" id="wgUpgradable" title="List packages with updates available">Updates available</button>
-        <button class="btn" type="button" id="wgUpgradeAll">Update all</button>
-      </div>
-      <div class="tool-out" id="wgOut"></div>
-      <p class="muted" style="font-size:11.5px;margin:8px 0 0;">
-        Installs machine-wide (<code>--scope machine</code>) so the software is there for every user, not just whoever is signed in.
-        WinGet ships as part of App Installer; if a device does not have it, the tool says so.
-      </p>
+        <div class="sw-body">
+          <div class="sw-searchrow">
+            <input class="input" id="swQ" placeholder="Search for anything &mdash; spotify, 7-zip, chrome, teams&hellip;" autocomplete="off" style="font-size:14px;padding:9px 12px;">
+            <button class="btn btn-primary" type="button" id="swGo" style="padding:9px 18px;">Search</button>
+          </div>
+          <p class="muted" id="swHint" style="font-size:12px;margin:8px 2px 0;">
+            Asks WinGet and Chocolatey on this machine at the same time, so you see what each can actually install.
+          </p>
 
-      <hr style="border:none;border-top:1px solid var(--line);margin:14px 0;">
-      <h4 style="margin:0 0 8px;font-size:13px;">Or install from Chocolatey</h4>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
-        <label style="flex:2;min-width:220px;font-size:12px;">Search Chocolatey
-          <input class="input" id="chQuery" placeholder="e.g. googlechrome, vlc, firefox" style="font-size:12.5px;">
-        </label>
-        <button class="btn" type="button" id="chSearch">Search</button>
-        <label style="flex:2;min-width:220px;font-size:12px;">Package name to install
-          <input class="input" id="chId" placeholder="e.g. googlechrome" style="font-size:12.5px;">
-        </label>
-        <button class="btn btn-primary" type="button" id="chInstall">Install</button>
-        <button class="btn" type="button" id="chOutdated" title="List Chocolatey packages with updates available">Updates available</button>
-        <button class="btn" type="button" id="chUpgradeAll">Update all</button>
-        <button class="btn" type="button" id="chBootstrap" title="Install Chocolatey itself on this device">Install Chocolatey</button>
+          <div id="swResults" style="margin-top:12px;"></div>
+
+          <details class="sw-msi">
+            <summary>Have an MSI instead?</summary>
+            <div style="padding:12px 2px 2px;">
+              <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+                <label style="flex:2;min-width:220px;font-size:12px;">From the package library
+                  <select class="input" id="pkgSelect" style="font-size:12.5px;"><option value="">&mdash; choose &mdash;</option></select>
+                </label>
+                <span class="muted" style="font-size:12px;padding-bottom:8px;">or</span>
+                <label style="flex:2;min-width:220px;font-size:12px;">Direct MSI URL (https)
+                  <input class="input" id="pkgUrl" placeholder="https://&hellip;/app.msi" style="font-size:12.5px;">
+                </label>
+                <label style="width:140px;font-size:12px;">msiexec args
+                  <input class="input" id="pkgArgs" value="/qn /norestart" style="font-size:12.5px;">
+                </label>
+                <button class="btn btn-primary" type="button" id="pkgGo">Install</button>
+              </div>
+
+              <div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--line);display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+                <label style="flex:2;min-width:240px;font-size:12px;">Upload an MSI
+                  <input class="input" type="file" id="pkgFile" accept=".msi,application/x-msi" style="font-size:12.5px;">
+                </label>
+                <label style="flex:1;min-width:160px;font-size:12px;">Call it
+                  <input class="input" id="pkgFileName" placeholder="e.g. Sage 50 v30" style="font-size:12.5px;">
+                </label>
+                <button class="btn" type="button" id="pkgUpload">Upload &amp; install</button>
+                <span class="muted" id="pkgUpMsg" style="font-size:12px;"></span>
+              </div>
+              <p class="muted" style="font-size:11.5px;margin:8px 0 0;">
+                Uploads join the library, so the next machine that needs it is one click rather than another upload.
+              </p>
+            </div>
+          </details>
+        </div>
       </div>
-      <div class="tool-out" id="chOut"></div>
-      <p class="muted" style="font-size:11.5px;margin:8px 0 0;">
-        Chocolatey has to be present on the device first &mdash; use <strong>Install Chocolatey</strong> if the tool reports it missing.
-        Packages are community-maintained, so check what you are installing.
-      </p>
     </div>
   </div>
 
@@ -582,89 +613,146 @@
         .catch(function(err){ alert(err.message); b.disabled = false; });
     });
 
-    // ── winget ─────────────────────────────────────────────────────────────────
-    var wgOut = document.getElementById('wgOut');
-    function wgRun(kind, body, note){
-      wgOut.textContent = note || 'Working…';
-      run(kind, body || {}, softwareBusy).then(function(r){
-        wgOut.textContent = (r.output || '(no output)').trim();
-      }).catch(function(e){ wgOut.textContent = e.message; });
+    // ── Install software ───────────────────────────────────────────────────────
+    // One search, both managers, results side by side. Each row installs itself — no
+    // copying a package id from one box into another, which is what the old three-panel
+    // version asked for and nobody did twice.
+    var swModal = document.getElementById('swModal');
+    var swResults = document.getElementById('swResults');
+    var swPending = 0;
+
+    function swOpen(on){
+      swModal.style.display = on ? 'flex' : 'none';
+      if (!on) return;
+      document.getElementById('swQ').focus();
+      if (swModal._loaded) return;
+      swModal._loaded = true;
+      jsonFetch('/agent-packages.json').then(function(j){
+        if (!j.ok) return;
+        var sel = document.getElementById('pkgSelect');
+        j.rows.forEach(function(p){
+          var o = document.createElement('option');
+          o.value = p.id;
+          o.textContent = p.name + (p.version ? ' ' + p.version : '') + (p.file_name ? '' : ' (URL)');
+          sel.appendChild(o);
+        });
+      }).catch(function(){ /* the library is optional */ });
     }
-    document.getElementById('wgSearch').addEventListener('click', function(){
-      var q = document.getElementById('wgQuery').value.trim();
-      if (!q) { alert('Type something to search for.'); return; }
-      wgRun('winget.search', { q: q }, 'Searching the WinGet repository…');
-    });
-    document.getElementById('wgQuery').addEventListener('keydown', function(e){
-      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('wgSearch').click(); }
-    });
-    document.getElementById('wgInstall').addEventListener('click', function(){
-      var id = document.getElementById('wgId').value.trim();
-      if (!id) { alert('Enter the package id from the search results (the Id column).'); return; }
-      if (!confirm('Install "' + id + '" on <%= asset.hostname %> for all users?')) return;
-      wgRun('winget.install', { id: id }, 'Installing ' + id + '… this can take a few minutes.');
-    });
-    document.getElementById('wgUpgradable').addEventListener('click', function(){
-      wgRun('winget.upgradable', {}, 'Checking for updates…');
-    });
-    document.getElementById('wgUpgradeAll').addEventListener('click', function(){
-      if (!confirm('Update every WinGet package on <%= asset.hostname %>?\n\nThis can take a while and may restart applications.')) return;
-      wgRun('winget.upgrade', {}, 'Updating everything… this can take several minutes.');
+    document.getElementById('softInstall').addEventListener('click', function(){ swOpen(true); });
+    document.getElementById('swClose').addEventListener('click', function(){ swOpen(false); });
+    swModal.addEventListener('click', function(e){ if (e.target === swModal) swOpen(false); });
+    document.addEventListener('keydown', function(e){
+      if (e.key === 'Escape' && swModal.style.display !== 'none') swOpen(false);
     });
 
-    // ── chocolatey ─────────────────────────────────────────────────────────────
-    var chOut = document.getElementById('chOut');
-    function chRun(kind, body, note){
-      chOut.textContent = note || 'Working…';
-      run(kind, body || {}, softwareBusy).then(function(r){
-        chOut.textContent = (r.output || '(no output)').trim();
-      }).catch(function(e){ chOut.textContent = e.message; });
-    }
-    document.getElementById('chSearch').addEventListener('click', function(){
-      var q = document.getElementById('chQuery').value.trim();
-      if (!q) { alert('Type something to search for.'); return; }
-      chRun('choco.search', { q: q }, 'Searching Chocolatey…');
-    });
-    document.getElementById('chQuery').addEventListener('keydown', function(e){
-      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('chSearch').click(); }
-    });
-    document.getElementById('chInstall').addEventListener('click', function(){
-      var id = document.getElementById('chId').value.trim();
-      if (!id) { alert('Enter the package name from the search results.'); return; }
-      if (!confirm('Install "' + id + '" on <%= asset.hostname %> via Chocolatey?')) return;
-      chRun('choco.install', { id: id }, 'Installing ' + id + '… this can take a few minutes.');
-    });
-    document.getElementById('chOutdated').addEventListener('click', function(){
-      chRun('choco.outdated', {}, 'Checking for updates…');
-    });
-    document.getElementById('chUpgradeAll').addEventListener('click', function(){
-      if (!confirm('Update every Chocolatey package on <%= asset.hostname %>?')) return;
-      chRun('choco.upgrade', {}, 'Updating everything… this can take several minutes.');
-    });
-    document.getElementById('chBootstrap').addEventListener('click', function(){
-      if (!confirm('Install Chocolatey itself on <%= asset.hostname %>?\n\nThis downloads and runs the official install script from chocolatey.org.')) return;
-      chRun('choco.bootstrap', {}, 'Installing Chocolatey…');
-    });
+    var SW_SRC = {
+      winget: { label: 'WinGet', cls: 'sw-wg', logo:
+        '<svg width="12" height="12" viewBox="0 0 16 16"><rect x="0" y="0" width="7" height="7" fill="#00a4ef"/><rect x="9" y="0" width="7" height="7" fill="#7fba00"/><rect x="0" y="9" width="7" height="7" fill="#f25022"/><rect x="9" y="9" width="7" height="7" fill="#ffb900"/></svg>' },
+      choco:  { label: 'Chocolatey', cls: 'sw-ch', logo:
+        '<svg width="12" height="12" viewBox="0 0 16 16"><rect width="16" height="16" rx="2.5" fill="#804c28"/><path d="M11 5.4a3.4 3.4 0 100 5.2" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>' }
+    };
 
-    // ── install software ───────────────────────────────────────────────────────
-    var installBox = document.getElementById('installBox');
-    document.getElementById('softInstall').addEventListener('click', function(){
-      var showing = installBox.style.display !== 'none';
-      installBox.style.display = showing ? 'none' : 'block';
-      if (!showing && !installBox._loaded) {
-        installBox._loaded = true;
-        jsonFetch('/agent-packages.json').then(function(j){
-          if (!j.ok) return;
-          var sel = document.getElementById('pkgSelect');
-          j.rows.forEach(function(p){
-            var o = document.createElement('option');
-            o.value = p.id;
-            o.textContent = p.name + (p.version ? ' ' + p.version : '') + (p.file_name ? '' : ' (URL)');
-            sel.appendChild(o);
-          });
-        }).catch(function(){ /* library is optional */ });
+    // WinGet has no machine-readable output for search, so the table is read by COLUMN
+    // OFFSET from its own header row. Splitting on whitespace produces nonsense the moment
+    // an application name contains a space, which is most of them.
+    function swParseWinget(text){
+      var lines = String(text || '').replace(/[█░▒▓\-\\|\/]{4,}/g, '').split(/\r?\n/);
+      var h = -1;
+      for (var i = 0; i < lines.length; i++) { if (/^\s*Name\s+Id\s+Version/.test(lines[i])) { h = i; break; } }
+      if (h < 0) return [];
+      var head = lines[h];
+      var iId = head.indexOf('Id'), iVer = head.indexOf('Version');
+      var iSrc = head.indexOf('Source'); var iMatch = head.indexOf('Match');
+      var iEnd = iSrc > iVer ? iSrc : (iMatch > iVer ? iMatch : -1);
+      var out = [];
+      for (var j = h + 1; j < lines.length && out.length < 40; j++) {
+        var l = lines[j];
+        if (!l.trim() || /^[\s\-]+$/.test(l) || l.length <= iVer) continue;
+        var name = l.slice(0, iId).trim();
+        var id = l.slice(iId, iVer).trim();
+        var ver = (iEnd > iVer ? l.slice(iVer, iEnd) : l.slice(iVer)).trim();
+        if (name && id) out.push({ source: 'winget', name: name, id: id, version: ver });
       }
+      return out;
+    }
+
+    // Chocolatey does offer machine output: id|version, one per line.
+    function swParseChoco(text){
+      var out = [];
+      String(text || '').split(/\r?\n/).forEach(function(l){
+        var p = l.split('|');
+        if (p.length >= 2 && p[0] && !/^Chocolatey/i.test(p[0]) && out.length < 40) {
+          out.push({ source: 'choco', name: p[0].trim(), id: p[0].trim(), version: (p[1] || '').trim() });
+        }
+      });
+      return out;
+    }
+
+    function swRender(rows, note){
+      if (!rows.length) { return; }
+      rows.forEach(function(r){
+        var meta = SW_SRC[r.source];
+        var row = document.createElement('div');
+        row.className = 'sw-row';
+        row.innerHTML =
+          '<span class="sw-badge ' + meta.cls + '">' + meta.logo + ' ' + meta.label + '</span>' +
+          '<span class="sw-name">' + esc(r.name) + '<span class="sw-id">' + esc(r.id) + '</span></span>' +
+          '<span class="sw-ver">' + esc(r.version || '') + '</span>';
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'btn btn-primary sw-install'; b.textContent = 'Install';
+        b.addEventListener('click', function(){
+          if (!confirm('Install "' + r.name + '" on <%= asset.hostname %> via ' + meta.label + '?')) return;
+          b.disabled = true; b.textContent = 'Installing…';
+          run(r.source === 'choco' ? 'choco.install' : 'winget.install', { id: r.id }, softwareBusy)
+            .then(function(res){
+              b.textContent = 'Installed';
+              row.classList.add('done');
+              if (res.output) row.title = res.output.slice(0, 400);
+              return run('inventory.software', {}, softwareBusy);
+            })
+            .then(function(){ loadSoftware(); })
+            .catch(function(e){ b.disabled = false; b.textContent = 'Install'; alert(e.message); });
+        });
+        row.appendChild(b);
+        swResults.appendChild(row);
+      });
+    }
+
+    function swSearch(){
+      var q = document.getElementById('swQ').value.trim();
+      if (!q) { document.getElementById('swQ').focus(); return; }
+      swResults.innerHTML = '';
+      swPending = 2;
+      var hint = document.getElementById('swHint');
+      hint.textContent = 'Asking WinGet and Chocolatey on ' + '<%= asset.hostname %>' + '…';
+
+      function done(label, err){
+        swPending--;
+        if (err) {
+          var w = document.createElement('div');
+          w.className = 'sw-note';
+          w.textContent = label + ': ' + err;
+          swResults.appendChild(w);
+        }
+        if (swPending <= 0) {
+          hint.textContent = swResults.querySelector('.sw-row')
+            ? 'Pick a version and press Install. Both managers install machine-wide.'
+            : 'Nothing came back for that. Try a shorter word — "adobe" rather than "adobe acrobat reader dc".';
+        }
+      }
+
+      run('winget.search', { q: q }, softwareBusy)
+        .then(function(r){ swRender(swParseWinget(r.output)); done('WinGet'); })
+        .catch(function(e){ done('WinGet', e.message); });
+      run('choco.search', { q: q }, softwareBusy)
+        .then(function(r){ swRender(swParseChoco(r.output)); done('Chocolatey'); })
+        .catch(function(e){ done('Chocolatey', e.message); });
+    }
+    document.getElementById('swGo').addEventListener('click', swSearch);
+    document.getElementById('swQ').addEventListener('keydown', function(e){
+      if (e.key === 'Enter') { e.preventDefault(); swSearch(); }
     });
+
     document.getElementById('pkgGo').addEventListener('click', function(){
       var pkg = document.getElementById('pkgSelect').value;
       var url = document.getElementById('pkgUrl').value.trim();
@@ -676,6 +764,36 @@
         alert(r.output || 'Done.');
         return run('inventory.software', {}, softwareBusy);
       }).then(function(){ loadSoftware(); }).catch(function(e){ alert(e.message); });
+    });
+
+    // Upload straight from here. It joins the package library on the way through, so the
+    // next machine that needs the same MSI is one click rather than another upload.
+    document.getElementById('pkgUpload').addEventListener('click', function(){
+      var f = document.getElementById('pkgFile').files[0];
+      var msg = document.getElementById('pkgUpMsg');
+      if (!f) { alert('Choose an MSI first.'); return; }
+      var fd = new FormData();
+      fd.append('msi', f);
+      fd.append('name', document.getElementById('pkgFileName').value.trim() || f.name);
+      fd.append('args', document.getElementById('pkgArgs').value.trim() || '/qn /norestart');
+      msg.textContent = 'Uploading…';
+      fetch('/agent-packages?json=1', { method: 'POST', body: fd, headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(function(res){ return res.json(); })
+        .then(function(j){
+          if (!j.ok) throw new Error(j.error || 'Upload failed.');
+          msg.textContent = 'Uploaded. Installing…';
+          var sel = document.getElementById('pkgSelect');
+          var o = document.createElement('option');
+          o.value = j.id; o.textContent = j.name; sel.appendChild(o); sel.value = j.id;
+          return run('software.install', { package_id: j.id }, softwareBusy);
+        })
+        .then(function(r){
+          msg.textContent = '';
+          alert(r.output || 'Done.');
+          return run('inventory.software', {}, softwareBusy);
+        })
+        .then(function(){ loadSoftware(); })
+        .catch(function(e){ msg.textContent = ''; alert(e.message); });
     });
 
     // ── services ───────────────────────────────────────────────────────────────

@@ -1,6 +1,17 @@
 <%- include('../partials/header', { title: 'Quotes', user }) %>
 <% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
-<% function badge(s){ return s==='accepted'?'badge-sent':s==='sent'?'badge-primary':s==='lost'?'badge-failed':'badge-inactive'; } %>
+<% function badge(s){ return s==='invoiced'?'badge-active':s==='accepted'?'badge-sent':s==='sent'?'badge-primary':s==='lost'?'badge-failed':'badge-inactive'; } %>
+
+<style>
+  /* The bar only appears once something is ticked — an always-visible row of destructive
+     buttons is an invitation to press one by accident. */
+  #bulkBar { display:none; align-items:center; gap:8px; flex-wrap:wrap;
+             background:var(--tint-accent); border:1px solid var(--info-line);
+             border-radius:10px; padding:10px 14px; margin:0 0 12px; }
+  #bulkBar.on { display:flex; }
+  #bulkBar .n { font-weight:600; }
+  td.tick, th.tick { width:34px; text-align:center; }
+</style>
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div><h1>Quotes</h1><p class="muted"><%= quotes.length %> shown</p></div>
@@ -15,26 +26,56 @@
   </div>
 </div>
 
+<% if (typeof msg !== 'undefined' && msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+
 <div class="tabs" style="margin-bottom:16px;">
   <a class="tab-btn <%= status==='' ? 'active' : '' %>" href="/quotes">All</a>
-  <% ['draft','sent','accepted','lost'].forEach(function(s){ %>
+  <% ['draft','sent','accepted','invoiced','lost'].forEach(function(s){ %>
     <a class="tab-btn <%= status===s ? 'active' : '' %>" href="/quotes?status=<%= s %>"><%= s.charAt(0).toUpperCase()+s.slice(1) %> <span class="muted">(<%= statusCounts[s]||0 %>)</span></a>
   <% }); %>
+</div>
+
+<form method="post" action="/quotes/bulk" id="bulkForm">
+<input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+
+<div id="bulkBar">
+  <span class="n"><span id="bulkCount">0</span> selected</span>
+  <button class="btn btn-primary" type="submit" name="bulk_action" value="invoice"
+    onclick="return confirm('Create an invoice from each selected quote?\n\nEach one is a draft dated today — nothing is emailed, sent to QuickBooks or put in for Direct Debit until you press Complete in Invoices.');">
+    Convert to invoice
+  </button>
+  <button class="btn" type="submit" name="bulk_action" value="lost"
+    onclick="return confirm('Mark the selected quotes as lost?');">Mark as lost</button>
+  <button class="btn" type="submit" name="bulk_action" value="delete" style="color:var(--lumen-dark);"
+    onclick="return confirm('Move the selected quotes to the recycle bin?');">Delete</button>
+  <a class="btn" href="#" onclick="bulkClear();return false;" style="margin-left:auto;">Clear</a>
 </div>
 
 <div class="card" style="padding:0;">
   <div class="table-wrap">
     <table class="table">
-      <thead><tr><th>Number</th><th>Title</th><th>Customer</th><th>Status</th><th style="text-align:right;">Total</th><th>Issued</th><th>Valid until</th></tr></thead>
+      <thead>
+        <tr>
+          <th class="tick"><input type="checkbox" id="tickAll" onclick="bulkAll(this.checked)" title="Select all"></th>
+          <th>Number</th><th>Title</th><th>Customer</th><th>Status</th>
+          <th style="text-align:right;">Total</th><th>Invoice</th><th>Issued</th><th>Valid until</th>
+        </tr>
+      </thead>
       <tbody>
-        <% if (quotes.length===0) { %><tr><td colspan="7"><div class="empty-state">No quotes.</div></td></tr><% } %>
+        <% if (quotes.length===0) { %><tr><td colspan="9"><div class="empty-state">No quotes.</div></td></tr><% } %>
         <% quotes.forEach(function(q){ %>
           <tr>
+            <td class="tick"><input type="checkbox" class="tick-one" name="ids" value="<%= q.id %>" onclick="bulkSync()"></td>
             <td><a class="row-link" href="/quotes/<%= q.id %>"><%= q.quote_number %></a></td>
             <td><%= q.title %></td>
             <td class="muted"><% if (q.customer_id) { %><a class="row-link" href="/customers/<%= q.customer_id %>"><%= q.customer_name %></a><% } else { %>—<% } %></td>
             <td><span class="badge <%= badge(q.status) %>"><%= q.status.charAt(0).toUpperCase()+q.status.slice(1) %></span></td>
             <td style="text-align:right;"><%= money(q.total) %></td>
+            <td>
+              <% if (q.invoice_id) { %>
+                <a class="row-link" href="/invoices/<%= q.invoice_id %>"><%= q.invoice_number || 'draft' %></a>
+              <% } else { %><span class="muted">—</span><% } %>
+            </td>
             <td class="muted"><%= q.issue_date ? new Date(q.issue_date).toLocaleDateString('en-GB') : '—' %></td>
             <td class="muted"><%= q.valid_until ? new Date(q.valid_until).toLocaleDateString('en-GB') : '—' %></td>
           </tr>
@@ -43,5 +84,26 @@
     </table>
   </div>
 </div>
+</form>
+
+<p class="muted" style="margin:14px 0 0;font-size:12px;">
+  Converting sets the quote to Invoiced and creates a draft invoice dated today, for both issue and due.
+  A quote that already has an invoice is skipped rather than billed twice.
+</p>
+
+<script>
+function bulkTicks() { return Array.prototype.slice.call(document.querySelectorAll('.tick-one')); }
+function bulkSync() {
+  var on = bulkTicks().filter(function (t) { return t.checked; }).length;
+  document.getElementById('bulkCount').textContent = on;
+  document.getElementById('bulkBar').classList.toggle('on', on > 0);
+  var all = document.getElementById('tickAll');
+  all.checked = on > 0 && on === bulkTicks().length;
+  all.indeterminate = on > 0 && on < bulkTicks().length;
+}
+function bulkAll(on) { bulkTicks().forEach(function (t) { t.checked = on; }); bulkSync(); }
+function bulkClear() { bulkAll(false); }
+bulkSync();
+</script>
 
 <%- include('../partials/footer') %>

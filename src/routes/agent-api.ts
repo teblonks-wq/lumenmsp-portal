@@ -564,8 +564,10 @@ async function takeQueued(deviceId: number): Promise<any[]> {
   // Claim atomically so a duplicate poll (retry, restart) can't run a command twice.
   const r = await pool.query(
     `UPDATE agent_commands SET status='running', started_at=NOW()
-      WHERE id IN (SELECT id FROM agent_commands WHERE device_id=$1 AND status='queued'
-                    ORDER BY id LIMIT 5)
+      WHERE id IN (SELECT id FROM agent_commands
+                     WHERE device_id=$1 AND status='queued'
+                       AND (run_after IS NULL OR run_after <= NOW())
+                     ORDER BY id LIMIT 5)
       RETURNING id, kind, payload`, [deviceId]);
   return r.rows;
 }

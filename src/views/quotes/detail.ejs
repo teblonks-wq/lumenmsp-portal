@@ -1,6 +1,6 @@
 <%- include('../partials/header', { title: quote.quote_number, user }) %>
 <% function money(v){ return '£' + (Number(v)||0).toFixed(2); } %>
-<% function badge(s){ return s==='accepted'?'badge-sent':s==='sent'?'badge-primary':s==='lost'?'badge-failed':'badge-inactive'; } %>
+<% function badge(s){ return s==='invoiced'?'badge-active':s==='accepted'?'badge-sent':s==='sent'?'badge-primary':s==='lost'?'badge-failed':'badge-inactive'; } %>
 <% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
 <% function mcol(p){ return p>=20 ? 'var(--ok-fg)' : p>0 ? 'var(--warn-fg)' : 'var(--bad-fg)'; } %>
 
@@ -15,9 +15,14 @@
     <a class="btn" href="/quotes/<%= quote.id %>/edit">Edit</a>
     <a class="btn" href="/quotes/<%= quote.id %>/pdf" target="_blank">Preview PDF</a>
     <a class="btn" href="/quotes/<%= quote.id %>/pdf?dl=1">Download</a>
-    <a class="btn btn-primary" href="/invoices/new?quote=<%= quote.id %>">Create invoice</a>
+    <% var _inv = (typeof invoices !== 'undefined' ? invoices : []); %>
+    <% if (_inv.length) { %>
+      <a class="btn btn-primary" href="/invoices/<%= _inv[0].id %>">Go to invoice <%= _inv[0].invoice_number || '' %></a>
+    <% } else { %>
+      <a class="btn btn-primary" href="/invoices/new?quote=<%= quote.id %>">Create invoice</a>
+    <% } %>
     <form method="post" action="/quotes/<%= quote.id %>/status" style="margin:0;display:flex;gap:6px;align-items:center;">
-      <select class="input" name="status"><% ['draft','sent','accepted','lost'].forEach(function(s){ %><option value="<%= s %>" <%= quote.status===s?'selected':'' %>><%= s.charAt(0).toUpperCase()+s.slice(1) %></option><% }); %></select>
+      <select class="input" name="status"><% if (quote.status==='invoiced') { %><option value="invoiced" selected>Invoiced</option><% } %><% ['draft','sent','accepted','lost'].forEach(function(s){ %><option value="<%= s %>" <%= quote.status===s?'selected':'' %>><%= s.charAt(0).toUpperCase()+s.slice(1) %></option><% }); %></select>
       <button class="btn" type="submit">Set status</button>
     </form>
     <form method="post" action="/quotes/<%= quote.id %>/duplicate" style="margin:0;display:flex;gap:6px;align-items:center;">
@@ -31,6 +36,14 @@
     <form method="post" action="/quotes/<%= quote.id %>/delete" onsubmit="return confirm('Move this quote to the recycle bin?');" style="margin:0;"><button class="btn" type="submit" style="color:var(--lumen-dark);">Delete</button></form>
   </div>
 </div>
+
+<% if ((typeof invoices !== 'undefined' ? invoices : []).length) { %>
+<div class="alert" style="background:var(--tint-teal);border:1px solid var(--ok-line);">
+  <strong>Invoiced.</strong>
+  <% invoices.forEach(function (iv, ix) { %><%= ix ? ' · ' : ' ' %><a class="row-link" href="/invoices/<%= iv.id %>"><%= iv.invoice_number || ('draft #' + iv.id) %></a>
+    <span class="muted"><%= money(iv.total) %> · <%= iv.status %><%= iv.payment_status && iv.payment_status !== 'unpaid' ? ' · ' + iv.payment_status : '' %><%= iv.issue_date ? ' · ' + new Date(iv.issue_date).toLocaleDateString('en-GB') : '' %></span><% }); %>
+</div>
+<% } %>
 
 <% if (quote.accept_token) { %>
 <div class="alert" style="background:var(--tint-teal);border:1px solid var(--ok-line);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;">

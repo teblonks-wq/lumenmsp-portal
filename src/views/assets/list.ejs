@@ -62,8 +62,8 @@ var _pct     = rows.length ? Math.round((_agent / rows.length) * 100) : 0;
 
 <div class="hero-actions">
   <a class="btn btn-primary" href="/patching">🛡 Patch management</a>
+  <a class="btn" href="/software">📦 Software</a>
   <a class="btn" href="/ce">✅ Cyber Essentials</a>
-  <a class="btn" href="/remote-sessions">🖥 Remote sessions</a>
   <% if (typeof user!=='undefined' && user.role==='admin') { %>
   <a class="btn" href="/agents">📦 Agent deployment</a>
   <% } %>

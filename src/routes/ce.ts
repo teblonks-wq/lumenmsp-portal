@@ -4,6 +4,8 @@ import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { CONTROLS } from '../lib/ce';
 import { sweepStale, refreshAssessment } from '../lib/ce-ingest';
+import { syncEol } from '../lib/eol-sync';
+import { getSetting } from '../lib/settings';
 
 // ── Cyber Essentials assessment ─────────────────────────────────────────────────
 // An internal tool, not a certification body. It answers one question for an engineer:
@@ -263,12 +265,29 @@ router.get('/ce/device/:id', requireAuth, requireAdmin, async (req: Request, res
 router.get('/ce/eol', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const rows = (await pool.query(
-      `SELECT * FROM eol_products ORDER BY active DESC, category, name`)).rows;
+      `SELECT * FROM eol_products ORDER BY active DESC, source, category, name`)).rows;
+    let lastSync: any = null;
+    try { lastSync = JSON.parse((await getSetting('eol', 'last_sync')) || 'null'); } catch { /* never synced */ }
     res.render('ce-eol', {
-      user: req.session.user!, rows, msg: req.query.msg || null, error: null,
+      user: req.session.user!, rows, lastSync, msg: req.query.msg || null, error: null,
     });
   } catch (e: any) {
-    res.render('ce-eol', { user: req.session.user!, rows: [], msg: null, error: e.message });
+    res.render('ce-eol', { user: req.session.user!, rows: [], lastSync: null, msg: null, error: e.message });
+  }
+});
+
+// Pull the dates now rather than waiting for 04:20. Runs inline because it is a dozen
+// small HTTP calls and the person pressing it wants to see the result.
+router.post('/ce/eol/sync', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const r = await syncEol();
+    await logActivity(req.session.user!.id, 'ce_eol', null, null, `Synced end-of-life dates (${r.rows} rows)`);
+    let m = `Pulled ${r.rows} entries from ${r.products} products.`;
+    if (r.supersededManual) m += ` ${r.supersededManual} of our hand-written rows are now covered by the feed and have been switched off.`;
+    if (r.failed.length) m += ` No data came back for: ${r.failed.join(', ')}.`;
+    res.redirect('/ce/eol?msg=' + encodeURIComponent(m));
+  } catch (e: any) {
+    res.redirect('/ce/eol?msg=' + encodeURIComponent('Sync failed: ' + e.message));
   }
 });
 
@@ -288,18 +307,21 @@ router.post('/ce/eol', requireAuth, requireAdmin, async (req: Request, res: Resp
       t(b.eol_date, 10), t(b.severity, 10) || 'fail', t(b.action, 20) || 'upgrade',
       t(b.replacement, 200), t(b.guidance, 2000), t(b.ce_control, 20) || 'patch',
       b.active === undefined ? true : b.active === '1' || b.active === 'on' || b.active === 'true',
+      b.overridden === '1' || b.overridden === 'on' || b.overridden === 'true',
     ];
     if (id) {
+      // Editing an automatic row implicitly freezes it — otherwise the change is quietly
+      // undone at 04:20 and whoever made it is left wondering.
       await pool.query(
         `UPDATE eol_products SET category=$1, vendor=$2, name=$3, match_type=$4, match_value=$5,
                 version_max=$6, eol_date=$7::date, severity=$8, action=$9, replacement=$10,
-                guidance=$11, ce_control=$12, active=$13, updated_at=NOW()
-          WHERE id=$14`, [...vals, id]);
+                guidance=$11, ce_control=$12, active=$13, overridden=$14, updated_at=NOW()
+          WHERE id=$15`, [...vals, id]);
     } else {
       await pool.query(
         `INSERT INTO eol_products (category, vendor, name, match_type, match_value, version_max,
-                eol_date, severity, action, replacement, guidance, ce_control, active)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8,$9,$10,$11,$12,$13)`, vals);
+                eol_date, severity, action, replacement, guidance, ce_control, active, overridden, source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8,$9,$10,$11,$12,$13,$14,'manual')`, vals);
     }
     await logActivity(req.session.user!.id, 'ce_eol', null, null,
       `${id ? 'Updated' : 'Added'} end-of-life entry "${vals[2]}"`);

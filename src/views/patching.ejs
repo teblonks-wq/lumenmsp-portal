@@ -8,9 +8,11 @@ function ago(s) {
   if (h < 24) return h + 'h ago';
   return Math.round(h / 24) + 'd ago';
 }
-function src(s) {
-  var t = String(s || 'windows').toLowerCase();
-  return t === 'winget' ? 'WinGet' : t === 'choco' ? 'Chocolatey' : 'Windows';
+// A driver is still a Windows Update, but it behaves differently enough - and gets
+// blamed often enough - to be worth spotting without reading the title.
+function srcOf(u) {
+  if (/driver/i.test(String(u.categories || ''))) return 'driver';
+  return String(u.source || 'windows').toLowerCase();
 }
 function sev(s) {
   var t = String(s || '').toLowerCase();
@@ -23,7 +25,11 @@ function sev(s) {
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div>
     <h1 style="margin:0;">Patching</h1>
-    <p class="muted" style="margin:4px 0 0;">Pending Windows Updates across every machine running the LumenMSP Agent. Scanned daily.</p>
+    <p class="muted" style="margin:4px 0 0;">
+      Everything outstanding across every machine running the agent — Windows updates, hardware drivers, and
+      applications that WinGet or Chocolatey say are behind. Scanned daily; open a machine to deploy by hand,
+      which works whether or not automatic patching is switched on.
+    </p>
   </div>
   <form method="get" action="/patching" style="display:flex;gap:8px;align-items:center;">
     <select class="input" name="customer" onchange="this.form.submit()">
@@ -63,7 +69,7 @@ function sev(s) {
         <% updates.forEach(function (u) { %>
           <tr>
             <td><%= u.title %></td>
-            <td class="muted" style="font-size:12px;"><%= src(u.source) %></td>
+            <td><%- include('partials/srcbadge', { s: srcOf(u), small: true }) %></td>
             <td class="muted"><%= u.kb ? 'KB' + String(u.kb).replace(/^KB/i, '') : '—' %></td>
             <td><% if (u.severity) { %><span class="badge <%= sev(u.severity) %>"><%= u.severity %></span><% } else { %><span class="muted">—</span><% } %></td>
             <td style="text-align:right;"><%= u.devices %></td>
@@ -101,8 +107,8 @@ function sev(s) {
 <% } %>
 
 <p class="muted" style="margin:14px 0 0;font-size:12px;">
-  Reporting only. Installing updates, maintenance windows and restart policy are the next step —
-  nothing on this page changes a machine.
+  Nothing on this page changes a machine. Open one to install updates on it — by hand, now or in its
+  maintenance window. Restarts are never automatic.
 </p>
 
 <%- include('partials/footer') %>

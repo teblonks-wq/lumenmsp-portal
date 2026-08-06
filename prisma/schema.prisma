@@ -509,6 +509,10 @@ model AgentCommand {
   kind        String    // shell.powershell | shell.cmd | software.list | services.* | files.list | users.* | ad.user.*
   payload     Json?
   status      String    @default("queued") // queued | running | done | failed | expired
+  // Set when a command is deliberately held back - an app update queued into a machine's
+  // maintenance window. The agent is never told about it; the poll simply does not hand
+  // the command over until the time passes, so an offline machine still behaves correctly.
+  runAfter    DateTime? @map("run_after")
   exitCode    Int?      @map("exit_code")
   output      String?
   requestedBy Int?      @map("requested_by")
@@ -976,7 +980,7 @@ model Quote {
   inboxTicketId   Int?      @map("inbox_ticket_id") // → future helpdesk module (no FK yet)
   quoteNumber     String    @unique @map("quote_number")
   title           String
-  status          String    @default("draft") // draft | sent | accepted | lost
+  status          String    @default("draft") // draft | sent | accepted | lost | invoiced
   acceptToken     String?   @unique @map("accept_token")
   viewCount       Int       @default(0) @map("view_count")
   issueDate       DateTime? @map("issue_date") @db.Date
@@ -998,6 +1002,10 @@ model Quote {
   sentTo          String?   @map("sent_to")
   deletedAt       DateTime? @map("deleted_at")
   deletedByUserId Int?      @map("deleted_by_user_id")
+  // Set when the quote became an invoice. The invoice itself is the record - this is
+  // here so the quote list can say so without joining, and so "when did we bill it"
+  // survives the invoice being voided later.
+  invoicedAt      DateTime? @map("invoiced_at")
 
   customer Customer?   @relation(fields: [customerId], references: [id])
   items    QuoteItem[]
@@ -2252,9 +2260,18 @@ model EolProduct {
   ceControl   String    @default("patch") @map("ce_control") // firewall | config | access | malware | patch
   active      Boolean   @default(true)
   notes       String?
+  // Where the row came from. 'endoflife.date' rows are rewritten by the nightly sync;
+  // 'manual' rows are ours and are never touched by it. Ticking overridden freezes an
+  // automatic row in place - for when a vendor announces an extension before the feed
+  // catches up, which is the only reason anyone should be editing one.
+  source      String    @default("manual")
+  externalKey String?   @map("external_key")   // e.g. dotnet:6.0 — the sync's upsert key
+  overridden  Boolean   @default(false)
+  syncedAt    DateTime? @map("synced_at")
   createdAt   DateTime? @default(now()) @map("created_at")
   updatedAt   DateTime? @default(now()) @map("updated_at")
 
+  @@unique([source, externalKey])
   @@index([category])
   @@index([active])
   @@map("eol_products")
@@ -2324,4 +2341,29 @@ model CeFinding {
   @@index([assessmentId, status])
   @@index([deviceId])
   @@map("ce_findings")
+}
+
+// ── Servers ─────────────────────────────────────────────────────────────────────
+// The same agent, in server mode. One row per machine, holding the whole collected
+// picture as JSON rather than fifty columns: what a domain controller reports and what a
+// SQL box reports have almost nothing in common, and a rule added next month can be run
+// against last month's evidence without going back to the machine.
+//
+// The few things worth filtering and sorting on are lifted out into real columns.
+model ServerFact {
+  id          Int       @id @default(autoincrement())
+  deviceId    Int       @unique @map("device_id")
+  serverRole  String?   @map("server_role")   // domain controller | member server
+  roles       String?                          // comma-separated Windows roles, for filtering
+  domain      String?                          // AD domain this machine serves or belongs to
+  sqlInstances Int?     @default(0) @map("sql_instances")
+  vmCount     Int?      @default(0) @map("vm_count")
+  alerts      Int?      @default(0)            // things the Portal judged worth a look
+  facts       Json?
+  commandId   Int?      @map("command_id")
+  error       String?
+  collectedAt DateTime? @default(now()) @map("collected_at")
+
+  @@index([serverRole])
+  @@map("server_facts")
 }

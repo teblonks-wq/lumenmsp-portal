@@ -1,0 +1,31 @@
+<%
+// Where an update came from, as a glyph you can pick out at a glance in a long table.
+// Locals: s (source: windows | winget | choco | driver | msstore), and optional small.
+var _s = String(typeof s !== 'undefined' ? s : 'windows').toLowerCase();
+var _sm = (typeof small !== 'undefined') && small;
+var _pad = _sm ? '1px 6px' : '2px 8px';
+var _fs = _sm ? '10px' : '11px';
+%>
+<% if (_s === 'driver') { %>
+  <span title="Hardware driver, delivered by Windows Update" style="display:inline-flex;align-items:center;gap:4px;font-size:<%= _fs %>;font-weight:600;border-radius:5px;padding:<%= _pad %>;background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;">
+    <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1.5" fill="#4338ca"/><path d="M8 0v3M8 13v3M0 8h3M13 8h3M2.3 2.3l2.1 2.1M11.6 11.6l2.1 2.1M13.7 2.3l-2.1 2.1M4.4 11.6l-2.1 2.1" stroke="#4338ca" stroke-width="1.4" stroke-linecap="round"/></svg>
+    Driver
+  </span>
+<% } else if (_s === 'winget') { %>
+  <span title="WinGet — Microsoft's package manager. Sees software installed any way, including by hand." style="display:inline-flex;align-items:center;gap:4px;font-size:<%= _fs %>;font-weight:600;border-radius:5px;padding:<%= _pad %>;background:#e8f1fb;color:#1a5fb4;border:1px solid #bcd7f5;">
+    <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true"><rect x="0" y="0" width="7" height="7" fill="#00a4ef"/><rect x="9" y="0" width="7" height="7" fill="#7fba00"/><rect x="0" y="9" width="7" height="7" fill="#f25022"/><rect x="9" y="9" width="7" height="7" fill="#ffb900"/></svg>
+    WinGet
+  </span>
+<% } else if (_s === 'choco') { %>
+  <span title="Chocolatey — only sees packages Chocolatey installed" style="display:inline-flex;align-items:center;gap:4px;font-size:<%= _fs %>;font-weight:600;border-radius:5px;padding:<%= _pad %>;background:#f4ece4;color:#6b4423;border:1px solid #e0cdb8;">
+    <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="2.5" fill="#804c28"/><path d="M11 5.4a3.4 3.4 0 100 5.2" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+    Chocolatey
+  </span>
+<% } else if (_s === 'msstore') { %>
+  <span style="display:inline-flex;align-items:center;gap:4px;font-size:<%= _fs %>;font-weight:600;border-radius:5px;padding:<%= _pad %>;background:#e8f1fb;color:#1a5fb4;border:1px solid #bcd7f5;">Store</span>
+<% } else { %>
+  <span title="Windows Update" style="display:inline-flex;align-items:center;gap:4px;font-size:<%= _fs %>;font-weight:600;border-radius:5px;padding:<%= _pad %>;background:#e8f1fb;color:#1a5fb4;border:1px solid #bcd7f5;">
+    <svg width="10" height="10" viewBox="0 0 16 16" aria-hidden="true"><path d="M0 2.3L6.4 1.4v6.1H0zM7.3 1.3L16 0v7.5H7.3zM0 8.5h6.4v6.1L0 13.7zM7.3 8.5H16V16l-8.7-1.3z" fill="#0078d4"/></svg>
+    Windows
+  </span>
+<% } %>

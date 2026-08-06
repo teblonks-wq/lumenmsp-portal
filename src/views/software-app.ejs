@@ -1,0 +1,151 @@
+<%- include('partials/header', { title: name, user }) %>
+<%
+function ago(s) {
+  if (s == null) return 'never';
+  var m = Math.round(Number(s) / 60);
+  if (m < 60) return m + 'm ago';
+  var h = Math.round(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+%>
+
+<style>
+  #swBar { display:none; align-items:center; gap:8px; flex-wrap:wrap;
+           background:var(--tint-accent); border:1px solid var(--info-line);
+           border-radius:10px; padding:10px 14px; margin:0 0 12px; }
+  #swBar.on { display:flex; }
+  td.tick, th.tick { width:34px; text-align:center; }
+</style>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/software">← Software</a></p>
+  <h1 style="margin:0;"><%= name %></h1>
+  <p class="muted" style="margin:4px 0 0;">
+    <%= installs.length %> install<%= installs.length === 1 ? '' : 's' %> ·
+    <%= outdated %> with an update waiting
+    <% if (installs[0] && installs[0].publisher) { %> · <%= installs[0].publisher %><% } %>
+  </p>
+</div>
+
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+
+<% if (eolPast) { %>
+<div class="alert alert-error">
+  <strong><%= eol.name %> is out of support<% if (eol.eol_date) { %> (since <%= String(eol.eol_date).slice(0,10) %>)<% } %>.</strong>
+  <span class="muted">
+    <%= eol.guidance || (eol.replacement ? 'Move to ' + eol.replacement + '.' : 'Upgrade or remove it.') %>
+    Updating it in place will not fix this — there are no more updates to install.
+  </span>
+</div>
+<% } else if (eol && eol.eol_date) { %>
+<div class="alert" style="border:1px solid var(--warn-line);">
+  <strong>Support ends <%= String(eol.eol_date).slice(0,10) %>.</strong>
+  <span class="muted"><%= eol.guidance || 'Worth planning the move before that date.' %></span>
+</div>
+<% } %>
+
+<% if (customers.length > 1) { %>
+<div class="card">
+  <div class="card-header"><h2>By customer</h2></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <% customers.forEach(function (c) { %>
+      <form method="post" action="/software/update" style="margin:0;"
+            onsubmit="return confirm('Update <%= name.replace(/'/g, "\\'") %> on all <%= c.outdated %> machine(s) at <%= c.name.replace(/'/g, "\\'") %> that are behind?');">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <input type="hidden" name="name" value="<%= name %>">
+        <input type="hidden" name="scope" value="customer">
+        <input type="hidden" name="customer_id" value="<%= c.id %>">
+        <button class="btn" type="submit" <%= c.outdated ? '' : 'disabled' %>>
+          <%= c.name %> <span class="muted">— <%= c.outdated %>/<%= c.total %> behind</span>
+        </button>
+      </form>
+    <% }); %>
+  </div>
+</div>
+<% } %>
+
+<form method="post" action="/software/update" id="swForm">
+<input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+<input type="hidden" name="name" value="<%= name %>">
+<input type="hidden" name="when" id="swWhen" value="now">
+
+<div style="display:flex;gap:8px;margin:0 0 12px;flex-wrap:wrap;align-items:center;">
+  <button class="btn btn-primary" type="submit" name="scope" value="all-outdated" <%= outdated ? '' : 'disabled' %>
+    onclick="document.getElementById('swWhen').value='now';return confirm('Update this on all <%= outdated %> machine(s) that are behind, now?\n\nThey go out at the next check-in. Machines that are off take it when they come back. Nothing is restarted.');">
+    ⬆ Update all <%= outdated %> that are behind
+  </button>
+  <button class="btn" type="submit" name="scope" value="all-outdated" <%= outdated ? '' : 'disabled' %>
+    onclick="document.getElementById('swWhen').value='window';return confirm('Hold these until each machine\'s maintenance window?');">
+    In the maintenance window
+  </button>
+  <span class="muted" style="font-size:12px;">or tick individual machines below</span>
+</div>
+
+<div id="swBar">
+  <span><strong id="swCount">0</strong> selected</span>
+  <button class="btn btn-primary" type="submit" name="scope" value="selected" onclick="document.getElementById('swWhen').value='now';">Update selected now</button>
+  <button class="btn" type="submit" name="scope" value="selected" onclick="document.getElementById('swWhen').value='window';">In the window</button>
+  <a class="btn" href="#" onclick="swAll(false);return false;" style="margin-left:auto;">Clear</a>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th class="tick"><input type="checkbox" id="swTickAll" onclick="swAll(this.checked)" title="Select every machine that is behind"></th>
+          <th>Machine</th><th>Customer</th><th>Installed</th><th>Update</th><th>Via</th><th>Last seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (!installs.length) { %><tr><td colspan="7"><div class="empty-state">Not installed anywhere.</div></td></tr><% } %>
+        <% installs.forEach(function (i) { %>
+          <tr>
+            <td class="tick">
+              <% if (i.update_id && !i.patch_excluded) { %>
+                <input type="checkbox" class="sw-one" name="ids" value="<%= i.device_id %>" onclick="swSync()">
+              <% } %>
+            </td>
+            <td>
+              <a class="row-link" href="/patching/device/<%= i.device_id %>"><%= i.hostname %></a>
+              <% if (i.patch_excluded) { %><span class="badge badge-inactive" title="This machine is excluded from patching">excluded</span><% } %>
+            </td>
+            <td class="muted"><% if (i.customer_id) { %><a class="row-link" href="/customers/<%= i.customer_id %>"><%= i.customer_name %></a><% } else { %>—<% } %></td>
+            <td class="muted" style="font-size:12px;"><%= i.version || '—' %></td>
+            <td>
+              <% if (i.available_version) { %>
+                <span style="font-size:12px;"><%= i.current_version || i.version || '?' %> → <strong><%= i.available_version %></strong></span>
+              <% } else { %><span class="muted">up to date</span><% } %>
+            </td>
+            <td><% if (i.up_source) { %><%- include('partials/srcbadge', { s: i.up_source, small: true }) %><% } else { %><span class="muted">—</span><% } %></td>
+            <td class="muted" style="font-size:12px;"><%= ago(i.seen_secs) %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+</form>
+
+<p class="muted" style="margin:14px 0 0;font-size:12px;">
+  Updates go out through whichever manager reported them — WinGet where the software was installed by
+  hand or by an MSI, Chocolatey where we packaged it. Reboot behaviour and maintenance windows follow the
+  patch policy already assigned to each machine, so nothing here restarts a server in the middle of the afternoon.
+</p>
+
+<script>
+function swTicks() { return Array.prototype.slice.call(document.querySelectorAll('.sw-one')); }
+function swSync() {
+  var on = swTicks().filter(function (t) { return t.checked; }).length;
+  document.getElementById('swCount').textContent = on;
+  document.getElementById('swBar').classList.toggle('on', on > 0);
+  var all = document.getElementById('swTickAll');
+  all.checked = on > 0 && on === swTicks().length;
+  all.indeterminate = on > 0 && on < swTicks().length;
+}
+function swAll(on) { swTicks().forEach(function (t) { t.checked = on; }); swSync(); }
+swSync();
+</script>
+
+<%- include('partials/footer') %>

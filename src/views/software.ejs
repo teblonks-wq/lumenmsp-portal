@@ -1,0 +1,128 @@
+<%- include('partials/header', { title: 'Software', user }) %>
+
+<div class="page-header">
+  <h1 style="margin:0;">Software</h1>
+  <p class="muted" style="margin:4px 0 0;">
+    Everything installed across every machine running the agent. Three different questions live here:
+    what is installed, what is behind (answered per machine by WinGet and Chocolatey), and what is no
+    longer supported (from endoflife.date, nightly). The last two are not the same —
+    .NET&nbsp;6.0.36 is the newest 6.0 there will ever be, and it stopped getting security fixes in 2024.
+  </p>
+</div>
+
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<style>
+  td.tick, th.tick { width:34px; text-align:center; }
+  #swcBar { display:none; align-items:center; gap:8px; flex-wrap:wrap; background:var(--tint-accent);
+            border:1px solid var(--info-line); border-radius:10px; padding:10px 14px; margin:0 0 12px; }
+  #swcBar.on { display:flex; }
+</style>
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
+  <div class="card"><div class="card-header"><h2>Titles</h2></div><div class="stat" style="font-size:24px;"><%= summary.titles %></div><p class="muted" style="margin:2px 0 0;"><%= summary.installs %> installs</p></div>
+  <div class="card"><div class="card-header"><h2>Behind</h2></div><div class="stat" style="font-size:24px;<%= summary.outdated ? 'color:var(--warn-fg);' : '' %>"><%= summary.outdated %></div><p class="muted" style="margin:2px 0 0;">a newer version exists</p></div>
+  <div class="card"><div class="card-header"><h2>Out of support</h2></div><div class="stat" style="font-size:24px;<%= summary.eol ? 'color:var(--bad-fg);' : '' %>"><%= summary.eol %></div><p class="muted" style="margin:2px 0 0;">no more security fixes</p></div>
+</div>
+
+<div class="card" style="padding:16px 20px;">
+  <form method="get" action="/software" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <input class="input" type="search" name="q" value="<%= q %>" placeholder="Search a title or publisher…" style="min-width:260px;">
+    <select class="input" name="customer" style="width:auto;">
+      <option value="">All customers</option>
+      <% customers.forEach(function (c) { %><option value="<%= c.id %>" <%= customerId === c.id ? 'selected' : '' %>><%= c.name %> (<%= c.devices %>)</option><% }); %>
+    </select>
+    <select class="input" name="only" style="width:auto;">
+      <option value="">Everything</option>
+      <option value="outdated" <%= only === 'outdated' ? 'selected' : '' %>>Only where an update is waiting</option>
+      <option value="eol" <%= only === 'eol' ? 'selected' : '' %>>Only out of support</option>
+    </select>
+    <button class="btn btn-primary" type="submit">Show</button>
+    <% if (q || customerId || only) { %><a class="btn" href="/software">Clear</a><% } %>
+    <a class="btn" href="/ce/eol" style="margin-left:auto;">📋 End-of-life sources</a>
+  </form>
+</div>
+
+<form method="post" action="/software/bulk-update" id="swcForm">
+<input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+<input type="hidden" name="customer_id" value="<%= customerId || '' %>">
+<input type="hidden" name="q" value="<%= q %>">
+<input type="hidden" name="only" value="<%= only %>">
+<input type="hidden" name="when" id="swcWhen" value="now">
+
+<div id="swcBar">
+  <span><strong id="swcCount">0</strong> selected · <strong id="swcMachines">0</strong> machines behind</span>
+  <button class="btn btn-primary" type="submit" onclick="document.getElementById('swcWhen').value='now';return confirm('Update the selected titles now, on every machine that is behind?\n\nThey go out at the next check-in — about a minute for a machine that is on. Nothing is restarted.');">
+    ⬆ Update now
+  </button>
+  <button class="btn" type="submit" onclick="document.getElementById('swcWhen').value='window';return confirm('Hold these until each machine\'s maintenance window?');">
+    Update in the maintenance window
+  </button>
+  <a class="btn" href="#" onclick="swcAll(false);return false;" style="margin-left:auto;">Clear</a>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr>
+        <th class="tick"><input type="checkbox" id="swcTickAll" onclick="swcAll(this.checked)" title="Select every title with an update waiting"></th>
+        <th>Title</th><th>Publisher</th><th style="text-align:right;">Machines</th><th style="text-align:right;">Versions</th><th>Update waiting</th><th>Support</th>
+      </tr></thead>
+      <tbody>
+        <% if (!rows.length) { %><tr><td colspan="7"><div class="empty-state">Nothing matches. If this is empty everywhere, no agent has run its software inventory yet.</div></td></tr><% } %>
+        <% rows.forEach(function (r) { %>
+          <tr>
+            <td class="tick">
+              <% if (r.outdated) { %>
+                <input type="checkbox" class="swc-one" name="names" value="<%= r.name %>" data-n="<%= r.outdated %>" onclick="swcSync()">
+              <% } %>
+            </td>
+            <td><a class="row-link" href="/software/app?name=<%= encodeURIComponent(r.name) %><%= customerId ? '&customer=' + customerId : '' %>"><%= r.name %></a></td>
+            <td class="muted" style="font-size:12px;"><%= r.publisher || '—' %></td>
+            <td style="text-align:right;"><%= r.devices %></td>
+            <td style="text-align:right;"><%= r.versions %></td>
+            <td>
+              <% if (r.outdated) { %>
+                <%- include('partials/srcbadge', { s: r.up_source, small: true }) %>
+                <span style="font-size:12px;"><%= r.outdated %> behind<% if (r.available) { %> → <%= r.available %><% } %></span>
+              <% } else { %><span class="muted">—</span><% } %>
+            </td>
+            <td>
+              <% if (r.eol_past) { %>
+                <span class="badge badge-failed" title="<%= r.eol.guidance || '' %>">Out of support</span>
+                <span class="muted" style="font-size:11px;"><%= r.eol.date %></span>
+              <% } else if (r.eol && r.eol.date) { %>
+                <span class="muted" style="font-size:12px;">until <%= r.eol.date %></span>
+              <% } else { %><span class="muted">—</span><% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+</form>
+
+<p class="muted" style="margin:14px 0 0;font-size:12px;">
+  Ticking a title updates it on every machine that is behind, in one go. Open a title instead if you want
+  to pick particular machines, or do one customer at a time. Nothing is ever restarted —
+  a title that is out of support is not fixed by updating it, because there are no more updates to install.
+</p>
+
+<script>
+function swcTicks() { return Array.prototype.slice.call(document.querySelectorAll('.swc-one')); }
+function swcSync() {
+  var on = swcTicks().filter(function (t) { return t.checked; });
+  document.getElementById('swcCount').textContent = on.length;
+  document.getElementById('swcMachines').textContent =
+    on.reduce(function (a, t) { return a + (parseInt(t.getAttribute('data-n'), 10) || 0); }, 0);
+  document.getElementById('swcBar').classList.toggle('on', on.length > 0);
+  var all = document.getElementById('swcTickAll');
+  all.checked = on.length > 0 && on.length === swcTicks().length;
+  all.indeterminate = on.length > 0 && on.length < swcTicks().length;
+}
+function swcAll(on) { swcTicks().forEach(function (t) { t.checked = on; }); swcSync(); }
+swcSync();
+</script>
+
+<%- include('partials/footer') %>

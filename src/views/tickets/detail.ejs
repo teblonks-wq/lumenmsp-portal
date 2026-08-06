@@ -367,6 +367,24 @@
                 <span style="font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:6px;<%= e.channel==='teams' ? 'background:var(--tint-indigo);color:#4338ca;' : 'background:var(--tint-ok);color:var(--ok-fg);' %>"><%= e.channel==='teams' ? '👥 Teams' : '🟢 WhatsApp' %></span>
               <% } %></span>
               <span class="muted" style="display:flex;gap:8px;align-items:center;">
+                <%
+                  // Who was on this item. An inbound email has a From; anything we sent has
+                  // only a To/Cc, and replying to it means writing to the same people again.
+                  var _tlFrom = (e.kind==='message' && e.direction!=='outbound') ? (e.fromEmail || '') : '';
+                  var _tlAny  = [_tlFrom, e.to || '', e.cc || ''].filter(Boolean).join(',');
+                  var _tlMode = (e.kind==='note' && e.noteType==='side_convo') ? 'side_convo' : 'public_reply';
+                  var _tlId   = 'tl-' + (e.kind==='message' ? 'm' : 'n') + '-' + e.id;
+                %>
+                <% if (_tlAny) { %>
+                <button type="button" class="btn tl-act" data-act="reply" data-src="<%= _tlId %>"
+                        data-from="<%= _tlFrom %>" data-to="<%= e.to || '' %>" data-cc="<%= e.cc || '' %>"
+                        data-author="<%= e.author %>" data-at="<%= dt(e.at) %>" data-mode="<%= _tlMode %>"
+                        style="padding:1px 8px;font-size:11px;" title="Reply to everyone on this message">↩ Reply</button>
+                <% } %>
+                <button type="button" class="btn tl-act" data-act="forward" data-src="<%= _tlId %>"
+                        data-from="<%= _tlFrom %>" data-to="<%= e.to || '' %>" data-cc="<%= e.cc || '' %>"
+                        data-author="<%= e.author %>" data-at="<%= dt(e.at) %>" data-mode="side_convo"
+                        style="padding:1px 8px;font-size:11px;" title="Put this message in the composer and choose who to send it to">↪ Forward</button>
                 <% if (e.kind==='note' && (e.noteType==='public_reply' || e.noteType==='private_note')) { %>
                   <form method="post" action="/tickets/<%= ticket.id %>/note/<%= e.id %>/privacy" style="display:inline;margin:0;"><button class="btn" type="submit" style="padding:1px 8px;font-size:11px;"><%= e.noteType==='public_reply' ? 'Make private' : 'Make public' %></button></form>
                 <% } %>
@@ -407,6 +425,97 @@
           </div>
         <% } %>
       <% }); %>
+
+      <script>
+      // ── Reply / Forward from any item in the conversation ─────────────────────
+      // The message is already rendered on this page, so quoting it needs no round trip:
+      // we lift the HTML straight out of the timeline item and paste it into the composer.
+      //
+      // Reply keeps the conversation where it already is — a side conversation replies as
+      // a side conversation, a customer message replies publicly. Forward always switches
+      // to Side Convo, because by definition it is going to someone not on the case, and
+      // sending it as a public reply would put a third party's address on the customer's
+      // thread.
+      (function () {
+        var OUR = <%- JSON.stringify(typeof ourDomains !== 'undefined' ? ourDomains : []) %>;
+        function split(v) { return String(v || '').split(/[,;]/).map(function (s) { return s.trim(); }).filter(Boolean); }
+        function addr(s) { var m = String(s).match(/<([^>]+)>/); return (m ? m[1] : String(s)).trim(); }
+        // Our own mailboxes never go in a reply — that is how you start a loop with the
+        // inbox sync and email yourself all afternoon.
+        function ours(a) { var d = (addr(a).split('@')[1] || '').toLowerCase(); return OUR.indexOf(d) >= 0; }
+        function clean(list) {
+          var seen = {}, out = [];
+          list.forEach(function (a) {
+            var k = addr(a).toLowerCase();
+            if (!k || k.indexOf('@') < 0 || seen[k] || ours(a)) return;
+            seen[k] = 1; out.push(addr(a));
+          });
+          return out;
+        }
+        function setField(sel, val) {
+          var el = document.querySelector('#tkRecipients ' + sel);
+          if (!el) return;
+          el.value = val;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        function setMode(mode) {
+          var r = document.querySelector('input[name=note_type][value="' + mode + '"]');
+          if (r && !r.checked) { r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); }
+        }
+        function quoted(b, heading) {
+          var src = document.getElementById(b.getAttribute('data-src'));
+          var body = src ? src.querySelector('.email-body') : null;
+          var meta = [];
+          if (b.getAttribute('data-from')) meta.push('From: ' + b.getAttribute('data-from'));
+          if (b.getAttribute('data-to')) meta.push('To: ' + b.getAttribute('data-to'));
+          if (b.getAttribute('data-cc')) meta.push('Cc: ' + b.getAttribute('data-cc'));
+          meta.push('Sent: ' + b.getAttribute('data-at'));
+          return '<p><br></p><p>&mdash;&mdash;&mdash;&mdash;&mdash;</p><p><strong>' + heading + '</strong><br>' +
+                 meta.join('<br>') + '</p>' + (body ? body.innerHTML : '') + '<p><br></p>';
+        }
+        function run(b) {
+          var fwd = b.getAttribute('data-act') === 'forward';
+          if (fwd) {
+            // Deliberately blank: a forward goes somewhere new, and pre-filling it with the
+            // customer is exactly the mistake this button exists to avoid.
+            setField('.rcpt-to', ''); setField('.rcpt-cc', ''); setField('.rcpt-bcc', '');
+            setMode('side_convo');
+          } else {
+            var from = clean(split(b.getAttribute('data-from')));
+            var to   = clean(split(b.getAttribute('data-to')));
+            var cc   = clean(split(b.getAttribute('data-cc')));
+            var toL, ccL;
+            if (from.length) {
+              toL = from;
+              ccL = to.concat(cc).filter(function (a) { return toL.indexOf(a) < 0; });
+            } else {
+              toL = to; ccL = cc;   // something we sent — write to the same people again
+            }
+            setField('.rcpt-to', toL.join(', '));
+            setField('.rcpt-cc', ccL.join(', '));
+            setMode(b.getAttribute('data-mode') || 'public_reply');
+          }
+
+          var q = window.ticketQuill;
+          if (q) {
+            var head = fwd
+              ? 'Forwarded message'
+              : 'On ' + b.getAttribute('data-at') + ', ' + (b.getAttribute('data-author') || 'they') + ' wrote:';
+            var at = q.getLength() ? q.getLength() - 1 : 0;
+            q.clipboard.dangerouslyPasteHTML(at, quoted(b, head), 'user');
+            // Cursor at the top, above the quote — you write your bit first.
+            q.setSelection(0, 0);
+            q.focus();
+          }
+          var comp = document.getElementById('tkRecipients');
+          if (comp) comp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        document.querySelectorAll('.tl-act').forEach(function (b) {
+          b.addEventListener('click', function () { run(b); });
+        });
+      })();
+      </script>
     </div>
   </div>
 

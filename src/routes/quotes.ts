@@ -8,6 +8,7 @@ import { sendMail } from '../lib/mailer';
 import { quoteEmailHtml } from '../lib/emails';
 import { config } from '../config';
 import { getComms } from './comms';
+import { nextInvoiceNumber } from '../lib/recurring-billing';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -29,7 +30,9 @@ import {
 } from '../lib/doc-events';
 
 const router = Router();
-const STATUSES = ['draft', 'sent', 'accepted', 'lost'];
+// 'invoiced' is set by the system, never chosen by hand - it means an invoice exists for
+// this quote, and it is what stops the same job being billed twice.
+const STATUSES = ['draft', 'sent', 'accepted', 'lost', 'invoiced'];
 
 const nz = (v: any): string | null => { const s = (v ?? '').toString().trim(); return s !== '' ? s : null; };
 const num = (v: any): number => { const x = parseFloat((v ?? '').toString()); return isNaN(x) ? 0 : x; };
@@ -95,10 +98,20 @@ router.get('/quotes', requireAuth, async (req: Request, res: Response) => {
     where.push(`(q.quote_number ILIKE $${params.length} OR q.title ILIKE $${params.length} OR c.name ILIKE $${params.length})`);
   }
 
+  // LATERAL rather than a plain join: a quote could in principle carry more than one
+  // invoice, and we want one row per quote with the first invoice attached, not a
+  // duplicated quote row per invoice.
   const { rows } = await pool.query(
     `SELECT q.id, q.quote_number, q.title, q.status, q.total, q.currency_code, q.issue_date, q.valid_until,
-            c.name AS customer_name, c.id AS customer_id
-     FROM quotes q LEFT JOIN customers c ON c.id = q.customer_id
+            q.invoiced_at, c.name AS customer_name, c.id AS customer_id,
+            inv.id AS invoice_id, inv.invoice_number, inv.status AS invoice_status
+     FROM quotes q
+     LEFT JOIN customers c ON c.id = q.customer_id
+     LEFT JOIN LATERAL (
+       SELECT i.id, i.invoice_number, i.status FROM invoices i
+        WHERE i.quote_id = q.id AND i.deleted_at IS NULL
+        ORDER BY i.id LIMIT 1
+     ) inv ON true
      WHERE ${where.join(' AND ')}
      ORDER BY q.id DESC`,
     params
@@ -107,7 +120,7 @@ router.get('/quotes', requireAuth, async (req: Request, res: Response) => {
   const statusCounts: Record<string, number> = {};
   stat.rows.forEach((r: any) => { statusCounts[r.status] = r.n; });
 
-  res.render('quotes/list', { user, quotes: rows, status, search, statusCounts });
+  res.render('quotes/list', { user, quotes: rows, status, search, statusCounts, msg: req.query.msg || null });
 });
 
 // ── New ──────────────────────────────────────────────────────────────────────────
@@ -158,6 +171,126 @@ router.post('/quotes', requireAuth, async (req: Request, res: Response) => {
 });
 
 // ── Detail ────────────────────────────────────────────────────────────────────
+// ── Quote → invoice ─────────────────────────────────────────────────────────────
+// The invoice comes out READY BUT NOT SENT: today's date on both issue and due, status
+// draft, nothing emailed, nothing pushed to QuickBooks, no Direct Debit submitted.
+// Someone still has to press Complete in Invoices — that is the action with consequences
+// outside the Portal, and it should stay a deliberate one.
+async function convertQuoteToInvoice(quoteId: number, userId: number): Promise<{
+  ok: boolean; reason?: string; invoiceId?: number; invoiceNumber?: string; quoteNumber?: string;
+}> {
+  const q = (await pool.query('SELECT * FROM quotes WHERE id=$1 AND deleted_at IS NULL', [quoteId])).rows[0];
+  if (!q) return { ok: false, reason: 'no longer there' };
+
+  const existing = (await pool.query(
+    'SELECT id, invoice_number FROM invoices WHERE quote_id=$1 AND deleted_at IS NULL ORDER BY id LIMIT 1',
+    [quoteId])).rows[0];
+  if (existing) {
+    // Already billed. Correct the quote if it never got marked, then leave well alone —
+    // a second invoice against one quote is how a customer gets charged twice.
+    await pool.query(
+      `UPDATE quotes SET status='invoiced', invoiced_at=COALESCE(invoiced_at, NOW()) WHERE id=$1`, [quoteId]);
+    return { ok: false, reason: 'already invoiced as ' + existing.invoice_number, quoteNumber: q.quote_number };
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const invoiceNumber = await nextInvoiceNumber('IT');
+    const ins = await client.query(
+      `INSERT INTO invoices (customer_id, quote_id, invoice_number, invoice_scheme, title, status,
+              payment_status, payment_method, issue_date, due_date, currency_code, notes, terms,
+              subtotal, tax_total, total, balance, created_by)
+       VALUES ($1,$2,$3,'IT',$4,'draft','unpaid','upfront',CURRENT_DATE,CURRENT_DATE,$5,$6,$7,$8,$9,$10,$10,$11)
+       RETURNING id`,
+      [q.customer_id, q.id, invoiceNumber, q.title, q.currency_code || 'GBP', q.notes, q.terms,
+       q.subtotal, q.tax_total, q.total, userId]);
+    const invoiceId = ins.rows[0].id;
+
+    // Totals are copied from the quote rather than recomputed: the quote is what the
+    // customer agreed to, down to the penny, and rounding it a second time is how the
+    // invoice ends up a penny out from the thing they signed.
+    await client.query(
+      `INSERT INTO invoice_items (invoice_id, product_id, source, sort_order, description,
+              quantity, unit_price, tax_rate, line_total)
+       SELECT $1, qi.product_id, 'manual', qi.sort_order, qi.description,
+              qi.quantity, qi.unit_price, qi.tax_rate, qi.line_total
+         FROM quote_items qi WHERE qi.quote_id=$2 ORDER BY qi.sort_order, qi.id`, [invoiceId, q.id]);
+
+    await client.query(`UPDATE quotes SET status='invoiced', invoiced_at=NOW() WHERE id=$1`, [q.id]);
+    await client.query('COMMIT');
+
+    await logActivity(userId, 'created', 'invoices', invoiceId,
+      `Created invoice ${invoiceNumber} from quote ${q.quote_number}`);
+    await logActivity(userId, 'status_changed', 'quotes', q.id,
+      `Quote ${q.quote_number} invoiced as ${invoiceNumber}`);
+    return { ok: true, invoiceId, invoiceNumber, quoteNumber: q.quote_number };
+  } catch (e: any) {
+    await client.query('ROLLBACK');
+    return { ok: false, reason: e.message, quoteNumber: q.quote_number };
+  } finally {
+    client.release();
+  }
+}
+
+// ── Bulk actions ────────────────────────────────────────────────────────────────
+// Registered BEFORE '/quotes/:id' — Express matches in order, and POST '/quotes/:id'
+// would otherwise swallow this as a quote with the id "bulk".
+router.post('/quotes/bulk', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const action = String(req.body.bulk_action || '');
+  const ids = asArray(req.body.ids).map((v: any) => parseInt(String(v), 10)).filter((n: number) => !!n);
+  const go = (m: string) => res.redirect('/quotes?msg=' + encodeURIComponent(m));
+
+  if (!ids.length) { go('Nothing was ticked.'); return; }
+
+  try {
+    if (action === 'invoice') {
+      // One transaction per quote, in sequence. nextInvoiceNumber() reads committed rows,
+      // so converting them inside one transaction would hand every invoice the same number.
+      const made: string[] = [];
+      const skipped: string[] = [];
+      for (const id of ids) {
+        const r = await convertQuoteToInvoice(id, user.id);
+        if (r.ok) made.push(r.invoiceNumber!);
+        else skipped.push(`${r.quoteNumber || '#' + id} — ${r.reason}`);
+      }
+      let m = made.length
+        ? `Created ${made.length} invoice${made.length === 1 ? '' : 's'} (${made.join(', ')}). They are drafts dated today — complete them in Invoices when you are ready.`
+        : 'No invoices were created.';
+      if (skipped.length) m += ` Skipped ${skipped.length}: ${skipped.join('; ')}.`;
+      go(m);
+      return;
+    }
+
+    if (action === 'lost') {
+      const r = await pool.query(
+        `UPDATE quotes SET status='lost' WHERE id = ANY($1::int[]) AND deleted_at IS NULL
+           AND status <> 'invoiced' RETURNING id`, [ids]);
+      const held = ids.length - r.rows.length;
+      await logActivity(user.id, 'status_changed', 'quotes', null,
+        `Marked ${r.rows.length} quote(s) as lost`);
+      go(`Marked ${r.rows.length} as lost.` + (held ? ` ${held} left alone — a quote that has been invoiced cannot be lost.` : ''));
+      return;
+    }
+
+    if (action === 'delete') {
+      const r = await pool.query(
+        `UPDATE quotes SET deleted_at=NOW(), deleted_by_user_id=$2
+          WHERE id = ANY($1::int[]) AND deleted_at IS NULL RETURNING id`, [ids, user.id]);
+      await logActivity(user.id, 'deleted', 'quotes', null,
+        `Deleted ${r.rows.length} quote(s) in bulk`);
+      go(`Moved ${r.rows.length} to the recycle bin.`);
+      return;
+    }
+
+    go('That is not an action I know.');
+  } catch (e: any) {
+    console.error('[quotes] bulk action failed:', e.message);
+    go('Could not finish: ' + e.message);
+  }
+});
+
 router.get('/quotes/:id', requireAuth, async (req: Request, res: Response) => {
   const user = req.session.user!;
   const id = parseInt(String(req.params.id), 10);
@@ -176,6 +309,11 @@ router.get('/quotes/:id', requireAuth, async (req: Request, res: Response) => {
   const contacts = quote.customer_id
     ? (await pool.query('SELECT full_name, email, is_primary FROM customer_contacts WHERE customer_id=$1 AND email IS NOT NULL AND email <> \'\' ORDER BY is_primary DESC, full_name', [quote.customer_id])).rows
     : [];
+  // What this quote became. Shown on the quote so nobody has to search Invoices to find
+  // out whether it was ever billed.
+  const invoices = (await pool.query(
+    `SELECT id, invoice_number, status, payment_status, total, issue_date
+       FROM invoices WHERE quote_id=$1 AND deleted_at IS NULL ORDER BY id`, [id])).rows;
   const comms = await getComms('quote', id);
   const commsTo = quote.sent_to || (contacts[0]?.email) || '';
   // For the Duplicate control — the common reason to copy a quote is to send the same
@@ -184,7 +322,7 @@ router.get('/quotes/:id', requireAuth, async (req: Request, res: Response) => {
     `SELECT id, name FROM customers WHERE deleted_at IS NULL AND is_placeholder=false ORDER BY name`)).rows;
   // Optional same-site return path (e.g. the customer screen's Quotes tab).
   const backQ = String(req.query.back || '');
-  res.render('quotes/detail', { user, quote, items: items.rows, contacts, comms, commsTo, customers,
+  res.render('quotes/detail', { user, quote, items: items.rows, contacts, comms, commsTo, customers, invoices,
     back: /^\/(?!\/)/.test(backQ) ? backQ : null, events: await getDocEvents('quote', quote.id) });
 });
 
