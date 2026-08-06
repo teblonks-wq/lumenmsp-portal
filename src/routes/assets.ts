@@ -25,7 +25,9 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   const type = String(req.query.type || '').trim();
   const onlineOnly = req.query.online === '1';
   const noUser = req.query.nouser === '1'; // "unallocated" - no last logged-in user known
-  const agentOnly = req.query.agent === '1'; // only devices running the LumenMSP Agent
+  // Tri-state agent filter: '1' = has the LumenMSP Agent, '0' = without it (the machines
+  // to target for a rollout), '' = either. Kept as a string so "without" is expressible.
+  const agentFilter = String(req.query.agent || '').trim();
 
   const where: string[] = ['a.customer_id IS NOT NULL'];
   const params: any[] = [];
@@ -35,7 +37,8 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   if (onlineOnly) where.push('a.online_status = true');
   if (noUser) where.push("(a.assigned_contact_id IS NULL AND (a.last_login_user IS NULL OR a.last_login_user = ''))");
   // agd is the LATERAL agent match below, so it can be filtered on here.
-  if (agentOnly) where.push('agd.id IS NOT NULL');
+  if (agentFilter === '1') where.push('agd.id IS NOT NULL');
+  else if (agentFilter === '0') where.push('agd.id IS NULL');
 
   const rows = (await pool.query(
     `SELECT a.*, c.name AS customer_name, ac.full_name AS assigned_name,
@@ -65,7 +68,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
 
   res.render('assets/list', {
     user: req.session.user!, rows, unmatchedCount, types, customers, backupState,
-    filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentOnly },
+    filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentFilter },
     lastSynced: await lastAssetSyncAt(),
     remoteTemplate: await remoteUrlTemplate(),
     notice: req.query.msg || null, error: req.query.err || null,

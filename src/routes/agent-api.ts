@@ -6,7 +6,7 @@ import multer from 'multer';
 import { pool } from '../db/pool';
 import { getSetting, setSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
-import { vaultConfigured, encryptSecret } from '../lib/vault';
+import { vaultConfigured, encryptSecret, decryptSecret } from '../lib/vault';
 import { ingestCeResult } from '../lib/ce-ingest';
 import { ingestServerFacts } from '../lib/server-facts';
 import { htmlToPlain } from '../lib/whatsapp';
@@ -96,7 +96,7 @@ router.get('/agent/api/console', requireDevice, async (req: Request, res: Respon
   try {
     if (!d.customer_id) { res.status(409).json({ ok: false, error: 'This device is not linked to a customer yet.' }); return; }
 
-    const cust = (await pool.query('SELECT id, name FROM customers WHERE id=$1', [d.customer_id])).rows[0];
+    const cust = (await pool.query('SELECT id, name, agent_site_key FROM customers WHERE id=$1', [d.customer_id])).rows[0];
     const pin = (await getSetting('agent', 'console_pin')) || '486826';
     const salt = crypto.randomBytes(8).toString('hex');
 
@@ -119,8 +119,18 @@ router.get('/agent/api/console', requireDevice, async (req: Request, res: Respon
       pin_salt: salt,
       pin_hash: pinHash(String(pin), salt),
       networks: nets,
+      // Hostnames we already manage for this customer, so the scan can say "we have this
+      // one" instead of making someone cross-reference two lists by hand.
+      managed: (await pool.query(
+        `SELECT LOWER(hostname) AS h FROM agent_devices WHERE customer_id=$1 AND revoked=false AND hostname IS NOT NULL`,
+        [d.customer_id])).rows.map((r: any) => r.h),
       credential: cred,
       vault_ready: vaultConfigured(),
+      // The customer's own site key — used only to build the keyed MSI URL for the GPO
+      // fallback. It is a per-customer install secret, not a password: it already appears
+      // in the download links on /agents and /my, and the console is localhost-only on a
+      // server the engineer is already signed into.
+      site_key: cust?.agent_site_key || null,
     });
   } catch (e: any) {
     console.error('[console] bootstrap failed:', e.message);
@@ -218,6 +228,58 @@ router.post('/agent/api/console/credential', requireDevice, async (req: Request,
   } catch (e: any) {
     console.error('[console] credential failed:', e.message);
     res.status(500).json({ ok: false, error: 'could not save' });
+  }
+});
+
+// The one call that hands a stored password back. The server agent needs the domain
+// credential in the clear to open a WinRM session to the machines it is installing on —
+// there is no other way to authenticate as that account — so this returns the decrypted
+// password, together with the customer's site key so the pushed MSI enrols to the right
+// place.
+//
+// It is deliberately narrow:
+//   • device token only, and only the calling device's OWN customer;
+//   • only the single system-managed credential, and only when the Portal has already
+//     confirmed it is valid — a deploy must never begin on a password we have not tested;
+//   • every release is written to the activity log, because a domain-admin password
+//     leaving the vault is exactly the event an audit needs to see.
+// The password is used in memory on the server that asked, for the length of one run, and
+// is never written to that server's disk.
+router.get('/agent/api/console/deploy-config', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  try {
+    if (!d.customer_id) { res.status(409).json({ ok: false, error: 'This device is not linked to a customer yet.' }); return; }
+    if (!vaultConfigured()) { res.status(503).json({ ok: false, error: 'The password vault is not configured on the Portal.' }); return; }
+
+    const cust = (await pool.query('SELECT agent_site_key FROM customers WHERE id=$1', [d.customer_id])).rows[0];
+    const siteKey = cust?.agent_site_key || null;
+    if (!siteKey) { res.status(409).json({ ok: false, error: 'This customer has no agent site key yet.' }); return; }
+
+    const cred = (await pool.query(
+      `SELECT id, username, secret_encrypted, validation_state
+         FROM customer_credentials
+        WHERE customer_id=$1 AND system_managed=true AND deleted_at IS NULL
+        ORDER BY id LIMIT 1`, [d.customer_id])).rows[0];
+    if (!cred || !cred.secret_encrypted) {
+      res.status(409).json({ ok: false, error: 'No domain account is saved for this customer yet. Add one in the console first.' });
+      return;
+    }
+    if (cred.validation_state !== 'valid') {
+      res.status(409).json({ ok: false, error: 'The saved domain account has not been validated. Re-enter its password so it can be checked, then deploy.' });
+      return;
+    }
+
+    let password: string;
+    try { password = decryptSecret(cred.secret_encrypted); }
+    catch { res.status(500).json({ ok: false, error: 'The stored credential could not be decrypted.' }); return; }
+
+    await logActivity(null, 'agent_deploy_credential', 'credentials', cred.id,
+      `Domain credential for ${cred.username} released to the server console on ${d.hostname} to deploy the agent`);
+
+    res.json({ ok: true, username: cred.username, password, site_key: siteKey });
+  } catch (e: any) {
+    console.error('[console] deploy-config failed:', e.message);
+    res.status(500).json({ ok: false, error: 'could not load' });
   }
 });
 

@@ -88,10 +88,14 @@ var _pct     = rows.length ? Math.round((_agent / rows.length) * 100) : 0;
       <% types.forEach(function(t){ %><option value="<%= t %>" <%= filters.type===t?'selected':'' %>><%= t %></option><% }); %>
     </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" name="online" value="1" <%= filters.online?'checked':'' %>> Online only</label>
-    <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Only devices running the LumenMSP Agent"><input type="checkbox" name="agent" value="1" <%= filters.agent?'checked':'' %>> <img src="/static/img/lumen-agent-16.png" width="14" height="14" alt=""> Agent installed</label>
+    <select class="input" name="agent" title="Filter by whether the LumenMSP Agent is installed">
+      <option value="">Agent: any</option>
+      <option value="1" <%= filters.agent==='1'?'selected':'' %>>Agent installed</option>
+      <option value="0" <%= filters.agent==='0'?'selected':'' %>>Without agent</option>
+    </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Devices with no last logged-in user reported by Atera"><input type="checkbox" name="nouser" value="1" <%= filters.nouser?'checked':'' %>> No known user</label>
     <button class="btn" type="submit">Filter</button>
-    <% if (filters.q || filters.customer || filters.type || filters.online || filters.nouser) { %><a class="btn" href="/assets">Clear</a><% } %>
+    <% if (filters.q || filters.customer || filters.type || filters.online || filters.nouser || filters.agent) { %><a class="btn" href="/assets">Clear</a><% } %>
   </form>
 </div>
 

@@ -202,11 +202,36 @@ router.get('/auth/callback', async (req: Request, res: Response) => {
       return;
     }
 
-    const userRes = await pool.query(
-      'SELECT * FROM users WHERE email = $1 AND is_active = true LIMIT 1',
-      [email.toLowerCase()]
-    );
-    let user = userRes.rows[0];
+    // Identity match: Entra object id FIRST, email only as a fallback. The `email` claim
+    // comes from the mailbox's PRIMARY SMTP address, not the UPN, so renaming someone's
+    // address silently orphans their account on an email-only match - and the person
+    // locked out has no way to fix it themselves. `oid` never changes.
+    let user = oid
+      ? (await pool.query(
+          'SELECT * FROM users WHERE entra_oid = $1 AND is_active = true LIMIT 1',
+          [oid]
+        )).rows[0]
+      : undefined;
+
+    // Matched on oid but the address has moved: heal the stored address so the rest of the
+    // app (which keys off users.email) stays consistent. Guarded - if the new address is
+    // already held by a different row, keep the old one rather than fail the sign-in.
+    if (user && String(user.email || '').toLowerCase() !== email.toLowerCase()) {
+      const healed = (await pool.query(
+        'UPDATE users SET email = $1 WHERE id = $2 RETURNING *',
+        [email.toLowerCase(), user.id]
+      ).catch(() => ({ rows: [] as any[] }))).rows[0];
+      if (healed) user = healed;
+    }
+
+    // Fallback: no oid on the row yet (first sign-in since entra_oid was added, or a
+    // hand-created row). Line ~239 below stamps the oid on success, so this self-heals.
+    if (!user) {
+      user = (await pool.query(
+        'SELECT * FROM users WHERE email = $1 AND is_active = true LIMIT 1',
+        [email.toLowerCase()]
+      )).rows[0];
+    }
 
     // Auto-provision: anyone signing in from an ENABLED customer's tenant (not our home tenant)
     // gets a customer login created on first sign-in — no manual setup per person. Their access
