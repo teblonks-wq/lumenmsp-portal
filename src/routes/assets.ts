@@ -270,11 +270,12 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   const contactOptions = row.customer_id
     ? (await pool.query('SELECT id, full_name FROM customer_contacts WHERE customer_id=$1 AND archived=false ORDER BY full_name', [row.customer_id])).rows
     : [];
-  const tpl = await remoteUrlTemplate();
+
   // Admin-only raw-payload viewer (?debug=1) — lets us see Atera's exact field names for a real
   // device without guessing, since pick() field-name candidates won't always match every Atera
   // account/API version. Temporary diagnostic aid, not a general feature.
   const showDebug = req.session.user!.role === 'admin' && req.query.debug === '1';
+  const mesh = await meshStatus(row.id).catch(() => null);
   // Backup panel: MSP360 plans matched to this device by machine name, plus the Portal's
   // own accrued daily history (the asset page is heading towards system-of-record status).
   const backupPlansRaw = await getBackupForComputer(row.hostname || '');
@@ -297,12 +298,15 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     user: req.session.user!, asset: row, agentInfo,
     latestAgentVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
     backupPlans, backupHistory,
-    remoteUrl: row.external_id ? buildRemoteUrl(tpl, { agentId: row.external_id, deviceGuid: row.device_guid }) : null,
+    // Remote control means OUR remote control. It appears when MeshCentral actually has
+    // this machine - not when Atera happens to know about it, which is what it used to key
+    // on and is meaningless now Atera is on its way out.
+    remoteUrl: mesh && mesh.hasNode ? `/assets/${id}/remote-mesh` : null,
     back: safeBack(req.query.back, '/assets'), contactOptions,
     rawJson: showDebug ? JSON.stringify(row.raw, null, 2) : null,
     // Whether remote control is ready on this machine, and if not, which of the several
     // possible reasons it is — so the page can offer the install rather than a dead end.
-    meshState: await meshStatus(row.id).catch(() => null),
+    meshState: mesh,
     onlineWindowSecs: ONLINE_WINDOW_SECS,
     notice: req.query.msg || null, error: req.query.err || null,
   });

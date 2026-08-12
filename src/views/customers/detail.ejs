@@ -784,16 +784,6 @@
 <section class="tab-panel" data-key="assets" id="assets">
   <% var custAssets = (typeof assets!=='undefined') ? assets : []; %>
   <%
-  function assetRemoteHref(a){
-    var tpl = (typeof remoteTemplate!=='undefined'?remoteTemplate:'');
-    if (tpl.indexOf('{deviceGuid}') !== -1 && !a.device_guid) {
-      return 'https://app.atera.com/AgentDetails/' + encodeURIComponent(a.external_id || '');
-    }
-    var url = tpl;
-    if (a.device_guid) url = url.split('{deviceGuid}').join(encodeURIComponent(a.device_guid));
-    if (a.external_id) url = url.split('{agentId}').join(encodeURIComponent(a.external_id));
-    return url;
-  }
   %>
   <div class="card" style="padding:0;">
     <div class="card-header" style="padding:20px 24px 0;display:flex;justify-content:space-between;align-items:center;">
@@ -824,7 +814,7 @@
               <td class="muted"><%= a.os || '—' %></td>
               <td class="muted"><%= [a.manufacturer, a.model].filter(Boolean).join(' ') || '—' %></td>
               <td class="muted" style="font-size:12px;"><%= a.last_seen_at ? new Date(a.last_seen_at).toLocaleDateString('en-GB') : '—' %></td>
-              <td style="text-align:right;"><% if (a.external_id) { %><a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="<%= assetRemoteHref(a) %>">🖥 Remote</a><% } %></td>
+              <td style="text-align:right;"><% if (a.remote_ready) { %><a class="btn btn-remote" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="/assets/<%= a.id %>/remote-mesh">🖥 Remote</a><% } %></td>
             </tr>
           <% }); %>
         </tbody>

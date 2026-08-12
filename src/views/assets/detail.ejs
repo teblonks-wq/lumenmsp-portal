@@ -43,7 +43,7 @@
       <% if (_ours) { %>· <span class="muted" title="The Portal is the master record for this machine — every field on this page is collected by our own agent, not by Atera.">updated <%= dt(asset.synced_at) %></span><% } %>
     </p>
   </div>
-  <% if (remoteUrl) { %><a class="btn btn-primary" target="_blank" rel="noopener" href="/assets/<%= asset.id %>/remote-mesh">🖥 Remote control</a><% } %>
+  <% if (remoteUrl) { %><a class="btn btn-remote" target="_blank" rel="noopener" href="/assets/<%= asset.id %>/remote-mesh">🖥 Remote control</a><% } %>
 </div>
 
 <% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success"><%= notice %></div><% } %>

@@ -594,7 +594,7 @@
           <a class="row-link" style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" href="/assets/<%= d.id %>?back=<%= encodeURIComponent('/tickets/' + ticket.id) %>"><%= d.hostname || '(unnamed device)' %></a>
           <span class="muted" style="font-size:11px;flex:none;"><%= d.device_type || '' %></span>
         </span>
-        <% if (d.remote_url) { %><a class="btn" style="padding:3px 10px;font-size:12px;white-space:nowrap;" target="_blank" rel="noopener" href="<%= d.remote_url %>">🖥 Remote</a><% } %>
+        <% if (d.remote_url) { %><a class="btn btn-remote" style="padding:3px 10px;font-size:12px;white-space:nowrap;" target="_blank" rel="noopener" href="<%= d.remote_url %>">🖥 Remote</a><% } %>
       </div>
     <% }); %>
   </div>

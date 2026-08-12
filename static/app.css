@@ -457,6 +457,15 @@ html.theme-solstice .tab-btn.active { color: var(--ink); border-image: var(--gra
 .btn.btn-primary { background: var(--primary-bg); color: var(--primary-fg); border: 0; box-shadow: var(--primary-shadow); }
 .btn.btn-primary:hover { filter: brightness(1.06); }
 
+/* Remote control — the one action that takes you onto somebody's actual desktop, so it
+   gets its own colour and reads the same wherever it appears (assets, patching, a case,
+   a customer's device list). Uses the existing --blue token rather than a new one: the
+   accent is teal and stays teal. Carbon's --blue is a light blue, so the ink flips dark
+   there to keep the label readable. */
+.btn.btn-remote, .btn-remote { background: var(--blue); color: #fff; border: 0; font-weight: 600; }
+.btn.btn-remote:hover, .btn-remote:hover { filter: brightness(1.08); }
+html.theme-carbon .btn.btn-remote, html.theme-carbon .btn-remote { color: #0b1220; }
+
 /* Login (standalone page — no theme class, classic tokens apply) */
 .login-body { display: grid; place-items: center; min-height: 100vh; padding-top: 0; background: #0f172a; }
 .login-card { background: #fff; border-radius: 14px; padding: 36px 32px; width: 360px; max-width: 90vw; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,.3); }

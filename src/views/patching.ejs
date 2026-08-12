@@ -136,7 +136,7 @@ function sev(s) {
                 </form>
                 <% } %>
                 <% if (d.asset_id && d.mesh_node_id) { %>
-                <a class="btn" style="padding:3px 9px;font-size:12px;" target="_blank" rel="noopener" href="/assets/<%= d.asset_id %>/remote-mesh" title="Open this machine's desktop">🖥</a>
+                <a class="btn btn-remote" style="padding:3px 9px;font-size:12px;" target="_blank" rel="noopener" href="/assets/<%= d.asset_id %>/remote-mesh" title="Open this machine's desktop">🖥</a>
                 <% } %>
                 <button type="button" class="btn pw-btn" style="padding:3px 9px;font-size:12px;<%= d.power_pending ? 'border-color:var(--warn-line);' : '' %>"
                         data-id="<%= d.id %>" data-host="<%= d.hostname || '' %>" data-user="<%= d.logged_in_user || '' %>"

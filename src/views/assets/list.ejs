@@ -1,21 +1,6 @@
 <%- include('../partials/header', { title: 'Assets', user }) %>
 <% function secsAgo(s){ if (s == null) return 'never'; var m = Math.round(Number(s)/60); if (m < 1) return 'just now'; if (m < 60) return m + 'm ago'; var h = Math.round(m/60); if (h < 24) return h + 'h ago'; return Math.round(h/24) + 'd ago'; } %>
 <% function timeAgo(iso){ if(!iso) return 'never'; var d=new Date(iso); var mins=Math.round((Date.now()-d.getTime())/60000); if(mins<1) return 'just now'; if(mins<60) return mins+'m ago'; var hrs=Math.round(mins/60); if(hrs<24) return hrs+'h ago'; return Math.round(hrs/24)+'d ago'; } %>
-<%
-// Same fallback logic as lib/asset-sync.ts's buildRemoteUrl: if the saved template needs a
-// device_guid this row hasn't been re-synced with yet, fall back to the old numeric-ID page
-// rather than producing a dead link with a literal "{deviceGuid}" in it.
-function remoteHref(a){
-  var tpl = remoteTemplate;
-  if (tpl.indexOf('{deviceGuid}') !== -1 && !a.device_guid) {
-    return 'https://app.atera.com/AgentDetails/' + encodeURIComponent(a.external_id || '');
-  }
-  var url = tpl;
-  if (a.device_guid) url = url.split('{deviceGuid}').join(encodeURIComponent(a.device_guid));
-  if (a.external_id) url = url.split('{agentId}').join(encodeURIComponent(a.external_id));
-  return url;
-}
-%>
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
 <% var _noAgent = rows.filter(function(a){ return !a.agent_device_id; }).length; %>
@@ -220,11 +205,9 @@ function tileHref(over){
             <td class="muted seen-live" data-asset="<%= a.id %>" style="font-size:12px;"><%= a.agent_device_id && a.agent_seen_secs != null ? secsAgo(a.agent_seen_secs) : timeAgo(a.last_seen_at) %></td>
             <td style="text-align:right;white-space:nowrap;">
               <% if (a.agent_device_id && a.agent_mesh_node_id) { %>
-                <a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="/assets/<%= a.id %>/remote-mesh" title="Open this machine's desktop">🖥 Remote</a>
+                <a class="btn btn-remote" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="/assets/<%= a.id %>/remote-mesh" title="Open this machine's desktop">🖥 Remote</a>
               <% } else if (a.agent_device_id) { %>
-                <button type="button" class="btn remote-help" data-id="<%= a.id %>" data-host="<%= a.hostname || 'this machine' %>" style="padding:3px 10px;font-size:12px;opacity:.75;" title="Remote control is not ready on this machine yet — press for the reason and what to do">🖥 Remote</button>
-              <% } else if (a.external_id) { %>
-                <a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="<%= remoteHref(a) %>" title="Falls back to Atera — this machine has no LumenMSP Agent">🖥 Remote</a>
+                <button type="button" class="btn btn-remote remote-help" data-id="<%= a.id %>" data-host="<%= a.hostname || 'this machine' %>" style="padding:3px 10px;font-size:12px;opacity:.75;" title="Remote control is not ready on this machine yet — press for the reason and what to do">🖥 Remote</button>
               <% } %>
             </td>
           </tr>
@@ -234,18 +217,7 @@ function tileHref(over){
   </div>
 </div>
 
-<% if (typeof user!=='undefined' && user.role==='admin') { %>
-<div class="card">
-  <div class="card-header"><h2>Remote-access link</h2></div>
-  <p class="muted" style="margin:0 0 12px;font-size:13px;">
-    The "🖥 Remote" button opens this URL with <code>{deviceGuid}</code> (or <code>{agentId}</code>) replaced by the device's Atera identifiers. Confirmed live 2026-07-23 against Atera's current device page — adjust here if that ever changes, no redeploy needed.
-  </p>
-  <form method="post" action="/assets/remote-settings" style="display:flex;gap:8px;">
-    <input class="input" type="text" name="template" value="<%= remoteTemplate %>" style="flex:1;font-family:monospace;font-size:13px;">
-    <button class="btn btn-primary" type="submit">Save</button>
-  </form>
-</div>
-<% } %>
+
 
 <!-- Remote-access lightbox. Pressing Remote on a machine that is not ready used to send
      you to the device page carrying an error, which reads as "it opened another window and

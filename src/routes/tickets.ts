@@ -6,7 +6,6 @@ import { sendTicketStatusEmail } from '../lib/emails';
 import { cleanHtml } from '../lib/sanitize';
 import { attachmentUpload, processAttachments } from '../lib/attachments';
 import { logActivity } from '../lib/activity';
-import { remoteUrlTemplate, buildRemoteUrl } from '../lib/asset-sync';
 import { notify } from '../lib/notifications';
 import { sendTeamsNotice } from '../lib/teams'; // sendTeamsReply (relay) disabled pending Power Automate fix
 import { teamsGraphConnected, sendTeamsChatMessage } from '../lib/teamsgraph';
@@ -575,11 +574,16 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
   let requesterAssets: any[] = [];
   if (r.rows[0].contact_id) {
     try {
-      const assetTpl = await remoteUrlTemplate();
+      // Remote here means our own remote control, offered only when MeshCentral actually
+      // has the machine. The old Atera deep-link is gone.
       requesterAssets = (await pool.query(
-        `SELECT id, hostname, device_type, online_status, external_id, device_guid
-           FROM customer_assets WHERE assigned_contact_id=$1 ORDER BY hostname`, [r.rows[0].contact_id]
-      )).rows.map((d: any) => ({ ...d, remote_url: d.external_id ? buildRemoteUrl(assetTpl, { agentId: d.external_id, deviceGuid: d.device_guid }) : null }));
+        `SELECT a.id, a.hostname, a.device_type, a.online_status,
+                (ad.mesh_node_id IS NOT NULL) AS remote_ready
+           FROM customer_assets a
+           LEFT JOIN agent_devices ad ON ad.id = a.agent_device_id AND ad.revoked = false
+          WHERE a.assigned_contact_id=$1 AND a.merged_into_id IS NULL
+          ORDER BY a.hostname`, [r.rows[0].contact_id]
+      )).rows.map((d: any) => ({ ...d, remote_url: d.remote_ready ? `/assets/${d.id}/remote-mesh` : null }));
     } catch { /* assigned_contact_id ships in the same deploy as this code */ }
   }
   // Our own mailboxes, so Reply-to-all on a message doesn't put us in our own To line
