@@ -15,7 +15,22 @@ import { windowsOsName } from './os-name';
 //      agent, so the device page showed two of everything and they disagreed.
 // Both go away by making enrolment itself create and maintain the asset row.
 
-const ONLINE_WINDOW_SECS = 12 * 60;
+/**
+ * How long we wait, hearing nothing at all, before calling a machine offline.
+ *
+ * The signal is fresher than it looks: as well as the heartbeat (every 2 minutes, set
+ * server-side in deviceConfig), an enrolled agent holds a 25-second command long-poll
+ * open and every one of those bumps last_seen_at too. So a machine that is switched on
+ * touches the Portal roughly every 25 seconds.
+ *
+ * The floor on this number is the SLOWEST thing that should be beating - the heartbeat.
+ * Set it below that and any device whose command worker has died would flip online/off
+ * every heartbeat, which is worse than being slow. 3 minutes against a 2-minute
+ * heartbeat leaves a clear margin.
+ */
+export const ONLINE_WINDOW_SECS = 3 * 60;
+/** The same number for use inside SQL. Keep both sides reading this constant. */
+export const ONLINE_WINDOW_SQL = `INTERVAL '${ONLINE_WINDOW_SECS} seconds'`;
 
 // ── Matching a machine to the row we already hold ───────────────────────────────
 // This is what decides whether deploying our agent to a machine Atera already told us
@@ -217,7 +232,7 @@ export async function backfillAssetsFromAgents(): Promise<{ bound: number; creat
               ad.serial_number, ad.os, ad.os_version, ad.agent_version, ad.logged_in_user,
               ad.local_ips, ad.public_ip, COALESCE(ad.device_type, 'Workstation'), ad.manufacturer,
               ad.model, ad.cpu, ad.ram_gb, ad.mac_addresses, ad.domain_or_workgroup,
-              (ad.last_seen_at > NOW() - interval '12 minutes'), ad.enrolled_at, ad.last_seen_at,
+              (ad.last_seen_at > NOW() - ${ONLINE_WINDOW_SQL}), ad.enrolled_at, ad.last_seen_at,
               ad.last_boot_at, NOW(), NOW()
          FROM agent_devices ad
         WHERE ad.revoked = false AND ad.customer_id IS NOT NULL
@@ -247,7 +262,7 @@ export async function backfillAssetsFromAgents(): Promise<{ bound: number; creat
           device_type = COALESCE(ad.device_type, a.device_type),
           last_reboot_at = COALESCE(ad.last_boot_at, a.last_reboot_at),
           last_seen_at = COALESCE(ad.last_seen_at, a.last_seen_at),
-          online_status = (ad.last_seen_at > NOW() - interval '12 minutes'),
+          online_status = (ad.last_seen_at > NOW() - ${ONLINE_WINDOW_SQL}),
           data_source = 'agent', synced_at = NOW(), updated_at = NOW()
          FROM agent_devices ad
         WHERE a.agent_device_id = ad.id AND ad.revoked = false
@@ -286,9 +301,24 @@ export async function backfillAssetsFromAgents(): Promise<{ bound: number; creat
 // match above failed. The fixed matching stops NEW ones appearing; this finds and clears
 // the ones already there.
 
+/**
+ * Where a duplicate came from. Terry, 2026-08-12: *"I have known for some time we have had
+ * dups in Atera - so this is not all Portal's fault."* Quite right, and the two kinds need
+ * different handling:
+ *
+ *  - 'portal-miss'  one Atera row + one of ours. OUR matching failed to adopt. The agent
+ *                   row is obviously the one to keep.
+ *  - 'atera-dupe'   two or more Atera rows and no agent on any of them. Atera itself held
+ *                   the machine twice - a rebuild, an agent reinstall, a rename. There is
+ *                   no "live" copy to prefer, so the most recently seen one wins.
+ *  - 'mixed'        more than two rows, or more than one carrying an agent. Left to a human.
+ */
+export type DuplicateOrigin = 'portal-miss' | 'atera-dupe' | 'mixed';
+
 export interface DuplicateGroup {
   key: string;
   reason: 'serial' | 'hostname';
+  origin: DuplicateOrigin;
   customerId: number | null;
   customerName: string | null;
   rows: {
@@ -316,7 +346,7 @@ export async function findDuplicateAssets(): Promise<DuplicateGroup[]> {
   const groups = new Map<string, DuplicateGroup>();
   const put = (key: string, reason: 'serial' | 'hostname', r: any) => {
     if (!groups.has(key)) {
-      groups.set(key, { key, reason, customerId: r.customer_id, customerName: r.customer_name, rows: [] });
+      groups.set(key, { key, reason, origin: 'mixed', customerId: r.customer_id, customerName: r.customer_name, rows: [] });
     }
     const g = groups.get(key)!;
     if (!g.rows.some((x) => x.id === r.id)) {
@@ -356,18 +386,39 @@ export async function findDuplicateAssets(): Promise<DuplicateGroup[]> {
     for (const r of list) put(k, 'hostname', r);
   }
 
+  // Work out what each group actually is, now every row is in place.
+  for (const g of groups.values()) g.origin = originOf(g.rows);
+
   return Array.from(groups.values()).sort((a, b) =>
     String(a.customerName || '').localeCompare(String(b.customerName || '')) ||
     String(a.rows[0]?.hostname || '').localeCompare(String(b.rows[0]?.hostname || '')));
 }
 
-/** Which row of a duplicate group to keep: the one our agent reports, because it is the
- *  one that stays current. Ties break on the older row, so the device's history and its
- *  id in any link somebody has already sent survive. */
-export function preferredSurvivor<T extends { id: number; agentDeviceId: number | null }>(rows: T[]): T {
+export function originOf(rows: { agentDeviceId: number | null }[]): DuplicateOrigin {
+  const withAgent = rows.filter((r) => r.agentDeviceId != null).length;
+  if (rows.length !== 2) return 'mixed';
+  if (withAgent === 1) return 'portal-miss';
+  if (withAgent === 0) return 'atera-dupe';
+  return 'mixed';                 // both carry an agent - two enrolments, wants a human
+}
+
+/**
+ * Which row of a duplicate group to keep.
+ *
+ * If one is reported by our agent, that one - it is the copy that stays current.
+ * If none is (two Atera records for the same machine), the most recently seen one, because
+ * the other is usually the record left behind by a rebuild or an agent reinstall. Ties fall
+ * back to the older id so existing links keep working.
+ */
+export function preferredSurvivor<T extends { id: number; agentDeviceId: number | null; lastSeenAt?: Date | null }>(rows: T[]): T {
   const withAgent = rows.filter((r) => r.agentDeviceId != null);
-  const pool_ = withAgent.length ? withAgent : rows;
-  return pool_.slice().sort((a, b) => a.id - b.id)[0];
+  if (withAgent.length) return withAgent.slice().sort((a, b) => a.id - b.id)[0];
+  return rows.slice().sort((a, b) => {
+    const at = a.lastSeenAt ? new Date(a.lastSeenAt).getTime() : 0;
+    const bt = b.lastSeenAt ? new Date(b.lastSeenAt).getTime() : 0;
+    if (at !== bt) return bt - at;      // most recently seen first
+    return a.id - b.id;
+  })[0];
 }
 
 /**

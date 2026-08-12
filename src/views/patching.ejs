@@ -31,13 +31,33 @@ function sev(s) {
       which works whether or not automatic patching is switched on.
     </p>
   </div>
-  <form method="get" action="/patching" style="display:flex;gap:8px;align-items:center;">
-    <select class="input" name="customer" onchange="this.form.submit()">
+  <form method="get" action="/patching" id="patchFilters" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <input class="input" type="search" name="q" value="<%= typeof q !== 'undefined' ? q : '' %>"
+           placeholder="<%= view === 'updates' ? 'Find an update, KB or category…' : 'Find a machine, user or customer…' %>" style="min-width:230px;">
+    <select class="input js-pf" name="customer" style="min-width:190px;">
       <option value="">All customers</option>
       <% customers.forEach(function (c) { %><option value="<%= c.id %>" <%= customerId === c.id ? 'selected' : '' %>><%= c.name %></option><% }); %>
     </select>
+    <% var _on = (typeof online !== 'undefined') ? online : ''; %>
+    <select class="input js-pf" name="online" title="Only machines the agent has checked in from recently">
+      <option value="">On or off</option>
+      <option value="1" <%= _on === '1' ? 'selected' : '' %>>Online only</option>
+      <option value="0" <%= _on === '0' ? 'selected' : '' %>>Offline only</option>
+    </select>
     <input type="hidden" name="view" value="<%= view %>">
+    <noscript><button class="btn" type="submit">Filter</button></noscript>
+    <% if ((typeof q !== 'undefined' && q) || customerId || _on) { %><a class="btn" href="/patching?view=<%= view %>">Clear</a><% } %>
   </form>
+  <script>
+    (function () {
+      var f = document.getElementById('patchFilters'); if (!f) return;
+      f.querySelectorAll('.js-pf').forEach(function (el) {
+        el.addEventListener('change', function () {
+          if (typeof f.requestSubmit === 'function') f.requestSubmit(); else f.submit();
+        });
+      });
+    })();
+  </script>
 </div>
 
 <% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
@@ -54,8 +74,14 @@ function sev(s) {
 </div>
 
 <div style="display:flex;gap:8px;margin:0 0 14px;flex-wrap:wrap;">
-  <a class="btn <%= view !== 'updates' ? 'btn-primary' : '' %>" href="/patching?view=devices<%= customerId ? '&customer=' + customerId : '' %>">By machine</a>
-  <a class="btn <%= view === 'updates' ? 'btn-primary' : '' %>" href="/patching?view=updates<%= customerId ? '&customer=' + customerId : '' %>">By update</a>
+<% function keepQs(v){ var p = ['view=' + v];
+     if (customerId) p.push('customer=' + customerId);
+     if (typeof q !== 'undefined' && q) p.push('q=' + encodeURIComponent(q));
+     if (typeof online !== 'undefined' && online) p.push('online=' + online);
+     return '/patching?' + p.join('&'); } %>
+  <a class="btn <%= view !== 'updates' ? 'btn-primary' : '' %>" href="<%= keepQs('devices') %>">By machine</a>
+  <a class="btn <%= view === 'updates' ? 'btn-primary' : '' %>" href="<%= keepQs('updates') %>">By update</a>
+  <% if (view === 'updates') { %><span class="muted" style="font-size:12px;align-self:center;margin-left:6px;">Most machines affected first</span><% } %>
   <a class="btn" href="/patching/policies" style="margin-left:auto;">⚙ Policies</a>
 </div>
 
@@ -65,14 +91,14 @@ function sev(s) {
     <table class="table">
       <thead><tr><th>Update</th><th>Source</th><th>KB</th><th>Severity</th><th style="text-align:right;">Machines</th><th style="text-align:right;">Outstanding</th></tr></thead>
       <tbody>
-        <% if (!updates.length) { %><tr><td colspan="6"><div class="empty-state">Nothing pending — or nothing scanned yet.</div></td></tr><% } %>
+        <% if (!updates.length) { %><tr><td colspan="6"><div class="empty-state">No updates match. Clear the filters, or nothing has been scanned yet.</div></td></tr><% } %>
         <% updates.forEach(function (u) { %>
           <tr>
             <td><%= u.title %></td>
             <td><%- include('partials/srcbadge', { s: srcOf(u), small: true }) %></td>
             <td class="muted"><%= u.kb ? 'KB' + String(u.kb).replace(/^KB/i, '') : '—' %></td>
             <td><% if (u.severity) { %><span class="badge <%= sev(u.severity) %>"><%= u.severity %></span><% } else { %><span class="muted">—</span><% } %></td>
-            <td style="text-align:right;"><%= u.devices %></td>
+            <td style="text-align:right;font-weight:600;"><%= u.devices %></td>
             <td style="text-align:right;"><%= u.oldest_days %>d</td>
           </tr>
         <% }); %>
@@ -85,19 +111,39 @@ function sev(s) {
   <div class="table-wrap">
     <table class="table">
       <thead>
-        <tr><th>Machine</th><th>Customer</th><th style="text-align:right;">Critical</th><th style="text-align:right;">Pending</th><th style="text-align:right;">Oldest</th><th>Restart</th><th>Last scan</th></tr>
+        <tr><th></th><th>Machine</th><th>Customer</th><th style="text-align:right;">Critical</th><th style="text-align:right;">Pending</th><th style="text-align:right;">Oldest</th><th>Restart</th><th>Last scan</th><th></th></tr>
       </thead>
       <tbody>
-        <% if (!devices.length) { %><tr><td colspan="7"><div class="empty-state">No agents reporting yet.</div></td></tr><% } %>
+        <% if (!devices.length) { %><tr><td colspan="9"><div class="empty-state">No machines match. Clear the filters, or check an agent is reporting.</div></td></tr><% } %>
         <% devices.forEach(function (d) { %>
           <tr>
-            <td><a class="row-link" href="/patching/device/<%= d.id %>"><%= d.hostname %></a><% if (d.os) { %> <span class="muted" style="font-size:12px;"><%= d.os %></span><% } %></td>
+            <% var _live = d.seen_secs != null && Number(d.seen_secs) < (typeof onlineWindowSecs !== 'undefined' ? onlineWindowSecs : 180); %>
+            <td><span title="<%= _live ? 'Online' : 'Offline — anything you queue runs when it next comes online' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= _live ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
+            <td><a class="row-link" href="/patching/device/<%= d.id %>"><%= d.hostname %></a><% if (d.os) { %> <span class="muted" style="font-size:12px;"><%= d.os %></span><% } %><% if (d.logged_in_user) { %><div class="muted" style="font-size:11px;"><%= String(d.logged_in_user).split('\\').pop() %> signed in</div><% } %></td>
             <td class="muted"><% if (d.customer_id) { %><a class="row-link" href="/customers/<%= d.customer_id %>"><%= d.customer_name %></a><% } else { %>—<% } %></td>
             <td style="text-align:right;<%= d.patch_critical ? 'color:var(--bad-fg);font-weight:600;' : '' %>"><%= d.patch_critical == null ? '—' : d.patch_critical %></td>
             <td style="text-align:right;"><%= d.patch_pending == null ? '—' : d.patch_pending %></td>
             <td style="text-align:right;"><%= d.oldest_critical_days != null ? d.oldest_critical_days + 'd' : '—' %></td>
             <td><% if (d.reboot_required) { %><span class="badge badge-failed">Needed</span><% } else if (d.patch_scan_at) { %><span class="muted">—</span><% } else { %><span class="muted">—</span><% } %></td>
             <td class="muted"><%= d.patch_scan_at ? ago(d.scan_age_secs) : 'never' %></td>
+            <td style="text-align:right;white-space:nowrap;">
+              <div class="pw-wrap" style="position:relative;display:inline-block;">
+                <% if (d.patch_pending) { %>
+                <form method="post" action="/patching/device/<%= d.id %>/install" style="display:inline;margin:0;">
+                  <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+                  <input type="hidden" name="when" value="now">
+                  <button class="btn" type="submit" style="padding:3px 9px;font-size:12px;" title="Install every pending update on this machine now">⬇ Updates</button>
+                </form>
+                <% } %>
+                <% if (d.asset_id && d.mesh_node_id) { %>
+                <a class="btn" style="padding:3px 9px;font-size:12px;" target="_blank" rel="noopener" href="/assets/<%= d.asset_id %>/remote-mesh" title="Open this machine's desktop">🖥</a>
+                <% } %>
+                <button type="button" class="btn pw-btn" style="padding:3px 9px;font-size:12px;<%= d.power_pending ? 'border-color:var(--warn-line);' : '' %>"
+                        data-id="<%= d.id %>" data-host="<%= d.hostname || '' %>" data-user="<%= d.logged_in_user || '' %>"
+                        data-live="<%= _live ? '1' : '' %>" data-pending="<%= d.power_pending ? '1' : '' %>"
+                        title="<%= d.power_pending ? 'A power action is already queued on this machine' : 'Sign out, restart or shut down' %>">⏻ ▾</button>
+              </div>
+            </td>
           </tr>
         <% }); %>
       </tbody>
@@ -111,4 +157,89 @@ function sev(s) {
   maintenance window. Restarts are never automatic.
 </p>
 
+<style>
+  .pw-menu { display:none; position:absolute; right:0; top:100%; margin-top:3px; z-index:70; min-width:210px;
+             background:var(--card,#fff); border:1px solid var(--line-strong); border-radius:9px;
+             box-shadow:0 8px 22px rgba(0,0,0,.16); overflow:hidden; text-align:left; }
+  .pw-menu button { display:block; width:100%; text-align:left; border:0; background:none; padding:8px 12px;
+                    font:inherit; font-size:13px; cursor:pointer; color:var(--ink); }
+  .pw-menu button:hover { background:var(--tint-accent); }
+  .pw-menu .pw-danger:hover { background:var(--tint-warn); color:var(--warn-deep); }
+  .pw-menu .pw-head { padding:7px 12px; font-size:11px; color:var(--muted); border-bottom:1px solid var(--line); }
+</style>
+<script>
+(function () {
+  // One menu element, moved to whichever row was clicked — 200 machines should not mean
+  // 200 hidden menus in the DOM.
+  var menu = document.createElement('div');
+  menu.className = 'pw-menu';
+  document.body.appendChild(menu);
+  var openFor = null;
+
+  function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
+  function close(){ menu.style.display = 'none'; openFor = null; }
+  document.addEventListener('click', function (e) { if (!menu.contains(e.target) && !e.target.closest('.pw-btn')) close(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+
+  function post(id, action, delay) {
+    var f = document.createElement('form');
+    f.method = 'post'; f.action = '/patching/device/' + id + '/power';
+    [['_csrf', csrf()], ['action', action], ['delay_seconds', String(delay)], ['back', location.pathname + location.search]]
+      .forEach(function (kv) {
+        var i = document.createElement('input'); i.type = 'hidden'; i.name = kv[0]; i.value = kv[1]; f.appendChild(i);
+      });
+    document.body.appendChild(f); f.submit();
+  }
+
+  document.querySelectorAll('.pw-btn').forEach(function (b) {
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (openFor === b) { close(); return; }
+      var id = b.getAttribute('data-id');
+      var host = b.getAttribute('data-host') || 'this machine';
+      var who = b.getAttribute('data-user') || '';
+      var live = b.getAttribute('data-live') === '1';
+      var pending = b.getAttribute('data-pending') === '1';
+
+      menu.innerHTML = '';
+      var head = document.createElement('div');
+      head.className = 'pw-head';
+      head.textContent = who ? (who.split('\\').pop() + ' is signed in — they are warned, not asked')
+                             : (live ? 'Nobody signed in' : 'Offline — runs when it next comes online');
+      menu.appendChild(head);
+
+      [['logoff', 'Sign the user out', false],
+       ['restart', 'Restart', true],
+       ['shutdown', 'Shut down', true],
+       ['cancel', 'Cancel a pending restart', false]].forEach(function (row) {
+        if (row[0] === 'cancel' && !pending) return;
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        if (row[2]) btn.className = 'pw-danger';
+        btn.textContent = row[1];
+        btn.addEventListener('click', function () {
+          var msg;
+          if (row[0] === 'cancel') { msg = 'Cancel the pending restart or shutdown on ' + host + '?'; }
+          else {
+            msg = row[1] + ' ' + host + '?\n\n'
+                + (who ? who.split('\\').pop() + ' is signed in. They get a warning and cannot stop it. Unsaved work will be lost.\n\n' : '')
+                + (live ? 'They get 60 seconds\' notice.' : host + ' is offline — this runs the moment it next comes online.');
+          }
+          if (!window.confirm(msg)) return;
+          close();
+          post(id, row[0], 60);
+        });
+        menu.appendChild(btn);
+      });
+
+      var r = b.getBoundingClientRect();
+      menu.style.display = 'block';
+      menu.style.position = 'absolute';
+      menu.style.left = (window.scrollX + r.right - menu.offsetWidth) + 'px';
+      menu.style.top = (window.scrollY + r.bottom + 3) + 'px';
+      openFor = b;
+    });
+  });
+})();
+</script>
 <%- include('partials/footer') %>

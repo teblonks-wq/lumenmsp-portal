@@ -424,7 +424,11 @@ async function deviceConfig(customerId: number | null, deviceRing = 2) {
   // Offer the build only once the rollout has reached this device's ring.
   const offered = version && stage >= 0 && deviceRing <= stage ? version : null;
   return {
-    heartbeat_seconds: 300,
+    // 2 minutes, not 5. This is the backstop signal for "is it still there" - the
+    // command long-poll is what actually keeps a live machine current - and it has to
+    // beat comfortably inside ONLINE_WINDOW_SECS or a device whose command worker has
+    // stopped would flap. Server-side, so changing it needs no agent build.
+    heartbeat_seconds: 120,
     chat_poll_seconds: 20,
     rmm_installer_url: rmm.url,
     rmm_install_args: rmm.args,

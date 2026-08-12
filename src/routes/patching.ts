@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
+import { queuePower, isPowerAction, powerConfirmText } from '../lib/device-power';
+import { ONLINE_WINDOW_SECS } from '../lib/agent-asset';
 import { logActivity } from '../lib/activity';
 import { resolvePolicy, nextWindowStart } from '../lib/patch-policy';
 
@@ -34,10 +36,20 @@ const classOf = (d: any) =>
 router.get('/patching', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const customerId = parseInt(String(req.query.customer || ''), 10) || null;
   const view = String(req.query.view || 'devices');
+  // A late-night patching run is a worklist, so the filters are the ones that narrow it:
+  // which customer, is the machine actually on, and "just find me this box".
+  const q = String(req.query.q || '').trim();
+  const online = String(req.query.online || '').trim();   // '1' on | '0' off | '' either
 
   const where: string[] = ['ad.revoked = false'];
   const params: any[] = [];
   if (customerId) { params.push(customerId); where.push(`ad.customer_id = $${params.length}`); }
+  if (q) {
+    params.push('%' + q + '%');
+    where.push(`(ad.hostname ILIKE $${params.length} OR ad.serial_number ILIKE $${params.length} OR ad.logged_in_user ILIKE $${params.length} OR c.name ILIKE $${params.length})`);
+  }
+  if (online === '1') where.push(`ad.last_seen_at > NOW() - INTERVAL '${ONLINE_WINDOW_SECS} seconds'`);
+  else if (online === '0') where.push(`(ad.last_seen_at IS NULL OR ad.last_seen_at <= NOW() - INTERVAL '${ONLINE_WINDOW_SECS} seconds')`);
 
   try {
     // Ages are computed in SQL: the app server runs Europe/London while Postgres stores
@@ -46,7 +58,13 @@ router.get('/patching', requireAuth, requireAdmin, async (req: Request, res: Res
       `SELECT ad.id, ad.hostname, ad.os, ad.customer_id, ad.patch_excluded, ad.patch_class,
               c.name AS customer_name,
               ad.patch_scan_at, ad.patch_pending, ad.patch_critical,
-              ad.reboot_required, ad.patch_last_installed,
+              ad.reboot_required, ad.patch_last_installed, ad.logged_in_user, ad.mesh_node_id,
+              EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at))::int AS seen_secs,
+              (SELECT ca.id FROM customer_assets ca
+                WHERE ca.agent_device_id = ad.id AND ca.merged_into_id IS NULL LIMIT 1) AS asset_id,
+              (SELECT 1 FROM agent_commands pc
+                WHERE pc.device_id = ad.id AND pc.kind LIKE 'power.%'
+                  AND pc.status IN ('queued','running') LIMIT 1) AS power_pending,
               EXTRACT(EPOCH FROM (NOW() - ad.patch_scan_at))::int AS scan_age_secs,
               (SELECT MAX(EXTRACT(DAY FROM (NOW() - dp.first_seen)))::int
                  FROM device_patches dp
@@ -60,17 +78,30 @@ router.get('/patching', requireAuth, requireAdmin, async (req: Request, res: Res
 
     // The same data cut by update — "what is this month's problem across the estate"
     // rather than "which box is behind".
+    // The same filters apply here: an update view you cannot narrow is no use on a
+    // late-night run either. Sorted by HOW MANY MACHINES need it, because that is the
+    // order you would actually work through them - biggest blast radius first.
+    const uWhere: string[] = ['ad.revoked = false'];
+    const uParams: any[] = [];
+    if (customerId) { uParams.push(customerId); uWhere.push(`ad.customer_id = $${uParams.length}`); }
+    if (q) {
+      uParams.push('%' + q + '%');
+      uWhere.push(`(dp.title ILIKE $${uParams.length} OR COALESCE(dp.kb,'') ILIKE $${uParams.length} OR COALESCE(dp.categories,'') ILIKE $${uParams.length})`);
+    }
+    if (online === '1') uWhere.push(`ad.last_seen_at > NOW() - INTERVAL '${ONLINE_WINDOW_SECS} seconds'`);
+    else if (online === '0') uWhere.push(`(ad.last_seen_at IS NULL OR ad.last_seen_at <= NOW() - INTERVAL '${ONLINE_WINDOW_SECS} seconds')`);
+
     const updates = (await pool.query(
       `SELECT dp.title, dp.kb, dp.severity, dp.source,
               MAX(dp.categories) AS categories,
               count(*)::int AS devices,
               MAX(EXTRACT(DAY FROM (NOW() - dp.first_seen)))::int AS oldest_days
          FROM device_patches dp
-         JOIN agent_devices ad ON ad.id = dp.device_id AND ad.revoked = false
-        ${customerId ? 'WHERE ad.customer_id = $1' : ''}
+         JOIN agent_devices ad ON ad.id = dp.device_id
+        WHERE ${uWhere.join(' AND ')}
         GROUP BY dp.title, dp.kb, dp.severity, dp.source
-        ORDER BY (LOWER(COALESCE(dp.severity,'')) IN ('critical','important')) DESC, count(*) DESC
-        LIMIT 200`, customerId ? [customerId] : [])).rows;
+        ORDER BY count(*) DESC, (LOWER(COALESCE(dp.severity,'')) IN ('critical','important')) DESC, MAX(dp.first_seen) ASC
+        LIMIT 200`, uParams)).rows;
 
     const customers = (await pool.query(
       `SELECT DISTINCT c.id, c.name FROM agent_devices ad
@@ -89,17 +120,51 @@ router.get('/patching', requireAuth, requireAdmin, async (req: Request, res: Res
       compliant: scanned.filter((d: any) => !d.patch_critical && !d.reboot_required).length,
     };
 
-    res.render('patching', { user: req.session.user!, devices, updates, customers, customerId, view, summary, error: null });
+    res.render('patching', {
+      user: req.session.user!, devices, updates, customers, customerId, view, summary,
+      q, online, onlineWindowSecs: ONLINE_WINDOW_SECS, error: null,
+    });
   } catch (e: any) {
     console.error('[patching] dashboard failed:', e.message);
     res.render('patching', {
       user: req.session.user!, devices: [], updates: [], customers: [], customerId, view,
+      q, online, onlineWindowSecs: ONLINE_WINDOW_SECS,
       summary: { devices: 0, scanned: 0, neverScanned: 0, pending: 0, critical: 0, needReboot: 0, compliant: 0 },
       error: e.message,
     });
   }
 });
 
+
+// ── Power control ───────────────────────────────────────────────────────────────
+// Keyed on the AGENT DEVICE id, which is what the patching pages already work in, so the
+// same endpoint serves the patching list, the per-device page and the asset card.
+router.post('/patching/device/:id/power', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const action = String(req.body.action || '');
+  const wantsJson = String(req.body.json || '') === '1' || (req.get('accept') || '').includes('application/json');
+  const back = String(req.body.back || '').startsWith('/') ? String(req.body.back) : `/patching/device/${id}`;
+
+  if (!isPowerAction(action)) {
+    if (wantsJson) { res.status(400).json({ ok: false, error: 'Unknown action.' }); return; }
+    res.redirect(back + '?err=' + encodeURIComponent('Unknown action.')); return;
+  }
+
+  const r = await queuePower(id, action, {
+    delaySeconds: parseInt(String(req.body.delay_seconds ?? '60'), 10),
+    userId: req.session.user!.id,
+    userName: req.session.user!.displayName || null,
+  });
+
+  if (wantsJson) { res.json(r); return; }
+  if (!r.ok) { res.redirect(back + '?err=' + encodeURIComponent(r.error || 'Could not queue that.')); return; }
+  const qd = r.queued!;
+  res.redirect(back + '?msg=' + encodeURIComponent(
+    `${action === 'cancel' ? 'Cancelled any pending restart on' : action.charAt(0).toUpperCase() + action.slice(1) + ' queued for'} ${qd.hostname || 'the machine'}` +
+    (action === 'cancel' ? '.' : qd.online
+      ? `. The user is being warned now and it runs in ${qd.delaySeconds} seconds.`
+      : `. It is offline, so this runs the moment it next comes online.`)));
+});
 
 // ── Deploy, by hand ─────────────────────────────────────────────────────────────
 // Separate from the policy engine on purpose. A policy decides what happens on its own

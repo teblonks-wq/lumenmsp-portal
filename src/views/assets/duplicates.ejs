@@ -32,7 +32,17 @@
 <% if (!groups.length) { %>
   <div class="card"><div class="empty-state">No duplicates. Every machine is held once.</div></div>
 <% } else { %>
-  <p class="muted" style="font-size:13px;margin:0 0 12px;"><%= groups.length %> machine<%= groups.length===1?'':'s' %> held more than once. The record our agent reports is pre-selected to keep, because it is the one that stays current.</p>
+<%
+  var _byOrigin = { 'portal-miss': 0, 'atera-dupe': 0, 'mixed': 0 };
+  groups.forEach(function(g){ _byOrigin[g.origin] = (_byOrigin[g.origin] || 0) + 1; });
+%>
+  <p class="muted" style="font-size:13px;margin:0 0 12px;">
+    <%= groups.length %> machine<%= groups.length===1?'':'s' %> held more than once<% if (_byOrigin['portal-miss'] || _byOrigin['atera-dupe']) { %> —
+    <strong><%= _byOrigin['portal-miss'] %></strong> where our own matching missed,
+    <strong><%= _byOrigin['atera-dupe'] %></strong> already duplicated in Atera before we imported them<% if (_byOrigin['mixed']) { %>,
+    <strong><%= _byOrigin['mixed'] %></strong> needing a look<% } %><% } %>.
+    Where our agent reports one of the copies it is pre-selected to keep; where neither has an agent, the most recently seen one is.
+  </p>
 
   <% groups.forEach(function(g){ %>
   <div class="card" style="padding:0;margin-bottom:14px;">
@@ -42,6 +52,12 @@
       <span class="badge <%= g.reason === 'serial' ? 'badge-sent' : 'badge-inactive' %>" title="<%= g.reason === 'serial' ? 'Both records carry the same real serial number — as certain as it gets.' : 'Matched on host name only. Check they really are the same machine before merging.' %>">
         <%= g.reason === 'serial' ? 'same serial' : 'same host name only' %>
       </span>
+      <%
+        var _org = { 'portal-miss': ['our match missed', 'One Atera record and one of ours. Our matching failed to adopt the existing row — the agent copy is the one to keep.'],
+                     'atera-dupe':  ['duplicated in Atera', 'Two Atera records and no agent on either. Atera itself held this machine twice — a rebuild, an agent reinstall or a rename — and we imported both. Not caused by the Portal.'],
+                     'mixed':       ['needs a look', 'More than two copies, or more than one carrying an agent. Decide this one by hand.'] }[g.origin] || ['—',''];
+      %>
+      <span class="badge badge-inactive" title="<%= _org[1] %>"><%= _org[0] %></span>
     </div>
     <form method="post" action="/assets/duplicates/merge" style="margin:0;">
       <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">

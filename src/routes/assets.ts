@@ -8,7 +8,7 @@ import { logActivity } from '../lib/activity';
 import { getSetting, setSetting } from '../lib/settings';
 import { AGENT_MSI_DIR, AGENT_MSI_PATH, AGENT_VERSION_PATH, agentMsiInfo, agentHostedVersion, agentHostedSha256, rolloutState, wakeAgent } from './agent-api';
 import { syncAssetsFromAtera, lastAssetSyncAt, remoteUrlTemplate, saveRemoteUrlTemplate, buildRemoteUrl } from '../lib/asset-sync';
-import { backfillAssetsFromAgents, findDuplicateAssets, preferredSurvivor, mergeAsset, unmergeAsset } from '../lib/agent-asset';
+import { backfillAssetsFromAgents, findDuplicateAssets, preferredSurvivor, mergeAsset, unmergeAsset, ONLINE_WINDOW_SECS } from '../lib/agent-asset';
 import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
 import { meshStatus } from './mesh';
 
@@ -93,6 +93,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
     filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentFilter, servers: serversOnly },
     // For the "agent required" copy button: the same keyed one-liner the Agents page hands out.
     baseUrl: req.protocol + '://' + req.get('host'),
+    onlineWindowSecs: ONLINE_WINDOW_SECS,
     lastSynced: await lastAssetSyncAt(),
     remoteTemplate: await remoteUrlTemplate(),
     notice: req.query.msg || null, error: req.query.err || null,
@@ -103,6 +104,40 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
 router.get('/assets/unmatched', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const rows = (await pool.query("SELECT * FROM customer_assets WHERE customer_id IS NULL AND merged_into_id IS NULL ORDER BY hostname")).rows;
   res.render('assets/unmatched', { user: req.session.user!, rows, notice: req.query.msg || null });
+});
+
+// ── Live status for the rows on screen ──────────────────────────────────────────
+// Fast offline detection is no use on a page somebody is staring at, so the list polls
+// this and updates the dots in place. Deliberately narrow: it answers only "is it on,
+// and when did we last hear from it" for the ids already being shown, which keeps it
+// cheap and means it cannot leak a device the viewer was not already looking at.
+router.get('/assets/status.json', requireAuth, async (req: Request, res: Response) => {
+  const ids = String(req.query.ids || '')
+    .split(',').map((x) => parseInt(x, 10)).filter(Number.isInteger).slice(0, 500);
+  if (!ids.length) { res.json({ ok: true, windowSecs: ONLINE_WINDOW_SECS, devices: [] }); return; }
+  try {
+    const rows = (await pool.query(
+      `SELECT a.id,
+              EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at))::int AS seen_secs,
+              ad.agent_version
+         FROM customer_assets a
+         LEFT JOIN agent_devices ad ON ad.id = a.agent_device_id AND ad.revoked = false
+        WHERE a.id = ANY($1::int[]) AND a.merged_into_id IS NULL`, [ids])).rows;
+    res.json({
+      ok: true,
+      windowSecs: ONLINE_WINDOW_SECS,
+      devices: rows.map((r: any) => ({
+        id: r.id,
+        seenSecs: r.seen_secs === null ? null : Number(r.seen_secs),
+        // No agent of ours means no live link, so it is offline whatever else is true.
+        online: r.seen_secs !== null && Number(r.seen_secs) < ONLINE_WINDOW_SECS,
+        agentVersion: r.agent_version || null,
+      })),
+    });
+  } catch (e: any) {
+    console.error('[assets] status poll failed:', e.message);
+    res.status(500).json({ ok: false });
+  }
 });
 
 // ── Duplicate devices: find, merge, undo (admin) ────────────────────────────────
@@ -138,18 +173,22 @@ router.post('/assets/duplicates/merge', requireAuth, requireAdmin, async (req: R
 // serial number, one of which our agent reports. Anything less certain is left alone.
 router.post('/assets/duplicates/merge-obvious', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const groups = await findDuplicateAssets();
-  let done = 0, skipped = 0;
+  let ourMiss = 0, ateraDupe = 0, skipped = 0;
   for (const g of groups) {
-    const agentRows = g.rows.filter((r) => r.agentDeviceId != null);
-    if (g.reason !== 'serial' || g.rows.length !== 2 || agentRows.length !== 1) { skipped++; continue; }
-    const keep = agentRows[0];
+    // A shared REAL serial is the strong identity, so both origins are safe to fold. What
+    // differs is which copy survives, and preferredSurvivor already knows the rule.
+    if (g.reason !== 'serial' || (g.origin !== 'portal-miss' && g.origin !== 'atera-dupe')) { skipped++; continue; }
+    const keep = preferredSurvivor(g.rows);
     const drop = g.rows.find((r) => r.id !== keep.id)!;
     const r = await mergeAsset(keep.id, drop.id, req.session.user!.id);
-    if (r.ok) done++; else skipped++;
+    if (!r.ok) { skipped++; continue; }
+    if (g.origin === 'portal-miss') ourMiss++; else ateraDupe++;
   }
+  const done = ourMiss + ateraDupe;
   res.redirect('/assets/duplicates?msg=' + encodeURIComponent(
-    `Merged ${done} clear-cut duplicate${done === 1 ? '' : 's'}` +
-    (skipped ? `. ${skipped} left for you to decide — they matched on host name only, or had no agent on either copy.` : '.')));
+    `Merged ${done} device${done === 1 ? '' : 's'} held twice` +
+    (done ? ` — ${ourMiss} where our own matching missed, ${ateraDupe} that were already duplicated in Atera before we imported them.` : '.') +
+    (skipped ? ` ${skipped} left for you: they matched on host name only, or had more than two copies.` : '')));
 });
 
 router.post('/assets/duplicates/:id/undo', requireAuth, requireAdmin, async (req: Request, res: Response) => {
@@ -264,6 +303,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     // Whether remote control is ready on this machine, and if not, which of the several
     // possible reasons it is — so the page can offer the install rather than a dead end.
     meshState: await meshStatus(row.id).catch(() => null),
+    onlineWindowSecs: ONLINE_WINDOW_SECS,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });

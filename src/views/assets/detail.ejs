@@ -25,7 +25,9 @@
       <%= asset.hostname || '(unnamed device)' %>
     </h1>
     <p class="muted" style="margin:6px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-      <% var _live = !!asset.online_status && !!asset.agent_device_id; %>
+      <% var _hw = (typeof onlineWindowSecs !== 'undefined' && onlineWindowSecs) ? onlineWindowSecs : 180;
+         var _live = !!asset.agent_device_id && typeof agentInfo !== 'undefined' && agentInfo
+                     && agentInfo.seen_secs != null && Number(agentInfo.seen_secs) < _hw; %>
       <span title="<%= asset.agent_device_id ? 'Live status from the LumenMSP Agent' : 'No LumenMSP Agent on this machine, so the Portal has no live status for it' %>" style="display:inline-flex;align-items:center;gap:5px;font-weight:600;color:<%= _live ? 'var(--ok)' : 'var(--faint)' %>;">
         <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= _live ? 'var(--ok)' : 'var(--line-strong)' %>;"></span>
         <%= _live ? 'Online' : 'Offline' %>
@@ -163,7 +165,9 @@ function _ago(d) {
         <div class="dev-field-row"><div class="k">Date added</div><div class="v"><%= dt(asset.added_at) %></div></div>
       </div>
       <% if (typeof agentInfo !== 'undefined' && agentInfo) {
-           var agOnline = agentInfo.seen_secs != null && Number(agentInfo.seen_secs) < 12*60;
+           // Same window as the list and the SQL — passed in, never re-typed.
+           var _win = (typeof onlineWindowSecs !== 'undefined' && onlineWindowSecs) ? onlineWindowSecs : 180;
+           var agOnline = agentInfo.seen_secs != null && Number(agentInfo.seen_secs) < _win;
       %>
       <div>
         <p class="dev-subcard-title" style="display:flex;align-items:center;gap:6px;"><img src="/static/img/lumen-agent-16.png" width="14" height="14" alt=""> Reported by</p>
