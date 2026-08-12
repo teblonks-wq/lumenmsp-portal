@@ -8,7 +8,7 @@ import { logActivity } from '../lib/activity';
 import { getSetting, setSetting } from '../lib/settings';
 import { AGENT_MSI_DIR, AGENT_MSI_PATH, AGENT_VERSION_PATH, agentMsiInfo, agentHostedVersion, agentHostedSha256, rolloutState, wakeAgent } from './agent-api';
 import { syncAssetsFromAtera, lastAssetSyncAt, remoteUrlTemplate, saveRemoteUrlTemplate, buildRemoteUrl } from '../lib/asset-sync';
-import { backfillAssetsFromAgents } from '../lib/agent-asset';
+import { backfillAssetsFromAgents, findDuplicateAssets, preferredSurvivor, mergeAsset, unmergeAsset } from '../lib/agent-asset';
 import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
 import { meshStatus } from './mesh';
 
@@ -45,7 +45,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   // to target for a rollout), '' = either. Kept as a string so "without" is expressible.
   const agentFilter = String(req.query.agent || '').trim();
 
-  const where: string[] = ['a.customer_id IS NOT NULL'];
+  const where: string[] = ['a.customer_id IS NOT NULL', 'a.merged_into_id IS NULL'];
   const params: any[] = [];
   if (q) { params.push('%' + q + '%'); where.push(`(a.hostname ILIKE $${params.length} OR a.serial_number ILIKE $${params.length} OR a.model ILIKE $${params.length} OR a.last_login_user ILIKE $${params.length} OR ac.full_name ILIKE $${params.length} OR c.name ILIKE $${params.length})`); }
   if (custId) { params.push(custId); where.push(`a.customer_id = $${params.length}`); }
@@ -78,7 +78,10 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
      ORDER BY c.name, a.hostname`, params
   )).rows;
 
-  const unmatchedCount = (await pool.query('SELECT COUNT(*)::int AS n FROM customer_assets WHERE customer_id IS NULL')).rows[0].n;
+  const unmatchedCount = (await pool.query('SELECT COUNT(*)::int AS n FROM customer_assets WHERE customer_id IS NULL AND merged_into_id IS NULL')).rows[0].n;
+  // Cheap enough to run per page load, and it is the kind of mess that has to be visible
+  // to get fixed - a silent duplicate is one somebody remotes onto the wrong copy of.
+  const duplicateCount = (await findDuplicateAssets()).length;
   const types = (await pool.query("SELECT DISTINCT device_type FROM customer_assets WHERE device_type IS NOT NULL ORDER BY device_type")).rows.map((r: any) => r.device_type);
   const customers = (await pool.query('SELECT id, name FROM customers WHERE deleted_at IS NULL ORDER BY name')).rows;
 
@@ -86,7 +89,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   const backupState = await backupStateByComputer();
 
   res.render('assets/list', {
-    user: req.session.user!, rows, unmatchedCount, types, customers, backupState,
+    user: req.session.user!, rows, unmatchedCount, duplicateCount, types, customers, backupState,
     filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentFilter, servers: serversOnly },
     // For the "agent required" copy button: the same keyed one-liner the Agents page hands out.
     baseUrl: req.protocol + '://' + req.get('host'),
@@ -98,8 +101,62 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
 
 // ── Devices Atera has that aren't matched to a portal customer yet ──────────────
 router.get('/assets/unmatched', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const rows = (await pool.query("SELECT * FROM customer_assets WHERE customer_id IS NULL ORDER BY hostname")).rows;
+  const rows = (await pool.query("SELECT * FROM customer_assets WHERE customer_id IS NULL AND merged_into_id IS NULL ORDER BY hostname")).rows;
   res.render('assets/unmatched', { user: req.session.user!, rows, notice: req.query.msg || null });
+});
+
+// ── Duplicate devices: find, merge, undo (admin) ────────────────────────────────
+// One physical PC held as two rows - the Atera import and our agent's own record - which
+// happened whenever the old exact-string match missed (a trailing space, a case change,
+// or an FQDN on one side). The matching is fixed; this clears up what it already made.
+router.get('/assets/duplicates', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const groups = await findDuplicateAssets();
+  res.render('assets/duplicates', {
+    user: req.session.user!,
+    groups: groups.map((g) => ({ ...g, survivorId: preferredSurvivor(g.rows).id })),
+    merged: (await pool.query(
+      `SELECT a.id, a.hostname, a.merged_at, a.merged_into_id, k.hostname AS into_hostname, c.name AS customer_name
+         FROM customer_assets a
+         LEFT JOIN customer_assets k ON k.id = a.merged_into_id
+         LEFT JOIN customers c ON c.id = a.customer_id
+        WHERE a.merged_into_id IS NOT NULL ORDER BY a.merged_at DESC LIMIT 50`)).rows,
+    notice: req.query.msg || null, error: req.query.err || null,
+  });
+});
+
+router.post('/assets/duplicates/merge', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const keepId = parseInt(String(req.body.keep_id), 10);
+  const dropId = parseInt(String(req.body.drop_id), 10);
+  if (!keepId || !dropId) { res.redirect('/assets/duplicates?err=' + encodeURIComponent('Pick which record to keep.')); return; }
+  const r = await mergeAsset(keepId, dropId, req.session.user!.id);
+  res.redirect('/assets/duplicates?' + (r.ok
+    ? 'msg=' + encodeURIComponent('Merged. The second record is kept but hidden — undo it below if that was wrong.')
+    : 'err=' + encodeURIComponent(r.error || 'Merge failed.')));
+});
+
+// Merge every group where the answer is not in doubt: exactly two rows, sharing a real
+// serial number, one of which our agent reports. Anything less certain is left alone.
+router.post('/assets/duplicates/merge-obvious', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const groups = await findDuplicateAssets();
+  let done = 0, skipped = 0;
+  for (const g of groups) {
+    const agentRows = g.rows.filter((r) => r.agentDeviceId != null);
+    if (g.reason !== 'serial' || g.rows.length !== 2 || agentRows.length !== 1) { skipped++; continue; }
+    const keep = agentRows[0];
+    const drop = g.rows.find((r) => r.id !== keep.id)!;
+    const r = await mergeAsset(keep.id, drop.id, req.session.user!.id);
+    if (r.ok) done++; else skipped++;
+  }
+  res.redirect('/assets/duplicates?msg=' + encodeURIComponent(
+    `Merged ${done} clear-cut duplicate${done === 1 ? '' : 's'}` +
+    (skipped ? `. ${skipped} left for you to decide — they matched on host name only, or had no agent on either copy.` : '.')));
+});
+
+router.post('/assets/duplicates/:id/undo', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const ok = await unmergeAsset(parseInt(String(req.params.id), 10), req.session.user!.id);
+  res.redirect('/assets/duplicates?' + (ok
+    ? 'msg=' + encodeURIComponent('Restored as its own record.')
+    : 'err=' + encodeURIComponent('That record was not merged.')));
 });
 
 // ── Sync now (admin) ─────────────────────────────────────────────────────────────
@@ -149,6 +206,13 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
      LEFT JOIN customer_contacts ac ON ac.id = a.assigned_contact_id WHERE a.id=$1`, [id]
   )).rows[0];
   if (!row) { res.status(404).render('error', { message: 'Device not found.' }); return; }
+  // A merged-away record is not an error - it is the same machine under another id, so
+  // send the reader to the copy that is being kept rather than showing a stale twin.
+  if (row.merged_into_id) {
+    res.redirect(`/assets/${row.merged_into_id}?msg=` + encodeURIComponent(
+      `That was a duplicate record for this machine — merged into this one. Undo it on the duplicates page if that was wrong.`));
+    return;
+  }
   // LumenMSP Agent on this device? Matched by serial (preferred) or hostname.
   let agentInfo: any = null;
   try {

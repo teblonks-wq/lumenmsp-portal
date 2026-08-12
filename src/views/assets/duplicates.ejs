@@ -1,0 +1,108 @@
+<%- include('../partials/header', { title: 'Duplicate devices', user }) %>
+<% function dt(v){ return v ? new Date(v).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/assets">← Assets</a></p>
+    <h1 style="margin:0;">Duplicate devices</h1>
+    <p class="muted" style="margin:6px 0 0;">One machine, two records — the Atera import and our own agent's, where they failed to match up.</p>
+  </div>
+  <% if (groups.length) { %>
+  <form method="post" action="/assets/duplicates/merge-obvious" style="margin:0;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <button class="btn btn-primary" type="submit">Merge the clear-cut ones</button>
+  </form>
+  <% } %>
+</div>
+
+<% if (notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<div class="card" style="background:var(--tint-accent);border-color:var(--info-line);">
+  <p style="margin:0;font-size:13px;color:var(--info-deep);">
+    <strong>Why this happens.</strong> A machine is matched to the record we already hold by serial number, then by host name.
+    Until this was fixed, both comparisons were exact — so a trailing space, a change of case, or Atera holding
+    <code>PC-01.customer.local</code> where our agent reports <code>PC-01</code> produced a second record instead of adopting the first.
+    That is why it hit some machines and not others. New deployments now match on a trimmed, case-insensitive serial
+    (ignoring meaningless ones like "To be filled by O.E.M.") and on the short host name.
+    <strong>Nothing here is deleted</strong> — a merged record is kept and hidden, and can be restored below.
+  </p>
+</div>
+
+<% if (!groups.length) { %>
+  <div class="card"><div class="empty-state">No duplicates. Every machine is held once.</div></div>
+<% } else { %>
+  <p class="muted" style="font-size:13px;margin:0 0 12px;"><%= groups.length %> machine<%= groups.length===1?'':'s' %> held more than once. The record our agent reports is pre-selected to keep, because it is the one that stays current.</p>
+
+  <% groups.forEach(function(g){ %>
+  <div class="card" style="padding:0;margin-bottom:14px;">
+    <div class="card-header" style="padding:12px 18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <h2 style="margin:0;font-size:15px;"><%= g.rows[0].hostname || '(unnamed device)' %></h2>
+      <span class="muted" style="font-size:12.5px;"><%= g.customerName || 'no customer' %></span>
+      <span class="badge <%= g.reason === 'serial' ? 'badge-sent' : 'badge-inactive' %>" title="<%= g.reason === 'serial' ? 'Both records carry the same real serial number — as certain as it gets.' : 'Matched on host name only. Check they really are the same machine before merging.' %>">
+        <%= g.reason === 'serial' ? 'same serial' : 'same host name only' %>
+      </span>
+    </div>
+    <form method="post" action="/assets/duplicates/merge" style="margin:0;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <div class="table-wrap"><table class="table" style="margin:0;">
+        <thead><tr>
+          <th style="width:70px;">Keep</th><th>Host name</th><th>Serial</th><th>Source</th>
+          <th>Assigned to</th><th>Last seen</th><th>First added</th><th></th>
+        </tr></thead>
+        <tbody>
+        <% g.rows.forEach(function(r){ %>
+          <tr>
+            <td style="text-align:center;"><input type="radio" name="keep_id" value="<%= r.id %>" <%= r.id === g.survivorId ? 'checked' : '' %>></td>
+            <td style="font-weight:600;"><a class="row-link" href="/assets/<%= r.id %>" target="_blank" rel="noopener"><%= r.hostname || '(unnamed)' %></a></td>
+            <td class="muted" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;"><%= r.serialNumber || '—' %></td>
+            <td>
+              <% if (r.agentDeviceId) { %><span class="badge badge-sent" title="Reported live by the LumenMSP Agent">LumenMSP Agent</span>
+              <% } else { %><span class="badge badge-inactive" title="Imported from Atera — no live link to this machine">Atera import</span><% } %>
+            </td>
+            <td class="muted" style="font-size:12px;"><%= r.assignedContactId ? 'yes' : '—' %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= dt(r.lastSeenAt) %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= dt(r.addedAt) %></td>
+            <td class="muted" style="font-size:11px;">#<%= r.id %></td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+      <div style="padding:11px 18px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);">
+        <% g.rows.forEach(function(r){ if (r.id === g.survivorId) return; %>
+          <button class="btn" type="submit" name="drop_id" value="<%= r.id %>">Merge #<%= r.id %> into the ticked record</button>
+        <% }); %>
+        <span class="muted" style="font-size:11.5px;">Anything only the merged record knows — the assigned person, Atera's ids — moves across first.</span>
+      </div>
+    </form>
+  </div>
+  <% }); %>
+<% } %>
+
+<% if (merged.length) { %>
+<div class="card" style="padding:0;margin-top:20px;">
+  <div class="card-header" style="padding:12px 18px;"><h2 style="margin:0;font-size:15px;">Already merged</h2>
+    <span class="muted" style="font-size:12px;">Kept, hidden from the lists, and restorable.</span></div>
+  <div class="table-wrap"><table class="table" style="margin:0;">
+    <thead><tr><th>Record</th><th>Customer</th><th>Merged into</th><th>When</th><th></th></tr></thead>
+    <tbody>
+    <% merged.forEach(function(m){ %>
+      <tr>
+        <td class="muted"><%= m.hostname || '(unnamed)' %> <span style="font-size:11px;">#<%= m.id %></span></td>
+        <td class="muted"><%= m.customer_name || '—' %></td>
+        <td><a class="row-link" href="/assets/<%= m.merged_into_id %>"><%= m.into_hostname || ('#' + m.merged_into_id) %></a></td>
+        <td class="muted" style="font-size:12px;white-space:nowrap;"><%= dt(m.merged_at) %></td>
+        <td style="text-align:right;">
+          <form method="post" action="/assets/duplicates/<%= m.id %>/undo" style="margin:0;">
+            <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+            <button class="btn" type="submit" style="padding:3px 10px;font-size:12px;">Undo</button>
+          </form>
+        </td>
+      </tr>
+    <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<%- include('../partials/footer') %>

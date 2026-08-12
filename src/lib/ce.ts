@@ -17,6 +17,8 @@
 
 export type CeStatus = 'fail' | 'warn' | 'pass';
 
+import { windowsOsName } from './os-name';
+
 export interface CeFinding {
   control: 'firewall' | 'config' | 'access' | 'malware' | 'patch';
   rule: string;
@@ -367,8 +369,13 @@ export function evaluate(facts: any, ctx: CeContext): CeFinding[] {
 
   // Operating system support
   const build = str(f?.os?.build);
-  const caption = str(f?.os?.caption) || str(dev.os);
+  // Windows 11 calls itself "Windows 10 Pro" in the registry (see lib/os-name.ts). Left
+  // uncorrected, the caption lookup below can match a Windows 10 end-of-support row and
+  // fail a brand-new Windows 11 laptop for running an OS it is not running - the single
+  // most damaging way this assessment could be wrong.
+  const rawCaption = str(f?.os?.caption) || str(dev.os);
   const display = str(f?.os?.display);
+  const caption = windowsOsName(rawCaption, build, display) || rawCaption;
   // Name first, build second. Windows 10 1809 and Server 2019 are both build 17763, so a
   // build-only lookup would tell a domain controller it was a desktop. Server editions are
   // matched on their caption; Windows 10/11 need the build, because the caption alone

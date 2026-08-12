@@ -9,6 +9,7 @@ import { logActivity } from '../lib/activity';
 import { vaultConfigured, encryptSecret, decryptSecret } from '../lib/vault';
 import { ingestCeResult } from '../lib/ce-ingest';
 import { syncAssetFromAgent } from '../lib/agent-asset';
+import { windowsOsName } from '../lib/os-name';
 import { reapStaleCommands } from '../lib/agent-commands';
 import { ingestServerFacts } from '../lib/server-facts';
 import { htmlToPlain } from '../lib/whatsapp';
@@ -449,7 +450,10 @@ router.post('/agent/api/enroll', async (req: Request, res: Response) => {
   const serial = s(b.serial_number, 120);
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = sha256(token);
-  const os = s(b.os, 200); const osVersion = s(b.os_version, 100); const agentVersion = s(b.agent_version, 50);
+  const osVersion = s(b.os_version, 100);
+  // Windows 11 reports itself as "Windows 10 Pro" - see lib/os-name.ts.
+  const os = windowsOsName(s(b.os, 200), osVersion);
+  const agentVersion = s(b.agent_version, 50);
   const hw = hardware(b);
 
   try {
@@ -530,7 +534,7 @@ router.post('/agent/api/heartbeat', requireDevice, async (req: Request, res: Res
          domain_or_workgroup=COALESCE($15, domain_or_workgroup), device_type=COALESCE($16, device_type),
          last_boot_at=COALESCE($17, last_boot_at), serial_number=COALESCE($18, serial_number),
          last_seen_at=NOW(), updated_at=NOW() WHERE id=$9`,
-      [s(b.hostname, 200), s(b.os, 200), s(b.os_version, 100), s(b.agent_version, 50),
+      [s(b.hostname, 200), windowsOsName(s(b.os, 200), s(b.os_version, 100)), s(b.os_version, 100), s(b.agent_version, 50),
        s(b.logged_in_user, 200), localIps, diskInfo, clientIp(req), d.id,
        hw.manufacturer, hw.model, hw.cpu, hw.ramGb, hw.macAddresses, hw.domainOrWorkgroup, hw.deviceType, hw.lastBootAt,
        s(b.serial_number, 120)]

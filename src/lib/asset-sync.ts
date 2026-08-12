@@ -2,7 +2,7 @@ import { pool } from '../db/pool';
 import { Atera, pick } from './atera';
 import { logActivity } from './activity';
 import { getSetting, setSetting } from './settings';
-import { backfillAssetsFromAgents } from './agent-asset';
+import { backfillAssetsFromAgents, normalSerial, shortHost } from './agent-asset';
 
 // Atera is an IMPORTER, not a source of truth. (Terry, 2026-08-12: "we only [use] Atera to
 // import agents and advise the agent is required in the Portal, nothing else - Portal is to
@@ -97,13 +97,17 @@ export async function syncAssetsFromAtera(userId: number): Promise<AssetSyncResu
 
   // Every device the Portal already owns, keyed both ways, so an Atera record can be
   // recognised as "we have this machine" without a query per agent.
+  // Keyed exactly the way agent-asset.ts matches, junk serials excluded - otherwise the
+  // import happily recreates the second copy we just merged away.
   const ownedBySerial = new Map<string, number>();
   const ownedByHost = new Map<string, number>();
   (await pool.query(
-    `SELECT id, customer_id, serial_number, LOWER(hostname) AS h
-       FROM customer_assets WHERE agent_device_id IS NOT NULL`)).rows.forEach((r: any) => {
-    if (r.serial_number) ownedBySerial.set(r.customer_id + '|' + String(r.serial_number).trim().toLowerCase(), r.id);
-    if (r.h) ownedByHost.set(r.customer_id + '|' + r.h, r.id);
+    `SELECT id, customer_id, serial_number, hostname
+       FROM customer_assets WHERE agent_device_id IS NOT NULL AND merged_into_id IS NULL`)).rows.forEach((r: any) => {
+    const sn = normalSerial(r.serial_number);
+    const hn = shortHost(r.hostname);
+    if (sn) ownedBySerial.set(r.customer_id + '|' + sn, r.id);
+    if (hn) ownedByHost.set(r.customer_id + '|' + hn, r.id);
   });
 
   let imported = 0, linked = 0, unmatched = 0;
@@ -114,9 +118,11 @@ export async function syncAssetsFromAtera(userId: number): Promise<AssetSyncResu
     if (!customerId) unmatched++;
 
     // Do we already own this machine?
+    const dSerial = normalSerial(d.serialNumber);
+    const dHost = shortHost(d.hostname);
     const owned = customerId
-      ? (d.serialNumber ? ownedBySerial.get(customerId + '|' + d.serialNumber.trim().toLowerCase()) : undefined)
-        ?? (d.hostname ? ownedByHost.get(customerId + '|' + d.hostname.trim().toLowerCase()) : undefined)
+      ? (dSerial ? ownedBySerial.get(customerId + '|' + dSerial) : undefined)
+        ?? (dHost ? ownedByHost.get(customerId + '|' + dHost) : undefined)
       : undefined;
 
     if (owned) {

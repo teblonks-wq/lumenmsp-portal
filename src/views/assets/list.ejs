@@ -26,6 +26,7 @@ function remoteHref(a){
     <form method="post" action="/assets/sync"><button class="btn" type="submit" title="Pulls Atera's device list to find machines we do not have. It never overwrites anything our own agent reports.">↻ Import from Atera</button></form>
     <% } %>
     <% if (unmatchedCount > 0) { %><a class="btn" href="/assets/unmatched" style="border-color:var(--amber);color:var(--warn-fg);">⚠ <%= unmatchedCount %> unmatched</a><% } %>
+    <% if (typeof duplicateCount !== 'undefined' && duplicateCount > 0 && user.role === 'admin') { %><a class="btn" href="/assets/duplicates" style="border-color:var(--warn-line);color:var(--warn-deep);" title="One machine held as two records — usually the Atera import and our agent's own, which failed to match up">⧉ <%= duplicateCount %> duplicate<%= duplicateCount===1?'':'s' %></a><% } %>
   </div>
 </div>
 

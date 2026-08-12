@@ -584,6 +584,11 @@ model CustomerAsset {
   agentDeviceId  Int?      @map("agent_device_id")
   ateraAgentId   String?   @map("atera_agent_id")  // Atera's AgentID for a row WE own (external_id is ours)
   dataSource     String?   @default("atera") @map("data_source") // agent | atera
+  // Set when this row was found to be a SECOND copy of a machine we already had, and
+  // merged into that one. The row is kept rather than deleted so a wrong merge can be
+  // undone - it is simply filtered out of every list.
+  mergedIntoId   Int?      @map("merged_into_id")
+  mergedAt       DateTime? @map("merged_at")
   raw            Json?     // full source payload, for fields not yet promoted to columns
   syncedAt       DateTime  @default(now()) @map("synced_at")
   createdAt      DateTime  @default(now()) @map("created_at")
@@ -596,6 +601,7 @@ model CustomerAsset {
   @@index([hostname])
   @@index([assignedContactId])
   @@index([agentDeviceId])
+  @@index([mergedIntoId])
   @@map("customer_assets")
 }
 
