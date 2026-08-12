@@ -58,14 +58,14 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   else if (agentFilter === '0') where.push('agd.id IS NULL');
 
   const rows = (await pool.query(
-    `SELECT a.*, c.name AS customer_name, ac.full_name AS assigned_name,
+    `SELECT a.*, c.name AS customer_name, c.agent_site_key, ac.full_name AS assigned_name,
             agd.id AS agent_device_id, agd.last_seen_at AS agent_last_seen, agd.agent_version AS agent_agent_version,
-            agd.seen_secs AS agent_seen_secs
+            agd.seen_secs AS agent_seen_secs, agd.mesh_node_id AS agent_mesh_node_id
      FROM customer_assets a
      LEFT JOIN customers c ON c.id = a.customer_id
      LEFT JOIN customer_contacts ac ON ac.id = a.assigned_contact_id
      LEFT JOIN LATERAL (
-       SELECT ag.id, ag.last_seen_at, ag.agent_version,
+       SELECT ag.id, ag.last_seen_at, ag.agent_version, ag.mesh_node_id,
               EXTRACT(EPOCH FROM (NOW() - ag.last_seen_at)) AS seen_secs FROM agent_devices ag
        WHERE ag.revoked = false AND ag.customer_id = a.customer_id
          AND (ag.id = a.agent_device_id
@@ -88,6 +88,8 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   res.render('assets/list', {
     user: req.session.user!, rows, unmatchedCount, types, customers, backupState,
     filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentFilter, servers: serversOnly },
+    // For the "agent required" copy button: the same keyed one-liner the Agents page hands out.
+    baseUrl: req.protocol + '://' + req.get('host'),
     lastSynced: await lastAssetSyncAt(),
     remoteTemplate: await remoteUrlTemplate(),
     notice: req.query.msg || null, error: req.query.err || null,

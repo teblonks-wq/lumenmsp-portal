@@ -149,7 +149,7 @@ function tileHref(over){
             <td><span title="<%= _lv ? 'Online - the LumenMSP Agent checked in recently' : (a.agent_device_id ? 'Offline' : 'Offline - no LumenMSP Agent on this machine, so the Portal has no live status for it') %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= _lv ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
             <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/assets') %>"><%= a.hostname || '(unnamed device)' %></a><% if (a.agent_device_id) { %> <img src="/static/img/lumen-agent-16.png" width="14" height="14" alt="LumenMSP Agent" style="vertical-align:-2px;margin-left:5px;" title="LumenMSP Agent<%= a.agent_agent_version ? ' v' + a.agent_agent_version : '' %> — last seen <%= secsAgo(a.agent_seen_secs) %>"><% if (a.agent_agent_version) { %><span class="muted" style="font-size:10.5px;margin-left:3px;">v<%= a.agent_agent_version %></span><% } %><% } %></td>
             <td class="muted"><% if (a.customer_id) { %><a class="row-link" href="/customers/<%= a.customer_id %>#assets"><%= a.customer_name %></a><% } else { %>—<% } %></td>
-            <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span><% if (!a.agent_device_id) { %> <a class="badge" href="/agents#download" style="background:var(--tint-warn);color:var(--warn-deep);border:1px solid var(--warn-line);text-decoration:none;" title="Imported from Atera. The Portal cannot describe or remote onto this machine until the LumenMSP Agent is installed.">agent required</a><% } %></td>
+            <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span><% if (!a.agent_device_id) { %> <button type="button" class="badge copy-install" data-key="<%= a.agent_site_key || '' %>" data-host="<%= a.hostname || 'this machine' %>" style="background:var(--tint-warn);color:var(--warn-deep);border:1px solid var(--warn-line);cursor:pointer;font:inherit;font-size:11px;" title="Copy the PowerShell command that installs the LumenMSP Agent on this machine, then paste it into an elevated PowerShell on the box">agent required — copy install ⧉</button><% } %></td>
             <td><% var bs = backupState[String(a.hostname||'').toLowerCase()]; %>
               <% if (bs === 'ok') { %><span class="badge badge-sent" title="All backup plans succeeded (MSP360)">Protected</span>
               <% } else if (bs === 'failed') { %><span class="badge badge-failed" title="A backup plan needs attention (MSP360)">Attention</span>
@@ -161,8 +161,13 @@ function tileHref(over){
             <td class="muted" style="font-size:12px;" title="<%= a.assigned_name ? (a.assigned_name + ' (assigned)') : (a.last_login_user || '') %>"><% if (a.assigned_name) { %><span style="font-weight:600;color:var(--ink);"><%= a.assigned_name %></span><% } else if (a.last_login_user) { %><%= String(a.last_login_user).split('\\').pop() %><% } else { %><span class="muted" style="opacity:.55;">unallocated</span><% } %></td>
             <td class="muted" style="font-size:12px;"><%= timeAgo(a.last_seen_at) %></td>
             <td style="text-align:right;white-space:nowrap;">
-              <% if (a.agent_device_id) { %><a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="/assets/<%= a.id %>/remote-mesh">🖥 Remote</a>
-              <% } else if (a.external_id) { %><a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="<%= remoteHref(a) %>">🖥 Remote</a><% } %>
+              <% if (a.agent_device_id && a.agent_mesh_node_id) { %>
+                <a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="/assets/<%= a.id %>/remote-mesh" title="Open this machine's desktop">🖥 Remote</a>
+              <% } else if (a.agent_device_id) { %>
+                <button type="button" class="btn remote-help" data-id="<%= a.id %>" data-host="<%= a.hostname || 'this machine' %>" style="padding:3px 10px;font-size:12px;opacity:.75;" title="Remote control is not ready on this machine yet — press for the reason and what to do">🖥 Remote</button>
+              <% } else if (a.external_id) { %>
+                <a class="btn" style="padding:3px 10px;font-size:12px;" target="_blank" rel="noopener" href="<%= remoteHref(a) %>" title="Falls back to Atera — this machine has no LumenMSP Agent">🖥 Remote</a>
+              <% } %>
             </td>
           </tr>
         <% }); %>
@@ -183,5 +188,125 @@ function tileHref(over){
   </form>
 </div>
 <% } %>
+
+<!-- Remote-access lightbox. Pressing Remote on a machine that is not ready used to send
+     you to the device page carrying an error, which reads as "it opened another window and
+     did nothing". This answers in place, and offers the install where that is the fix. -->
+<div id="rmOverlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:120;" onclick="if(event.target===this)rmClose()">
+  <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(560px,92vw);background:var(--card,#fff);border:1px solid var(--line-strong);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.28);padding:22px;">
+    <div style="display:flex;align-items:flex-start;gap:12px;">
+      <div style="flex:1;">
+        <p class="muted" style="margin:0 0 3px;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;">Remote control</p>
+        <h2 id="rmTitle" style="margin:0;font-size:17px;">Checking…</h2>
+      </div>
+      <button type="button" onclick="rmClose()" style="border:none;background:none;font-size:22px;line-height:1;cursor:pointer;color:var(--muted);">&times;</button>
+    </div>
+    <p id="rmDetail" class="muted" style="margin:11px 0 0;font-size:13.5px;line-height:1.55;"></p>
+    <pre id="rmOut" style="display:none;margin:11px 0 0;font-size:11px;line-height:1.5;background:var(--ink-chip);color:var(--line);padding:11px;border-radius:8px;max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;"></pre>
+    <div id="rmActions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var BASE = <%- JSON.stringify(typeof baseUrl !== 'undefined' ? baseUrl : '') %>;
+  var Q = String.fromCharCode(34), A = String.fromCharCode(39), B = String.fromCharCode(92);
+
+  // Byte-for-byte the command the Agents page hands out. No '$' anywhere: an outer shell
+  // would expand it before PowerShell ever saw it, which is what once produced '/i',,'/qn'.
+  function installCommand(key) {
+    var name = 'LumenMSPAgent-' + key + '.msi';
+    var url = BASE + '/agent/download/' + name;
+    var tmp = 'C:' + B + 'Windows' + B + 'Temp' + B + name;
+    return 'powershell -NoProfile -ExecutionPolicy Bypass -Command ' + Q
+      + 'Invoke-WebRequest ' + A + url + A + ' -OutFile ' + A + tmp + A + ' -UseBasicParsing; '
+      + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',' + A + tmp + A + ',' + A + '/qn' + A + ','
+      + A + '/l*v' + A + ',' + A + 'C:' + B + 'Windows' + B + 'Temp' + B + 'LumenMSPAgent-install.log' + A + ' -Wait' + Q;
+  }
+  function copyText(text, btn, done) {
+    var restore = btn.textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+      .then(function () { btn.textContent = done; setTimeout(function () { btn.textContent = restore; }, 1800); })
+      .catch(function () { window.prompt('Copy this command:', text); });
+  }
+
+  document.querySelectorAll('.copy-install').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var key = b.getAttribute('data-key');
+      if (!key) { window.alert('This customer has no agent site key yet — open the Agents page and one is generated automatically.'); return; }
+      copyText(installCommand(key), b, 'copied — paste into elevated PowerShell ✓');
+    });
+  });
+
+  var ov = document.getElementById('rmOverlay');
+  var elTitle = document.getElementById('rmTitle'), elDetail = document.getElementById('rmDetail');
+  var elOut = document.getElementById('rmOut'), elActions = document.getElementById('rmActions');
+  window.rmClose = function () { ov.style.display = 'none'; };
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') rmClose(); });
+
+  function btn(label, primary) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn' + (primary ? ' btn-primary' : '');
+    b.textContent = label; return b;
+  }
+
+  document.querySelectorAll('.remote-help').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var id = b.getAttribute('data-id'), host = b.getAttribute('data-host');
+      elTitle.textContent = 'Checking ' + host + '…';
+      elDetail.textContent = ''; elOut.style.display = 'none'; elActions.innerHTML = '';
+      ov.style.display = 'block';
+
+      fetch('/assets/' + id + '/remote-state.json').then(function (r) { return r.json(); }).then(function (d) {
+        if (!d.ok) { elTitle.textContent = 'Could not check'; elDetail.textContent = d.error || 'Unknown error.'; return; }
+        // Became ready between the page loading and the click - just go.
+        if (d.ready) { rmClose(); window.open(d.href, '_blank', 'noopener'); return; }
+
+        elTitle.textContent = d.title;
+        elDetail.textContent = d.detail;
+
+        var la = d.lastAttempt;
+        if (la && (la.output || la.progress)) {
+          elOut.style.display = 'block';
+          elOut.textContent = 'Last attempt: ' + la.status
+            + (la.exitCode !== null && la.exitCode !== undefined ? ' (exit ' + la.exitCode + ')' : '')
+            + (la.startedAt ? ' — started ' + new Date(la.startedAt).toLocaleString('en-GB') : '')
+            + '\n\n' + (la.output || la.progress);
+        }
+
+        if (d.canInstall) {
+          var install = btn('🖥 Install remote control', true);
+          install.addEventListener('click', function () {
+            install.disabled = true; install.textContent = 'Queueing…';
+            var f = document.createElement('form');
+            f.method = 'post'; f.action = d.installUrl;
+            var t = document.createElement('input');
+            t.type = 'hidden'; t.name = '_csrf';
+            var m = document.querySelector('meta[name="csrf-token"]');
+            t.value = m ? m.getAttribute('content') : '';
+            f.appendChild(t); document.body.appendChild(f); f.submit();
+          });
+          elActions.appendChild(install);
+        }
+        if (d.action) {
+          var a = document.createElement('a');
+          a.className = 'btn'; a.href = d.action.href; a.textContent = d.action.label;
+          elActions.appendChild(a);
+        }
+        var page = document.createElement('a');
+        page.className = 'btn'; page.href = '/assets/' + id; page.textContent = 'Open the device page';
+        elActions.appendChild(page);
+
+        var close = btn('Close', false);
+        close.addEventListener('click', rmClose);
+        elActions.appendChild(close);
+      }).catch(function () {
+        elTitle.textContent = 'Could not check';
+        elDetail.textContent = 'The Portal did not answer. Try the device page.';
+      });
+    });
+  });
+})();
+</script>
 
 <%- include('../partials/footer') %>

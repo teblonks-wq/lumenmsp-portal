@@ -27,6 +27,8 @@ const board = sel ? include('../partials/oneboard-board', {
   obShowSave: false,
   obExtraHidden: '<input type="hidden" name="customer" value="' + sel + '">',
   obExtraQs: '&customer=' + sel,
+  // Ask Insights is staff-only for now - see the route for the one-line customer rollout.
+  obAskUrl: '/insights/oneboard/ask',
 }) : '';
 %>
 <%- include('_layout', { title: 'OneBoard', user, csrfToken: typeof csrfToken !== 'undefined' ? csrfToken : '', body: picker + board }) %>

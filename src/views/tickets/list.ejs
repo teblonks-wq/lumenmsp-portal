@@ -30,9 +30,15 @@
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div><h1>Support</h1><p class="muted">Tickets, cases and manually raised work.</p></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-    <form method="get" action="/tickets" style="display:flex;gap:8px;align-items:center;">
-      <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search ticket, subject, customer…" style="min-width:240px;">
-      <button class="btn" type="submit">Search</button>
+    <!-- The box is Claude now. A bare ticket number still does the fast thing (jump/filter);
+         anything that reads like a question gets read across every case instead of matched
+         against a subject line. -->
+    <form method="get" action="/tickets" id="tkAskForm" style="display:flex;gap:8px;align-items:center;">
+      <input class="input" type="search" name="search" id="tkAskQ" value="<%= search %>" autocomplete="off"
+             placeholder="Ask Claude about every case… or type a ticket number"
+             title="Ask a real question — e.g. how many reports have we had from Larkmead about slow printers?"
+             style="min-width:330px;">
+      <button class="btn btn-primary" type="submit" id="tkAskGo">✦ Ask</button>
       <% if (search) { %><a class="btn" href="/tickets">Clear</a><% } %>
     </form>
     <form method="post" action="/tickets/pickup-mail" style="margin:0;"><button class="btn" type="submit" title="Sync the support mailbox into tickets now">↻ Pick up email</button></form>
@@ -44,6 +50,103 @@
 
 <% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" style="margin-bottom:14px;"><%= error %></div><% } %>
 <% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="margin-bottom:14px;"><%= notice %></div><% } %>
+
+<!-- Ask Claude answer panel -->
+<div id="tkAskPanel" style="display:none;margin-bottom:16px;" class="card">
+  <div style="display:flex;align-items:flex-start;gap:10px;">
+    <div style="flex:1;">
+      <p class="muted" style="margin:0 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;">Asked Claude</p>
+      <h2 id="tkAskQuestion" style="margin:0;font-size:16px;"></h2>
+    </div>
+    <button type="button" id="tkAskClose" style="border:none;background:none;font-size:22px;line-height:1;cursor:pointer;color:var(--muted);">&times;</button>
+  </div>
+  <div id="tkAskBody" style="margin-top:12px;"></div>
+</div>
+
+<script>
+(function () {
+  var form = document.getElementById('tkAskForm'); if (!form) return;
+  var q = document.getElementById('tkAskQ'), go = document.getElementById('tkAskGo');
+  var panel = document.getElementById('tkAskPanel'), head = document.getElementById('tkAskQuestion'), body = document.getElementById('tkAskBody');
+  document.getElementById('tkAskClose').addEventListener('click', function () { panel.style.display = 'none'; });
+  function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
+  function el(tag, css, text){ var e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; }
+
+  // A ticket reference or a bare number is a lookup, not a question - let the ordinary
+  // filter handle it, which is instant and exact. Everything else goes to Claude.
+  function isLookup(v) {
+    var t = v.trim();
+    if (!t) return true;
+    if (/^[a-z]{2,4}[- ]?\d{2,}$/i.test(t)) return true;   // INC-1234, TKT 88
+    if (/^#?\d{1,8}$/.test(t)) return true;                // 1234
+    return false;
+  }
+
+  form.addEventListener('submit', function (ev) {
+    var question = (q.value || '').trim();
+    if (isLookup(question)) return;                        // fall through to the GET filter
+    ev.preventDefault();
+
+    panel.style.display = 'block';
+    head.textContent = question;
+    body.innerHTML = '';
+    body.appendChild(el('p', 'margin:0;color:var(--muted);font-size:13px;', 'Working out what to search for, then reading the cases that match. This takes a few seconds.'));
+    go.disabled = true; go.textContent = 'Thinking…';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    fetch('/tickets/ask.json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() },
+      body: JSON.stringify({ question: question })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      body.innerHTML = '';
+      if (!d.ok) { body.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', d.error || 'That did not work.')); return; }
+
+      if (d.count !== null && d.count !== undefined) {
+        var big = el('div', 'display:flex;align-items:baseline;gap:9px;margin-bottom:10px;');
+        big.appendChild(el('span', 'font-size:30px;font-weight:800;line-height:1;', String(d.count) + (d.capped ? '+' : '')));
+        big.appendChild(el('span', 'font-size:13px;color:var(--muted);', d.capped ? 'cases — at least, the search hit its limit' : (d.count === 1 ? 'case' : 'cases')));
+        body.appendChild(big);
+      }
+
+      String(d.answer || '').split(/\n{1,}/).forEach(function (para) {
+        if (!para.trim()) return;
+        body.appendChild(el('p', 'margin:0 0 8px;font-size:13.5px;line-height:1.55;', para.trim()));
+      });
+
+      if (d.cases && d.cases.length) {
+        var wrap = el('div', 'margin-top:12px;border-top:1px solid var(--line);padding-top:11px;');
+        wrap.appendChild(el('p', 'margin:0 0 7px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;color:var(--muted);', 'Cases counted'));
+        d.cases.forEach(function (c) {
+          var row = el('div', 'display:flex;gap:9px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--surface-3);font-size:13px;');
+          var a = document.createElement('a');
+          a.className = 'row-link'; a.href = '/tickets/' + c.id; a.target = '_blank'; a.rel = 'noopener';
+          a.style.cssText = 'font-weight:600;white-space:nowrap;'; a.textContent = c.ticketNumber;
+          row.appendChild(a);
+          row.appendChild(el('span', 'flex:1;', c.subject));
+          if (c.customer) row.appendChild(el('span', 'color:var(--muted);font-size:12px;white-space:nowrap;', c.customer));
+          if (c.why) row.appendChild(el('span', 'color:var(--muted);font-size:11.5px;font-style:italic;max-width:34%;', c.why));
+          wrap.appendChild(row);
+        });
+        body.appendChild(wrap);
+      }
+
+      // What it actually searched, so a wrong answer is diagnosable rather than mysterious.
+      var meta = [];
+      if (d.searched && d.searched.length) meta.push('searched for: ' + d.searched.join(', '));
+      if (d.customer) meta.push('customer like "' + d.customer + '"');
+      if (d.monthsBack) meta.push('last ' + d.monthsBack + ' months');
+      meta.push(d.scanned + ' case' + (d.scanned === 1 ? '' : 's') + ' read in full');
+      if (d.seconds) meta.push(d.seconds + 's');
+      if (d.cache) meta.push(d.cache);
+      body.appendChild(el('p', 'margin:11px 0 0;font-size:11px;color:var(--faint);', meta.join(' · ')));
+    }).catch(function () {
+      body.innerHTML = '';
+      body.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', 'Could not reach the Portal.'));
+    }).then(function () { go.disabled = false; go.textContent = '✦ Ask'; });
+  });
+})();
+</script>
 
 <%- include('../partials/master-search') %>
 

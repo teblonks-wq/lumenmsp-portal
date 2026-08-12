@@ -12,6 +12,7 @@ import { moduleList } from '../lib/insights/reports/modules';
 import { clientFromCustomer } from '../lib/insights/tollring-client';
 import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam } from '../lib/oneboard';
 import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
+import { askInsights } from '../lib/insights-ask';
 import { htmlToPdf } from '../lib/pdf';
 
 // Insights — reporting & call analytics, now a native section of the portal. Reads from the
@@ -38,7 +39,48 @@ router.get('/insights/oneboard', requireAuth, async (req: Request, res: Response
   const data = customerId
     ? await buildOneBoard(customerId, { from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: r.compare })
     : null;
-  res.render('insights/oneboard', { user: req.session.user, customers, customerId, ...(data || {}), ...r });
+  res.render('insights/oneboard', {
+    user: req.session.user, customers, customerId, ...(data || {}), ...r,
+    // Staff only for now. Pointing this at /my/oneboard would put it in front of customers
+    // too - a one-line change once we are happy with what it says.
+    obAskUrl: customerId ? '/insights/oneboard/ask' : '',
+  });
+});
+
+// ── Ask Insights ────────────────────────────────────────────────────────────────
+// Natural-language questions about the board currently on screen. The query string is the
+// same one the page was rendered with, so the answer can only ever be about exactly what
+// the asker is looking at - same customer, same dates, same sites.
+router.post('/insights/oneboard/ask', requireAuth, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.query.customer || ''), 10) || 0;
+  const question = String((req.body || {}).question || '').trim().slice(0, 400);
+  if (!customerId) { res.status(400).json({ ok: false, error: 'Pick a customer first.' }); return; }
+  if (!question) { res.status(400).json({ ok: false, error: 'Ask a question first.' }); return; }
+  try {
+    const r = parseOneBoardRange(req.query as Record<string, any>);
+    const data = await buildOneBoard(customerId, {
+      from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: r.compare,
+    });
+    if (data.state !== 'ok') { res.status(400).json({ ok: false, error: 'Call analytics is not available for this customer right now.' }); return; }
+    if (!data.sites.some((s) => s.included && s.configured)) {
+      res.status(400).json({ ok: false, error: 'No configured sites are selected, so there is nothing to reason about. Tick a site and press Update.' });
+      return;
+    }
+
+    const out = await askInsights(data, r.from, r.to, question);
+    // Surfacing the cache hit is worth the line: it is the difference between a follow-up
+    // question costing full price and costing a tenth, and it makes a silent regression visible.
+    const u = out.usage;
+    const cost = u
+      ? (u.cacheReadTokens > 0
+          ? `Re-used ${u.cacheReadTokens.toLocaleString()} cached tokens — follow-up questions are cheap for the next few minutes.`
+          : `Cached ${u.cacheCreationTokens.toLocaleString()} tokens of call data — the next question re-uses them.`)
+      : null;
+    res.json({ ok: true, answer: out.answer, points: out.points, cost });
+  } catch (e: any) {
+    console.error('[ask-insights] failed:', e?.message || e);
+    res.status(400).json({ ok: false, error: e.message || 'Ask Insights failed.' });
+  }
 });
 
 router.get('/insights/oneboard.pdf', requireAuth, async (req: Request, res: Response) => {

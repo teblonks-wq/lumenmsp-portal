@@ -334,6 +334,103 @@ export async function aiAskText(system: string, text: string, maxTokens = 700): 
   return callClaude(key, model, system, text, maxTokens);
 }
 
+// ── Ask a question over a big body of evidence, with the evidence CACHED ─────────
+// The corpus (every case we shortlisted, or a whole call-volume grid) is the expensive
+// part of these calls and it does not change between one question and the next. Sending
+// it as a cache_control block means the second and third question in a sitting re-read it
+// from Anthropic's cache at a fraction of the input price instead of paying full whack
+// every time. Cache entries live ~5 minutes, refreshed on each hit - which is exactly the
+// shape of somebody standing at a screen asking follow-ups.
+//
+// Order matters: everything before and including the cached block must be byte-identical
+// to score a hit, so the QUESTION goes AFTER the corpus, never woven into it.
+export interface AskCachedResult { text: string; usage: AskUsage }
+export interface AskUsage {
+  inputTokens: number;
+  cacheCreationTokens: number;   // corpus written to the cache (first question)
+  cacheReadTokens: number;       // corpus read from the cache (every question after)
+  outputTokens: number;
+}
+
+export async function aiAskCached(
+  system: string,
+  corpus: string,
+  question: string,
+  opts?: { maxTokens?: number; strong?: boolean },
+): Promise<AskCachedResult> {
+  const key = await resolveKey();
+  if (!key) throw new Error('Claude is not configured - add your API key in Settings -> Integrations (or ANTHROPIC_API_KEY in the server .env).');
+  const model = opts?.strong
+    ? (((await getSetting('anthropic', 'model_strong')) || '').trim() || 'claude-sonnet-4-6')
+    : (((await getSetting('anthropic', 'model')) || '').trim() || DEFAULT_MODEL);
+  return callClaudeCached(key, model, system, corpus, question, opts?.maxTokens ?? 1600);
+}
+
+async function callClaudeCached(
+  key: string, model: string, system: string, corpus: string, question: string, maxTokens: number,
+): Promise<AskCachedResult> {
+  const body = {
+    model,
+    max_tokens: maxTokens,
+    temperature: 0.2,
+    // The system prompt is stable across every question of this kind, so it is cached too.
+    system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: corpus, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: question },
+      ],
+    }],
+  };
+
+  let res: Response;
+  try {
+    res = await fetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: {
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (e: any) {
+    throw new Error('Could not reach Claude: ' + (e.message || 'network error'));
+  }
+
+  if (!res.ok) {
+    let detail = '';
+    try { const j: any = await res.json(); detail = j?.error?.message || ''; } catch { /* ignore */ }
+    if (res.status === 401) throw new Error('Claude rejected the API key (401) - check ANTHROPIC_API_KEY.');
+    if (res.status === 429) throw new Error('Claude rate/credit limit hit (429) - check your Anthropic billing.');
+    throw new Error(`Claude error ${res.status}${detail ? ': ' + detail : ''}`);
+  }
+
+  const data: any = await res.json();
+  const text = Array.isArray(data?.content)
+    ? data.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text).join('').trim()
+    : '';
+  if (!text) throw new Error('Claude returned an empty message.');
+  const u = data?.usage || {};
+  return {
+    text,
+    usage: {
+      inputTokens: Number(u.input_tokens || 0),
+      cacheCreationTokens: Number(u.cache_creation_input_tokens || 0),
+      cacheReadTokens: Number(u.cache_read_input_tokens || 0),
+      outputTokens: Number(u.output_tokens || 0),
+    },
+  };
+}
+
+/** Strip the markdown fence some answers arrive wrapped in, then JSON.parse. */
+export function parseJsonAnswer<T>(raw: string, fallback: T): T {
+  try {
+    return JSON.parse(raw.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim()) as T;
+  } catch { return fallback; }
+}
+
 async function callClaude(key: string, model: string, system: string, userText: string, maxTokens: number, images?: StudioImage[]): Promise<string> {
   const content: any = (images && images.length)
     ? [

@@ -12,6 +12,7 @@ import { sendTeamsNotice } from '../lib/teams'; // sendTeamsReply (relay) disabl
 import { teamsGraphConnected, sendTeamsChatMessage } from '../lib/teamsgraph';
 import { syncInbox } from '../lib/mailsync';
 import { aiAskText } from '../lib/ai-compose';
+import { askTickets } from '../lib/ticket-ask';
 import { blockSender, emailDomain } from '../lib/spam';
 import { sendWhatsAppText, htmlToPlain, normaliseWaNumber } from '../lib/whatsapp';
 import { logChannel } from '../lib/commslog';
@@ -322,6 +323,37 @@ router.post('/tickets', requireAuth, attachmentUpload.array('attachments', 5), a
 });
 
 // Search tickets (for merge) — by number, subject, customer or contact name.
+// ── Ask Claude across every case ────────────────────────────────────────────────
+// The old search box matched a ticket number, a subject and a customer name, which is why
+// "how many reports have we had from Larkmead about slow printers" was unanswerable - that
+// phrase is never in a subject line, it is in the third message down and an engineer's note.
+// This reads the actual content. See lib/ticket-ask.ts for the two-pass engine.
+router.post('/tickets/ask.json', requireAuth, async (req: Request, res: Response) => {
+  const question = String((req.body || {}).question || '').trim().slice(0, 400);
+  if (!question) { res.status(400).json({ ok: false, error: 'Ask a question first.' }); return; }
+  const started = Date.now();
+  try {
+    const r = await askTickets(question);
+    const u = r.usage;
+    res.json({
+      ok: true,
+      answer: r.answer, count: r.count, cases: r.cases,
+      scanned: r.scanned, capped: r.capped,
+      searched: r.plan.keywords,
+      customer: r.plan.customer,
+      monthsBack: r.plan.monthsBack,
+      seconds: Math.round((Date.now() - started) / 100) / 10,
+      // Making the cache visible keeps a silent regression from costing real money.
+      cache: u ? (u.cacheReadTokens > 0
+        ? `re-used ${u.cacheReadTokens.toLocaleString()} cached tokens`
+        : `cached ${u.cacheCreationTokens.toLocaleString()} tokens for follow-ups`) : null,
+    });
+  } catch (e: any) {
+    console.error('[ask-tickets] failed:', e?.message || e);
+    res.status(400).json({ ok: false, error: e.message || 'Ask failed.' });
+  }
+});
+
 router.get('/tickets/search.json', requireAuth, async (req: Request, res: Response) => {
   const q = String(req.query.q || '').trim();
   if (!q) { res.json([]); return; }

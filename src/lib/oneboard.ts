@@ -19,6 +19,15 @@ export interface OneBoardSite {
   daily: { day: string; label: string; total: number; answered: number; missed: number }[];
   missedByHour: number[];           // indexed by hour-of-day (Europe/London)
   totalByHour: number[];            // ALL incoming calls per hour (Kim's all-calls heatmap)
+  // Day-of-week breakdown. Hour-of-day alone answers "when are we busy" but NOT "which
+  // shift should a new person work" - a Monday 9am problem and a Friday 4pm problem look
+  // identical once you average them together. Index 0 = Monday ... 6 = Sunday.
+  missedByDow: number[];            // 7
+  totalByDow: number[];             // 7
+  daysSeenByDow: number[];          // how many Mondays, Tuesdays... the range covers, so
+                                    // a 10-day range does not make Mon/Tue look busier
+  missedByDowHour: number[][];      // [7][24] - the grid Ask Insights reasons over
+  totalByDowHour: number[][];       // [7][24]
 }
 
 export interface OneBoardData {
@@ -32,6 +41,13 @@ export interface OneBoardData {
 }
 
 export const ONEBOARD_HOURS = Array.from({ length: 13 }, (_, i) => i + 7); // 07:00–19:00
+export const DOW_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+export const DOW_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+/** Monday-first index for a YYYY-MM-DD day string. JS getUTCDay() is Sunday-first, and a
+ *  working week that starts on Sunday reads wrong to everyone who works here. */
+export function dowIndex(day: string): number {
+  return (new Date(day + 'T00:00:00Z').getUTCDay() + 6) % 7;
+}
 
 // Europe/London wall-clock parts for an ISO timestamp — the same clock the customer reads.
 const LDN_FMT = new Intl.DateTimeFormat('en-GB', {
@@ -211,7 +227,9 @@ export async function buildOneBoard(
       const included = wanted.has(Number(s.id));
       const logic = siteLogicOf(s);
       if (!logic || !included) {
-        sites.push({ id: Number(s.id), label: s.site_label, configured: !!logic, included, metrics: null, prev: null, daily: [], missedByHour: [], totalByHour: [] });
+        sites.push({ id: Number(s.id), label: s.site_label, configured: !!logic, included, metrics: null, prev: null,
+          daily: [], missedByHour: [], totalByHour: [],
+          missedByDow: [], totalByDow: [], daysSeenByDow: [], missedByDowHour: [], totalByDowHour: [] });
         continue;
       }
       const journeys = buildJourneys(rows, logic);
@@ -220,15 +238,30 @@ export async function buildOneBoard(
       const byDay = new Map<string, { total: number; answered: number; missed: number }>();
       const heat: number[] = Array(24).fill(0);
       const heatAll: number[] = Array(24).fill(0);
+      const missedByDow: number[] = Array(7).fill(0);
+      const totalByDow: number[] = Array(7).fill(0);
+      const missedByDowHour: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
+      const totalByDowHour: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
       for (const j of journeys) {
         const p = ldn(j.datetime);
         if (!byDay.has(p.day)) byDay.set(p.day, { total: 0, answered: 0, missed: 0 });
         const b = byDay.get(p.day)!;
+        const dw = dowIndex(p.day);
         b.total++;
         heatAll[p.hour]++;
+        totalByDow[dw]++;
+        totalByDowHour[dw][p.hour]++;
         if (j.status === 'Answered') b.answered++;
-        else { b.missed++; heat[p.hour]++; }
+        else {
+          b.missed++; heat[p.hour]++;
+          missedByDow[dw]++;
+          missedByDowHour[dw][p.hour]++;
+        }
       }
+      // How many of each weekday the range actually covers. Without this, "Monday is our
+      // worst day" can just mean the range happened to contain three Mondays and two Fridays.
+      const daysSeenByDow: number[] = Array(7).fill(0);
+      for (const d of days) daysSeenByDow[dowIndex(d.day)]++;
       for (const h of ONEBOARD_HOURS) { maxHeat = Math.max(maxHeat, heat[h]); maxHeatAll = Math.max(maxHeatAll, heatAll[h]); }
 
       sites.push({
@@ -238,6 +271,7 @@ export async function buildOneBoard(
         daily: days.map((d) => ({ ...d, ...(byDay.get(d.day) || { total: 0, answered: 0, missed: 0 }) })),
         missedByHour: heat,
         totalByHour: heatAll,
+        missedByDow, totalByDow, daysSeenByDow, missedByDowHour, totalByDowHour,
       });
     }
     return { state: 'ok', insName: ins.name, sites, hours: ONEBOARD_HOURS, maxHeat, maxHeatAll, compareNote };

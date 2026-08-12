@@ -14,8 +14,8 @@ import { pool } from '../db/pool';
 // heartbeat queue a fresh attempt.
 
 const BUDGET_MINUTES: Record<string, number> = {
-  'mesh.install': 20,     // 10 min installer + up to 1 min waiting for the service
-  'mesh.remove': 20,
+  'mesh.install': 12,     // 10 min installer + up to 1 min waiting for the service
+  'mesh.remove': 12,
   'agent.update': 20,     // download + verify + restart
   'software.install': 30,
   'software.uninstall': 30,

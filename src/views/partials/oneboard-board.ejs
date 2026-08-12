@@ -17,6 +17,19 @@
   var HEAT_ALL = ['var(--surface-2)','#d7eef3','var(--accent-line)','#5cb8ca','#1f8fa6','var(--accent-deep)'];
   function heatAllBg(n){ if(!maxHeatAll || !n) return HEAT_ALL[0]; var i = Math.min(5, Math.max(1, Math.ceil(n / maxHeatAll * 5))); return HEAT_ALL[i]; }
   function heatAllInk(n){ if(!maxHeatAll || !n) return 'var(--faint)'; return (Math.ceil(n / maxHeatAll * 5) >= 4) ? '#ffffff' : 'var(--ink)'; }
+  // Day-of-week ramp. Scaled against the busiest weekday cell on the board rather than
+  // the hourly max - a whole day always dwarfs a single hour, and reusing maxHeat here
+  // would leave every cell the same shade of nearly-nothing.
+  var DOW_SHORT = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  var DOW_FULL  = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+  var maxDow = 0;
+  (typeof sites !== 'undefined' ? sites : []).forEach(function(s){
+    if (!s.included || !s.missedByDow) return;
+    for (var d = 0; d < 7; d++) maxDow = Math.max(maxDow, s.missedByDow[d] || 0);
+  });
+  function dowBg(n){ if(!maxDow || !n) return HEAT_STEPS[0]; var i = Math.min(5, Math.max(1, Math.ceil(n / maxDow * 5))); return HEAT_STEPS[i]; }
+  function dowInk(n){ if(!maxDow || !n) return 'var(--faint)'; return (Math.ceil(n / maxDow * 5) >= 4) ? '#ffffff' : 'var(--ink)'; }
+  function per(n, d){ return d > 0 ? (n / d).toFixed(1) : '0.0'; }
   function delta(cur, prev, invert){
     if (prev == null) return '';
     var d = cur - prev;
@@ -104,6 +117,88 @@
 </div>
 
 <!-- Daily totals: answered v missed per branch -->
+<% var _askUrl = (typeof obAskUrl !== 'undefined' && obAskUrl) ? obAskUrl : ''; %>
+<% if (_askUrl) { %>
+<!-- Ask Insights: the staffing questions that used to need an export to Excel first -->
+<div class="card" style="margin-bottom:16px;border-left:3px solid var(--accent);">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+    <h2 style="margin:0;font-size:16px;">Ask Insights</h2>
+    <span class="badge badge-inactive" style="font-size:10px;">Claude</span>
+  </div>
+  <p class="muted" style="margin:0 0 10px;font-size:12.5px;">
+    Ask about the calls on this board — cover, staffing, patterns. It answers from the numbers above and nothing else.
+  </p>
+  <form id="aiForm" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;">
+    <input class="input" id="aiQ" autocomplete="off" style="flex:1;min-width:280px;"
+           placeholder="If I got another receptionist, when should they work?">
+    <button class="btn btn-primary" type="submit" id="aiGo">Ask</button>
+  </form>
+  <div id="aiChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;">
+    <% ['When do we miss the most calls?',
+        'If I got another receptionist, when should they work?',
+        'Which day of the week is worst, and is it really worse or just more days?',
+        'What hours would fix the most missed calls for the least cover?'].forEach(function(q){ %>
+      <button type="button" class="ai-chip" data-q="<%= esc(q) %>"
+              style="border:1px solid var(--line-strong);background:var(--surface-2);color:var(--muted);border-radius:999px;padding:3px 11px;font-size:11.5px;cursor:pointer;"><%= esc(q) %></button>
+    <% }); %>
+  </div>
+  <div id="aiOut" style="display:none;margin-top:14px;padding-top:13px;border-top:1px solid var(--line);"></div>
+</div>
+<script>
+(function () {
+  var form = document.getElementById('aiForm'); if (!form) return;
+  var q = document.getElementById('aiQ'), go = document.getElementById('aiGo'), out = document.getElementById('aiOut');
+  var URL_ASK = <%- JSON.stringify(_askUrl) %>;
+  function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
+  function el(tag, css, text){ var e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; }
+
+  document.querySelectorAll('.ai-chip').forEach(function (c) {
+    c.addEventListener('click', function () { q.value = c.getAttribute('data-q'); form.dispatchEvent(new Event('submit', { cancelable: true })); });
+  });
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var question = (q.value || '').trim();
+    if (!question) { q.focus(); return; }
+    go.disabled = true; go.textContent = 'Thinking…';
+    out.style.display = 'block';
+    out.innerHTML = '';
+    out.appendChild(el('p', 'margin:0;color:var(--muted);font-size:13px;', 'Reading the board…'));
+
+    // The board's own query string decides the customer, dates and sites, so the answer
+    // is always about exactly what is on screen.
+    fetch(URL_ASK + window.location.search, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() },
+      body: JSON.stringify({ question: question })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      out.innerHTML = '';
+      if (!d.ok) { out.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', d.error || 'That did not work.')); return; }
+      out.appendChild(el('p', 'margin:0 0 9px;font-weight:600;font-size:13px;', question));
+      if (d.points && d.points.length) {
+        var chips = el('div', 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:11px;');
+        d.points.forEach(function (p) {
+          var c = el('div', 'border:1px solid var(--line);border-radius:8px;padding:6px 11px;background:var(--surface-2);');
+          c.appendChild(el('div', 'font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:600;', p.label));
+          c.appendChild(el('div', 'font-size:13px;font-weight:700;', p.value));
+          chips.appendChild(c);
+        });
+        out.appendChild(chips);
+      }
+      String(d.answer || '').split(/\n{1,}/).forEach(function (para) {
+        if (!para.trim()) return;
+        out.appendChild(el('p', 'margin:0 0 8px;font-size:13.5px;line-height:1.55;', para.trim()));
+      });
+      if (d.cost) out.appendChild(el('p', 'margin:6px 0 0;font-size:11px;color:var(--faint);', d.cost));
+    }).catch(function () {
+      out.innerHTML = '';
+      out.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', 'Could not reach the Portal.'));
+    }).then(function () { go.disabled = false; go.textContent = 'Ask'; });
+  });
+})();
+</script>
+<% } %>
+
 <div class="card" style="padding:0;margin-bottom:16px;">
   <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">Daily calls — answered v missed</h2></div>
   <div class="table-wrap"><table class="table" style="margin:0;">
@@ -146,6 +241,45 @@
         <% hours.forEach(function(h){ var n = s.missedByHour[h] || 0; %>
           <td title="<%= esc(s.label) %> · <%= ('0'+h).slice(-2) %>:00 — <%= n %> missed" style="text-align:center;background:<%= heatBg(n) %>;color:<%= heatInk(n) %>;font-size:12px;font-weight:600;min-width:34px;"><%= n || '' %></td>
         <% }); %>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <div style="display:flex;align-items:center;gap:6px;padding:10px 18px;font-size:11px;color:var(--muted);">
+    Fewer <% ['var(--surface-2)','var(--bad-bg)','var(--bad-line2)','var(--bad-soft)','var(--bad)','#7f1d1d'].forEach(function(c){ %><span style="width:18px;height:10px;background:<%= c %>;border:1px solid var(--line);border-radius:2px;display:inline-block;"></span><% }); %> More missed
+  </div>
+</div>
+
+<!-- Missed calls by day of the week -->
+<div class="card" style="padding:0;margin-top:16px;">
+  <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">Missed calls by day of the week</h2>
+    <span class="muted" style="font-size:12px;">Total missed, and the per-day average — the range rarely holds the same number of each weekday, so the average is the fair comparison</span></div>
+  <div class="table-wrap"><table class="table" style="margin:0;">
+    <thead><tr><th style="min-width:110px;"></th>
+      <% for (var d = 0; d < 7; d++) { %><th class="muted" style="text-align:center;font-size:11px;"><%= DOW_SHORT[d] %></th><% } %>
+      <th class="muted" style="text-align:center;font-size:11px;">Worst day</th></tr></thead>
+    <tbody>
+      <% included.forEach(function(s){
+           var worst = -1, worstAvg = -1;
+           for (var d = 0; d < 7; d++) {
+             var seen = (s.daysSeenByDow || [])[d] || 0; if (!seen) continue;
+             var a = ((s.missedByDow || [])[d] || 0) / seen;
+             if (a > worstAvg) { worstAvg = a; worst = d; }
+           }
+      %>
+      <tr>
+        <td style="font-weight:600;font-size:13px;white-space:nowrap;"><%= esc(s.label) %></td>
+        <% for (var d = 0; d < 7; d++) { var seen = (s.daysSeenByDow || [])[d] || 0;
+             var n = (s.missedByDow || [])[d] || 0; var tot = (s.totalByDow || [])[d] || 0; %>
+          <% if (!seen) { %>
+            <td class="muted" style="text-align:center;font-size:12px;opacity:.4;" title="The selected range contains no <%= DOW_FULL[d] %>">—</td>
+          <% } else { %>
+            <td title="<%= esc(s.label) %> · <%= DOW_FULL[d] %> — <%= n %> missed of <%= tot %> calls over <%= seen %> <%= DOW_FULL[d] %><%= seen === 1 ? '' : 's' %> (<%= per(n, seen) %> missed per day)" style="text-align:center;background:<%= dowBg(n) %>;color:<%= dowInk(n) %>;font-size:12px;font-weight:600;min-width:42px;line-height:1.25;">
+              <%= n || '' %><% if (n) { %><div style="font-size:10px;font-weight:500;opacity:.85;"><%= per(n, seen) %>/day</div><% } %>
+            </td>
+          <% } %>
+        <% } %>
+        <td style="text-align:center;font-size:12px;font-weight:600;white-space:nowrap;"><%= worst >= 0 && worstAvg > 0 ? DOW_SHORT[worst] + ' (' + worstAvg.toFixed(1) + '/day)' : '—' %></td>
       </tr>
       <% }); %>
     </tbody>

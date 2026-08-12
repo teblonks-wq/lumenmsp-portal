@@ -411,6 +411,12 @@ export interface MeshStatus {
    *  the queue waiting for a machine that is switched off). */
   pendingStarted: boolean;
   failed: { at: Date | null; output: string } | null;
+  /** The most recent install attempt whatever its state - so "it did nothing" becomes
+   *  "here is what it did, when, and what it said". Admin-facing diagnostics. */
+  lastAttempt: {
+    status: string; requestedAt: Date | null; startedAt: Date | null; finishedAt: Date | null;
+    exitCode: number | null; output: string; progress: string; progressPct: number | null;
+  } | null;
 }
 
 export async function meshStatus(assetId: number): Promise<MeshStatus | null> {
@@ -449,6 +455,15 @@ export async function meshStatus(assetId: number): Promise<MeshStatus | null> {
                            AND ok.status='done' AND ok.id > agent_commands.id)
       ORDER BY id DESC LIMIT 1`, [d.id])).rows[0];
 
+  // Whatever happened last, regardless of state. Without this the page can only say
+  // "queued" or "failed", and an install that was claimed and then went quiet reads as
+  // nothing happening at all.
+  const last = (await pool.query(
+    `SELECT status, requested_at, started_at, finished_at, exit_code, output, progress, progress_pct
+       FROM agent_commands
+      WHERE device_id=$1 AND kind='mesh.install'
+      ORDER BY id DESC LIMIT 1`, [d.id])).rows[0] || null;
+
   return {
     deviceId: d.id,
     hostname: d.hostname || null,
@@ -460,8 +475,73 @@ export async function meshStatus(assetId: number): Promise<MeshStatus | null> {
     pendingSince: pending ? pending.requested_at : null,
     pendingStarted: !!(pending && pending.started_at),
     failed: failed ? { at: failed.finished_at, output: String(failed.output || '').slice(-600) } : null,
+    lastAttempt: last ? {
+      status: String(last.status || ''),
+      requestedAt: last.requested_at || null,
+      startedAt: last.started_at || null,
+      finishedAt: last.finished_at || null,
+      exitCode: last.exit_code === null || last.exit_code === undefined ? null : Number(last.exit_code),
+      output: String(last.output || '').slice(-1200),
+      progress: String(last.progress || '').slice(-400),
+      progressPct: last.progress_pct === null || last.progress_pct === undefined ? null : Number(last.progress_pct),
+    } : null,
   };
 }
+
+// ── Remote-access state for one asset, as JSON ──────────────────────────────────
+// Feeds the lightbox on the assets list, so pressing "Remote" on a machine that is not
+// ready explains itself in place instead of navigating you to a second page carrying an
+// error. Everything here is already on the device page; this is the same answer, fetched.
+router.get('/assets/:id/remote-state.json', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  try {
+    const st = await meshStatus(id);
+    const base = await meshServerUrl();
+    if (!st) {
+      res.json({ ok: true, ready: false, reason: 'no-agent', canInstall: false,
+        title: 'No LumenMSP Agent on this machine',
+        detail: 'Remote control is delivered BY our agent, so it has to be installed first. Until then the Portal has no way onto this machine.',
+        action: { label: 'Install the LumenMSP Agent', href: '/agents#download' } });
+      return;
+    }
+    if (!base) {
+      res.json({ ok: true, ready: false, reason: 'no-server', canInstall: false, hostname: st.hostname,
+        title: 'MeshCentral is not configured', detail: 'The remote-access server address is not set in the Portal yet.',
+        action: { label: 'Agents page', href: '/agents' } });
+      return;
+    }
+    if (st.hasNode) { res.json({ ok: true, ready: true, hostname: st.hostname, href: `/assets/${id}/remote-mesh` }); return; }
+
+    let reason = 'not-installed', title = 'Remote control is not installed yet', detail =
+      'Installing takes about a minute and needs nobody at the far end - our agent does it.';
+    if (!st.enabled) {
+      reason = 'disabled'; title = `Remote access is switched off for ${st.customer || 'this customer'}`;
+      detail = 'Turn it on for the customer and it installs itself on every machine they have.';
+    } else if (!st.hasPackage) {
+      reason = 'no-package'; title = `${st.customer || 'This customer'} has no remote-access agent built yet`;
+      detail = 'One gets built per customer, then installs itself everywhere. Nothing on this machine can fix it until that exists.';
+    } else if (st.pendingSince) {
+      reason = st.pendingStarted ? 'running' : 'queued';
+      title = st.pendingStarted ? 'The install is running on the machine now' : 'The install is queued';
+      detail = st.pendingStarted
+        ? 'The agent collected it and has not reported back yet. If it overruns it is failed automatically and retried.'
+        : 'It runs within seconds of the machine next checking in.';
+    } else if (st.failed) {
+      reason = 'failed'; title = 'The last install attempt failed';
+      detail = st.failed.output || 'No output was returned.';
+    }
+    res.json({
+      ok: true, ready: false, reason, hostname: st.hostname, customer: st.customer, title, detail,
+      canInstall: st.enabled && st.hasPackage && !st.pendingSince,
+      installUrl: `/assets/${id}/mesh-install`,
+      lastAttempt: st.lastAttempt,
+      action: !st.enabled || !st.hasPackage ? { label: 'Agents page', href: '/agents' } : null,
+    });
+  } catch (e: any) {
+    console.error('[mesh] remote-state failed:', e.message);
+    res.status(500).json({ ok: false, error: 'Could not read the remote-access state.' });
+  }
+});
 
 // Install it from the machine's own page — which is where you are standing when you find
 // out it is missing, rather than the Agents list.
@@ -485,10 +565,10 @@ router.post('/assets/:id/mesh-install', requireAuth, requireAdmin, async (req: R
     const r = await queueMeshInstall(st.deviceId!, `${req.protocol}://${req.get('host')}`);
     await logActivity(req.session.user!.id, 'mesh_install', 'customer_assets', id,
       `Queued remote-access install on ${st.hostname}`);
-    res.redirect(back + '?msg=' + encodeURIComponent(
-      r === 'queued'
-        ? 'Installing remote access. It runs at the next check-in — about a minute on a machine that is switched on — and this page will show when it lands.'
-        : 'Could not queue it. Check the customer has a remote-access agent on the Agents page.'));
+    // No success notice on the way back: the page's own remote-access banner already
+    // says exactly this, and two boxes saying the same thing is how a page gets noisy.
+    res.redirect(r === 'queued' ? back
+      : back + '?err=' + encodeURIComponent('Could not queue it. Check the customer has a remote-access agent on the Agents page.'));
   } catch (e: any) {
     console.error('[mesh] asset install failed:', e.message);
     res.redirect(back + '?err=' + encodeURIComponent('Could not queue the remote-access install.'));
