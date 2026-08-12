@@ -18,11 +18,12 @@ function remoteHref(a){
 %>
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-  <div><h1>Assets</h1><p class="muted"><%= rows.length %> device<%= rows.length===1?'':'s' %> shown · synced from Atera <%= timeAgo(lastSynced) %></p></div>
+<% var _noAgent = rows.filter(function(a){ return !a.agent_device_id; }).length; %>
+  <div><h1>Assets</h1><p class="muted"><%= rows.length %> device<%= rows.length===1?'':'s' %> shown · reported by the LumenMSP Agent · last Atera import <%= timeAgo(lastSynced) %></p></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
     <a class="btn" href="/agents#download" style="display:inline-flex;align-items:center;gap:6px;"><img src="/static/img/lumen-agent-16.png" width="14" height="14" alt=""> Download Agent</a>
     <% if (typeof user!=='undefined' && user.role==='admin') { %>
-    <form method="post" action="/assets/sync"><button class="btn btn-primary" type="submit">↻ Sync from Atera</button></form>
+    <form method="post" action="/assets/sync"><button class="btn" type="submit" title="Pulls Atera's device list to find machines we do not have. It never overwrites anything our own agent reports.">↻ Import from Atera</button></form>
     <% } %>
     <% if (unmatchedCount > 0) { %><a class="btn" href="/assets/unmatched" style="border-color:var(--amber);color:var(--warn-fg);">⚠ <%= unmatchedCount %> unmatched</a><% } %>
   </div>
@@ -35,7 +36,9 @@ function remoteHref(a){
 // Hero board. Counts come from the ROWS ON SCREEN, so they follow the filter rather than
 // silently describing the whole estate while you're looking at one customer — the labels
 // say "shown" for exactly that reason.
-var _online  = rows.filter(function (a) { return a.online_status; }).length;
+// Online means OUR agent checked in recently. A machine we cannot reach is not online,
+// whatever Atera's last import claimed.
+var _online  = rows.filter(function (a) { return a.online_status && a.agent_device_id; }).length;
 var _agent   = rows.filter(function (a) { return a.agent_device_id; }).length;
 var _servers = rows.filter(function (a) { return String(a.device_type || '').toLowerCase().indexOf('server') >= 0; }).length;
 var _nouser  = rows.filter(function (a) { return !a.assigned_name && !a.last_login_user; }).length;
@@ -70,9 +73,9 @@ function tileHref(over){
 
 <div class="hero">
   <a class="tile" href="/assets" title="Show every device - clears every filter"><div class="n"><%= rows.length %></div><div class="l">devices shown</div><div class="h"><%= _anyFilter ? 'show all devices' : 'all devices' %></div></a>
-  <a class="tile<%= filters.online ? ' on' : '' %>" href="<%= tileHref({ online: filters.online ? '' : '1' }) %>" title="Only devices Atera currently reports as online"><div class="n" style="color:var(--ok-fg);"><%= _online %></div><div class="l">online now</div><div class="h"><%= filters.online ? 'filtering - click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= filters.online ? ' on' : '' %>" href="<%= tileHref({ online: filters.online ? '' : '1' }) %>" title="Only devices the LumenMSP Agent has checked in from recently"><div class="n" style="color:var(--ok-fg);"><%= _online %></div><div class="l">online now</div><div class="h"><%= filters.online ? 'filtering - click to clear' : 'click to filter' %></div></a>
   <a class="tile<%= filters.agent === '1' ? ' on' : '' %>" href="<%= tileHref({ agent: filters.agent === '1' ? '' : '1' }) %>" title="Only devices with the LumenMSP Agent installed"><div class="n"><%= _agent %> <span style="font-size:14px;font-weight:600;color:var(--muted);"><%= _pct %>%</span></div><div class="l">running our agent</div><div class="h"><%= filters.agent === '1' ? 'filtering - click to clear' : 'click to filter' %></div></a>
-  <a class="tile<%= filters.servers ? ' on' : '' %>" href="<%= tileHref({ servers: filters.servers ? '' : '1', type: '' }) %>" title="Only devices Atera types as a server"><div class="n"><%= _servers %></div><div class="l">servers</div><div class="h"><%= filters.servers ? 'filtering - click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= filters.servers ? ' on' : '' %>" href="<%= tileHref({ servers: filters.servers ? '' : '1', type: '' }) %>" title="Only devices typed as a server"><div class="n"><%= _servers %></div><div class="l">servers</div><div class="h"><%= filters.servers ? 'filtering - click to clear' : 'click to filter' %></div></a>
   <a class="tile<%= filters.nouser ? ' on' : '' %>" href="<%= tileHref({ nouser: filters.nouser ? '' : '1' }) %>" title="Devices with no assigned contact and no last logged-in user"><div class="n" style="<%= _nouser ? 'color:var(--warn-fg);' : '' %>"><%= _nouser %></div><div class="l">no known user</div><div class="h"><%= filters.nouser ? 'filtering - click to clear' : 'click to filter' %></div></a>
   <% if (unmatchedCount > 0) { %>
   <a class="tile" href="/assets/unmatched" style="text-decoration:none;color:inherit;"><div class="n" style="color:var(--warn-fg);"><%= unmatchedCount %></div><div class="l">unmatched — click to fix</div></a>
@@ -90,47 +93,63 @@ function tileHref(over){
 
 <div class="card" style="background:var(--tint-accent);border-color:var(--info-line);">
   <p style="margin:0;font-size:13px;color:var(--info-deep);">
-    <strong>Read-only for now.</strong> Everything here comes straight from Atera — details are locked until we confirm Atera's API will
-    accept changes written back from the Portal. Once a "next RMM" replaces Atera (expected in 6–10 months), this sync will point there instead.
+    <strong>The Portal is the master record.</strong> Devices are described by the <strong>LumenMSP Agent</strong>, which writes straight
+    into this list the moment it enrols — no sync to run. Atera is now an <strong>importer only</strong>: it tells us a machine exists
+    so it can be chased for an agent, and it is never allowed to overwrite anything our own agent reports.
+    <% if (_noAgent) { %><br><span style="font-weight:600;"><%= _noAgent %> of the devices shown have no LumenMSP Agent yet</span> — those are the ones still relying on Atera.<% } %>
   </p>
 </div>
 
 <div class="card" style="padding:16px 20px;">
-  <form method="get" action="/assets" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+  <form method="get" action="/assets" id="asset-filters" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
     <input class="input" type="search" name="q" value="<%= filters.q %>" placeholder="Search hostname, serial, model, user, customer…" style="min-width:260px;">
-    <select class="input" name="customer" style="min-width:200px;">
+    <select class="input js-autofilter" name="customer" style="min-width:200px;">
       <option value="">All customers</option>
       <% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= filters.customer===c.id?'selected':'' %>><%= c.name %></option><% }); %>
     </select>
-    <select class="input" name="type">
+    <select class="input js-autofilter" name="type">
       <option value="">All types</option>
       <% types.forEach(function(t){ %><option value="<%= t %>" <%= filters.type===t?'selected':'' %>><%= t %></option><% }); %>
     </select>
-    <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" name="online" value="1" <%= filters.online?'checked':'' %>> Online only</label>
-    <select class="input" name="agent" title="Filter by whether the LumenMSP Agent is installed">
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input class="js-autofilter" type="checkbox" name="online" value="1" <%= filters.online?'checked':'' %>> Online only</label>
+    <select class="input js-autofilter" name="agent" title="Filter by whether the LumenMSP Agent is installed">
       <option value="">Agent: any</option>
       <option value="1" <%= filters.agent==='1'?'selected':'' %>>Agent installed</option>
       <option value="0" <%= filters.agent==='0'?'selected':'' %>>Without agent</option>
     </select>
-    <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Devices with no last logged-in user reported by Atera"><input type="checkbox" name="nouser" value="1" <%= filters.nouser?'checked':'' %>> No known user</label>
-    <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Anything Atera types as a server"><input type="checkbox" name="servers" value="1" <%= filters.servers?'checked':'' %>> Servers only</label>
-    <button class="btn" type="submit">Filter</button>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Devices with no assigned person and no known signed-in user"><input class="js-autofilter" type="checkbox" name="nouser" value="1" <%= filters.nouser?'checked':'' %>> No known user</label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Anything Atera types as a server"><input class="js-autofilter" type="checkbox" name="servers" value="1" <%= filters.servers?'checked':'' %>> Servers only</label>
+    <noscript><button class="btn" type="submit">Filter</button></noscript>
     <% if (_anyFilter) { %><a class="btn" href="/assets">Clear</a><% } %>
   </form>
 </div>
+<script>
+  // Pick a customer (or any other single-click filter) and the list filters itself. The
+  // search box is deliberately left alone - it submits on Enter, not on every keystroke.
+  (function () {
+    var form = document.getElementById('asset-filters');
+    if (!form) return;
+    form.querySelectorAll('.js-autofilter').forEach(function (el) {
+      el.addEventListener('change', function () {
+        if (typeof form.requestSubmit === 'function') form.requestSubmit(); else form.submit();
+      });
+    });
+  })();
+</script>
 
 <div class="card" style="padding:0;">
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th></th><th>Hostname</th><th>Customer</th><th>Type</th><th>Backup</th><th>OS</th><th>Manufacturer / Model</th><th>User</th><th>Last seen</th><th></th></tr></thead>
       <tbody>
-        <% if (rows.length===0) { %><tr><td colspan="10"><div class="empty-state">No devices match. Try "↻ Sync from Atera" if this is the first run.</div></td></tr><% } %>
+        <% if (rows.length===0) { %><tr><td colspan="10"><div class="empty-state">No devices match. Machines appear here as soon as the LumenMSP Agent enrols on them — use "↻ Import from Atera" to pull in the ones that do not have it yet.</div></td></tr><% } %>
         <% rows.forEach(function(a){ %>
           <tr>
-            <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
+            <% var _lv = a.online_status && a.agent_device_id; %>
+            <td><span title="<%= _lv ? 'Online - the LumenMSP Agent checked in recently' : (a.agent_device_id ? 'Offline' : 'Offline - no LumenMSP Agent on this machine, so the Portal has no live status for it') %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= _lv ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
             <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/assets') %>"><%= a.hostname || '(unnamed device)' %></a><% if (a.agent_device_id) { %> <img src="/static/img/lumen-agent-16.png" width="14" height="14" alt="LumenMSP Agent" style="vertical-align:-2px;margin-left:5px;" title="LumenMSP Agent<%= a.agent_agent_version ? ' v' + a.agent_agent_version : '' %> — last seen <%= secsAgo(a.agent_seen_secs) %>"><% if (a.agent_agent_version) { %><span class="muted" style="font-size:10.5px;margin-left:3px;">v<%= a.agent_agent_version %></span><% } %><% } %></td>
             <td class="muted"><% if (a.customer_id) { %><a class="row-link" href="/customers/<%= a.customer_id %>#assets"><%= a.customer_name %></a><% } else { %>—<% } %></td>
-            <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span></td>
+            <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span><% if (!a.agent_device_id) { %> <a class="badge" href="/agents#download" style="background:var(--tint-warn);color:var(--warn-deep);border:1px solid var(--warn-line);text-decoration:none;" title="Imported from Atera. The Portal cannot describe or remote onto this machine until the LumenMSP Agent is installed.">agent required</a><% } %></td>
             <td><% var bs = backupState[String(a.hostname||'').toLowerCase()]; %>
               <% if (bs === 'ok') { %><span class="badge badge-sent" title="All backup plans succeeded (MSP360)">Protected</span>
               <% } else if (bs === 'failed') { %><span class="badge badge-failed" title="A backup plan needs attention (MSP360)">Attention</span>

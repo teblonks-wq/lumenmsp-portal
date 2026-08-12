@@ -12,9 +12,15 @@
   var _custName = (typeof custName !== 'undefined' && custName) ? custName : 'the customer';
   var _custId = (typeof custId !== 'undefined' && custId) ? custId : '';
   var _emails = _contacts.map(function(c){ return String(c.email || '').toLowerCase(); }).filter(Boolean).join(',');
+  // Name + address for the lookup. A native <datalist> matches against the WHOLE input
+  // value, so the moment you type a comma it stops suggesting - which is why CC and BCC
+  // only ever looked up the first address. The menu below matches per comma-separated
+  // token instead, so the second and third address get the same lookup as the first.
+  var _people = JSON.stringify(_contacts
+    .map(function(c){ return { n: String(c.name || ''), e: String(c.email || '') }; })
+    .filter(function(c){ return c.e; }));
 %>
-<datalist id="<%= _rid %>-contacts"><% _contacts.forEach(function(c){ %><option value="<%= c.email %>"><%= c.name %> &lt;<%= c.email %>&gt;</option><% }); %></datalist>
-<div class="rcpt" data-domain="<%= _domain %>" data-default-to="<%= _to %>" data-contacts="<%= _emails %>" data-cust="<%= _custName %>" data-cust-id="<%= _custId %>">
+<div class="rcpt" data-domain="<%= _domain %>" data-default-to="<%= _to %>" data-contacts="<%= _emails %>" data-people="<%= _people %>" data-cust="<%= _custName %>" data-cust-id="<%= _custId %>">
   <div class="form-group" style="margin-bottom:8px;">
     <label>To
       <% if (_contacts.length > 1) { %>
@@ -24,18 +30,18 @@
       </button>
       <% } %>
     </label>
-    <input class="input rcpt-f rcpt-to" name="to" list="<%= _rid %>-contacts" autocomplete="off" placeholder="name@customer.com (start typing to pick a contact)" value="<%= _to %>">
+    <input class="input rcpt-f rcpt-to" name="to" autocomplete="off" placeholder="name@customer.com (start typing to pick a contact)" value="<%= _to %>">
     <div class="rcpt-warn" style="display:none;font-size:12px;color:var(--warn-fg);margin-top:3px;"></div>
   </div>
   <div style="display:flex;gap:10px;flex-wrap:wrap;">
     <div class="form-group" style="flex:1;min-width:200px;margin-bottom:8px;">
       <label>CC</label>
-      <input class="input rcpt-f rcpt-cc" name="cc" list="<%= _rid %>-contacts" autocomplete="off" placeholder="optional, comma-separated" value="<%= _cc %>">
+      <input class="input rcpt-f rcpt-cc" name="cc" autocomplete="off" placeholder="optional, comma-separated - start typing any of them" value="<%= _cc %>">
       <div class="rcpt-warn" style="display:none;font-size:12px;color:var(--warn-fg);margin-top:3px;"></div>
     </div>
     <div class="form-group" style="flex:1;min-width:200px;margin-bottom:8px;">
       <label>BCC</label>
-      <input class="input rcpt-f rcpt-bcc" name="bcc" list="<%= _rid %>-contacts" autocomplete="off" placeholder="optional, comma-separated" value="<%= _bcc %>">
+      <input class="input rcpt-f rcpt-bcc" name="bcc" autocomplete="off" placeholder="optional, comma-separated - start typing any of them" value="<%= _bcc %>">
       <div class="rcpt-warn" style="display:none;font-size:12px;color:var(--warn-fg);margin-top:3px;"></div>
     </div>
   </div>
@@ -46,6 +52,16 @@
   </label>
   <% } %>
 </div>
+<style>
+  .rcpt-menu { display:none; position:absolute; z-index:60; left:0; right:0; top:100%; margin-top:2px;
+               background:var(--card,#fff); border:1px solid var(--line-strong); border-radius:8px;
+               box-shadow:0 6px 18px rgba(0,0,0,.12); max-height:230px; overflow:auto; }
+  .rcpt-opt { padding:6px 10px; font-size:13px; cursor:pointer; display:flex; gap:8px; align-items:baseline; }
+  .rcpt-opt + .rcpt-opt { border-top:1px solid var(--surface-3); }
+  .rcpt-opt.on, .rcpt-opt:hover { background:var(--tint-accent); }
+  .rcpt-opt-n { font-weight:600; white-space:nowrap; }
+  .rcpt-opt-e { color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+</style>
 <script>
 if (!window.__rcptInit) { window.__rcptInit = true;
   function rcptEmails(v){ return String(v||'').split(/[,;]/).map(function(s){ return s.trim(); }).filter(Boolean); }
@@ -91,6 +107,95 @@ if (!window.__rcptInit) { window.__rcptInit = true;
       });
     });
   }
+  // -- Contact lookup, per address ----------------------------------------------
+  // Everything below exists because a native datalist matches the whole field. These work out
+  // which comma-separated address the caret is sitting in and only match that one.
+  function rcptPeople(block){
+    try { return JSON.parse(block.getAttribute('data-people') || '[]') || []; } catch (e) { return []; }
+  }
+  function rcptToken(inp){
+    var v = inp.value;
+    var pos = (inp.selectionStart == null) ? v.length : inp.selectionStart;
+    var start = Math.max(v.lastIndexOf(',', pos - 1), v.lastIndexOf(';', pos - 1)) + 1;
+    var ends = [v.indexOf(',', pos), v.indexOf(';', pos)].filter(function(i){ return i >= 0; });
+    var end = ends.length ? Math.min.apply(null, ends) : v.length;
+    return { start: start, end: end, text: v.slice(start, end).trim() };
+  }
+  function rcptMenuFor(inp){
+    var host = inp.parentNode;
+    var m = host.querySelector('.rcpt-menu');
+    if (!m){
+      if (!host.style.position) host.style.position = 'relative';
+      m = document.createElement('div');
+      m.className = 'rcpt-menu';
+      // mousedown would blur the input before the click lands, so the pick never happens.
+      m.addEventListener('mousedown', function(ev){ ev.preventDefault(); });
+      host.appendChild(m);
+    }
+    return m;
+  }
+  function rcptHide(inp){
+    var m = inp.parentNode.querySelector('.rcpt-menu');
+    if (m){ m.style.display = 'none'; m.__opts = null; m.__i = -1; }
+  }
+  function rcptPick(inp, email){
+    var t = rcptToken(inp);
+    var before = inp.value.slice(0, t.start).replace(/\s+$/, '');
+    var after = inp.value.slice(t.end).replace(/^[\s,;]+/, '');
+    var head = before ? before + ' ' : '';
+    inp.value = head + email + ', ' + after;
+    var caret = (head + email + ', ').length;
+    try { inp.setSelectionRange(caret, caret); } catch (e) {}
+    rcptHide(inp);
+    inp.dispatchEvent(new Event('input'));
+    inp.focus();
+  }
+  function rcptSuggest(block, inp){
+    var t = rcptToken(inp);
+    var q = t.text.toLowerCase();
+    if (q.length < 1) { rcptHide(inp); return; }
+    // Addresses already in this field drop out of the list - except the one being typed,
+    // which would otherwise vanish the moment it matched exactly.
+    var taken = rcptEmails(inp.value).map(function(e){ return e.toLowerCase(); });
+    var hits = rcptPeople(block).filter(function(p){
+      var e = String(p.e || '').toLowerCase(), n = String(p.n || '').toLowerCase();
+      if (taken.indexOf(e) >= 0 && e !== q) return false;
+      return e.indexOf(q) >= 0 || n.indexOf(q) >= 0;
+    }).slice(0, 8);
+    if (!hits.length) { rcptHide(inp); return; }
+    var m = rcptMenuFor(inp);
+    m.__opts = hits; m.__i = 0;
+    m.innerHTML = hits.map(function(p, i){
+      return '<div class="rcpt-opt' + (i === 0 ? ' on' : '') + '" data-i="' + i + '">' +
+             '<span class="rcpt-opt-n">' + rcptEsc(p.n || p.e) + '</span>' +
+             '<span class="rcpt-opt-e">' + rcptEsc(p.e) + '</span></div>';
+    }).join('');
+    m.style.display = 'block';
+    Array.prototype.forEach.call(m.querySelectorAll('.rcpt-opt'), function(el){
+      el.addEventListener('click', function(){
+        var opts = m.__opts || [];
+        var p = opts[Number(el.getAttribute('data-i'))];
+        if (p) rcptPick(inp, p.e);
+      });
+    });
+  }
+  function rcptKey(inp, ev){
+    var m = inp.parentNode.querySelector('.rcpt-menu');
+    if (!m || m.style.display !== 'block' || !m.__opts || !m.__opts.length) return;
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp'){
+      ev.preventDefault();
+      m.__i = (m.__i + (ev.key === 'ArrowDown' ? 1 : -1) + m.__opts.length) % m.__opts.length;
+      Array.prototype.forEach.call(m.querySelectorAll('.rcpt-opt'), function(el, i){
+        el.classList.toggle('on', i === m.__i);
+      });
+    } else if (ev.key === 'Enter' || ev.key === 'Tab'){
+      // Enter would otherwise submit the whole reply form with a half-typed address in it.
+      ev.preventDefault();
+      rcptPick(inp, m.__opts[m.__i].e);
+    } else if (ev.key === 'Escape'){
+      rcptHide(inp);
+    }
+  }
   function rcptToChanged(block){
     var to = block.querySelector('.rcpt-to'); if (!to) return;
     var def = (block.getAttribute('data-default-to')||'').trim().toLowerCase();
@@ -102,7 +207,13 @@ if (!window.__rcptInit) { window.__rcptInit = true;
   window.rcptInitAll = function(){
     document.querySelectorAll('.rcpt').forEach(function(block){
       if (block.__inited) return; block.__inited = true;
-      block.querySelectorAll('.rcpt-f').forEach(function(inp){ inp.addEventListener('input', function(){ rcptCheck(block); rcptToChanged(block); }); });
+      block.querySelectorAll('.rcpt-f').forEach(function(inp){
+        inp.addEventListener('input', function(){ rcptCheck(block); rcptToChanged(block); rcptSuggest(block, inp); });
+        inp.addEventListener('keydown', function(ev){ rcptKey(inp, ev); });
+        inp.addEventListener('focus', function(){ rcptSuggest(block, inp); });
+        // Delayed so a click on a suggestion still registers before the menu goes.
+        inp.addEventListener('blur', function(){ setTimeout(function(){ rcptHide(inp); }, 150); });
+      });
       // "All contacts" → fill To with every contact on the customer (bulk notices).
       var allBtn = block.querySelector('.rcpt-all');
       if (allBtn) allBtn.addEventListener('click', function(){

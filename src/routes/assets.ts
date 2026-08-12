@@ -8,10 +8,22 @@ import { logActivity } from '../lib/activity';
 import { getSetting, setSetting } from '../lib/settings';
 import { AGENT_MSI_DIR, AGENT_MSI_PATH, AGENT_VERSION_PATH, agentMsiInfo, agentHostedVersion, agentHostedSha256, rolloutState, wakeAgent } from './agent-api';
 import { syncAssetsFromAtera, lastAssetSyncAt, remoteUrlTemplate, saveRemoteUrlTemplate, buildRemoteUrl } from '../lib/asset-sync';
+import { backfillAssetsFromAgents } from '../lib/agent-asset';
 import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
 import { meshStatus } from './mesh';
 
 const router = Router();
+
+// Adopting/creating asset rows for enrolled agents is normally done at enrolment and on
+// every heartbeat. This is the belt-and-braces pass for anything that predates that, run
+// at most once a minute so opening /assets never costs more than a couple of set-based
+// statements.
+let lastBackfillMs = 0;
+async function backfillOnce(): Promise<void> {
+  if (Date.now() - lastBackfillMs < 60_000) return;
+  lastBackfillMs = Date.now();
+  try { await backfillAssetsFromAgents(); } catch { /* never block the page */ }
+}
 
 function safeBack(raw: unknown, fallback: string): string {
   const s = String(raw || '');
@@ -20,6 +32,7 @@ function safeBack(raw: unknown, fallback: string): string {
 
 // ── Portal-wide asset list ──────────────────────────────────────────────────────
 router.get('/assets', requireAuth, async (req: Request, res: Response) => {
+  await backfillOnce();
   const q = String(req.query.q || '').trim();
   const custId = parseInt(String(req.query.customer || ''), 10) || null;
   const type = String(req.query.type || '').trim();
@@ -55,8 +68,10 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
        SELECT ag.id, ag.last_seen_at, ag.agent_version,
               EXTRACT(EPOCH FROM (NOW() - ag.last_seen_at)) AS seen_secs FROM agent_devices ag
        WHERE ag.revoked = false AND ag.customer_id = a.customer_id
-         AND ((a.serial_number IS NOT NULL AND ag.serial_number = a.serial_number)
-           OR (a.hostname IS NOT NULL AND LOWER(ag.hostname) = LOWER(a.hostname)))
+         AND (ag.id = a.agent_device_id
+           OR (a.agent_device_id IS NULL
+               AND ((a.serial_number IS NOT NULL AND ag.serial_number = a.serial_number)
+                 OR (a.hostname IS NOT NULL AND LOWER(ag.hostname) = LOWER(a.hostname)))))
        ORDER BY ag.last_seen_at DESC NULLS LAST LIMIT 1
      ) agd ON true
      WHERE ${where.join(' AND ')}
@@ -90,7 +105,8 @@ router.post('/assets/sync', requireAuth, requireAdmin, async (req: Request, res:
   const user = req.session.user!;
   const r = await syncAssetsFromAtera(user.id);
   if (r.error) { res.redirect('/assets?err=' + encodeURIComponent(r.error)); return; }
-  const msg = `Synced ${r.synced} device(s) from Atera` + (r.unmatched ? ` — ${r.unmatched} not yet matched to a customer` : '');
+  const msg = `Imported from Atera: ${r.imported} machine(s) without the LumenMSP Agent, ${r.linked} already covered by it (identifiers refreshed, inventory untouched)` +
+    (r.unmatched ? ` — ${r.unmatched} not yet matched to a customer` : '');
   res.redirect('/assets?msg=' + encodeURIComponent(msg));
 });
 
@@ -138,10 +154,11 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
       `SELECT id, last_seen_at, agent_version, logged_in_user, local_ips, public_ip, disk_info,
               EXTRACT(EPOCH FROM (NOW() - last_seen_at)) AS seen_secs FROM agent_devices
        WHERE revoked = false AND customer_id = $1
-         AND (($2::text IS NOT NULL AND serial_number = $2)
-           OR ($3::text IS NOT NULL AND LOWER(hostname) = LOWER($3)))
+         AND (id = $4
+           OR ($4::int IS NULL AND (($2::text IS NOT NULL AND serial_number = $2)
+             OR ($3::text IS NOT NULL AND LOWER(hostname) = LOWER($3)))))
        ORDER BY last_seen_at DESC NULLS LAST LIMIT 1`,
-      [row.customer_id, row.serial_number || null, row.hostname || null]
+      [row.customer_id, row.serial_number || null, row.hostname || null, row.agent_device_id || null]
     )).rows[0] || null;
   } catch { /* cosmetic — never block the device page */ }
   // Contacts of this device's customer, for the "Assigned user" picker (Portal-side allocation).

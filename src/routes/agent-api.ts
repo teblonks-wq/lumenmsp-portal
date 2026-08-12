@@ -8,6 +8,8 @@ import { getSetting, setSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
 import { vaultConfigured, encryptSecret, decryptSecret } from '../lib/vault';
 import { ingestCeResult } from '../lib/ce-ingest';
+import { syncAssetFromAgent } from '../lib/agent-asset';
+import { reapStaleCommands } from '../lib/agent-commands';
 import { ingestServerFacts } from '../lib/server-facts';
 import { htmlToPlain } from '../lib/whatsapp';
 import { nextTicketNumber } from './tickets';
@@ -67,6 +69,27 @@ const noNul = (v: string) => v.replace(/\u0000/g, '');
 const s = (v: any, max = 300): string | null => { const t = noNul(String(v ?? '')).trim(); return t ? t.slice(0, max) : null; };
 
 // Real client IP — the app sets trust proxy 1, so req.ip is already the nginx-forwarded address.
+// Hardware facts the agent collects with WMI. These used to reach the Portal only through
+// the Atera sync, which is why every device page showed two of everything. Parsed the same
+// way on enrolment and on heartbeat so the machine describes itself from the first second.
+function hardware(b: any) {
+  const ram = Number(b?.ram_gb);
+  const bootMs = Date.parse(String(b?.last_boot_at ?? ''));
+  const macs = Array.isArray(b?.mac_addresses)
+    ? (b.mac_addresses.map((x: any) => noNul(String(x)).trim()).filter(Boolean).slice(0, 8).join(', ') || null)
+    : s(b?.mac_addresses, 200);
+  return {
+    manufacturer: s(b?.manufacturer, 120),
+    model: s(b?.model, 160),
+    cpu: s(b?.cpu, 200),
+    ramGb: Number.isFinite(ram) && ram > 0 ? Math.round(ram * 10) / 10 : null,
+    macAddresses: macs,
+    domainOrWorkgroup: s(b?.domain_or_workgroup, 120),
+    deviceType: s(b?.device_type, 40),
+    lastBootAt: Number.isFinite(bootMs) ? new Date(bootMs) : null,
+  };
+}
+
 function clientIp(req: Request): string {
   return String(req.ip || '').replace(/^::ffff:/, '');
 }
@@ -427,6 +450,7 @@ router.post('/agent/api/enroll', async (req: Request, res: Response) => {
   const token = crypto.randomBytes(32).toString('hex');
   const tokenHash = sha256(token);
   const os = s(b.os, 200); const osVersion = s(b.os_version, 100); const agentVersion = s(b.agent_version, 50);
+  const hw = hardware(b);
 
   try {
     // Same machine re-enrolling? Match serial first (survives renames), then hostname.
@@ -443,14 +467,22 @@ router.post('/agent/api/enroll', async (req: Request, res: Response) => {
       await pool.query(
         `UPDATE agent_devices SET token_hash=$1, hostname=$2, serial_number=COALESCE($3, serial_number), os=COALESCE($4, os),
            os_version=COALESCE($5, os_version), agent_version=COALESCE($6, agent_version), revoked=false,
-           public_ip=$7, enrolled_at=NOW(), last_seen_at=NOW(), updated_at=NOW() WHERE id=$8`,
-        [tokenHash, hostname, serial, os, osVersion, agentVersion, clientIp(req), deviceId]
+           public_ip=$7,
+           manufacturer=COALESCE($9, manufacturer), model=COALESCE($10, model), cpu=COALESCE($11, cpu),
+           ram_gb=COALESCE($12, ram_gb), mac_addresses=COALESCE($13, mac_addresses),
+           domain_or_workgroup=COALESCE($14, domain_or_workgroup), device_type=COALESCE($15, device_type),
+           last_boot_at=COALESCE($16, last_boot_at),
+           enrolled_at=NOW(), last_seen_at=NOW(), updated_at=NOW() WHERE id=$8`,
+        [tokenHash, hostname, serial, os, osVersion, agentVersion, clientIp(req), deviceId,
+         hw.manufacturer, hw.model, hw.cpu, hw.ramGb, hw.macAddresses, hw.domainOrWorkgroup, hw.deviceType, hw.lastBootAt]
       );
     } else {
       const ins = await pool.query(
-        `INSERT INTO agent_devices (customer_id, hostname, serial_number, os, os_version, agent_version, token_hash, public_ip, enrolled_at, last_seen_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW()) RETURNING id`,
-        [customerId, hostname, serial, os, osVersion, agentVersion, tokenHash, clientIp(req)]
+        `INSERT INTO agent_devices (customer_id, hostname, serial_number, os, os_version, agent_version, token_hash, public_ip,
+           manufacturer, model, cpu, ram_gb, mac_addresses, domain_or_workgroup, device_type, last_boot_at, enrolled_at, last_seen_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW(),NOW()) RETURNING id`,
+        [customerId, hostname, serial, os, osVersion, agentVersion, tokenHash, clientIp(req),
+         hw.manufacturer, hw.model, hw.cpu, hw.ramGb, hw.macAddresses, hw.domainOrWorkgroup, hw.deviceType, hw.lastBootAt]
       );
       deviceId = ins.rows[0].id;
     }
@@ -464,6 +496,11 @@ router.post('/agent/api/enroll', async (req: Request, res: Response) => {
       const { queueMeshInstall } = await import('./mesh');
       await queueMeshInstall(deviceId, `${req.protocol}://${req.get('host')}`);
     } catch (e: any) { console.error('[mesh] enrol hook:', e.message); }
+
+    // The Portal's own device record, written here rather than waiting for an Atera sync.
+    // This is what makes a freshly enrolled machine appear on /assets - with a working
+    // remote-control button - within seconds of the agent landing.
+    await syncAssetFromAgent(deviceId);
 
     res.status(existing ? 200 : 201).json({ ok: true, device_id: deviceId, device_token: token, customer: cust.rows[0].name, config: await deviceConfig(customerId, 2) });
   } catch (e: any) {
@@ -482,14 +519,32 @@ router.post('/agent/api/heartbeat', requireDevice, async (req: Request, res: Res
   if (Array.isArray(b.local_ips)) localIps = b.local_ips.map((x: any) => String(x).trim()).filter(Boolean).slice(0, 16).join(', ') || null;
   let diskInfo: string | null = null;
   try { const j = JSON.stringify(b.disks ?? null); diskInfo = j && j !== 'null' ? j.slice(0, 4000) : null; } catch { diskInfo = null; }
+  const hw = hardware(b);
   try {
     await pool.query(
       `UPDATE agent_devices SET hostname=COALESCE($1, hostname), os=COALESCE($2, os), os_version=COALESCE($3, os_version),
          agent_version=COALESCE($4, agent_version), logged_in_user=$5, local_ips=$6, disk_info=$7,
-         public_ip=$8, last_seen_at=NOW(), updated_at=NOW() WHERE id=$9`,
+         public_ip=$8,
+         manufacturer=COALESCE($10, manufacturer), model=COALESCE($11, model), cpu=COALESCE($12, cpu),
+         ram_gb=COALESCE($13, ram_gb), mac_addresses=COALESCE($14, mac_addresses),
+         domain_or_workgroup=COALESCE($15, domain_or_workgroup), device_type=COALESCE($16, device_type),
+         last_boot_at=COALESCE($17, last_boot_at), serial_number=COALESCE($18, serial_number),
+         last_seen_at=NOW(), updated_at=NOW() WHERE id=$9`,
       [s(b.hostname, 200), s(b.os, 200), s(b.os_version, 100), s(b.agent_version, 50),
-       s(b.logged_in_user, 200), localIps, diskInfo, clientIp(req), d.id]
+       s(b.logged_in_user, 200), localIps, diskInfo, clientIp(req), d.id,
+       hw.manufacturer, hw.model, hw.cpu, hw.ramGb, hw.macAddresses, hw.domainOrWorkgroup, hw.deviceType, hw.lastBootAt,
+       s(b.serial_number, 120)]
     );
+    // Keep the Portal's device record live off the heartbeat, so /assets is current
+    // without anybody syncing anything.
+    await syncAssetFromAgent(d.id);
+
+    // Clear out any command the agent was killed in the middle of BEFORE deciding whether
+    // a remote-access install is still outstanding. Without this, one orphaned mesh.install
+    // stuck in 'running' blocks every future attempt for the life of the device - which is
+    // exactly how a machine sits on "Installing remote access..." for hours while switched on.
+    await reapStaleCommands();
+
     // Catches devices that enrolled before their customer had a MeshCentral group, and
     // any machine where the install failed and was cleared. Cheap: returns immediately
     // unless there is genuinely something to queue.
@@ -809,12 +864,15 @@ function waitForCommand(deviceId: number, ms: number): Promise<void> {
 
 async function takeQueued(deviceId: number): Promise<any[]> {
   // Claim atomically so a duplicate poll (retry, restart) can't run a command twice.
+  // Remote access goes out FIRST regardless of when it was queued: getting a hands-free
+  // way onto a machine matters more than any inventory job sitting in front of it, and
+  // the agent runs what it is handed in order.
   const r = await pool.query(
     `UPDATE agent_commands SET status='running', started_at=NOW()
       WHERE id IN (SELECT id FROM agent_commands
                      WHERE device_id=$1 AND status='queued'
                        AND (run_after IS NULL OR run_after <= NOW())
-                     ORDER BY id LIMIT 5)
+                     ORDER BY (kind = 'mesh.install') DESC, id LIMIT 5)
       RETURNING id, kind, payload`, [deviceId]);
   return r.rows;
 }
@@ -823,6 +881,8 @@ router.get('/agent/api/commands', requireDevice, async (req: Request, res: Respo
   const d = (req as any).agentDevice;
   const waitSec = Math.min(30, Math.max(0, parseInt(String(req.query.wait || '0'), 10) || 0));
   try {
+    // Housekeeping on the way past (throttled internally to once a minute).
+    reapStaleCommands().catch(() => {});
     let rows = await takeQueued(d.id);
     if (!rows.length && waitSec > 0) {
       await waitForCommand(d.id, waitSec * 1000);

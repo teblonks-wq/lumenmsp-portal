@@ -21,6 +21,7 @@ export const CHANGELOG: ChangelogEntry[] = [
         'Self-updating and safe to ship: one version source, signed MSI, SHA-256 verified before install, and a staged rollout in rings (internal → pilot → everyone) with per-device "Update now" and a Halt button.',
         'Discovery + deploy: the server console finds the unmanaged Windows machines on a customer\'s network and installs the agent over WinRM with per-host progress, generating a GPO where WinRM is off — so nothing is forced.',
         'Remote control rides along: MeshCentral is installed at enrolment, so a new machine is reachable from the moment it appears; every session is recorded and kept 60 days under Admin → Remote Sessions.',
+        'Asset Manager: real hardware detail per device, an assigned-user picker, and a jump straight from a case to the machine it is about — agent devices and RMM assets kept as separate sources, joined only at the point of display.',
       ] },
       { area: 'Cyber Essentials — NEW (Admin → Cyber Essentials)', items: [
         'Assess one machine, one customer or the whole estate against the five controls. The agent gathers the evidence; the Portal makes every judgement, so tightening the standard never touches a customer machine.',
@@ -42,6 +43,18 @@ export const CHANGELOG: ChangelogEntry[] = [
         'VoiceBox — NEW: voicemail transcription (Whisper) into the helpdesk, with departments, audit and a check-now.',
         'Site logic is the boundary end-to-end: per-contact site scoping on OneBoard, the Wallboard and my-insights; call-flow counted once per call (a queue hop no longer double-counts); a guard against comparing against stale data.',
         'Ask Claude on a ticket: whole-case Q&A that reads the hidden email text and jumps you to the moment in the timeline.',
+        'Number Lookup made trustworthy: reverse-lookup results refresh on a 10-minute sync with an admin "update now", so a caller\'s name is current rather than cached.',
+      ] },
+      { area: 'Support & helpdesk', items: [
+        'Helpdesk Review: an oldest-first walk through open cases with the full activity of each case mirrored read-only alongside — for clearing the tail without opening every ticket.',
+        'Claude picks the support category on a new case (from email or a message), and a reply is held until the category is set; a recurring issue is flagged towards a problem record.',
+        'Per-message Reply and Forward on every case; the Messages inbox now carries an Agent channel, so a reply reaches the machine the person is sitting at.',
+      ] },
+      { area: 'Sales & quotes', items: [
+        'Quotes gained real throughput: duplicate a quote, bulk-convert accepted quotes to invoices, bulk mark lost or delete, and an "invoiced" status so a converted quote is unmistakable.',
+      ] },
+      { area: 'Marketing', items: [
+        'Mass Mailer: default-domain campaigns with a Claude-drafted message and a "Data missing" sheet that shows exactly which customers can\'t be reached and why.',
       ] },
       { area: 'Finance', items: [
         'Finance Agent: an Ask-Claude on the invoice and case pages for billing questions — live GoCardless payment checks, credits, sibling invoices and the customer thread, in one place.',

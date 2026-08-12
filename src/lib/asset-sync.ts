@@ -2,12 +2,19 @@ import { pool } from '../db/pool';
 import { Atera, pick } from './atera';
 import { logActivity } from './activity';
 import { getSetting, setSetting } from './settings';
+import { backfillAssetsFromAgents } from './agent-asset';
 
-// Asset Manager v1: one-way pull from Atera's device (agent) inventory into customer_assets.
-// READ-ONLY by design — nothing here writes back to Atera. Field names vary across Atera API
-// versions/plans, so everything is picked defensively (same approach as ateraCustomer/ateraContact
-// in routes/atera.ts) and the full raw payload is kept in `raw` so nothing is lost if a field we
-// didn't map turns out to matter later.
+// Atera is an IMPORTER, not a source of truth. (Terry, 2026-08-12: "we only [use] Atera to
+// import agents and advise the agent is required in the Portal, nothing else - Portal is to
+// be the master of the RMM part now.")
+//
+// So this pull does exactly two things:
+//   1. Tells us a machine EXISTS that we do not already have. Those rows land with no agent
+//      bound, which is what the "agent required" flag on /assets reads.
+//   2. Stamps Atera's own identifiers onto machines we DO already own, so the old deep-link
+//      still works while Atera is being wound down.
+// It is not allowed to write a single inventory field onto a device our agent reports. That
+// rule is what removed the duplicate, disagreeing values from the device page.
 
 function ateraAgent(r: any) {
   // Field names confirmed against a REAL payload via /assets/:id?debug=1 (2026-07-30):
@@ -59,7 +66,15 @@ function ateraAgent(r: any) {
 }
 function parseDate(s: string): Date | null { if (!s) return null; const d = new Date(s); return isNaN(d.getTime()) ? null : d; }
 
-export interface AssetSyncResult { synced: number; unmatched: number; error?: string }
+export interface AssetSyncResult {
+  /** machines imported because we had no record of them (no agent) */
+  imported: number;
+  /** machines Atera also knows about that our own agent already owns - identifiers only */
+  linked: number;
+  synced: number;
+  unmatched: number;
+  error?: string;
+}
 
 // Pulls Atera's full device list and upserts into customer_assets, keyed on (source_system,
 // external_id) so re-running is always safe. Agents whose CustomerID doesn't map to a portal
@@ -67,45 +82,90 @@ export interface AssetSyncResult { synced: number; unmatched: number; error?: st
 // disappears — they show up as "Unmatched" on the Assets list for someone to reconcile.
 export async function syncAssetsFromAtera(userId: number): Promise<AssetSyncResult> {
   const a = await Atera.load();
-  if (!a.hasKey()) return { synced: 0, unmatched: 0, error: 'Atera API key not set — add it in Settings → Integrations.' };
+  if (!a.hasKey()) return { imported: 0, linked: 0, synced: 0, unmatched: 0, error: 'Atera API key not set - add it in Settings -> Integrations.' };
 
   let agents: any[];
   try { agents = await a.getAgents(); }
-  catch (e: any) { return { synced: 0, unmatched: 0, error: 'Atera pull failed: ' + e.message }; }
+  catch (e: any) { return { imported: 0, linked: 0, synced: 0, unmatched: 0, error: 'Atera pull failed: ' + e.message }; }
+
+  // Adopt anything our agents already cover before deciding what Atera is allowed to write.
+  await backfillAssetsFromAgents();
 
   const custByAtera = new Map<string, number>();
   (await pool.query("SELECT external_id, customer_id FROM customer_external_ids WHERE source_system='atera'")).rows
     .forEach((r: any) => custByAtera.set(String(r.external_id), r.customer_id));
 
-  let synced = 0, unmatched = 0;
+  // Every device the Portal already owns, keyed both ways, so an Atera record can be
+  // recognised as "we have this machine" without a query per agent.
+  const ownedBySerial = new Map<string, number>();
+  const ownedByHost = new Map<string, number>();
+  (await pool.query(
+    `SELECT id, customer_id, serial_number, LOWER(hostname) AS h
+       FROM customer_assets WHERE agent_device_id IS NOT NULL`)).rows.forEach((r: any) => {
+    if (r.serial_number) ownedBySerial.set(r.customer_id + '|' + String(r.serial_number).trim().toLowerCase(), r.id);
+    if (r.h) ownedByHost.set(r.customer_id + '|' + r.h, r.id);
+  });
+
+  let imported = 0, linked = 0, unmatched = 0;
   for (const raw of agents) {
     const d = ateraAgent(raw);
     if (!d.ateraId) continue;
     const customerId = custByAtera.get(d.customerAteraId) || null;
     if (!customerId) unmatched++;
+
+    // Do we already own this machine?
+    const owned = customerId
+      ? (d.serialNumber ? ownedBySerial.get(customerId + '|' + d.serialNumber.trim().toLowerCase()) : undefined)
+        ?? (d.hostname ? ownedByHost.get(customerId + '|' + d.hostname.trim().toLowerCase()) : undefined)
+      : undefined;
+
+    if (owned) {
+      // Identifiers and the raw payload only. Not one inventory field - our agent is
+      // standing on the machine and Atera is not.
+      await pool.query(
+        `UPDATE customer_assets
+            SET atera_agent_id=$1, device_guid=COALESCE(device_guid, $2), raw=$3, synced_at=NOW(), updated_at=NOW()
+          WHERE id=$4`,
+        [d.ateraId, d.deviceGuid || null, JSON.stringify(raw), owned]);
+      linked++;
+      continue;
+    }
+
+    // A machine we do not have. Import it so it is visible and can be chased - this is the
+    // "you still need to put our agent on this one" list.
     await pool.query(
-      `INSERT INTO customer_assets (customer_id, source_system, external_id, device_guid, hostname, device_type, os, os_version,
+      `INSERT INTO customer_assets (customer_id, source_system, external_id, atera_agent_id, data_source, device_guid, hostname, device_type, os, os_version,
          manufacturer, model, serial_number, cpu, ram_gb, disk_info, ip_addresses, mac_address, domain_or_workgroup,
          online_status, public_ip, agent_version, last_login_user, added_at, last_seen_at, last_reboot_at, raw, synced_at, updated_at)
-       VALUES ($1,'atera',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,NOW(),NOW())
+       VALUES ($1,'atera',$2,$2,'atera',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,NOW(),NOW())
        ON CONFLICT (source_system, external_id) DO UPDATE SET
-         customer_id=$1, device_guid=$3, hostname=$4, device_type=$5, os=$6, os_version=$7, manufacturer=$8, model=$9,
+         customer_id=$1, atera_agent_id=$2, device_guid=$3, hostname=$4, device_type=$5, os=$6, os_version=$7, manufacturer=$8, model=$9,
          serial_number=$10, cpu=$11, ram_gb=$12, disk_info=$13, ip_addresses=$14, mac_address=$15,
          domain_or_workgroup=$16, online_status=$17, public_ip=$18, agent_version=$19, last_login_user=$20,
          added_at=$21, last_seen_at=$22, last_reboot_at=$23, raw=$24,
-         synced_at=NOW(), updated_at=NOW()`,
+         synced_at=NOW(), updated_at=NOW()
+       WHERE customer_assets.agent_device_id IS NULL`,
       [customerId, d.ateraId, d.deviceGuid || null, d.hostname || null, d.deviceType || null, d.os || null, d.osVersion || null,
        d.manufacturer || null, d.model || null, d.serialNumber || null, d.cpu || null, d.ramGb, d.diskInfo || null,
-       d.ipAddresses || null, d.macAddress || null, d.domainOrWorkgroup || null, d.online,
+       d.ipAddresses || null, d.macAddress || null, d.domainOrWorkgroup || null,
+       // ALWAYS false. A machine with no LumenMSP Agent on it is offline as far as the
+       // Portal is concerned - we have no live link to it, and showing Atera's green dot
+       // implied we did. d.online is still kept in `raw` if it is ever wanted.
+       false,
        d.publicIp || null, d.agentVersion || null, d.lastLoginUser || null, d.addedAt, d.lastSeenAt, d.lastRebootAt,
        JSON.stringify(raw)]
     );
-    synced++;
+    imported++;
   }
 
+  // An Atera row whose machine has since had our agent put on it gets adopted here rather
+  // than living on as a second, staler copy of the same PC.
+  await backfillAssetsFromAgents();
+
   await setSetting('atera', 'assets_last_synced_at', new Date().toISOString());
-  await logActivity(userId, 'created', 'customers', null, `Atera asset sync: ${synced} device(s) synced, ${unmatched} unmatched to a customer`);
-  return { synced, unmatched };
+  await logActivity(userId, 'created', 'customers', null,
+    `Atera import: ${imported} device(s) without our agent, ${linked} already covered by the LumenMSP Agent, ${unmatched} unmatched to a customer`);
+  return { imported, linked, synced: imported + linked, unmatched };
 }
 
 export async function lastAssetSyncAt(): Promise<string | null> {

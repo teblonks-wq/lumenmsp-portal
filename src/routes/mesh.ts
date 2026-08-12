@@ -1,4 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import { reapStaleCommands } from '../lib/agent-commands';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -342,11 +343,22 @@ router.get('/remote-sessions', requireAuth, requireAdmin, async (req: Request, r
  * or when an install is already sitting in the queue.
  */
 export async function queueMeshInstall(deviceId: number, baseUrl: string): Promise<'queued' | 'skipped'> {
+  // An install claimed by an agent that then restarted would otherwise block every future
+  // attempt on this machine forever, because the check below counts 'running' as in flight.
+  await reapStaleCommands();
+
   const d = (await pool.query(
     `SELECT ad.id, ad.mesh_installed, c.name AS customer, c.mesh_agent_package_id, COALESCE(c.mesh_enabled, true) AS enabled
        FROM agent_devices ad JOIN customers c ON c.id = ad.customer_id
       WHERE ad.id=$1 AND ad.revoked=false`, [deviceId])).rows[0];
-  if (!d || !d.enabled || d.mesh_installed || !d.mesh_agent_package_id) return 'skipped';
+  if (!d || !d.enabled || d.mesh_installed) return 'skipped';
+  if (!d.mesh_agent_package_id) {
+    // Worth saying out loud: this is the one skip reason nothing on the machine can fix.
+    // Until the customer has an agent package built, every device they own is silently
+    // waiting, and the only clue is a device page saying "no remote-access agent yet".
+    console.warn(`[mesh] ${d.customer} has no remote-access package - device ${deviceId} cannot be installed yet`);
+    return 'skipped';
+  }
 
   const pending = await pool.query(
     `SELECT 1 FROM agent_commands WHERE device_id=$1 AND kind='mesh.install' AND status IN ('queued','running') LIMIT 1`,
@@ -395,10 +407,17 @@ export interface MeshStatus {
   hasPackage: boolean;     // this customer has an agent package built
   customer: string | null;
   pendingSince: Date | null;
+  /** true once the agent has actually claimed the install (as opposed to it sitting in
+   *  the queue waiting for a machine that is switched off). */
+  pendingStarted: boolean;
   failed: { at: Date | null; output: string } | null;
 }
 
 export async function meshStatus(assetId: number): Promise<MeshStatus | null> {
+  // Clear out anything the agent was killed in the middle of first, so a command orphaned
+  // in 'running' by an agent restart shows as a failure you can retry rather than an
+  // install that has been "in progress" since yesterday.
+  await reapStaleCommands();
   // Asset to agent device, matched the same way as everywhere else in the Portal:
   // serial first because it survives a rename, hostname second.
   const d = (await pool.query(
@@ -417,7 +436,7 @@ export async function meshStatus(assetId: number): Promise<MeshStatus | null> {
   if (!d) return null;   // no agent on this machine at all — nothing to install onto
 
   const pending = (await pool.query(
-    `SELECT requested_at FROM agent_commands
+    `SELECT requested_at, started_at, status FROM agent_commands
       WHERE device_id=$1 AND kind='mesh.install' AND status IN ('queued','running')
       ORDER BY id DESC LIMIT 1`, [d.id])).rows[0];
 
@@ -439,6 +458,7 @@ export async function meshStatus(assetId: number): Promise<MeshStatus | null> {
     hasPackage: !!d.mesh_agent_package_id,
     customer: d.customer || null,
     pendingSince: pending ? pending.requested_at : null,
+    pendingStarted: !!(pending && pending.started_at),
     failed: failed ? { at: failed.finished_at, output: String(failed.output || '').slice(-600) } : null,
   };
 }

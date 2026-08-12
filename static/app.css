@@ -668,3 +668,34 @@ html.theme-carbon .ql-container { border-color: var(--line) !important; color: v
 .nav-group.shut { display: none; }
 .nav-collapsed .nav-section-btn { display: none; }
 .nav-collapsed .nav-group.shut { display: block; }   /* icon rail: never hide the icons */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   V4.1 — estate polish (2026-08-06). One shared layer so the boldness of the home
+   and Admin pages carries through to EVERY route, not just the headline screens.
+   Additive overrides only — nothing structural — so no existing page can break.
+   Tune here once and the whole estate moves together.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Page headers — more presence and a clear subtitle rhythm. */
+.page-header { margin-bottom: 28px; }
+.page-header > p, .page-header .lead, .page-header .muted { font-size: 15px; line-height: 1.55; }
+
+/* Primary action — unmistakable on every page, with a little life on hover. */
+.btn { transition: background .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease, filter .15s ease; }
+.btn.btn-primary { padding: 11px 20px; letter-spacing: .1px; }
+.btn.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 10px 22px rgba(2,6,23,.16); filter: brightness(1.06); }
+
+/* Cards — smoother, and link-cards lift so they read as clickable. */
+.card { transition: box-shadow .15s ease, transform .15s ease, border-color .15s ease; }
+a.card:hover { transform: translateY(-2px); box-shadow: 0 14px 30px rgba(2,6,23,.14); border-color: var(--line-strong); }
+.card-header h2 { font-weight: 800; letter-spacing: -.2px; }
+
+/* Tables — a touch more air and a firmer header rule. */
+.table td { padding-top: 14px; padding-bottom: 14px; }
+.table th { border-bottom-color: var(--line-strong); }
+
+/* Empty states — intentional, not "is this broken?". */
+.empty-state { padding: 44px 24px; color: var(--muted); font-size: 15px; }
+
+/* Badges — a hair bolder so status reads at a glance. */
+.badge { font-weight: 700; }

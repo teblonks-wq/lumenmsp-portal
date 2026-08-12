@@ -24,13 +24,16 @@
       <%= asset.hostname || '(unnamed device)' %>
     </h1>
     <p class="muted" style="margin:6px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-      <span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;color:<%= asset.online_status ? 'var(--ok)' : 'var(--faint)' %>;">
-        <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= asset.online_status ? 'var(--ok)' : 'var(--line-strong)' %>;"></span>
-        <%= asset.online_status ? 'Online' : 'Offline' %>
+      <% var _live = !!asset.online_status && !!asset.agent_device_id; %>
+      <span title="<%= asset.agent_device_id ? 'Live status from the LumenMSP Agent' : 'No LumenMSP Agent on this machine, so the Portal has no live status for it' %>" style="display:inline-flex;align-items:center;gap:5px;font-weight:600;color:<%= _live ? 'var(--ok)' : 'var(--faint)' %>;">
+        <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= _live ? 'var(--ok)' : 'var(--line-strong)' %>;"></span>
+        <%= _live ? 'Online' : 'Offline' %>
       </span>
       <span class="badge badge-inactive"><%= asset.device_type || 'Device' %></span>
       <% if (typeof agentInfo !== 'undefined' && agentInfo) { %>
       <span title="LumenMSP Agent v<%= agentInfo.agent_version || '?' %> — last seen <%= dt(agentInfo.last_seen_at) %>" style="display:inline-flex;align-items:center;gap:5px;font-weight:600;color:var(--accent);"><img src="/static/img/lumen-agent-16.png" width="14" height="14" alt=""> <a class="row-link" href="/agents" style="color:inherit;">Agent installed</a></span>
+      <% } else { %>
+      <a class="badge" href="/agents#download" style="background:var(--tint-warn);color:var(--warn-deep);border:1px solid var(--warn-line);text-decoration:none;">agent required</a>
       <% } %>
       <% if (asset.customer_id) { %>· <a class="row-link" href="/customers/<%= asset.customer_id %>#assets"><%= asset.customer_name %></a><% } %>
       <% if (asset.last_login_user) { %>· <span class="muted"><%= asset.last_login_user %></span><% } %>
@@ -59,8 +62,13 @@ function _ago(d) {
   <% if (_ms.pendingSince) { %>
     <div class="alert" style="border:1px solid var(--info-line);background:var(--tint-accent);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
       <span>
+        <% if (_ms.pendingStarted) { %>
         <strong>Installing remote access…</strong>
-        <span class="muted">Queued <%= _ago(_ms.pendingSince) %>. It runs at the machine's next check-in — about a minute if it is switched on, otherwise when it next comes online. This page refreshes itself.</span>
+        <span class="muted">The agent picked this up and is running it. If it is still saying this in twenty minutes it will be marked failed automatically and retried — nothing to do.</span>
+        <% } else { %>
+        <strong>Remote access install is queued.</strong>
+        <span class="muted">Queued <%= _ago(_ms.pendingSince) %>, and the machine has not collected it yet — it runs within seconds of the agent checking in. This page refreshes itself.</span>
+        <% } %>
       </span>
     </div>
     <meta http-equiv="refresh" content="20">
@@ -108,9 +116,17 @@ function _ago(d) {
 <% } %>
 
 
-<div class="card" style="background:var(--tint-accent);border-color:var(--info-line);">
-  <p style="margin:0;font-size:13px;color:var(--info-deep);">
-    <strong>Synced from Atera</strong> — last refreshed <%= dt(asset.synced_at) %>. Locked from editing until we confirm Atera accepts changes written back from here.
+<% var _ours = (asset.data_source === 'agent') || !!asset.agent_device_id; %>
+<div class="card" style="background:<%= _ours ? 'var(--tint-accent)' : 'var(--tint-warn)' %>;border-color:<%= _ours ? 'var(--info-line)' : 'var(--warn-line)' %>;">
+  <p style="margin:0;font-size:13px;color:<%= _ours ? 'var(--info-deep)' : 'var(--warn-deep)' %>;">
+    <% if (_ours) { %>
+      <strong>Reported by the LumenMSP Agent</strong> — last updated <%= dt(asset.synced_at) %>. The Portal is the master record for this
+      machine: every field below is collected by our own agent, not by Atera.
+    <% } else { %>
+      <strong>Imported from Atera — no LumenMSP Agent on this machine.</strong> Everything below is whatever Atera last reported, and the
+      Portal cannot describe it, patch it or remote onto it until our agent is installed. It shows as offline here for that reason.
+      <a href="/agents#download" style="font-weight:600;">Install the LumenMSP Agent &rarr;</a>
+    <% } %>
   </p>
 </div>
 
@@ -132,19 +148,18 @@ function _ago(d) {
         <div class="dev-field-row"><div class="k">Public IP</div><div class="v"><%= fmt(asset.public_ip) %></div></div>
         <div class="dev-field-row"><div class="k">Local IP address(es)</div><div class="v"><%= fmt(asset.ip_addresses) %></div></div>
         <div class="dev-field-row"><div class="k">MAC address</div><div class="v"><%= fmt(asset.mac_address) %></div></div>
-        <div class="dev-field-row"><div class="k">Last logged-in user</div><div class="v"><%= fmt(asset.last_login_user) %></div></div>
+        <div class="dev-field-row"><div class="k">Signed-in user</div><div class="v"><%= fmt(asset.last_login_user) %></div></div>
+        <div class="dev-field-row"><div class="k">Disks</div><div class="v"><%= fmt(asset.disk_info) %></div></div>
         <div class="dev-field-row"><div class="k">Last seen</div><div class="v"><%= dt(asset.last_seen_at) %></div></div>
         <div class="dev-field-row"><div class="k">Last reboot</div><div class="v"><%= dt(asset.last_reboot_at) %></div></div>
-        <div class="dev-field-row"><div class="k">Atera agent version</div><div class="v"><%= fmt(asset.agent_version) %></div></div>
         <div class="dev-field-row"><div class="k">Date added</div><div class="v"><%= dt(asset.added_at) %></div></div>
       </div>
       <% if (typeof agentInfo !== 'undefined' && agentInfo) {
            var agOnline = agentInfo.seen_secs != null && Number(agentInfo.seen_secs) < 12*60;
-           var agDisks = [];
-           try { agDisks = JSON.parse(agentInfo.disk_info || '[]') || []; } catch (e) { agDisks = []; }
       %>
       <div>
-        <p class="dev-subcard-title" style="display:flex;align-items:center;gap:6px;"><img src="/static/img/lumen-agent-16.png" width="14" height="14" alt=""> LumenMSP Agent (live)</p>
+        <p class="dev-subcard-title" style="display:flex;align-items:center;gap:6px;"><img src="/static/img/lumen-agent-16.png" width="14" height="14" alt=""> Reported by</p>
+        <div class="dev-field-row"><div class="k">Source</div><div class="v">LumenMSP Agent <span class="muted">(this machine, live)</span></div></div>
         <div class="dev-field-row"><div class="k">Status</div><div class="v">
           <span style="display:inline-flex;align-items:center;gap:5px;font-weight:600;color:<%= agOnline ? 'var(--ok)' : 'var(--faint)' %>;">
             <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= agOnline ? 'var(--ok)' : 'var(--line-strong)' %>;"></span>
@@ -152,14 +167,16 @@ function _ago(d) {
           </span>
         </div></div>
         <div class="dev-field-row"><div class="k">Agent version</div><div class="v"><strong><%= agentInfo.agent_version ? 'v' + agentInfo.agent_version : '—' %></strong><% if (typeof latestAgentVersion !== 'undefined' && latestAgentVersion && agentInfo.agent_version && agentInfo.agent_version !== latestAgentVersion) { %> <span class="badge badge-inactive" title="Self-updates to v<%= latestAgentVersion %> within 6 hours">update due</span><% } %></div></div>
-        <div class="dev-field-row"><div class="k">Signed-in user</div><div class="v"><%= fmt(agentInfo.logged_in_user) %></div></div>
-        <div class="dev-field-row"><div class="k">Local IP address(es)</div><div class="v"><%= fmt(agentInfo.local_ips) %></div></div>
-        <div class="dev-field-row"><div class="k">Public IP</div><div class="v"><%= fmt(agentInfo.public_ip) %></div></div>
-        <% agDisks.forEach(function(d){ %>
-        <div class="dev-field-row"><div class="k">Disk <%= d.drive %></div><div class="v"><%= d.free_gb %> GB free of <%= d.total_gb %> GB</div></div>
-        <% }); %>
         <div class="dev-field-row"><div class="k">Last check-in</div><div class="v"><%= dt(agentInfo.last_seen_at) %></div></div>
         <div class="dev-field-row"><div class="k">&nbsp;</div><div class="v"><a class="row-link" href="/agents">Manage agents &rarr;</a></div></div>
+      </div>
+      <% } else { %>
+      <div>
+        <p class="dev-subcard-title">Reported by</p>
+        <div class="dev-field-row"><div class="k">Source</div><div class="v">Atera <span class="muted">(import only)</span></div></div>
+        <div class="dev-field-row"><div class="k">Status</div><div class="v"><span class="muted">Offline — the Portal has no live link to this machine.</span></div></div>
+        <div class="dev-field-row"><div class="k">Last imported</div><div class="v"><%= dt(asset.synced_at) %></div></div>
+        <div class="dev-field-row"><div class="k">&nbsp;</div><div class="v"><a class="row-link" href="/agents#download">Install the LumenMSP Agent &rarr;</a></div></div>
       </div>
       <% } %>
       <div>
@@ -182,14 +199,17 @@ function _ago(d) {
           </form>
           <% } else { %><span class="muted">match this device to a customer first</span><% } %>
         </div></div>
-        <div class="dev-field-row"><div class="k">Source</div><div class="v"><span class="badge badge-primary">Atera</span></div></div>
-        <div class="dev-field-row"><div class="k">Atera Agent ID</div><div class="v muted" style="font-family:monospace;font-size:12px;"><%= fmt(asset.external_id) %></div></div>
+        <div class="dev-field-row"><div class="k">Record owner</div><div class="v"><span class="badge <%= _ours ? 'badge-sent' : 'badge-inactive' %>"><%= _ours ? 'LumenMSP Agent' : 'Atera import' %></span></div></div>
+        <% var _ateraId = asset.atera_agent_id || (asset.source_system === 'atera' ? asset.external_id : null); %>
+        <% if (_ateraId) { %>
+        <div class="dev-field-row"><div class="k">Atera Agent ID</div><div class="v muted" style="font-family:monospace;font-size:12px;" title="Kept only so the old Atera deep-link still works while Atera is wound down."><%= _ateraId %></div></div>
+        <% } %>
         <% if (asset.device_guid) { %>
         <div class="dev-field-row"><div class="k">Device GUID</div><div class="v muted" style="font-family:monospace;font-size:11px;overflow-wrap:anywhere;"><%= asset.device_guid %></div></div>
         <% } %>
       </div>
     </div>
-    <p class="muted" style="font-size:12px;margin:14px 0 0;">"Assigned user" is Portal data, not Atera's - it stays editable despite the sync lock and survives every sync (Atera's API exposes no contact assignment; last logged-in user above is the closest it reports). Assign a person here and their devices appear on any case they raise, with a jump-through and remote control.</p>
+    <p class="muted" style="font-size:12px;margin:14px 0 0;">"Assigned user" is who this machine belongs to, set here and never touched by any import — the signed-in user above is only whoever last logged on. Assign a person and their devices appear on any case they raise, with a jump-through and remote control.</p>
   </section>
 
   <% if (user.role === 'admin') { %><%- include('_tools', { asset: asset, agentInfo: (typeof agentInfo !== 'undefined' ? agentInfo : null), user: user }) %><% } %>

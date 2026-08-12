@@ -441,6 +441,18 @@ model AgentDevice {
   localIps     String?   @map("local_ips")
   publicIp     String?   @map("public_ip")
   diskInfo     String?   @map("disk_info") // JSON: [{drive,total_gb,free_gb}]
+  // Hardware inventory collected BY OUR AGENT (WMI), not by Atera. Every one of these
+  // used to arrive only via the Atera sync, which is why the asset page showed two of
+  // everything. Nullable: older agents do not send them and db push would drop a column
+  // that is not declared here.
+  manufacturer      String?
+  model             String?
+  cpu               String?
+  ramGb             Float?    @map("ram_gb")
+  macAddresses      String?   @map("mac_addresses")
+  domainOrWorkgroup String?   @map("domain_or_workgroup")
+  deviceType        String?   @map("device_type")   // Workstation | Laptop | Server
+  lastBootAt        DateTime? @map("last_boot_at")
   updateRing   Int       @default(2) @map("update_ring") // 0=internal, 1=pilot, 2=general - staged self-update
   isAdAgent    Boolean   @default(false) @map("is_ad_agent") // this device runs the customer's AD actions (a DC or management server)
   // MeshCentral remote access. meshNodeId is written by the bridge, matched on hostname —
@@ -565,6 +577,13 @@ model CustomerAsset {
   addedAt        DateTime? @map("added_at") // when Atera first recorded this agent
   lastSeenAt     DateTime? @map("last_seen_at")
   lastRebootAt   DateTime? @map("last_reboot_at")
+  // Portal is master of the RMM record. agentDeviceId binds this asset to the LumenMSP
+  // Agent that reports it; once bound, dataSource flips to 'agent' and the Atera sync is
+  // no longer allowed to write any of the fields below - it may only ADD machines we do
+  // not have and stamp its own identifiers.
+  agentDeviceId  Int?      @map("agent_device_id")
+  ateraAgentId   String?   @map("atera_agent_id")  // Atera's AgentID for a row WE own (external_id is ours)
+  dataSource     String?   @default("atera") @map("data_source") // agent | atera
   raw            Json?     // full source payload, for fields not yet promoted to columns
   syncedAt       DateTime  @default(now()) @map("synced_at")
   createdAt      DateTime  @default(now()) @map("created_at")
@@ -576,6 +595,7 @@ model CustomerAsset {
   @@index([customerId])
   @@index([hostname])
   @@index([assignedContactId])
+  @@index([agentDeviceId])
   @@map("customer_assets")
 }
 
