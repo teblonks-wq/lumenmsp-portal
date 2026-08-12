@@ -13,6 +13,7 @@ import { clientFromCustomer } from '../lib/insights/tollring-client';
 import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam } from '../lib/oneboard';
 import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
 import { askInsights } from '../lib/insights-ask';
+import { cacheNote } from '../lib/ai-compose';
 import { htmlToPdf } from '../lib/pdf';
 
 // Insights — reporting & call analytics, now a native section of the portal. Reads from the
@@ -68,15 +69,16 @@ router.post('/insights/oneboard/ask', requireAuth, async (req: Request, res: Res
     }
 
     const out = await askInsights(data, r.from, r.to, question);
-    // Surfacing the cache hit is worth the line: it is the difference between a follow-up
-    // question costing full price and costing a tenth, and it makes a silent regression visible.
-    const u = out.usage;
-    const cost = u
-      ? (u.cacheReadTokens > 0
-          ? `Re-used ${u.cacheReadTokens.toLocaleString()} cached tokens — follow-up questions are cheap for the next few minutes.`
-          : `Cached ${u.cacheCreationTokens.toLocaleString()} tokens of call data — the next question re-uses them.`)
-      : null;
-    res.json({ ok: true, answer: out.answer, points: out.points, cost });
+    // cacheNote returns null when the prompt was under the model's minimum cacheable size,
+    // which a single site's grid usually is - a few hundred tokens. Claiming a saving that
+    // did not happen would be worse than saying nothing.
+    res.json({
+      ok: true,
+      headline: out.headline, answer: out.answer, working: out.working,
+      points: out.points, periodWarning: out.periodWarning,
+      period: { from: r.from, to: r.to },
+      cost: cacheNote(out.usage),
+    });
   } catch (e: any) {
     console.error('[ask-insights] failed:', e?.message || e);
     res.status(400).json({ ok: false, error: e.message || 'Ask Insights failed.' });

@@ -11,7 +11,7 @@ import { notify } from '../lib/notifications';
 import { sendTeamsNotice } from '../lib/teams'; // sendTeamsReply (relay) disabled pending Power Automate fix
 import { teamsGraphConnected, sendTeamsChatMessage } from '../lib/teamsgraph';
 import { syncInbox } from '../lib/mailsync';
-import { aiAskText } from '../lib/ai-compose';
+import { aiAskText, aiAskCached, cacheNote, parseJsonAnswer, stripTrailingJson } from '../lib/ai-compose';
 import { askTickets } from '../lib/ticket-ask';
 import { blockSender, emailDomain } from '../lib/spam';
 import { sendWhatsAppText, htmlToPlain, normaliseWaNumber } from '../lib/whatsapp';
@@ -344,9 +344,7 @@ router.post('/tickets/ask.json', requireAuth, async (req: Request, res: Response
       monthsBack: r.plan.monthsBack,
       seconds: Math.round((Date.now() - started) / 100) / 10,
       // Making the cache visible keeps a silent regression from costing real money.
-      cache: u ? (u.cacheReadTokens > 0
-        ? `re-used ${u.cacheReadTokens.toLocaleString()} cached tokens`
-        : `cached ${u.cacheCreationTokens.toLocaleString()} tokens for follow-ups`) : null,
+      cache: cacheNote(u),
     });
   } catch (e: any) {
     console.error('[ask-tickets] failed:', e?.message || e);
@@ -1444,17 +1442,21 @@ router.post('/tickets/:id/ask', requireAuth, async (req: Request, res: Response)
     ].join('\n');
 
     // 1400 tokens: room for the private reasoning pass (the "additional thinking") + the answer.
-    const raw = await aiAskText(system, `QUESTION: ${question}\n\nTICKET CONTENT:\n\n${corpus}`, 1400);
-    let parsed: any;
-    try { parsed = JSON.parse(raw.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim()); }
-    catch { parsed = { answer: raw.trim(), findings: [] }; }
+    // The CASE goes in a cached block and the question comes last. That ordering is the whole
+    // trick: the cached prefix has to be byte-identical between calls, so a second question
+    // about the same ticket re-reads a 40,000-token thread at a tenth of the input price
+    // instead of paying for it again. Nobody asks only one question about a difficult case.
+    const { text: raw, usage } = await aiAskCached(system, corpus, `QUESTION: ${question}`, { maxTokens: 1400 });
+    // parseJsonAnswer takes the outermost {...} span, so a model that writes a sentence
+    // before its JSON no longer dumps the raw blob onto the page underneath the answer.
+    const parsed: any = parseJsonAnswer<any>(raw, { answer: stripTrailingJson(raw), findings: [] });
     const answer = { answer: String(parsed.answer || '').slice(0, 4000),
       findings: Array.isArray(parsed.findings) ? parsed.findings.slice(0, 4).map((f: any) => ({ ref: String(f.ref || ''), quote: String(f.quote || '').slice(0, 200) })) : [] };
 
     const ins = (await pool.query(
       'INSERT INTO ticket_ai_queries (ticket_id, user_id, question, answer) VALUES ($1,$2,$3,$4::jsonb) RETURNING id, created_at',
       [id, user.id, question, JSON.stringify(answer)])).rows[0];
-    res.json({ ok: true, id: ins.id, question, answer, created_at: ins.created_at, asked_by: user.displayName });
+    res.json({ ok: true, id: ins.id, question, answer, created_at: ins.created_at, asked_by: user.displayName, cache: cacheNote(usage) });
   } catch (e: any) {
     console.error('[ask-claude] failed:', e?.message || e);
     res.status(400).json({ ok: false, error: e.message || 'Ask failed.' });

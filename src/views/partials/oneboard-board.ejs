@@ -174,9 +174,20 @@
     }).then(function (r) { return r.json(); }).then(function (d) {
       out.innerHTML = '';
       if (!d.ok) { out.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', d.error || 'That did not work.')); return; }
-      out.appendChild(el('p', 'margin:0 0 9px;font-weight:600;font-size:13px;', question));
+      // Order on the page is the order of usefulness: the decision, the numbers behind it,
+      // the reasoning, and only then the arithmetic - folded away, because the working is
+      // what makes an answer checkable and also what makes it unreadable.
+      if (d.periodWarning) {
+        var warn = el('div', 'border:1px solid var(--warn-line);background:var(--tint-warn);color:var(--warn-deep);border-radius:8px;padding:9px 12px;font-size:12.5px;line-height:1.5;margin-bottom:12px;', d.periodWarning);
+        out.appendChild(warn);
+      }
+
+      if (d.headline) {
+        out.appendChild(el('p', 'margin:0 0 12px;font-size:19px;font-weight:700;line-height:1.35;', d.headline));
+      }
+
       if (d.points && d.points.length) {
-        var chips = el('div', 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:11px;');
+        var chips = el('div', 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:13px;');
         d.points.forEach(function (p) {
           var c = el('div', 'border:1px solid var(--line);border-radius:8px;padding:6px 11px;background:var(--surface-2);');
           c.appendChild(el('div', 'font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:600;', p.label));
@@ -185,11 +196,29 @@
         });
         out.appendChild(chips);
       }
+
       String(d.answer || '').split(/\n{1,}/).forEach(function (para) {
         if (!para.trim()) return;
         out.appendChild(el('p', 'margin:0 0 8px;font-size:13.5px;line-height:1.55;', para.trim()));
       });
-      if (d.cost) out.appendChild(el('p', 'margin:6px 0 0;font-size:11px;color:var(--faint);', d.cost));
+
+      if (d.working && d.working.trim()) {
+        var det = document.createElement('details');
+        det.style.cssText = 'margin-top:10px;border-top:1px solid var(--line);padding-top:9px;';
+        var sum = document.createElement('summary');
+        sum.style.cssText = 'cursor:pointer;font-size:12px;font-weight:600;color:var(--muted);';
+        sum.textContent = 'Show the working';
+        det.appendChild(sum);
+        var pre = el('div', 'margin-top:8px;font-size:12.5px;line-height:1.6;white-space:pre-wrap;color:var(--muted);');
+        pre.textContent = d.working.trim();
+        det.appendChild(pre);
+        out.appendChild(det);
+      }
+
+      var foot = [];
+      if (d.period) foot.push('based on ' + d.period.from + ' to ' + d.period.to);
+      if (d.cost) foot.push(d.cost);
+      if (foot.length) out.appendChild(el('p', 'margin:11px 0 0;font-size:11px;color:var(--faint);', foot.join(' · ')));
     }).catch(function () {
       out.innerHTML = '';
       out.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', 'Could not reach the Portal.'));

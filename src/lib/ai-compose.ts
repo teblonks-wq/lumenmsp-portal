@@ -344,6 +344,24 @@ export async function aiAskText(system: string, text: string, maxTokens = 700): 
 //
 // Order matters: everything before and including the cached block must be byte-identical
 // to score a hit, so the QUESTION goes AFTER the corpus, never woven into it.
+// Anthropic's MINIMUM CACHEABLE PREFIX, and the trap in it: a block shorter than the
+// minimum is simply not cached and NO ERROR IS RETURNED. So a cache_control block on a
+// short prompt looks like it is working and silently is not. Checked against the docs
+// 2026-08-12: Haiku 4.5 = 4,096 tokens; Sonnet 4.5/4.6 and Sonnet 5 = 1,024; Opus 5 = 512.
+// Cache reads cost 0.1x base input, 5-minute writes 1.25x - so caching is a clear win the
+// moment the corpus is over the minimum, and a rounding error either way when it is under.
+export function cacheMinimumTokens(model: string): number {
+  // Model ids are not consistently ordered - Haiku 4.5 is 'claude-haiku-4-5-...' but Haiku
+  // 3.5 is 'claude-3-5-haiku-...'. Normalise the separators and test both orderings.
+  const m = model.toLowerCase().replace(/\./g, '-');
+  const has = (family: string, ver: string) => m.includes(`${family}-${ver}`) || m.includes(`${ver}-${family}`);
+  if (has('haiku', '4-5')) return 4096;
+  if (has('haiku', '3-5')) return 2048;
+  if (has('opus', '4-5') || has('opus', '4-6')) return 4096;
+  if (has('opus', '5')) return 512;
+  return 1024; // Sonnet 4.5 / 4.6 / 5 and anything newer we have not listed
+}
+
 export interface AskCachedResult { text: string; usage: AskUsage }
 export interface AskUsage {
   inputTokens: number;
@@ -424,11 +442,44 @@ async function callClaudeCached(
   };
 }
 
-/** Strip the markdown fence some answers arrive wrapped in, then JSON.parse. */
+/** One honest sentence about what the cache actually did on this call. Returns null when
+ *  the prompt was too small to cache at all - saying "cached 0 tokens" would be worse than
+ *  saying nothing, and claiming a saving that did not happen is worse still. */
+export function cacheNote(u: AskUsage | undefined): string | null {
+  if (!u) return null;
+  if (u.cacheReadTokens > 0) return `re-used ${u.cacheReadTokens.toLocaleString()} cached tokens (a tenth of the input price)`;
+  if (u.cacheCreationTokens > 0) return `cached ${u.cacheCreationTokens.toLocaleString()} tokens - ask again within 5 minutes and it is a tenth of the price`;
+  return null;   // below the model's minimum cacheable size: nothing was cached, and it was cheap anyway
+}
+
+/**
+ * Get the JSON object out of a model reply, however it chose to present it.
+ *
+ * "Reply with STRICT JSON only" is followed most of the time, not all of the time - a
+ * model will sometimes write the answer as prose and THEN restate it as JSON. A bare
+ * JSON.parse throws on that, and a fallback of "show the raw text" then puts the entire
+ * JSON blob on screen underneath the prose. (Seen live 2026-08-12 on Ask Insights.)
+ *
+ * So: strip fences, take the outermost {...} span, and only fall back if there is no
+ * object in there at all.
+ */
 export function parseJsonAnswer<T>(raw: string, fallback: T): T {
-  try {
-    return JSON.parse(raw.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim()) as T;
-  } catch { return fallback; }
+  const text = String(raw || '').replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim();
+  try { return JSON.parse(text) as T; } catch { /* not clean JSON - keep looking */ }
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a >= 0 && b > a) {
+    try { return JSON.parse(text.slice(a, b + 1)) as T; } catch { /* not an object either */ }
+  }
+  return fallback;
+}
+
+/** Last resort for the prose fallback: drop a trailing JSON blob so the user reads an
+ *  answer rather than an answer followed by its own source code. */
+export function stripTrailingJson(text: string): string {
+  const t = String(text || '').trim();
+  const a = t.indexOf('{"');
+  if (a > 0 && t.lastIndexOf('}') > a) return t.slice(0, a).trim();
+  return t;
 }
 
 async function callClaude(key: string, model: string, system: string, userText: string, maxTokens: number, images?: StudioImage[]): Promise<string> {

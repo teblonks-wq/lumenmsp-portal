@@ -16,7 +16,7 @@ import { syncItCloudInvoice, resyncItCloudLine, promoteItCloudToTemplate } from 
 import { resolvePeriod, PERIOD_OPTIONS } from '../lib/date-periods';
 import { getSetting } from '../lib/settings';
 import { config } from '../config';
-import { aiAskText } from '../lib/ai-compose';
+import { aiAskText, aiAskCached, cacheNote } from '../lib/ai-compose';
 import { GoCardless } from '../lib/gocardless';
 import { askFinance, listFinanceConversations, getFinanceConversation, listFinanceMemories, archiveFinanceMemory } from '../lib/finance-agent';
 
@@ -1005,7 +1005,9 @@ router.post('/invoices/:id/ask', requireAuth, async (req: Request, res: Response
       '- Only propose actions justified by the data; if unsure, propose none.',
     ].join('\n');
 
-    const raw = await aiAskText(system, `QUESTION: ${question}\n\nINVOICE DATA:\n\n${corpus}`, 800);
+    // Invoice data cached, question last - see the ticket version for why the order matters.
+    const { text: raw, usage: askUsage } = await aiAskCached(system, corpus, `QUESTION: ${question}`, { maxTokens: 800 });
+    const askCache = cacheNote(askUsage);
     // Parse robustly: models sometimes wrap JSON in fences or lead with prose — take the
     // outermost {...} span rather than trusting the reply shape.
     let parsed: any;
@@ -1036,7 +1038,7 @@ router.post('/invoices/:id/ask', requireAuth, async (req: Request, res: Response
     const ins = (await pool.query(
       'INSERT INTO invoice_ai_queries (invoice_id, user_id, question, answer) VALUES ($1,$2,$3,$4::jsonb) RETURNING id, created_at',
       [id, user.id, question, JSON.stringify(answer)])).rows[0];
-    res.json({ ok: true, id: ins.id, question, answer, created_at: ins.created_at, asked_by: user.displayName });
+    res.json({ ok: true, id: ins.id, question, answer, created_at: ins.created_at, asked_by: user.displayName, cache: askCache });
   } catch (e: any) {
     console.error('[finance-agent] failed:', e?.message || e);
     res.status(400).json({ ok: false, error: e.message || 'Ask failed.' });

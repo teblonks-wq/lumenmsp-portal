@@ -1,5 +1,5 @@
 import { OneBoardData, OneBoardSite, ONEBOARD_HOURS, DOW_LABELS } from './oneboard';
-import { aiAskCached, parseJsonAnswer, AskUsage } from './ai-compose';
+import { aiAskCached, parseJsonAnswer, stripTrailingJson, AskUsage } from './ai-compose';
 
 // ── Ask Insights ────────────────────────────────────────────────────────────────
 // The staffing questions nobody could answer without exporting to Excel first:
@@ -12,8 +12,16 @@ import { aiAskCached, parseJsonAnswer, AskUsage } from './ai-compose';
 // fraction of the first one's input cost.
 
 export interface InsightsAnswer {
+  /** The decision, in one line. This is the bit somebody actually needs. */
+  headline: string;
+  /** Two or three short paragraphs of reasoning - NO arithmetic. */
   answer: string;
+  /** The hour-by-hour sums. Kept out of the way behind "Show the working", because the
+   *  numbers are what makes the answer checkable and also what makes it unreadable. */
+  working: string;
   points: { label: string; value: string }[];
+  /** Set when the question asks for a longer period than the board is showing. */
+  periodWarning: string | null;
   usage?: AskUsage;
 }
 
@@ -73,30 +81,52 @@ const SYSTEM = [
   'You are the call-data analyst for Lumen IT Solutions, a UK managed-service provider. You are answering a question from Lumen staff or a customer manager about ONE customer\'s inbound call performance.',
   'You are given a grid of that customer\'s calls: totals, a weekday breakdown, and missed/total calls by weekday x hour.',
   '',
-  'How to answer:',
-  '- Work from the numbers given. NEVER invent a figure. If the grid cannot answer the question, say plainly what is missing and what you WOULD need.',
-  '- Staffing and cover questions ("when should another receptionist work?", "what hours should we add?") are the point of this tool. Answer them concretely: name the weekdays and the clock hours, and say how many of the missed calls that shift would have been on hand for. Show the arithmetic in one line so it can be checked.',
-  '- Prefer PER-DAY averages when comparing weekdays. The range rarely holds the same number of each weekday, and raw weekday totals mislead - the grid gives you both, use the average.',
-  '- Call out the difference between "lots of calls" and "lots of MISSED calls". A busy hour that is fully answered needs no help; a quiet hour where half the callers give up does.',
-  '- Be honest about small numbers. If a recommendation rests on a handful of calls or a single week, say so rather than dressing it up.',
-  '- British English. Concise and direct - the reader is busy. No preamble, no restating the question.',
+  'ANSWER THE QUESTION THAT WAS ASKED, FIRST AND PLAINLY. If somebody asks which days and hours to hire for, the first thing they read must be the days and the hours - not a caveat, not a description of the data. Caveats come after the answer, never before it.',
   '',
-  'Reply with STRICT JSON only, no markdown fences:',
-  '{"answer":"your answer, 2-6 short paragraphs, plain text with \\n between paragraphs","points":[{"label":"short label","value":"the number or finding"}]}',
-  '0 to 4 points, each a key figure worth putting on screen (e.g. label "Worst hour" value "Mon 09:00 - 14 missed"). Omit points entirely for a question that has no headline number.',
+  'How to answer:',
+  '- Work from the numbers given. NEVER invent a figure. If the grid genuinely cannot answer, say plainly what is missing and what you WOULD need.',
+  '- Staffing and cover questions are the point of this tool. Commit to a specific recommendation: named weekdays, clock hours, and how many of the missed calls that shift would have covered.',
+  '- Prefer PER-DAY averages when comparing weekdays. The range rarely holds the same number of each weekday, and raw weekday totals mislead - the grid gives you both, use the average.',
+  '- Distinguish "lots of calls" from "lots of MISSED calls". A busy hour that is fully answered needs no help; a quiet hour where half the callers give up does.',
+  '- Be honest about thin data, but do not let it stop you answering. Give the recommendation, then say how confident it is and what would firm it up.',
+  '- British English. Concise and direct. No preamble, no restating the question.',
+  '',
+  'Reply with STRICT JSON only. No prose before it, no prose after it, no markdown fences:',
+  '{"headline":"...","answer":"...","working":"...","points":[{"label":"...","value":"..."}]}',
+  '',
+  '- headline: THE ANSWER, one line, no more than about 15 words. For a hiring question that means the days and the hours, e.g. "Monday and Tuesday, 08:00-10:00 and 16:00-18:00". Never put a caveat in the headline.',
+  '- answer: 2-4 SHORT paragraphs (\\n between them) saying why, and how confident it is. Plain sentences. Keep the hour-by-hour sums OUT of here.',
+  '- working: all the arithmetic - the per-hour figures and the addition that gets to the totals you quote. This is displayed behind a "Show the working" toggle, so it can be as dense as it needs to be. Empty string if there is no arithmetic.',
+  '- points: 0 to 4 key figures for on-screen chips, e.g. label "Worst hour" value "Tue 09:00 - 13 missed of 23".',
 ].join('\n');
+
+/** The board shows what it shows. If somebody asks for two months while looking at one
+ *  week, that mismatch is the single most important thing to tell them - and it is a fact
+ *  about the page, not something the model should have to infer. */
+export function periodMismatch(question: string, from: string, to: string): string | null {
+  const days = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) + 1;
+  const m = question.toLowerCase().match(/(\d+)\s*(month|week|year)/);
+  if (!m) return null;
+  const want = Number(m[1]) * (m[2] === 'month' ? 30 : m[2] === 'year' ? 365 : 7);
+  if (want <= days * 1.5) return null;
+  return `You asked about ${m[1]} ${m[2]}${Number(m[1]) === 1 ? '' : 's'}, but this board is showing ${days} day${days === 1 ? '' : 's'} (${from} to ${to}). The answer below is based on those ${days} days only — widen the date range above and ask again for the fuller picture.`;
+}
 
 export async function askInsights(
   data: OneBoardData, from: string, to: string, question: string,
 ): Promise<InsightsAnswer> {
   const corpus = buildInsightsCorpus(data, from, to);
-  const { text, usage } = await aiAskCached(SYSTEM, corpus, `QUESTION: ${question}`, { maxTokens: 1500, strong: true });
-  const parsed = parseJsonAnswer<{ answer?: string; points?: any[] }>(text, { answer: text, points: [] });
+  const { text, usage } = await aiAskCached(SYSTEM, corpus, `QUESTION: ${question}`, { maxTokens: 1800, strong: true });
+  const parsed = parseJsonAnswer<{ headline?: string; answer?: string; working?: string; points?: any[] }>(
+    text, { answer: stripTrailingJson(text) });
   return {
-    answer: String(parsed.answer || text).slice(0, 6000),
+    headline: String(parsed.headline || '').slice(0, 200),
+    answer: String(parsed.answer || stripTrailingJson(text)).slice(0, 6000),
+    working: String(parsed.working || '').slice(0, 6000),
     points: Array.isArray(parsed.points)
       ? parsed.points.slice(0, 4).map((p: any) => ({ label: String(p?.label || '').slice(0, 40), value: String(p?.value || '').slice(0, 80) })).filter((p) => p.label && p.value)
       : [],
+    periodWarning: periodMismatch(question, from, to),
     usage,
   };
 }

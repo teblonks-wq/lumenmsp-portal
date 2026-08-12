@@ -1,5 +1,5 @@
 import { pool } from '../db/pool';
-import { aiAskText, aiAskCached, parseJsonAnswer, AskUsage } from './ai-compose';
+import { aiAskText, aiAskCached, parseJsonAnswer, stripTrailingJson, AskUsage } from './ai-compose';
 
 // ── Ask Claude across every case ────────────────────────────────────────────────
 // "How many reports have we had from Larkmead about slow printers?" is a question the
@@ -238,7 +238,7 @@ export async function askTickets(question: string): Promise<TicketAskResult> {
     ? `\n\nIMPORTANT: the keyword search matched MORE than ${MAX_CASES} cases and only the ${MAX_CASES} strongest are shown above. Say in your answer that the true figure is at least your count, not exactly it.`
     : '';
   const { text, usage } = await aiAskCached(ANSWER_SYSTEM, corpus, `QUESTION: ${question}${capNote}`, { maxTokens: 2000, strong: true });
-  const parsed = parseJsonAnswer<any>(text, { answer: text, count: null, cases: [] });
+  const parsed = parseJsonAnswer<any>(text, { answer: stripTrailingJson(text), count: null, cases: [] });
 
   const byNumber = new Map(rows.map((r) => [String(r.ticket_number).toUpperCase(), r]));
   const cases = (Array.isArray(parsed.cases) ? parsed.cases : []).slice(0, 25).map((c: any) => {
@@ -250,7 +250,7 @@ export async function askTickets(question: string): Promise<TicketAskResult> {
   }).filter(Boolean) as TicketAskResult['cases'];
 
   return {
-    answer: String(parsed.answer || text).slice(0, 8000),
+    answer: String(parsed.answer || stripTrailingJson(text)).slice(0, 8000),
     count: Number.isFinite(Number(parsed.count)) ? Number(parsed.count) : null,
     cases, scanned: rows.length, capped, plan, usage,
   };
