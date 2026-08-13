@@ -64,6 +64,7 @@ import { ensureAlertsTable } from './lib/alerts';
 import { ensureSocialsTables } from './lib/socials';
 import { startGiacomStatus } from './lib/giacom-status';
 import { startUnifiPoll } from './lib/unifi';
+import { startWatchdog } from './lib/watchdog';
 import { startMsp360Sync } from './lib/msp360';
 import { startGraphConsentCheck } from './lib/graph-consent';
 import { startAzureBackupSync } from './lib/azure-backup';
@@ -449,6 +450,7 @@ server.listen(config.PORT, () => {
   resumeMassMailer();    // Mass Mailer: resume any campaign a deploy restart interrupted
   startGiacomStatus();   // N3twrx: poll Giacom status feed
   startUnifiPoll();      // N3twrx: poll UniFi Site Manager API for offline devices
+  startWatchdog();       // our own plumbing: mesh bridge fresh? agent estate breathing?
   startMsp360Sync();     // MSP360: nightly backup status + storage snapshot for the IT reports
   startGraphConsentCheck(); // Graph: which customer tenants have consented the portal app (Customers list badge)
   startAzureBackupSync();   // Azure Backup: Recovery Services vaults per customer tenant (needs Reader RBAC per subscription)
