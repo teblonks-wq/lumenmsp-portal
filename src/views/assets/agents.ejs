@@ -203,16 +203,67 @@
 <% } %>
 
 <div class="card" style="margin-bottom:20px;">
-  <h3 style="margin-top:0;">Enrolled devices (<%= rows.length %>)</h3>
+  <h3 style="margin-top:0;">Enrolled devices (<span id="agShown"><%= rows.length %></span> of <%= rows.length %>)</h3>
   <% if (!rows.length) { %>
     <p class="muted">No devices yet. Generate a site key below, then install the agent MSI with <code>SITEKEY=&lt;key&gt;</code>.</p>
   <% } else { %>
-  <div style="overflow-x:auto;">
+
+  <%
+    // Counts for the chips, worked out once here rather than in the browser.
+    var _agOnline = 0, _agOffline = 0, _agBehind = 0, _agStranded = 0, _agRevoked = 0, _agAd = 0, _agNoAsset = 0;
+    rows.forEach(function (d) {
+      if (d.revoked) { _agRevoked++; return; }
+      if (isOnline(d)) { _agOnline++; } else { _agOffline++; }
+      if (latestVersion && d.agent_version && d.agent_version !== latestVersion) {
+        if (stranded(d.agent_version)) { _agStranded++; } else { _agBehind++; }
+      }
+      if (d.is_ad_agent) _agAd++;
+      if (!d.asset_id) _agNoAsset++;
+    });
+    var _agCustomers = [];
+    var _agSeen = {};
+    rows.forEach(function (d) {
+      if (d.customer_id && !_agSeen[d.customer_id]) { _agSeen[d.customer_id] = 1; _agCustomers.push({ id: d.customer_id, name: d.customer_name }); }
+    });
+    _agCustomers.sort(function (a, b) { return String(a.name).localeCompare(String(b.name)); });
+  %>
+
+  <div class="ag-bar">
+    <input class="input ag-search" id="agSearch" type="search" autofocus
+           placeholder="Search hostname, user, serial, IP or customer…">
+    <select class="input ag-cust" id="agCust">
+      <option value="">All customers</option>
+      <% _agCustomers.forEach(function (c) { %><option value="<%= c.id %>"><%= c.name %></option><% }); %>
+    </select>
+    <div class="ag-chips" id="agChips">
+      <button type="button" class="ag-chip on" data-f="">All <span><%= rows.length %></span></button>
+      <button type="button" class="ag-chip" data-f="online">Online <span><%= _agOnline %></span></button>
+      <button type="button" class="ag-chip" data-f="offline">Offline <span><%= _agOffline %></span></button>
+      <% if (_agBehind) { %><button type="button" class="ag-chip" data-f="behind">Update due <span><%= _agBehind %></span></button><% } %>
+      <% if (_agStranded) { %><button type="button" class="ag-chip" data-f="stranded">Manual reinstall <span><%= _agStranded %></span></button><% } %>
+      <% if (_agAd) { %><button type="button" class="ag-chip" data-f="ad">AD agents <span><%= _agAd %></span></button><% } %>
+      <% if (_agNoAsset) { %><button type="button" class="ag-chip" data-f="noasset">No asset <span><%= _agNoAsset %></span></button><% } %>
+      <% if (_agRevoked) { %><button type="button" class="ag-chip" data-f="revoked">Revoked <span><%= _agRevoked %></span></button><% } %>
+    </div>
+  </div>
+
+  <div style="overflow-x:auto;" class="ag-tablewrap">
     <table class="table">
       <thead><tr><th></th><th>Device</th><th>Customer</th><th>User</th><th>Local IPs</th><th>Public IP</th><th>Version</th><th>Last seen</th><% if (isAdmin) { %><th>Ring</th><th>AD agent</th><th></th><% } %></tr></thead>
       <tbody>
-        <% rows.forEach(function(d){ var on = !d.revoked && isOnline(d); %>
-        <tr style="<%= d.revoked ? 'opacity:.5;' : '' %>">
+        <% rows.forEach(function(d){ var on = !d.revoked && isOnline(d);
+             var _f = [];
+             if (d.revoked) { _f.push('revoked'); } else { _f.push(on ? 'online' : 'offline'); }
+             if (!d.revoked && latestVersion && d.agent_version && d.agent_version !== latestVersion) {
+               _f.push(stranded(d.agent_version) ? 'stranded' : 'behind');
+             }
+             if (d.is_ad_agent) _f.push('ad');
+             if (!d.asset_id) _f.push('noasset');
+             var _hay = [d.hostname, d.serial_number, d.logged_in_user, d.local_ips, d.public_ip,
+                         d.customer_name, d.agent_version].filter(Boolean).join(' ').toLowerCase();
+        %>
+        <tr class="ag-row" data-f="<%= _f.join(' ') %>" data-cust="<%= d.customer_id || '' %>"
+            data-hay="<%= _hay.replace(/"/g, '&quot;') %>" style="<%= d.revoked ? 'opacity:.5;' : '' %>">
           <td><span title="<%= d.revoked ? 'Revoked' : (on ? 'Online' : 'Offline') %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= d.revoked ? 'var(--bad-fg)' : (on ? 'var(--ok)' : 'var(--line-strong)') %>;"></span></td>
           <td>
             <% if (d.asset_id) { %>
@@ -281,6 +332,73 @@
       </tbody>
     </table>
   </div>
+  <p class="muted" id="agNone" style="display:none;padding:14px 2px;">Nothing matches that. <a href="#" id="agClear">Clear the filters</a>.</p>
+
+  <style>
+    .ag-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:0 0 12px; }
+    .ag-search { flex:0 1 300px; min-width:190px; font-size:13px; padding:6px 10px; }
+    .ag-cust { width:auto; max-width:230px; font-size:13px; padding:6px 8px; }
+    .ag-chips { display:flex; gap:6px; flex-wrap:wrap; }
+    .ag-chip { font-size:12px; padding:3px 10px; border-radius:999px; cursor:pointer;
+               border:1px solid var(--line-strong); background:transparent; color:var(--text-2); }
+    .ag-chip span { opacity:.65; margin-left:4px; font-variant-numeric:tabular-nums; }
+    .ag-chip:hover { border-color:var(--blue); }
+    .ag-chip.on { background:var(--blue); border-color:var(--blue); color:#fff; }
+    .ag-chip.on span { opacity:.85; }
+    /* 141 machines is a lot of scrolling - keep the header in view. */
+    .ag-tablewrap { max-height:70vh; overflow:auto; }
+    .ag-tablewrap thead th { position:sticky; top:0; background:var(--card,#fff); z-index:2; }
+  </style>
+  <script>
+  (function () {
+    var rows = Array.prototype.slice.call(document.querySelectorAll('.ag-row'));
+    if (!rows.length) return;
+    var search = document.getElementById('agSearch');
+    var cust = document.getElementById('agCust');
+    var chips = Array.prototype.slice.call(document.querySelectorAll('#agChips .ag-chip'));
+    var shown = document.getElementById('agShown');
+    var none = document.getElementById('agNone');
+    var flag = '';
+
+    function apply() {
+      var q = (search.value || '').trim().toLowerCase();
+      var c = cust.value || '';
+      var n = 0;
+      rows.forEach(function (r) {
+        var okF = !flag || (' ' + r.getAttribute('data-f') + ' ').indexOf(' ' + flag + ' ') >= 0;
+        var okC = !c || r.getAttribute('data-cust') === c;
+        var okQ = !q || r.getAttribute('data-hay').indexOf(q) >= 0;
+        var on = okF && okC && okQ;
+        r.style.display = on ? '' : 'none';
+        if (on) n++;
+      });
+      shown.textContent = n;
+      none.style.display = n ? 'none' : 'block';
+    }
+
+    search.addEventListener('input', apply);
+    cust.addEventListener('change', apply);
+    chips.forEach(function (b) {
+      b.addEventListener('click', function () {
+        chips.forEach(function (x) { x.classList.remove('on'); });
+        b.classList.add('on');
+        flag = b.getAttribute('data-f') || '';
+        apply();
+      });
+    });
+    document.getElementById('agClear').addEventListener('click', function (e) {
+      e.preventDefault();
+      search.value = ''; cust.value = ''; flag = '';
+      chips.forEach(function (x) { x.classList.toggle('on', !x.getAttribute('data-f')); });
+      apply();
+    });
+    // Escape clears, so you can get back to everything without reaching for the mouse.
+    search.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { search.value = ''; apply(); }
+    });
+    apply();
+  })();
+  </script>
   <% } %>
 </div>
 
