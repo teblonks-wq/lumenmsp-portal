@@ -276,6 +276,30 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   // account/API version. Temporary diagnostic aid, not a general feature.
   const showDebug = req.session.user!.role === 'admin' && req.query.debug === '1';
   const mesh = await meshStatus(row.id).catch(() => null);
+
+  // ── Server health, on the machine's own page ──────────────────────────────────
+  // The /servers section already collects and judges all of this; there is no reason a
+  // server's own asset page should send you somewhere else to see it. Same facts, same
+  // judgements - one query, and the tab only appears when there is something in it.
+  let serverFacts: any = null;
+  let serverAlerts: any[] = [];
+  let serverRoles: string[] = [];
+  if (row.agent_device_id) {
+    try {
+      const sf = (await pool.query(
+        `SELECT *, EXTRACT(EPOCH FROM (NOW() - collected_at))::int AS age_secs
+           FROM server_facts WHERE device_id=$1`, [row.agent_device_id])).rows[0] || null;
+      if (sf) {
+        serverFacts = sf;
+        const { judge } = await import('../lib/server-facts');
+        const { prettyRoles } = await import('./servers');
+        serverAlerts = judge(sf.facts || null);
+        serverRoles = prettyRoles(sf.roles || null, Number(sf.sql_instances || 0));
+      }
+    } catch (e: any) {
+      console.error('[assets] server facts failed:', e.message);
+    }
+  }
   // Backup panel: MSP360 plans matched to this device by machine name, plus the Portal's
   // own accrued daily history (the asset page is heading towards system-of-record status).
   const backupPlansRaw = await getBackupForComputer(row.hostname || '');
@@ -308,6 +332,10 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     // possible reasons it is — so the page can offer the install rather than a dead end.
     meshState: mesh,
     onlineWindowSecs: ONLINE_WINDOW_SECS,
+    serverFacts, serverAlerts, serverRoles,
+    powerPending: (await pool.query(
+      `SELECT 1 FROM agent_commands WHERE device_id=$1 AND kind LIKE 'power.%' AND status IN ('queued','running') LIMIT 1`,
+      [row.agent_device_id || 0])).rows.length > 0,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
@@ -350,6 +378,15 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
     template: isAdmin ? ((await getSetting('agent', 'rmm_installer_template')) || '') : '',
   };
   const rollout = await rolloutState();
+  // Remote access lives or dies on the mesh bridge, and nothing on the Portal used to
+  // show whether it was running. A bridge that had quietly stopped looked exactly like a
+  // healthy one, while every machine enrolled since sat on "remote control not installed".
+  const meshBridge = isAdmin ? await (await import('./mesh')).meshBridgeHealth() : null;
+  const meshStranded = isAdmin ? (await pool.query(
+    `SELECT COUNT(*)::int AS n FROM agent_devices
+      WHERE revoked=false AND mesh_node_id IS NULL AND mesh_installed = true`)).rows[0].n : 0;
+  const meshLoose = isAdmin ? (await pool.query(
+    'SELECT node_id, group_id, hostname, seen_at FROM mesh_unmatched_nodes ORDER BY hostname LIMIT 50')).rows : [];
   const ringCounts = (await pool.query(
     `SELECT COALESCE(update_ring,2) AS ring, COUNT(*)::int AS n,
             COUNT(*) FILTER (WHERE agent_version IS DISTINCT FROM $1)::int AS behind
@@ -357,6 +394,7 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
   res.render('assets/agents', {
     user: req.session.user!, rows, customers, defaults, isAdmin,
     rollout, ringCounts, hostedSha: agentHostedSha256(),
+    meshBridge, meshStranded, meshLoose,
     packages: isAdmin ? (await pool.query(
       'SELECT id, name, version, file_name, url, size_bytes, install_args FROM agent_packages ORDER BY name')).rows : [],
     msi: agentMsiInfo(), latestVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',

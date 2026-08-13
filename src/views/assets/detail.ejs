@@ -43,7 +43,19 @@
       <% if (_ours) { %>· <span class="muted" title="The Portal is the master record for this machine — every field on this page is collected by our own agent, not by Atera.">updated <%= dt(asset.synced_at) %></span><% } %>
     </p>
   </div>
-  <% if (remoteUrl) { %><a class="btn btn-remote" target="_blank" rel="noopener" href="/assets/<%= asset.id %>/remote-mesh">🖥 Remote control</a><% } %>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <% if (remoteUrl) { %><a class="btn btn-remote" target="_blank" rel="noopener" href="/assets/<%= asset.id %>/remote-mesh">🖥 Remote control</a><% } %>
+    <% if (asset.agent_device_id) { %>
+    <div class="pw-wrap" style="position:relative;display:inline-block;">
+      <button type="button" class="btn pw-btn" <%= (typeof powerPending !== 'undefined' && powerPending) ? 'style="border-color:var(--warn-line);"' : '' %>
+              data-id="<%= asset.agent_device_id %>" data-host="<%= asset.hostname || '' %>"
+              data-user="<%= (typeof agentInfo !== 'undefined' && agentInfo) ? (agentInfo.logged_in_user || '') : '' %>"
+              data-live="<%= _live ? '1' : '' %>" data-pending="<%= (typeof powerPending !== 'undefined' && powerPending) ? '1' : '' %>"
+              data-strict="<%= (typeof serverFacts !== 'undefined' && serverFacts) ? '1' : '' %>"
+              title="Sign out, restart or shut down">⏻ Power ▾</button>
+    </div>
+    <% } %>
+  </div>
 </div>
 
 <% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
@@ -105,13 +117,20 @@ function _ago(d) {
       <a class="btn" href="/agents" style="margin-left:auto;">Agents page</a>
     </div>
   <% } else if (_ms.installed) { %>
-    <div class="alert" style="border:1px solid var(--info-line);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
-      <span><strong>Remote access is installed, waiting for its first check-in.</strong>
-      <span class="muted">The machine appears for remote control once it has reached the remote-access server. If it has been like this for a while, the install may not have taken — reinstall below.</span></span>
-      <form method="post" action="/assets/<%= asset.id %>/mesh-install" style="margin:0 0 0 auto;">
-        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
-        <button class="btn" type="submit">Reinstall</button>
-      </form>
+    <div class="alert" style="border:1px solid var(--warn-line);display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+      <span style="flex:1;min-width:300px;">
+        <strong>Remote access is installed on this machine, but the Portal has not been told which machine it is.</strong>
+        <span class="muted" style="display:block;margin-top:4px;"><%= _ms.strandedDetail || 'The machine has not been linked to a MeshCentral node yet.' %></span>
+        <% if (_ms.installedAt) { %><span class="muted" style="display:block;font-size:11.5px;margin-top:4px;">The agent reported a clean install <%= _ago(_ms.installedAt) %>.</span><% } %>
+        <span class="muted" style="display:block;font-size:11.5px;margin-top:4px;">Reinstalling will not fix this — the Mesh Agent is already there. It is the link that is missing.</span>
+      </span>
+      <span style="display:flex;gap:8px;margin-left:auto;">
+        <a class="btn" href="/agents">Bridge status</a>
+        <form method="post" action="/assets/<%= asset.id %>/mesh-install" style="margin:0;">
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+          <button class="btn" type="submit">Reinstall anyway</button>
+        </form>
+      </span>
     </div>
   <% } else { %>
     <div class="alert" style="border:1px solid var(--warn-line);display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
@@ -145,6 +164,8 @@ function _ago(d) {
     <button type="button" data-tab="overview">Overview</button>
     <button type="button" data-tab="hardware">Hardware</button>
     <button type="button" data-tab="os">OS</button>
+<% var _isServer = (typeof serverFacts !== 'undefined' && serverFacts); %>
+<% if (_isServer) { %><button type="button" data-tab="server">Server<% var _sb = (serverAlerts||[]).filter(function(a){ return a.level==='bad'; }).length; %><% if (_sb) { %> <span style="color:var(--bad-fg);">●</span><% } %></button><% } %>
 <% if (user.role === 'admin') { %><button type="button" data-tab="tools">Tools</button><% } %>
     <button type="button" data-tab="backup">Backup<% if (backupPlans.length && backupPlans.some(function(p){ return p.cls==='failed'; })) { %> <span style="color:var(--bad-fg);">●</span><% } %></button>
   </nav>
@@ -223,6 +244,8 @@ function _ago(d) {
     </div>
     <p class="muted" style="font-size:12px;margin:14px 0 0;">"Assigned user" is who this machine belongs to, set here and never touched by any import — the signed-in user above is only whoever last logged on. Assign a person and their devices appear on any case they raise, with a jump-through and remote control.</p>
   </section>
+
+  <% if (_isServer) { %><%- include('_server') %><% } %>
 
   <% if (user.role === 'admin') { %><%- include('_tools', { asset: asset, agentInfo: (typeof agentInfo !== 'undefined' ? agentInfo : null), user: user }) %><% } %>
 
@@ -314,5 +337,7 @@ function _ago(d) {
     show((saved && document.querySelector('.dev-tab-panel[data-key="' + saved + '"]')) ? saved : 'overview');
   })();
 </script>
+
+<%- include('../partials/power-menu') %>
 
 <%- include('../partials/footer') %>

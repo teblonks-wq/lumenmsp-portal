@@ -305,7 +305,10 @@ function tileHref(over){
         }
 
         if (d.canInstall) {
-          var install = btn('🖥 Install remote control', true);
+          // Reinstalling a Mesh Agent that is already there does not make the bridge see
+          // it, so on that one reason the button stops being the obvious thing to press.
+          var wontHelp = d.reason === 'installed-not-linked';
+          var install = btn((wontHelp ? '' : '🖥 ') + (d.installLabel || 'Install remote control'), !wontHelp);
           install.addEventListener('click', function () {
             install.disabled = true; install.textContent = 'Queueing…';
             var f = document.createElement('form');

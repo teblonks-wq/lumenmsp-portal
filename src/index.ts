@@ -51,6 +51,7 @@ import patchingRoutes from './routes/patching';
 import ceRoutes from './routes/ce';
 import softwareRoutes from './routes/software';
 import serverRoutes from './routes/servers';
+import gpoRoutes from './routes/gpo';
 import mcpRoutes from './routes/mcp';
 import marketingRoutes from './routes/marketing';
 import networkRoutes from './routes/network';
@@ -368,6 +369,7 @@ app.use('/', patchingRoutes);    // Windows Update reporting across the estate
 app.use('/', ceRoutes);          // Cyber Essentials assessment, actions and the end-of-life list
 app.use('/', softwareRoutes);    // Software across the estate: installed, behind, out of support
 app.use('/', serverRoutes);      // Servers: roles, AD, SQL, Hyper-V and what is worth a look
+app.use('/', gpoRoutes);         // Group Policy: read-only inventory per domain, with a Claude button
 app.use('/', reviewRoutes);
 app.use('/', insightsRoutes);
 app.use('/', itReportRoutes);     // Monthly IT Operations & Security Snapshot (staff)

@@ -47,11 +47,29 @@ var vols = facts && Array.isArray(facts.volumes) ? facts.volumes : [];
       <% roleLabels.forEach(function (r) { %><span class="role-chip"><%= r %></span><% }); %>
     </p>
   </div>
-  <form method="post" action="/servers/<%= device.id %>/refresh" style="margin:0;">
-    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
-    <button class="btn btn-primary" type="submit" <%= pending ? 'disabled' : '' %>><%= pending ? 'Queued…' : '↻ Scan now' %></button>
-  </form>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <% var _slive = device.seen_secs != null && Number(device.seen_secs) < (typeof onlineWindowSecs !== 'undefined' ? onlineWindowSecs : 180); %>
+    <% if (typeof assetId !== 'undefined' && assetId && device.mesh_node_id) { %>
+    <a class="btn btn-remote" target="_blank" rel="noopener" href="/assets/<%= assetId %>/remote-mesh">🖥 Remote control</a>
+    <% } %>
+    <div class="pw-wrap" style="position:relative;display:inline-block;">
+      <button type="button" class="btn pw-btn" <%= (typeof powerPending !== 'undefined' && powerPending) ? 'style="border-color:var(--warn-line);"' : '' %>
+              data-id="<%= device.id %>" data-host="<%= device.hostname || '' %>" data-user="<%= device.logged_in_user || '' %>"
+              data-live="<%= _slive ? '1' : '' %>" data-pending="<%= (typeof powerPending !== 'undefined' && powerPending) ? '1' : '' %>" data-strict="1"
+              title="Sign out, restart or shut down — a server asks you to type its name first">⏻ Power ▾</button>
+    </div>
+    <form method="post" action="/servers/<%= device.id %>/refresh" style="margin:0;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <button class="btn btn-primary" type="submit" <%= pending ? 'disabled' : '' %>><%= pending ? 'Queued…' : '↻ Scan now' %></button>
+    </form>
+  </div>
 </div>
+<% if (typeof err !== 'undefined' && err) { %><div class="alert alert-error"><%= err %></div><% } %>
+<% if (device.reboot_required) { %>
+<div class="alert" style="border:1px solid var(--warn-line);background:var(--tint-warn);color:var(--warn-deep);">
+  <strong>This server is waiting on a restart.</strong> Windows has updates that will not finish until it reboots — use Power above when the site can take it.
+</div>
+<% } %>
 
 <% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
 
@@ -265,5 +283,7 @@ var vols = facts && Array.isArray(facts.volumes) ? facts.volumes : [];
 <% } %>
 
 <% } %>
+
+<%- include('partials/power-menu') %>
 
 <%- include('partials/footer') %>

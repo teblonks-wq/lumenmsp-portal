@@ -3,6 +3,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { judge, refreshStaleServers } from '../lib/server-facts';
+import { ONLINE_WINDOW_SECS } from '../lib/agent-asset';
 
 // ── Servers ─────────────────────────────────────────────────────────────────────
 // The same agent as everywhere else, running in server mode. Nothing here is a separate
@@ -54,7 +55,13 @@ router.get('/servers', requireAuth, requireAdmin, async (req: Request, res: Resp
 
     const rows = (await pool.query(
       `SELECT ad.id, ad.hostname, ad.os, ad.customer_id, c.name AS customer_name,
+              ad.logged_in_user, ad.mesh_node_id, ad.reboot_required,
               EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at))::int AS seen_secs,
+              (SELECT ca.id FROM customer_assets ca
+                WHERE ca.agent_device_id = ad.id AND ca.merged_into_id IS NULL LIMIT 1) AS asset_id,
+              (SELECT 1 FROM agent_commands pc
+                WHERE pc.device_id = ad.id AND pc.kind LIKE 'power.%'
+                  AND pc.status IN ('queued','running') LIMIT 1) AS power_pending,
               sf.server_role, sf.roles, sf.domain, sf.sql_instances, sf.vm_count,
               sf.alerts, sf.error, sf.collected_at,
               EXTRACT(EPOCH FROM (NOW() - sf.collected_at))::int AS facts_age_secs
@@ -83,7 +90,8 @@ router.get('/servers', requireAuth, requireAdmin, async (req: Request, res: Resp
 
     res.render('servers', {
       user: req.session.user!, rows, customers, customerId, summary, queued,
-      msg: req.query.msg || null, error: null,
+      onlineWindowSecs: ONLINE_WINDOW_SECS,
+      msg: req.query.msg || null, error: req.query.err || null,
     });
   } catch (e: any) {
     console.error('[servers] list failed:', e.message);
@@ -118,7 +126,13 @@ router.get('/servers/:id', requireAuth, requireAdmin, async (req: Request, res: 
     res.render('server-detail', {
       user: req.session.user!, device, sf, facts,
       alerts: judge(facts), roleLabels: prettyRoles(sf?.roles || null, Number(sf?.sql_instances || 0)),
-      pending, msg: req.query.msg || null,
+      pending, msg: req.query.msg || null, err: req.query.err || null,
+      onlineWindowSecs: ONLINE_WINDOW_SECS,
+      assetId: (await pool.query(
+        'SELECT id FROM customer_assets WHERE agent_device_id=$1 AND merged_into_id IS NULL LIMIT 1', [id])).rows[0]?.id || null,
+      powerPending: (await pool.query(
+        `SELECT 1 FROM agent_commands WHERE device_id=$1 AND kind LIKE 'power.%' AND status IN ('queued','running') LIMIT 1`,
+        [id])).rows.length > 0,
     });
   } catch (e: any) {
     console.error('[servers] detail failed:', e.message);

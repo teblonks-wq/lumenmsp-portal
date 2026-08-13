@@ -1,0 +1,209 @@
+<%- include('../partials/header', { title: 'Group Policy', user }) %>
+<%
+function ago(s) {
+  if (s == null) return 'never';
+  var m = Math.round(Number(s) / 60);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm ago';
+  var h = Math.round(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+var _cust = null;
+customers.forEach(function (c) { if (customerId === c.id) _cust = c; });
+%>
+
+<style>
+  .gpo-flag { display:inline-block; font-size:11px; font-weight:600; border-radius:5px; padding:1px 7px;
+              margin:1px 3px 1px 0; border:1px solid var(--warn-line); color:var(--warn-fg); background:var(--warn-bg); }
+  .gpo-flag.bad { border-color:var(--bad-line); color:var(--bad-fg); background:var(--bad-bg); }
+  .gpo-link { display:block; font-size:12px; color:var(--muted); }
+</style>
+
+<div class="page-header">
+  <h1 style="margin:0;">Group Policy</h1>
+  <p class="muted" style="margin:4px 0 0;">
+    Every Group Policy Object in a customer's domain, what it is linked to and what it actually does.
+    Read-only &mdash; the writing still happens in Group Policy Management. Collected by the customer's
+    nominated AD agent, so nothing here needs a domain admin login to the Portal.
+  </p>
+</div>
+
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+<% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
+
+<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));">
+  <div class="card"><div class="card-header"><h2>Policies</h2></div><div class="stat" style="font-size:24px;"><%= summary.gpos %></div></div>
+  <div class="card"><div class="card-header"><h2>Not linked</h2></div><div class="stat" style="font-size:24px;<%= summary.unlinked ? 'color:var(--warn-fg);' : '' %>"><%= summary.unlinked %></div><p class="muted" style="margin:2px 0 0;">applying to nothing</p></div>
+  <div class="card"><div class="card-header"><h2>Settings</h2></div><div class="stat" style="font-size:24px;"><%= summary.settings.toLocaleString('en-GB') %></div></div>
+  <div class="card"><div class="card-header"><h2>Worth a look</h2></div><div class="stat" style="font-size:24px;<%= summary.findings ? 'color:var(--warn-fg);' : '' %>"><%= summary.findings %></div><p class="muted" style="margin:2px 0 0;"><%= summary.bad %> need reading</p></div>
+</div>
+
+<div class="card" style="padding:16px 20px;">
+  <form method="get" action="/gpo" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <select class="input" name="customer" onchange="this.form.submit()" style="width:auto;min-width:220px;">
+      <option value="">All customers</option>
+      <% customers.forEach(function (c) { %>
+        <option value="<%= c.id %>" <%= customerId === c.id ? 'selected' : '' %>><%= c.name %><%= c.gpo_count ? ' (' + c.gpo_count + ')' : ' - not collected' %></option>
+      <% }); %>
+    </select>
+    <input class="input" type="search" name="q" value="<%= q %>" placeholder="Search name, description or where it's linked" style="width:auto;min-width:280px;">
+    <label style="display:flex;gap:6px;align-items:center;font-size:13px;">
+      <input type="checkbox" name="only" value="findings" <%= only === 'findings' ? 'checked' : '' %> onchange="this.form.submit()">
+      Only ones worth a look
+    </label>
+    <button class="btn" type="submit">Filter</button>
+    <% if (q || only || customerId) { %><a class="btn" href="/gpo">Clear</a><% } %>
+  </form>
+
+  <% if (_cust) { %>
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">
+      <form method="post" action="/gpo/refresh" style="margin:0;">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <input type="hidden" name="customer_id" value="<%= _cust.id %>">
+        <button class="btn btn-primary" type="submit" <%= _cust.pending ? 'disabled' : '' %>>
+          <%= _cust.pending ? 'Collection queued...' : (_cust.gpo_count ? 'Collect again' : 'Collect now') %>
+        </button>
+      </form>
+      <% if (_cust.ad_agent) { %>
+        <% var _live = _cust.ad_seen_secs != null && Number(_cust.ad_seen_secs) < onlineWindowSecs; %>
+        <span class="muted" style="font-size:12.5px;">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;background:<%= _live ? 'var(--ok)' : 'var(--line-strong)' %>;"></span>
+          AD agent: <strong><%= _cust.ad_agent %></strong> &mdash; <%= _live ? 'online' : 'last seen ' + ago(_cust.ad_seen_secs) %>.
+          Last collected <%= _cust.collected_at ? new Date(_cust.collected_at).toLocaleString('en-GB') : 'never' %>.
+        </span>
+      <% } else { %>
+        <span style="font-size:12.5px;color:var(--warn-fg);">
+          No AD agent for this customer. Install the agent on a domain controller or management server, then tick &ldquo;AD agent&rdquo; for it on the Agents page.
+        </span>
+      <% } %>
+      <button class="btn btn-remote" type="button" id="gpoAskBtn" style="margin-left:auto;">&#10022; Ask Claude about these policies</button>
+    </div>
+  <% } else { %>
+    <p class="muted" style="margin:12px 0 0;font-size:12.5px;">Pick a customer to collect their Group Policy, or to ask Claude about the whole set at once.</p>
+  <% } %>
+</div>
+
+<% if (typeof lastRun !== 'undefined' && lastRun && lastRun.failed) { %>
+<div class="alert alert-danger">
+  <strong>The last collection on <%= lastRun.hostname %> did not come back with anything.</strong>
+  <p style="margin:6px 0 0;font-size:13px;"><%= lastRun.reason %></p>
+</div>
+<% } %>
+
+<% if (_cust) { %>
+<div class="card" id="gpoAskPanel" style="display:none;">
+  <div style="display:flex;align-items:flex-start;gap:10px;">
+    <div style="flex:1;">
+      <p class="muted" style="margin:0 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;">Asked Claude &mdash; <%= _cust.name %></p>
+      <h2 id="gpoAskQ" style="margin:0;font-size:16px;"></h2>
+    </div>
+    <button type="button" id="gpoAskClose" style="border:none;background:none;font-size:22px;line-height:1;cursor:pointer;color:var(--muted);">&times;</button>
+  </div>
+  <form id="gpoAskForm" style="display:flex;gap:8px;margin-top:12px;">
+    <input class="input" id="gpoAskInput" style="flex:1;" autocomplete="off"
+           placeholder="e.g. does anything here weaken security? which policies overlap? what applies to the sales OU?">
+    <button class="btn btn-primary" type="submit" id="gpoAskGo">Ask</button>
+  </form>
+  <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;" id="gpoAskChips"></div>
+  <div id="gpoAskBody" style="margin-top:12px;"></div>
+</div>
+<% } %>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr>
+        <th>Policy</th><th>Customer</th><th>Linked to</th><th style="text-align:right;">Settings</th>
+        <th>Worth a look</th><th>Modified</th><th>Collected</th>
+      </tr></thead>
+      <tbody>
+        <% if (!rows.length) { %>
+          <tr><td colspan="7"><div class="empty-state">
+            <% if (only === 'findings') { %>
+              Nothing worth a look in what has been collected. That is a good result.
+            <% } else if (customerId) { %>
+              Nothing collected for this customer yet. Press <strong>Collect now</strong> above &mdash; it runs on their AD agent and takes a minute or two.
+            <% } else { %>
+              No Group Policy collected yet. Pick a customer with an AD agent and press Collect.
+            <% } %>
+          </div></td></tr>
+        <% } %>
+        <% rows.forEach(function (g) { %>
+          <% var _links = Array.isArray(g.links) ? g.links : []; %>
+          <tr>
+            <td>
+              <a class="row-link" href="/gpo/<%= g.id %>" style="font-weight:600;"><%= g.name %></a>
+              <% if (g.enforced) { %><span class="gpo-flag" title="At least one of its links is enforced, so it beats policies below it">Enforced</span><% } %>
+              <% if (g.description) { %><span class="gpo-link"><%= String(g.description).slice(0, 120) %></span><% } %>
+            </td>
+            <td class="muted"><%= g.customer_name || '-' %></td>
+            <td style="max-width:280px;">
+              <% if (!_links.length) { %>
+                <span class="muted">nowhere</span>
+              <% } else { %>
+                <% _links.slice(0, 3).forEach(function (l) { %>
+                  <span class="gpo-link"><%= l.target %><%= l.enabled === false ? ' (link off)' : '' %></span>
+                <% }); %>
+                <% if (_links.length > 3) { %><span class="gpo-link">+<%= _links.length - 3 %> more</span><% } %>
+              <% } %>
+            </td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;"><%= g.setting_count %></td>
+            <td>
+              <% if (!g.findings.length) { %><span class="muted">-</span><% } %>
+              <% g.findings.forEach(function (f) { %>
+                <span class="gpo-flag <%= f.level === 'bad' ? 'bad' : '' %>" title="<%= f.detail || '' %>"><%= f.title %></span>
+              <% }); %>
+            </td>
+            <td class="muted" style="font-size:12.5px;white-space:nowrap;"><%= g.modified_on ? String(g.modified_on).slice(0, 10) : '-' %></td>
+            <td class="muted" style="font-size:12.5px;white-space:nowrap;"><%= g.collected_at ? new Date(g.collected_at).toLocaleDateString('en-GB') : '-' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<% if (_cust) { %>
+<%- include('_ask-script') %>
+<script>
+(function () {
+  var CUST = <%= _cust.id %>;
+  var panel = document.getElementById('gpoAskPanel');
+  var form = document.getElementById('gpoAskForm');
+  var input = document.getElementById('gpoAskInput');
+  var go = document.getElementById('gpoAskGo');
+  var head = document.getElementById('gpoAskQ');
+  var body = document.getElementById('gpoAskBody');
+
+  function ask(question) { input.value = question; window.gpoAsk({ customer_id: CUST }, question, head, body, go); }
+
+  // The estate-wide questions worth asking, so nobody has to think of the wording.
+  var chips = document.getElementById('gpoAskChips');
+  ['Does anything here weaken security?',
+   'Which of these policies overlap or contradict each other?',
+   'Which of these are doing nothing and could go?'].forEach(function (t) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn'; b.style.cssText = 'font-size:12px;padding:3px 10px;';
+    b.textContent = t;
+    b.addEventListener('click', function () { ask(t); });
+    chips.appendChild(b);
+  });
+
+  document.getElementById('gpoAskBtn').addEventListener('click', function () {
+    panel.style.display = 'block';
+    input.focus();
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+  document.getElementById('gpoAskClose').addEventListener('click', function () { panel.style.display = 'none'; });
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var question = (input.value || '').trim();
+    if (question) window.gpoAsk({ customer_id: CUST }, question, head, body, go);
+  });
+})();
+</script>
+<% } %>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,104 @@
+<%
+// Shared power menu — sign out / restart / shut down, used by the patching list, the
+// servers list and a server's own page. Include it once per page; every button that
+// carries class="pw-btn" plus data-id / data-host / data-user / data-live / data-pending
+// is wired up automatically. Add data-strict="1" on a server to require the hostname to
+// be typed before a restart or shutdown.
+%>
+<style>
+  .pw-menu { display:none; position:absolute; right:0; top:100%; margin-top:3px; z-index:70; min-width:210px;
+             background:var(--card,#fff); border:1px solid var(--line-strong); border-radius:9px;
+             box-shadow:0 8px 22px rgba(0,0,0,.16); overflow:hidden; text-align:left; }
+  .pw-menu button { display:block; width:100%; text-align:left; border:0; background:none; padding:8px 12px;
+                    font:inherit; font-size:13px; cursor:pointer; color:var(--ink); }
+  .pw-menu button:hover { background:var(--tint-accent); }
+  .pw-menu .pw-danger:hover { background:var(--tint-warn); color:var(--warn-deep); }
+  .pw-menu .pw-head { padding:7px 12px; font-size:11px; color:var(--muted); border-bottom:1px solid var(--line); }
+</style>
+<script>
+(function () {
+  // One menu element, moved to whichever row was clicked — 200 machines should not mean
+  // 200 hidden menus in the DOM.
+  var menu = document.createElement('div');
+  menu.className = 'pw-menu';
+  document.body.appendChild(menu);
+  var openFor = null;
+
+  function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
+  function close(){ menu.style.display = 'none'; openFor = null; }
+  document.addEventListener('click', function (e) { if (!menu.contains(e.target) && !e.target.closest('.pw-btn')) close(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+
+  function post(id, action, delay) {
+    var f = document.createElement('form');
+    f.method = 'post'; f.action = '/patching/device/' + id + '/power';
+    [['_csrf', csrf()], ['action', action], ['delay_seconds', String(delay)], ['back', location.pathname + location.search]]
+      .forEach(function (kv) {
+        var i = document.createElement('input'); i.type = 'hidden'; i.name = kv[0]; i.value = kv[1]; f.appendChild(i);
+      });
+    document.body.appendChild(f); f.submit();
+  }
+
+  document.querySelectorAll('.pw-btn').forEach(function (b) {
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (openFor === b) { close(); return; }
+      var id = b.getAttribute('data-id');
+      var host = b.getAttribute('data-host') || 'this machine';
+      var who = b.getAttribute('data-user') || '';
+      var live = b.getAttribute('data-live') === '1';
+      var pending = b.getAttribute('data-pending') === '1';
+      var strict = b.getAttribute('data-strict') === '1';
+
+      menu.innerHTML = '';
+      var head = document.createElement('div');
+      head.className = 'pw-head';
+      head.textContent = who ? (who.split('\\').pop() + ' is signed in — they are warned, not asked')
+                             : (live ? (strict ? 'Nobody signed in — but this is a server' : 'Nobody signed in')
+                                     : 'Offline — runs when it next comes online');
+      menu.appendChild(head);
+
+      [['logoff', 'Sign the user out', false],
+       ['restart', 'Restart', true],
+       ['shutdown', 'Shut down', true],
+       ['cancel', 'Cancel a pending restart', false]].forEach(function (row) {
+        if (row[0] === 'cancel' && !pending) return;
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        if (row[2]) btn.className = 'pw-danger';
+        btn.textContent = row[1];
+        btn.addEventListener('click', function () {
+          var msg;
+          if (row[0] === 'cancel') { msg = 'Cancel the pending restart or shutdown on ' + host + '?'; }
+          else {
+            msg = row[1] + ' ' + host + '?\n\n'
+                + (who ? who.split('\\').pop() + ' is signed in. They get a warning and cannot stop it. Unsaved work will be lost.\n\n' : '')
+                + (live ? 'They get 60 seconds\' notice.' : host + ' is offline — this runs the moment it next comes online.');
+          }
+          if (!window.confirm(msg)) return;
+          // Servers ask for more than a click. A workstation restart costs one person
+          // their unsaved work; a server restart can stop a whole site.
+          if (strict && (row[0] === 'restart' || row[0] === 'shutdown')) {
+            var typed = window.prompt('This is a SERVER.\n\nType its name to confirm you mean ' + host + ':');
+            if (typed === null) return;
+            if (typed.trim().toLowerCase() !== host.trim().toLowerCase()) {
+              window.alert('That did not match "' + host + '" — nothing has been done.');
+              return;
+            }
+          }
+          close();
+          post(id, row[0], row[0] === 'shutdown' && strict ? 120 : 60);
+        });
+        menu.appendChild(btn);
+      });
+
+      var r = b.getBoundingClientRect();
+      menu.style.display = 'block';
+      menu.style.position = 'absolute';
+      menu.style.left = (window.scrollX + r.right - menu.offsetWidth) + 'px';
+      menu.style.top = (window.scrollY + r.bottom + 3) + 'px';
+      openFor = b;
+    });
+  });
+})();
+</script>

@@ -12,6 +12,7 @@ import { syncAssetFromAgent } from '../lib/agent-asset';
 import { windowsOsName } from '../lib/os-name';
 import { reapStaleCommands } from '../lib/agent-commands';
 import { ingestServerFacts } from '../lib/server-facts';
+import { ingestGpoInventory } from '../lib/gpo';
 import { htmlToPlain } from '../lib/whatsapp';
 import { nextTicketNumber } from './tickets';
 
@@ -949,6 +950,19 @@ router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request
     }
     if (r.rows[0].kind === 'server.facts') {
       ingestServerFacts(id).catch((err: any) => console.error('[servers] ingest failed:', err.message));
+    }
+    if (r.rows[0].kind === 'gpo.inventory') {
+      ingestGpoInventory(id).catch((err: any) => console.error('[gpo] ingest failed:', err.message));
+    }
+    // The Mesh Agent is now on the machine. Record that here, where we actually learn it.
+    // Until this existed, mesh_installed was only ever set by the bridge - so a machine
+    // the bridge could not link looked "never installed" forever, and the heartbeat below
+    // queued another install every two minutes, tearing the Mesh Agent down and putting it
+    // back for the life of the device.
+    if (r.rows[0].kind === 'mesh.install' && exitCode === 0) {
+      await pool.query(
+        'UPDATE agent_devices SET mesh_installed=true, mesh_installed_at=NOW(), updated_at=NOW() WHERE id=$1',
+        [d.id]).catch((err: any) => console.error('[mesh] install flag failed:', err.message));
     }
     res.json({ ok: true });
   } catch (e: any) {

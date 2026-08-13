@@ -460,6 +460,11 @@ model AgentDevice {
   meshNodeId     String?   @map("mesh_node_id")
   meshInstalled  Boolean?  @default(false) @map("mesh_installed")
   meshLastSeenAt DateTime? @map("mesh_last_seen_at")
+  // Set the moment a mesh.install command comes back with exit 0. Distinct from
+  // meshNodeId, which only arrives when the bridge matches the node - without this the
+  // Portal cannot tell "never installed" from "installed but the bridge never saw it",
+  // and re-queues the install on every heartbeat forever.
+  meshInstalledAt DateTime? @map("mesh_installed_at")
   patchScanAt        DateTime? @map("patch_scan_at")
   patchPending       Int?      @map("patch_pending")
   patchCritical      Int?      @map("patch_critical")
@@ -2425,4 +2430,50 @@ model CustomerNetwork {
   @@unique([customerId, cidr])
   @@index([customerId])
   @@map("customer_networks")
+}
+
+// Group Policy inventory, collected read-only from the customer's AD agent. One row per
+// GPO per customer, replaced wholesale on each collection — a GPO that has been deleted in
+// the domain should disappear here too, and diffing to achieve that buys nothing.
+/// A node the mesh bridge reported that matched no device in the Portal. Replaced
+/// wholesale on every bridge run. This exists so "remote control is not ready" can say
+/// WHY - the node is in a group no customer owns, or under a name we do not have.
+model MeshUnmatchedNode {
+  id        Int      @id @default(autoincrement())
+  nodeId    String   @unique @map("node_id")
+  groupId   String?  @map("group_id")
+  hostname  String?
+  osName    String?  @map("os_name")
+  online    Boolean  @default(false)
+  seenAt    DateTime @default(now()) @map("seen_at")
+
+  @@index([hostname])
+  @@map("mesh_unmatched_nodes")
+}
+
+model CustomerGpo {
+  id           Int      @id @default(autoincrement())
+  customerId   Int      @map("customer_id")
+  gpoId        String   @map("gpo_id")        // the domain's own GUID for it
+  name         String
+  status       String?                        // AllSettingsEnabled | UserSettingsDisabled | ...
+  description  String?
+  domain       String?
+  createdOn    String?  @map("created_on")
+  modifiedOn   String?  @map("modified_on")
+  linkCount    Int      @default(0) @map("link_count")
+  linkedEnabled Int     @default(0) @map("linked_enabled")
+  enforced     Boolean  @default(false)
+  settingCount Int      @default(0) @map("setting_count")
+  appliesTo    Json?    @map("applies_to")    // security groups the policy filters to
+  links        Json?                          // [{target,enabled,enforced,order}]
+  settings     Json?                          // the reduced setting list (capped agent-side)
+  reportError  String?  @map("report_error")
+  collectedAt  DateTime @default(now()) @map("collected_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([customerId, gpoId])
+  @@index([customerId])
+  @@map("customer_gpos")
 }

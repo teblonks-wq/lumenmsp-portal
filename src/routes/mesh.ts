@@ -6,7 +6,7 @@ import path from 'path';
 import multer from 'multer';
 import { pool } from '../db/pool';
 import { requireAuth, requireAdmin } from '../middleware/auth';
-import { getSetting } from '../lib/settings';
+import { getSetting, setSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
 import { AGENT_PKG_DIR, wakeAgent } from './agent-api';
 
@@ -39,6 +39,11 @@ const sha256 = (b: Buffer) => crypto.createHash('sha256').update(b).digest('hex'
  * dead desktop panel if you give it the prefixed one. Strip on the way in and again on
  * the way out, because a row stored before this existed shouldn't stay broken.
  */
+// How long an automatic (heartbeat-driven) install retry waits after the last attempt.
+// Long on purpose: the failure this guards against is a successful install that the
+// bridge never links, and no number of reinstalls changes that.
+const RETRY_COOLDOWN_HOURS = 12;
+
 const bareNodeId = (id: unknown) => String(id || '').replace(/^node\/\//, '');
 
 /**
@@ -195,6 +200,7 @@ router.post('/agent/api/mesh/devices', requireBridge, async (req: Request, res: 
   const list = (req.body || {}).devices;
   if (!Array.isArray(list)) { res.status(400).json({ ok: false, error: 'devices must be an array' }); return; }
   let matched = 0;
+  const unmatched: any[] = [];
   try {
     for (const d of list.slice(0, 5000)) {
       const nodeId = bareNodeId(String(d?.nodeId || '').trim()).slice(0, 200);
@@ -209,14 +215,67 @@ router.post('/agent/api/mesh/devices', requireBridge, async (req: Request, res: 
             AND c.mesh_group_id = $2
             AND LOWER(ad.hostname) = LOWER($3)`,
         [nodeId, groupId, hostname]);
-      matched += r.rowCount || 0;
+      const hit = r.rowCount || 0;
+      matched += hit;
+      // A node MeshCentral has that the Portal could not place. Before this existed, the
+      // only symptom was a machine stuck on "remote control is not installed" while the
+      // agent was demonstrably installed and working - with nothing anywhere saying why.
+      if (!hit) {
+        unmatched.push({ nodeId, groupId, hostname,
+          osName: String(d?.osName || '').slice(0, 200) || null,
+          online: d?.online === true });
+      }
     }
-    res.json({ ok: true, received: list.length, matched });
+
+    // Replace the unmatched set wholesale: it is a snapshot of this run, not a log.
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM mesh_unmatched_nodes');
+      for (const u of unmatched) {
+        await client.query(
+          `INSERT INTO mesh_unmatched_nodes (node_id, group_id, hostname, os_name, online, seen_at)
+           VALUES ($1,$2,$3,$4,$5,NOW())
+           ON CONFLICT (node_id) DO UPDATE SET group_id=$2, hostname=$3, os_name=$4, online=$5, seen_at=NOW()`,
+          [u.nodeId, u.groupId, u.hostname, u.osName, u.online]);
+      }
+      await client.query('COMMIT');
+    } catch (e: any) {
+      try { await client.query('ROLLBACK'); } catch { /* gone */ }
+      console.error('[mesh] unmatched-node snapshot failed:', e.message);
+    } finally { client.release(); }
+
+    // When the bridge last ran, and what it found. Nothing read this before, which is why
+    // a bridge that had quietly stopped looked identical to one that was running fine.
+    await setSetting('mesh', 'last_sync', JSON.stringify({
+      at: new Date().toISOString(), received: list.length, matched, unmatched: unmatched.length,
+    }));
+
+    res.json({ ok: true, received: list.length, matched, unmatched: unmatched.length });
   } catch (e: any) {
     console.error('[mesh] device sync failed:', e.message);
     res.status(500).json({ ok: false, error: 'device sync failed' });
   }
 });
+
+/** When the bridge last reported, and what it found. Null if it has never run. */
+export async function meshBridgeHealth(): Promise<
+  { at: Date; received: number; matched: number; unmatched: number; ageSecs: number } | null> {
+  const raw = (await getSetting('mesh', 'last_sync')) || '';
+  if (!raw) return null;
+  try {
+    const j = JSON.parse(raw);
+    const at = new Date(j.at);
+    if (isNaN(at.getTime())) return null;
+    return {
+      at,
+      received: Number(j.received) || 0,
+      matched: Number(j.matched) || 0,
+      unmatched: Number(j.unmatched) || 0,
+      ageSecs: Math.round((Date.now() - at.getTime()) / 1000),
+    };
+  } catch { return null; }
+}
 
 // ── Session recordings index ────────────────────────────────────────────────────
 // The bridge reports what recordings exist on mesh01; the files themselves stay
@@ -342,7 +401,7 @@ router.get('/remote-sessions', requireAuth, requireAdmin, async (req: Request, r
  * nothing when the device already has Mesh Agent, when its customer has no binary yet,
  * or when an install is already sitting in the queue.
  */
-export async function queueMeshInstall(deviceId: number, baseUrl: string): Promise<'queued' | 'skipped'> {
+export async function queueMeshInstall(deviceId: number, baseUrl: string, force = false): Promise<'queued' | 'skipped'> {
   // An install claimed by an agent that then restarted would otherwise block every future
   // attempt on this machine forever, because the check below counts 'running' as in flight.
   await reapStaleCommands();
@@ -365,6 +424,18 @@ export async function queueMeshInstall(deviceId: number, baseUrl: string): Promi
     [deviceId]);
   if (pending.rows.length) return 'skipped';
 
+  // An automatic retry backs off. A machine whose install keeps succeeding without the
+  // node ever appearing is not fixed by installing again - the Mesh Agent gets torn down
+  // and put back every two minutes, which kills any live session and fixes nothing. An
+  // engineer pressing the button on the device page passes force and skips this.
+  if (!force) {
+    const recent = await pool.query(
+      `SELECT 1 FROM agent_commands
+        WHERE device_id=$1 AND kind='mesh.install' AND finished_at IS NOT NULL
+          AND finished_at > NOW() - INTERVAL '${RETRY_COOLDOWN_HOURS} hours' LIMIT 1`, [deviceId]);
+    if (recent.rows.length) return 'skipped';
+  }
+
   // Resolve the URL here, never from anything the device sent — same rule as
   // software.install, so a device can't talk us into fetching an arbitrary installer.
   const payload = {
@@ -383,7 +454,7 @@ export async function queueMeshInstall(deviceId: number, baseUrl: string): Promi
 router.post('/agents/:id/mesh-install', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   try {
-    const r = await queueMeshInstall(id, `${req.protocol}://${req.get('host')}`);
+    const r = await queueMeshInstall(id, `${req.protocol}://${req.get('host')}`, true);
     res.redirect('/agents?msg=' + encodeURIComponent(
       r === 'queued'
         ? 'Remote access install queued — it will run on this device shortly.'
@@ -411,6 +482,16 @@ export interface MeshStatus {
    *  the queue waiting for a machine that is switched off). */
   pendingStarted: boolean;
   failed: { at: Date | null; output: string } | null;
+  /** When a mesh.install last came back clean. */
+  installedAt: Date | null;
+  /** A node MeshCentral reported under this hostname that the Portal could not place.
+   *  Its group id is the whole answer: it belongs to a device group no customer owns. */
+  looseNode: { nodeId: string; groupId: string | null; seenAt: Date } | null;
+  /** When the bridge last reported at all. Null means it never has. */
+  bridge: { at: Date; received: number; matched: number; unmatched: number; ageSecs: number } | null;
+  /** Why an installed machine still has no node. Null unless that is the situation.
+   *  Computed here so the device page and the list lightbox say the same thing. */
+  strandedDetail: string | null;
   /** The most recent install attempt whatever its state - so "it did nothing" becomes
    *  "here is what it did, when, and what it said". Admin-facing diagnostics. */
   lastAttempt: {
@@ -427,7 +508,7 @@ export async function meshStatus(assetId: number): Promise<MeshStatus | null> {
   // Asset to agent device, matched the same way as everywhere else in the Portal:
   // serial first because it survives a rename, hostname second.
   const d = (await pool.query(
-    `SELECT ad.id, ad.hostname, ad.mesh_node_id, ad.mesh_installed,
+    `SELECT ad.id, ad.hostname, ad.mesh_node_id, ad.mesh_installed, ad.mesh_installed_at,
             COALESCE(c.mesh_enabled, true) AS enabled, c.mesh_agent_package_id, c.name AS customer
        FROM customer_assets a
        JOIN agent_devices ad
@@ -464,10 +545,33 @@ export async function meshStatus(assetId: number): Promise<MeshStatus | null> {
       WHERE device_id=$1 AND kind='mesh.install'
       ORDER BY id DESC LIMIT 1`, [d.id])).rows[0] || null;
 
+  // Only worth looking up when the machine is stranded - a device with a node needs no
+  // explanation, and this is one query per page view.
+  const looseNode = d.mesh_node_id ? null : (await pool.query(
+    `SELECT node_id, group_id, seen_at FROM mesh_unmatched_nodes
+      WHERE LOWER(hostname) = LOWER($1) ORDER BY seen_at DESC LIMIT 1`, [d.hostname || ''])).rows[0] || null;
+  const bridge = d.mesh_node_id ? null : await meshBridgeHealth();
+
+  const hostname = d.hostname || 'this machine';
+  const strandedDetail = d.mesh_node_id || !d.mesh_installed ? null
+    : looseNode
+      ? `MeshCentral has a machine called ${hostname} in device group ${looseNode.group_id || 'unknown'}, but no customer in the Portal is linked to that group. `
+        + `Check ${d.customer || 'this customer'}'s device group on mesh01 - the Portal is holding a different group id for them, usually because the group was recreated by hand.`
+      : !bridge
+        ? 'The mesh bridge on mesh01 has never reported to the Portal. Until it does, no machine can be linked to its MeshCentral node. Check the bridge is scheduled and that its secret matches the one in Settings.'
+        : bridge.ageSecs > 6 * 3600
+          ? `The mesh bridge on mesh01 last reported ${Math.round(bridge.ageSecs / 3600)} hours ago. It is what links a machine to its MeshCentral node, and nothing gets linked while it is not running.`
+          : `The bridge is running (last reported ${Math.round(bridge.ageSecs / 60)} minutes ago, ${bridge.matched} machines linked) but has never seen a node called ${hostname}. `
+            + 'Either the Mesh Agent here has not reached mesh01 yet, or it registered under a different name.';
+
   return {
     deviceId: d.id,
     hostname: d.hostname || null,
     hasNode: !!d.mesh_node_id,
+    installedAt: d.mesh_installed_at || null,
+    strandedDetail,
+    looseNode: looseNode ? { nodeId: looseNode.node_id, groupId: looseNode.group_id, seenAt: looseNode.seen_at } : null,
+    bridge,
     installed: !!d.mesh_installed,
     enabled: !!d.enabled,
     hasPackage: !!d.mesh_agent_package_id,
@@ -529,12 +633,24 @@ router.get('/assets/:id/remote-state.json', requireAuth, requireAdmin, async (re
     } else if (st.failed) {
       reason = 'failed'; title = 'The last install attempt failed';
       detail = st.failed.output || 'No output was returned.';
+    } else if (st.installed) {
+      // The case this whole diagnosis exists for: the agent installed the Mesh Agent and
+      // said so, but nothing ever linked the machine to a node. Reinstalling does not fix
+      // it, so the page must not offer that as the answer - it must say what is actually
+      // broken, which is always one of these three.
+      reason = 'installed-not-linked';
+      title = 'Remote control is installed, but the Portal has not been told which machine it is';
+      detail = st.strandedDetail || detail;
     }
     res.json({
       ok: true, ready: false, reason, hostname: st.hostname, customer: st.customer, title, detail,
       canInstall: st.enabled && st.hasPackage && !st.pendingSince,
+      installLabel: reason === 'installed-not-linked' ? 'Reinstall anyway' : 'Install remote control',
       installUrl: `/assets/${id}/mesh-install`,
       lastAttempt: st.lastAttempt,
+      installedAt: st.installedAt,
+      looseNode: st.looseNode,
+      bridge: st.bridge,
       action: !st.enabled || !st.hasPackage ? { label: 'Agents page', href: '/agents' } : null,
     });
   } catch (e: any) {
@@ -562,7 +678,7 @@ router.post('/assets/:id/mesh-install', requireAuth, requireAdmin, async (req: R
       await pool.query('UPDATE agent_devices SET mesh_installed=false WHERE id=$1', [st.deviceId]);
     }
 
-    const r = await queueMeshInstall(st.deviceId!, `${req.protocol}://${req.get('host')}`);
+    const r = await queueMeshInstall(st.deviceId!, `${req.protocol}://${req.get('host')}`, true);
     await logActivity(req.session.user!.id, 'mesh_install', 'customer_assets', id,
       `Queued remote-access install on ${st.hostname}`);
     // No success notice on the way back: the page's own remote-access banner already

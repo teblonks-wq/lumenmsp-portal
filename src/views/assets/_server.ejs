@@ -1,0 +1,311 @@
+<%
+// ── Server tab ──────────────────────────────────────────────────────────────────
+// Everything the /servers section knows, on the machine's own page. The judgements come
+// from lib/server-facts.ts — this file only draws them.
+//
+// On form: almost none of this is a chart. Backup age, disk free and DHCP utilisation are
+// each ONE ratio against a limit, which is a meter, not a plot; the VM and database lists
+// are identity + state, which is a table. The only real graphics are meters, and their
+// unfilled track is a lighter step of the same ramp so the state reads across the whole
+// bar rather than only where it is filled. Status colour never travels alone — every chip
+// carries a word.
+var _f = (serverFacts && serverFacts.facts) ? serverFacts.facts : null;
+var _sql = (_f && Array.isArray(_f.sql)) ? _f.sql : [];
+var _vms = (_f && Array.isArray(_f.hyperv)) ? _f.hyperv : [];
+var _vols = (_f && Array.isArray(_f.volumes)) ? _f.volumes : [];
+var _certs = (_f && Array.isArray(_f.certificates)) ? _f.certificates : [];
+var _dhcp = (_f && Array.isArray(_f.dhcp)) ? _f.dhcp : [];
+var _ad = (_f && _f.ad) ? _f.ad : null;
+
+function sTone(level){ return level === 'bad' ? 'bad' : level === 'warn' ? 'warn' : 'ok'; }
+function sIcon(tone){ return tone === 'bad' ? '●' : tone === 'warn' ? '▲' : '✓'; }
+// Meter: fill carries severity, track is the same ramp one step lighter.
+function meter(pct, tone, title){
+  var p = Math.max(0, Math.min(100, Number(pct) || 0));
+  return '<span class="sv-meter" title="' + String(title || '').replace(/"/g,'&quot;') + '">'
+       + '<span class="sv-meter-fill sv-' + tone + '" style="width:' + p + '%"></span></span>';
+}
+function daysSince(v){
+  if (!v) return null;
+  var t = new Date(String(v).replace(' ', 'T')).getTime();
+  if (isNaN(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+function fmtN(n){ return (Number(n) || 0).toLocaleString('en-GB'); }
+// EJS compiles an include in its own scope, so the parent's dt() is not visible here.
+function dt(v){ return v ? new Date(v).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+function gb(mb){ return (Number(mb) / 1024).toFixed(1); }
+%>
+
+<style>
+  .sv-sec { margin-top:22px; }
+  .sv-sec > h3 { margin:0 0 3px; font-size:14px; }
+  .sv-sub { margin:0 0 10px; font-size:12px; color:var(--muted); }
+  .sv-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; }
+  .sv-kpi { border:1px solid var(--line); border-radius:10px; padding:11px 13px; background:var(--surface-2); }
+  .sv-kpi .l { font-size:11px; color:var(--muted); }
+  .sv-kpi .v { font-size:22px; font-weight:700; line-height:1.15; margin-top:2px; }
+  .sv-meter { display:inline-block; width:100%; max-width:150px; height:7px; border-radius:4px; background:var(--surface-3); overflow:hidden; vertical-align:middle; }
+  .sv-meter-fill { display:block; height:100%; border-radius:4px; }
+  .sv-meter-fill.sv-ok   { background:var(--ok); }
+  .sv-meter-fill.sv-warn { background:var(--warn); }
+  .sv-meter-fill.sv-bad  { background:var(--bad); }
+  .sv-meter.sv-track-ok   { background:var(--ok-bg); }
+  .sv-meter.sv-track-warn { background:var(--warn-bg); }
+  .sv-meter.sv-track-bad  { background:var(--bad-bg); }
+  .sv-chip { display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600; padding:1px 8px; border-radius:999px; white-space:nowrap; }
+  .sv-chip.ok   { background:var(--ok-bg);   color:var(--ok-deep); }
+  .sv-chip.warn { background:var(--warn-bg); color:var(--warn-deep); }
+  .sv-chip.bad  { background:var(--bad-bg);  color:var(--bad-deep); }
+  .sv-chip.mute { background:var(--surface-3); color:var(--muted); }
+  .sv-num { font-variant-numeric: tabular-nums; }
+  .sv-alert { display:flex; gap:9px; padding:9px 0; border-bottom:1px solid var(--surface-3); font-size:13px; }
+  .sv-alert:last-child { border-bottom:none; }
+</style>
+
+<section class="dev-tab-panel" data-key="server">
+  <% if (!serverFacts) { %>
+    <p class="muted" style="font-size:13px;margin:0;">
+      Nothing collected yet. Server checks run on machines Windows reports as a server — they are gathered on the
+      first visit to the Servers page and refreshed daily.
+    </p>
+  <% } else { %>
+
+    <div class="sv-kpis">
+      <% var _bad = serverAlerts.filter(function(a){ return a.level === 'bad'; }).length;
+         var _warn = serverAlerts.length - _bad; %>
+      <div class="sv-kpi">
+        <div class="l">Worth a look</div>
+        <div class="v" style="color:<%= _bad ? 'var(--bad-fg)' : (_warn ? 'var(--warn-fg)' : 'var(--ok-fg)') %>;"><%= serverAlerts.length %></div>
+        <div class="l"><%= _bad %> serious<%= _warn ? ', ' + _warn + ' to review' : '' %></div>
+      </div>
+      <% if (_vms.length) { var _run = _vms.filter(function(v){ return String(v.state).toLowerCase() === 'running'; }).length; %>
+      <div class="sv-kpi"><div class="l">Virtual machines</div><div class="v"><%= _run %><span style="font-size:14px;color:var(--muted);">/<%= _vms.length %></span></div><div class="l">running</div></div>
+      <% } %>
+      <% if (_sql.length) { var _dbs = _sql.reduce(function(n,i){ return n + ((i.databases||[]).length); }, 0); %>
+      <div class="sv-kpi"><div class="l">SQL databases</div><div class="v"><%= _dbs %></div><div class="l">across <%= _sql.length %> instance<%= _sql.length===1?'':'s' %></div></div>
+      <% } %>
+      <% if (_vols.length) { %>
+      <div class="sv-kpi"><div class="l">Volumes</div><div class="v"><%= _vols.length %></div><div class="l"><%= _vols.filter(function(v){ return Number(v.pctFree) < 10; }).length %> running low</div></div>
+      <% } %>
+      <div class="sv-kpi"><div class="l">Last checked</div><div class="v" style="font-size:15px;"><%= dt(serverFacts.collected_at) %></div></div>
+    </div>
+
+    <% if (serverRoles && serverRoles.length) { %>
+    <p style="margin:12px 0 0;"><% serverRoles.forEach(function(r){ %><span class="badge badge-inactive" style="margin-right:5px;"><%= r %></span><% }); %></p>
+    <% } %>
+
+    <% if (serverAlerts.length) { %>
+    <div class="sv-sec">
+      <h3>Worth a look</h3>
+      <p class="sv-sub">Judged in the Portal, not on the machine — so what counts as a problem can change without touching a single server.</p>
+      <% serverAlerts.forEach(function(a){ var t = sTone(a.level); %>
+        <div class="sv-alert">
+          <span class="sv-chip <%= t %>"><%= sIcon(t) %> <%= a.area %></span>
+          <span style="flex:1;">
+            <strong><%= a.title %></strong>
+            <% if (a.detail) { %><div class="muted" style="font-size:12px;margin-top:2px;"><%= a.detail %></div><% } %>
+          </span>
+        </div>
+      <% }); %>
+    </div>
+    <% } %>
+
+    <% if (_sql.length) { %>
+    <div class="sv-sec">
+      <h3>SQL Server</h3>
+      <p class="sv-sub">Backup age is measured against a seven-day limit — the bar fills as the gap grows, and a database that has never been backed up is full and red.</p>
+      <% _sql.forEach(function(inst){ %>
+        <div style="margin-bottom:14px;">
+          <div style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:5px;">
+            <strong style="font-size:13.5px;"><%= inst.instance %></strong>
+            <% if (inst.edition) { %><span class="muted" style="font-size:12px;"><%= inst.edition %><%= inst.version ? ' · ' + inst.version : '' %></span><% } %>
+            <% if (Number(inst.failedJobs7d) > 0) { %><span class="sv-chip bad">● <%= inst.failedJobs7d %> job failure<%= Number(inst.failedJobs7d)===1?'':'s' %> in 7 days</span><% } %>
+          </div>
+          <% if (inst.accessError) { %>
+            <p class="muted" style="font-size:12.5px;margin:0;">Could not read this instance: <%= inst.accessError %></p>
+          <% } else { %>
+          <div class="table-wrap"><table class="table" style="margin:0;">
+            <thead><tr><th>Database</th><th style="text-align:right;">Size</th><th>Recovery</th><th style="min-width:170px;">Last full backup</th><th>Log backup</th></tr></thead>
+            <tbody>
+            <% (inst.databases || []).forEach(function(db){
+                 var d = daysSince(db.lastFull);
+                 var never = d === null;
+                 var tone = never || d > 7 ? 'bad' : d > 2 ? 'warn' : 'ok';
+                 var pct = never ? 100 : Math.min(100, (d / 7) * 100);
+                 var full = String(db.recovery || '').toUpperCase().indexOf('FULL') === 0;
+                 var ld = daysSince(db.lastLog);
+            %>
+              <tr>
+                <td style="font-weight:600;"><%= db.name %></td>
+                <td style="text-align:right;" class="muted sv-num"><%= gb(db.sizeMb) %> GB</td>
+                <td><span class="sv-chip mute"><%= db.recovery || '—' %></span></td>
+                <td>
+                  <span class="sv-meter sv-track-<%= tone %>" title="<%= never ? 'Never backed up' : d + ' days since the last full backup' %>"><span class="sv-meter-fill sv-<%= tone %>" style="width:<%= pct %>%"></span></span>
+                  <div style="font-size:11.5px;margin-top:3px;">
+                    <span class="sv-chip <%= tone %>"><%= sIcon(tone) %> <%= never ? 'never backed up' : (d === 0 ? 'today' : d + 'd ago') %></span>
+                  </div>
+                </td>
+                <td class="muted" style="font-size:12px;">
+                  <% if (!full) { %><span class="muted">n/a</span>
+                  <% } else if (ld === null) { %><span class="sv-chip bad">● none — log will grow</span>
+                  <% } else { %><span class="sv-num"><%= ld === 0 ? 'today' : ld + 'd ago' %></span><% } %>
+                </td>
+              </tr>
+            <% }); %>
+            <% if (!(inst.databases || []).length) { %><tr><td colspan="5" class="muted">No databases reported.</td></tr><% } %>
+            </tbody>
+          </table></div>
+          <% } %>
+        </div>
+      <% }); %>
+    </div>
+    <% } %>
+
+    <% if (_vms.length) {
+         var _maxMem = Math.max.apply(null, _vms.map(function(v){ return Number(v.memoryMb) || 0; }).concat([1]));
+         var _totCpu = _vms.reduce(function(n,v){ return n + (Number(v.cpu) || 0); }, 0);
+         var _totMem = _vms.reduce(function(n,v){ return n + (Number(v.memoryMb) || 0); }, 0);
+    %>
+    <div class="sv-sec">
+      <h3>Hyper-V</h3>
+      <p class="sv-sub">Memory bars are relative to the largest guest on this host. <%= _totCpu %> vCPU and <%= gb(_totMem) %> GB assigned in total.</p>
+      <div class="table-wrap"><table class="table" style="margin:0;">
+        <thead><tr><th>Virtual machine</th><th>State</th><th style="text-align:right;">vCPU</th><th style="min-width:170px;">Memory assigned</th><th>Uptime</th><th>Checkpoints</th></tr></thead>
+        <tbody>
+        <% _vms.forEach(function(v){
+             var running = String(v.state).toLowerCase() === 'running';
+             var cAge = daysSince(v.oldestCheckpoint);
+             var cTone = cAge === null ? 'ok' : cAge > 14 ? 'bad' : cAge > 7 ? 'warn' : 'ok';
+             var up = Number(v.uptimeHours) || 0;
+        %>
+          <tr>
+            <td style="font-weight:600;"><%= v.name %></td>
+            <td><span class="sv-chip <%= running ? 'ok' : 'mute' %>"><%= running ? '✓ running' : '○ ' + (v.state || 'off') %></span></td>
+            <td style="text-align:right;" class="sv-num"><%= v.cpu || '—' %></td>
+            <td>
+              <span class="sv-meter" title="<%= fmtN(v.memoryMb) %> MB assigned"><span class="sv-meter-fill sv-ok" style="width:<%= Math.round((Number(v.memoryMb)||0) / _maxMem * 100) %>%;background:var(--accent);"></span></span>
+              <div class="muted sv-num" style="font-size:11.5px;margin-top:3px;"><%= gb(v.memoryMb) %> GB</div>
+            </td>
+            <td class="muted sv-num" style="font-size:12px;"><%= running ? (up >= 24 ? Math.round(up/24) + 'd' : up + 'h') : '—' %></td>
+            <td>
+              <% if (!Number(v.checkpoints)) { %><span class="muted">none</span>
+              <% } else { %>
+                <span class="sv-chip <%= cTone %>"><%= sIcon(cTone) %> <%= v.checkpoints %><%= cAge !== null ? ', oldest ' + cAge + 'd' : '' %></span>
+              <% } %>
+            </td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+    </div>
+    <% } %>
+
+    <% if (_vols.length) { %>
+    <div class="sv-sec">
+      <h3>Storage</h3>
+      <p class="sv-sub">Bars show space USED. Amber under 10% free, red under 5%.</p>
+      <div class="table-wrap"><table class="table" style="margin:0;">
+        <thead><tr><th>Volume</th><th style="min-width:190px;">Used</th><th style="text-align:right;">Free</th><th style="text-align:right;">Size</th></tr></thead>
+        <tbody>
+        <% _vols.forEach(function(v){
+             var pf = Number(v.pctFree);
+             var tone = pf < 5 ? 'bad' : pf < 10 ? 'warn' : 'ok';
+        %>
+          <tr>
+            <td style="font-weight:600;"><%= v.drive %></td>
+            <td>
+              <span class="sv-meter sv-track-<%= tone %>" title="<%= pf %>% free"><span class="sv-meter-fill sv-<%= tone %>" style="width:<%= Math.max(0, Math.min(100, 100 - pf)) %>%"></span></span>
+              <div style="font-size:11.5px;margin-top:3px;"><span class="sv-chip <%= tone %>"><%= sIcon(tone) %> <%= pf %>% free</span></div>
+            </td>
+            <td style="text-align:right;" class="muted sv-num"><%= fmtN(v.freeGb) %> GB</td>
+            <td style="text-align:right;" class="muted sv-num"><%= fmtN(v.sizeGb) %> GB</td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+    </div>
+    <% } %>
+
+    <% if (_certs.length) { %>
+    <div class="sv-sec">
+      <h3>Certificates</h3>
+      <div class="table-wrap"><table class="table" style="margin:0;">
+        <thead><tr><th>Subject</th><th>Expires</th><th>Days left</th></tr></thead>
+        <tbody>
+        <% _certs.forEach(function(c){ var l = Number(c.daysLeft);
+             var tone = l < 0 ? 'bad' : l < 14 ? 'bad' : l < 30 ? 'warn' : 'ok'; %>
+          <tr>
+            <td style="overflow-wrap:anywhere;"><%= c.subject %></td>
+            <td class="muted sv-num"><%= c.expires %></td>
+            <td><span class="sv-chip <%= tone %>"><%= sIcon(tone) %> <%= l < 0 ? 'expired ' + Math.abs(l) + 'd ago' : l + 'd' %></span></td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+    </div>
+    <% } %>
+
+    <% if (_dhcp.length) { %>
+    <div class="sv-sec">
+      <h3>DHCP</h3>
+      <div class="table-wrap"><table class="table" style="margin:0;">
+        <thead><tr><th>Scope</th><th style="min-width:190px;">Used</th><th style="text-align:right;">Free</th><th>Range</th></tr></thead>
+        <tbody>
+        <% _dhcp.forEach(function(d){ var u = Number(d.pctUsed);
+             var tone = u > 95 ? 'bad' : u > 85 ? 'warn' : 'ok'; %>
+          <tr>
+            <td style="font-weight:600;"><%= d.name || d.id %></td>
+            <td>
+              <span class="sv-meter sv-track-<%= tone %>" title="<%= u %>% used"><span class="sv-meter-fill sv-<%= tone %>" style="width:<%= Math.max(0, Math.min(100, u)) %>%"></span></span>
+              <div style="font-size:11.5px;margin-top:3px;"><span class="sv-chip <%= tone %>"><%= sIcon(tone) %> <%= u %>% used</span></div>
+            </td>
+            <td style="text-align:right;" class="muted sv-num"><%= fmtN(d.free) %></td>
+            <td class="muted" style="font-size:12px;"><%= d.range || '—' %></td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+    </div>
+    <% } %>
+
+    <% if (_ad) { %>
+    <div class="sv-sec">
+      <h3>Active Directory</h3>
+      <div class="dev-info-cols">
+        <div>
+          <div class="dev-field-row"><div class="k">Domain</div><div class="v"><%= _ad.domain || (serverFacts.domain || '—') %></div></div>
+          <div class="dev-field-row"><div class="k">Functional level</div><div class="v"><%= _ad.domainMode || '—' %></div></div>
+          <div class="dev-field-row"><div class="k">Domain controllers</div><div class="v"><%= _ad.dcCount != null ? _ad.dcCount : ((_ad.dcs||[]).length || '—') %></div></div>
+          <div class="dev-field-row"><div class="k">Recycle Bin</div><div class="v"><% if (_ad.recycleBin === true) { %><span class="sv-chip ok">✓ enabled</span><% } else if (_ad.recycleBin === false) { %><span class="sv-chip warn">▲ not enabled</span><% } else { %>—<% } %></div></div>
+        </div>
+        <div>
+          <div class="dev-field-row"><div class="k">Domain Admins</div><div class="v"><%= (_ad.domainAdmins || []).length || '—' %></div></div>
+          <div class="dev-field-row"><div class="k">Stale computers</div><div class="v"><%= _ad.staleComputers != null ? _ad.staleComputers : '—' %></div></div>
+          <div class="dev-field-row"><div class="k">Passwords never expire</div><div class="v"><%= _ad.passwordNeverExpires != null ? _ad.passwordNeverExpires : '—' %></div></div>
+          <div class="dev-field-row"><div class="k">Replication</div><div class="v"><% var rf = (_ad.replicationFailures || []).length; %><% if (rf) { %><span class="sv-chip bad">● failing with <%= rf %></span><% } else { %><span class="sv-chip ok">✓ healthy</span><% } %></div></div>
+        </div>
+      </div>
+      <% if ((_ad.dcs || []).length) { %>
+      <p class="sv-sub" style="margin-top:10px;">Domain controllers</p>
+      <div class="table-wrap"><table class="table" style="margin:0;">
+        <thead><tr><th>Name</th><th>Site</th><th>Global catalog</th><th>OS</th></tr></thead>
+        <tbody>
+        <% _ad.dcs.forEach(function(d){ %>
+          <tr><td style="font-weight:600;"><%= d.name %></td><td class="muted"><%= d.site || '—' %></td>
+              <td><% if (d.gc) { %><span class="sv-chip ok">✓ yes</span><% } else { %><span class="muted">no</span><% } %></td>
+              <td class="muted" style="font-size:12px;"><%= d.os || '—' %></td></tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+      <% } %>
+    </div>
+    <% } %>
+
+    <p class="muted" style="font-size:11.5px;margin-top:18px;">
+      Collected <%= dt(serverFacts.collected_at) %> · refreshed daily, or on demand from
+      <a class="row-link" href="/servers/<%= asset.agent_device_id %>">the server page</a>.
+      <% if (serverFacts.error) { %><br><span style="color:var(--warn-fg);">Last collection reported: <%= serverFacts.error %></span><% } %>
+    </p>
+  <% } %>
+</section>

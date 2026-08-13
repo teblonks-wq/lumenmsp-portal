@@ -54,6 +54,63 @@
   <% } %>
 </div>
 
+<% if (isAdmin) {
+     var _mb = typeof meshBridge !== 'undefined' ? meshBridge : null;
+     var _stranded = typeof meshStranded !== 'undefined' ? Number(meshStranded) : 0;
+     var _loose = typeof meshLoose !== 'undefined' ? meshLoose : [];
+     var _ageH = _mb ? Math.round(_mb.ageSecs / 3600) : null;
+     var _bad = !_mb || _mb.ageSecs > 6 * 3600;
+     var _warn = !_bad && (_stranded > 0 || _loose.length > 0);
+%>
+<div class="card" style="border-left:3px solid <%= _bad ? 'var(--bad-fg)' : (_warn ? 'var(--warn-fg)' : 'var(--ok)') %>;">
+  <h3 style="margin-top:0;">Remote access &mdash; mesh bridge</h3>
+  <p class="muted" style="margin:0 0 8px;font-size:12.5px;">
+    The bridge on mesh01 is what links a machine to its MeshCentral node. Remote control only
+    works on machines it has linked, so if it stops, everything installed after that point is stranded.
+  </p>
+  <% if (!_mb) { %>
+    <p style="margin:0;font-size:13.5px;color:var(--bad-fg);"><strong>The bridge has never reported to the Portal.</strong>
+      No machine can be linked to its node until it does. Check it is scheduled on mesh01 and that its secret matches the one in Settings.</p>
+  <% } else { %>
+    <p style="margin:0 0 6px;font-size:13.5px;<%= _bad ? 'color:var(--bad-fg);' : '' %>">
+      <strong>Last reported <%= _mb.ageSecs < 3600 ? Math.round(_mb.ageSecs / 60) + ' minutes' : _ageH + ' hours' %> ago</strong>
+      &mdash; <%= _mb.received %> node<%= _mb.received === 1 ? '' : 's' %> seen, <%= _mb.matched %> linked<% if (_mb.unmatched) { %>,
+      <span style="color:var(--warn-fg);"><%= _mb.unmatched %> it could not place</span><% } %>.
+      <% if (_bad) { %> That is long enough to assume it has stopped.<% } %>
+    </p>
+  <% } %>
+  <% if (_stranded) { %>
+    <p style="margin:6px 0 0;font-size:13px;">
+      <strong style="color:var(--warn-fg);"><%= _stranded %></strong> machine<%= _stranded === 1 ? ' has' : 's have' %>
+      the Mesh Agent installed but no node linked &mdash; remote control will not open on <%= _stranded === 1 ? 'it' : 'them' %>.
+    </p>
+  <% } %>
+  <% if (_loose.length) { %>
+    <details style="margin-top:8px;">
+      <summary style="cursor:pointer;font-size:12.5px;">Nodes MeshCentral has that the Portal could not place (<%= _loose.length %>)</summary>
+      <div class="table-wrap" style="margin-top:6px;">
+        <table class="table">
+          <thead><tr><th>Machine</th><th>Device group</th><th>Seen</th></tr></thead>
+          <tbody>
+            <% _loose.forEach(function (n) { %>
+              <tr>
+                <td><%= n.hostname || '(unnamed)' %></td>
+                <td style="font-family:ui-monospace,Consolas,monospace;font-size:11.5px;"><%= n.group_id || '-' %></td>
+                <td class="muted" style="font-size:12.5px;white-space:nowrap;"><%= n.seen_at ? new Date(n.seen_at).toLocaleString('en-GB') : '-' %></td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="margin:6px 0 0;font-size:12px;">
+        A node here is in a MeshCentral device group that no customer in the Portal is linked to, or under a name
+        the Portal does not have. The group id is the thing to check.
+      </p>
+    </details>
+  <% } %>
+</div>
+<% } %>
+
 <% if (isAdmin && rollout && rollout.version) {
      var stage = rollout.stage;
      var stageLabel = stage === -1 ? 'Halted' : stage === 0 ? 'Internal only' : stage === 1 ? 'Internal + pilot' : 'Everyone';

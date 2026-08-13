@@ -1,0 +1,62 @@
+<script>
+// -- The answer layout ----------------------------------------------------------
+// Headline first, then the answer, then anything worth acting on. The working-out is
+// not printed: if you want the settings they are on the page already, and burying the
+// answer under them is exactly the complaint that reshaped every AI panel in here.
+(function () {
+  if (window.gpoAsk) return;
+  function el(tag, css, text) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; }
+  function csrf() { var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
+
+  window.gpoAsk = function (scope, question, head, body, go) {
+    head.textContent = question;
+    body.innerHTML = '';
+    body.appendChild(el('p', 'margin:0;color:var(--muted);font-size:13px;', 'Reading the policy settings. A few seconds.'));
+    go.disabled = true;
+    var was = go.textContent;
+    go.textContent = 'Thinking...';
+
+    var payload = { question: question };
+    if (scope.id) payload.id = scope.id;
+    if (scope.customer_id) payload.customer_id = scope.customer_id;
+
+    fetch('/gpo/ask.json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() },
+      body: JSON.stringify(payload)
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      body.innerHTML = '';
+      if (!d.ok) { body.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', d.error || 'That did not work.')); return; }
+
+      if (d.headline) body.appendChild(el('p', 'margin:0 0 10px;font-size:17px;font-weight:700;line-height:1.35;', d.headline));
+
+      String(d.answer || '').split(/\n{1,}/).forEach(function (para) {
+        if (!para.trim()) return;
+        body.appendChild(el('p', 'margin:0 0 8px;font-size:13.5px;line-height:1.55;', para.trim()));
+      });
+
+      if (d.risks && d.risks.length) {
+        var wrap = el('div', 'margin-top:12px;border-top:1px solid var(--line);padding-top:11px;');
+        wrap.appendChild(el('p', 'margin:0 0 7px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;color:var(--muted);', 'Worth acting on'));
+        d.risks.forEach(function (r) {
+          var row = el('div', 'padding:7px 0;border-bottom:1px solid var(--surface-3);font-size:13px;');
+          var bad = r.level === 'bad';
+          row.appendChild(el('span', 'font-weight:700;color:' + (bad ? 'var(--bad-fg)' : 'var(--warn-fg)') + ';', (bad ? '▲ ' : '● ') + r.title));
+          if (r.detail) { row.appendChild(document.createTextNode(' ')); row.appendChild(el('span', 'color:var(--text-2);', r.detail)); }
+          wrap.appendChild(row);
+        });
+        body.appendChild(wrap);
+      }
+
+      var meta = [];
+      if (d.scope) meta.push('read: ' + d.scope);
+      if (d.seconds) meta.push(d.seconds + 's');
+      if (d.cache) meta.push(d.cache);
+      if (meta.length) body.appendChild(el('p', 'margin:11px 0 0;font-size:11px;color:var(--faint);', meta.join(' · ')));
+    }).catch(function () {
+      body.innerHTML = '';
+      body.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', 'Could not reach the Portal.'));
+    }).then(function () { go.disabled = false; go.textContent = was; });
+  };
+})();
+</script>
