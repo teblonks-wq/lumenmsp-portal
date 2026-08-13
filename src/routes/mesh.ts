@@ -64,15 +64,46 @@ export async function meshServerUrl(): Promise<string | null> {
 // ── Bridge auth ─────────────────────────────────────────────────────────────────
 // A shared secret in settings (mesh/bridge_secret), compared in constant time. This is
 // a server-to-server credential: no session, no CSRF, same posture as the agent API.
+let lastRejectWrite = 0;
+let lastContactWrite = 0;
+
+/** Remember that an authenticated bridge call came in, whatever it was for. Throttled:
+ *  the bridge makes several calls per run and one write a minute is plenty. */
+async function noteContact(path: string): Promise<void> {
+  const now = Date.now();
+  if (now - lastContactWrite < 60_000) return;
+  lastContactWrite = now;
+  try {
+    await setSetting('mesh', 'last_contact', JSON.stringify({ at: new Date().toISOString(), path }));
+  } catch { /* bookkeeping must never break the call itself */ }
+}
+
+/** Remember that something tried and was turned away. Throttled to once a minute so a
+ *  hammering client cannot turn this into a write loop. */
+async function noteReject(reason: string): Promise<void> {
+  const now = Date.now();
+  if (now - lastRejectWrite < 60_000) return;
+  lastRejectWrite = now;
+  try {
+    await setSetting('mesh', 'last_reject', JSON.stringify({ at: new Date().toISOString(), reason }));
+  } catch { /* never let bookkeeping break the rejection itself */ }
+}
+
 async function requireBridge(req: Request, res: Response, next: NextFunction): Promise<void> {
   const given = String(req.headers['x-mesh-bridge-secret'] || '');
   const want = ((await getSetting('mesh', 'bridge_secret')) || '').trim();
-  if (!want) { res.status(503).json({ ok: false, error: 'bridge secret not configured' }); return; }
+  if (!want) {
+    await noteReject('no bridge secret is set in the Portal');
+    res.status(503).json({ ok: false, error: 'bridge secret not configured' });
+    return;
+  }
   const a = Buffer.from(given), b = Buffer.from(want);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    await noteReject(given ? 'the secret it sent does not match the one in Settings' : 'it sent no secret at all');
     res.status(401).json({ ok: false, error: 'bad bridge secret' });
     return;
   }
+  await noteContact(String(req.path || '').slice(0, 120));
   next();
 }
 
@@ -245,6 +276,11 @@ router.post('/agent/api/mesh/devices', requireBridge, async (req: Request, res: 
       console.error('[mesh] unmatched-node snapshot failed:', e.message);
     } finally { client.release(); }
 
+    // A good run clears any record of a rejection: whatever was wrong is now right, and
+    // leaving a stale "bad secret" on screen would send someone chasing a fixed problem.
+    await setSetting('mesh', 'last_reject', null);
+    lastRejectWrite = 0;
+
     // When the bridge last ran, and what it found. Nothing read this before, which is why
     // a bridge that had quietly stopped looked identical to one that was running fine.
     await setSetting('mesh', 'last_sync', JSON.stringify({
@@ -257,6 +293,41 @@ router.post('/agent/api/mesh/devices', requireBridge, async (req: Request, res: 
     res.status(500).json({ ok: false, error: 'device sync failed' });
   }
 });
+
+// When this Portal process started. It matters because "the bridge has never reported"
+// and "the bridge has not reported in the four minutes since a deploy" look identical in
+// the database and mean completely different things. The bridge cycles every five
+// minutes, so a panel that shouts after a restart is a panel people learn to ignore.
+export const PORTAL_STARTED = new Date();
+
+/** How long the bridge cycle is, per the bridge's own header comment on mesh01. */
+export const BRIDGE_CYCLE_SECS = 5 * 60;
+
+/** The last time an authenticated bridge call arrived at all. Together with the device
+ *  sync this tells "not running" apart from "running, but dying partway through a run". */
+export async function meshBridgeContact(): Promise<{ at: Date; path: string; ageSecs: number } | null> {
+  const raw = (await getSetting('mesh', 'last_contact')) || '';
+  if (!raw) return null;
+  try {
+    const j = JSON.parse(raw);
+    const at = new Date(j.at);
+    if (isNaN(at.getTime())) return null;
+    return { at, path: String(j.path || ''), ageSecs: Math.round((Date.now() - at.getTime()) / 1000) };
+  } catch { return null; }
+}
+
+/** The last time something tried to talk to the bridge API and was turned away. This is
+ *  what tells "not running" apart from "running, wrong secret". */
+export async function meshBridgeReject(): Promise<{ at: Date; reason: string; ageSecs: number } | null> {
+  const raw = (await getSetting('mesh', 'last_reject')) || '';
+  if (!raw) return null;
+  try {
+    const j = JSON.parse(raw);
+    const at = new Date(j.at);
+    if (isNaN(at.getTime())) return null;
+    return { at, reason: String(j.reason || 'rejected'), ageSecs: Math.round((Date.now() - at.getTime()) / 1000) };
+  } catch { return null; }
+}
 
 /** When the bridge last reported, and what it found. Null if it has never run. */
 export async function meshBridgeHealth(): Promise<

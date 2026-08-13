@@ -381,7 +381,14 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
   // Remote access lives or dies on the mesh bridge, and nothing on the Portal used to
   // show whether it was running. A bridge that had quietly stopped looked exactly like a
   // healthy one, while every machine enrolled since sat on "remote control not installed".
-  const meshBridge = isAdmin ? await (await import('./mesh')).meshBridgeHealth() : null;
+  const mesh = await import('./mesh');
+  const meshBridge = isAdmin ? await mesh.meshBridgeHealth() : null;
+  const meshReject = isAdmin ? await mesh.meshBridgeReject() : null;
+  const meshContact = isAdmin ? await mesh.meshBridgeContact() : null;
+  // Seconds since this process started, so the panel can tell "never" apart from
+  // "not yet, we only just restarted".
+  const meshWatchingSecs = Math.round((Date.now() - mesh.PORTAL_STARTED.getTime()) / 1000);
+  const meshCycleSecs = mesh.BRIDGE_CYCLE_SECS;
   const meshStranded = isAdmin ? (await pool.query(
     `SELECT COUNT(*)::int AS n FROM agent_devices
       WHERE revoked=false AND mesh_node_id IS NULL AND mesh_installed = true`)).rows[0].n : 0;
@@ -394,7 +401,7 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
   res.render('assets/agents', {
     user: req.session.user!, rows, customers, defaults, isAdmin,
     rollout, ringCounts, hostedSha: agentHostedSha256(),
-    meshBridge, meshStranded, meshLoose,
+    meshBridge, meshReject, meshContact, meshStranded, meshLoose, meshWatchingSecs, meshCycleSecs,
     packages: isAdmin ? (await pool.query(
       'SELECT id, name, version, file_name, url, size_bytes, install_args FROM agent_packages ORDER BY name')).rows : [],
     msi: agentMsiInfo(), latestVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',

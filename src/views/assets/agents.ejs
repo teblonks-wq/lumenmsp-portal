@@ -59,8 +59,17 @@
      var _stranded = typeof meshStranded !== 'undefined' ? Number(meshStranded) : 0;
      var _loose = typeof meshLoose !== 'undefined' ? meshLoose : [];
      var _ageH = _mb ? Math.round(_mb.ageSecs / 3600) : null;
-     var _bad = !_mb || _mb.ageSecs > 6 * 3600;
-     var _warn = !_bad && (_stranded > 0 || _loose.length > 0);
+     var _watch = typeof meshWatchingSecs !== 'undefined' ? Number(meshWatchingSecs) : 99999;
+     var _cycle = typeof meshCycleSecs !== 'undefined' ? Number(meshCycleSecs) : 300;
+     // No report yet, but the Portal has only just restarted: that is a wait, not a fault.
+     // The two look identical in the database and mean completely different things.
+     var _rej = typeof meshReject !== 'undefined' ? meshReject : null;
+     var _con = typeof meshContact !== 'undefined' ? meshContact : null;
+     // Alive: it authenticated recently, whether or not it got as far as syncing devices.
+     var _alive = _con && _con.ageSecs < _cycle * 3;
+     var _tooSoon = !_mb && !_rej && !_alive && _watch < _cycle * 3;
+     var _bad = !_tooSoon && (!_mb || _mb.ageSecs > 6 * 3600);
+     var _warn = !_bad && (_tooSoon || _stranded > 0 || _loose.length > 0);
 %>
 <div class="card" style="border-left:3px solid <%= _bad ? 'var(--bad-fg)' : (_warn ? 'var(--warn-fg)' : 'var(--ok)') %>;">
   <h3 style="margin-top:0;">Remote access &mdash; mesh bridge</h3>
@@ -68,9 +77,32 @@
     The bridge on mesh01 is what links a machine to its MeshCentral node. Remote control only
     works on machines it has linked, so if it stops, everything installed after that point is stranded.
   </p>
-  <% if (!_mb) { %>
-    <p style="margin:0;font-size:13.5px;color:var(--bad-fg);"><strong>The bridge has never reported to the Portal.</strong>
-      No machine can be linked to its node until it does. Check it is scheduled on mesh01 and that its secret matches the one in Settings.</p>
+  <% if (!_mb && _tooSoon) { %>
+    <p style="margin:0;font-size:13.5px;color:var(--warn-fg);">
+      <strong>Waiting for the bridge's first report.</strong>
+      <span class="muted">The Portal restarted <%= Math.max(1, Math.round(_watch / 60)) %> minute<%= Math.round(_watch / 60) === 1 ? '' : 's' %> ago
+      and only starts counting from then, so this is not evidence of anything yet. The bridge reports every
+      <%= Math.round(_cycle / 60) %> minutes &mdash; give it a cycle and reload.</span>
+    </p>
+  <% } else if (!_mb && _alive) { %>
+    <p style="margin:0;font-size:13.5px;color:var(--bad-fg);">
+      <strong>The bridge is running and reaching the Portal, but never finishes a run.</strong>
+      It last called in <%= Math.max(1, Math.round(_con.ageSecs / 60)) %> minute<%= Math.round(_con.ageSecs / 60) === 1 ? '' : 's' %> ago
+      &mdash; so the Portal, its secret and the network are all fine &mdash; but it has never got as far as reporting devices.
+      It is failing inside its own run, which almost always means MeshCentral is refusing its login.
+      On mesh01: <code>journalctl -u lumen-mesh-bridge.service -n 40 --no-pager</code>.
+    </p>
+  <% } else if (!_mb && _rej) { %>
+    <p style="margin:0;font-size:13.5px;color:var(--bad-fg);">
+      <strong>The bridge is running, but the Portal is turning it away.</strong>
+      Something tried <%= _rej.ageSecs < 3600 ? Math.max(1, Math.round(_rej.ageSecs / 60)) + ' minutes' : Math.round(_rej.ageSecs / 3600) + ' hours' %> ago and was rejected:
+      <em><%= _rej.reason %></em>.
+      Set <code>PORTAL_SECRET</code> on mesh01 to the same value as the bridge secret in Settings, and it will link everything on its next run.
+    </p>
+  <% } else if (!_mb) { %>
+    <p style="margin:0;font-size:13.5px;color:var(--bad-fg);"><strong>The bridge has not reported in the <%= Math.round(_watch / 60) %> minutes since the Portal restarted.</strong>
+      It reports every <%= Math.round(_cycle / 60) %> minutes, and nothing has even reached the Portal, so it is not running at all.
+      On mesh01, check that its schedule still exists &mdash; <code>crontab -l</code> or <code>systemctl list-timers</code> &mdash; and try one run by hand.</p>
   <% } else { %>
     <p style="margin:0 0 6px;font-size:13.5px;<%= _bad ? 'color:var(--bad-fg);' : '' %>">
       <strong>Last reported <%= _mb.ageSecs < 3600 ? Math.round(_mb.ageSecs / 60) + ' minutes' : _ageH + ' hours' %> ago</strong>
@@ -83,6 +115,7 @@
     <p style="margin:6px 0 0;font-size:13px;">
       <strong style="color:var(--warn-fg);"><%= _stranded %></strong> machine<%= _stranded === 1 ? ' has' : 's have' %>
       the Mesh Agent installed but no node linked &mdash; remote control will not open on <%= _stranded === 1 ? 'it' : 'them' %>.
+      <% if (_tooSoon || (_mb && _mb.ageSecs < _cycle * 2)) { %><span class="muted">These should link themselves on the bridge's next run.</span><% } %>
     </p>
   <% } %>
   <% if (_loose.length) { %>
