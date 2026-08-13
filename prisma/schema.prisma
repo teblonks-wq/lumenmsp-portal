@@ -2491,3 +2491,38 @@ model CustomerGpo {
   @@index([customerId])
   @@map("customer_gpos")
 }
+
+/// Every Group Policy Object the Portal has removed from a domain, and the backup the
+/// agent took in the same breath.
+///
+/// This exists because "recoverable" was only true on paper. The agent has always backed
+/// a policy up before removing it and returned the backup id - and the Portal wrote that
+/// id to a console log and deleted the row. Undoing a deletion therefore meant remoting
+/// into the domain controller and guessing which backup folder was which, which is the
+/// same as not being able to undo it.
+///
+/// The settings snapshot is kept deliberately: once the object is gone from the domain,
+/// this row is the only remaining answer to "what was actually in it".
+model GpoDeletion {
+  id           Int       @id @default(autoincrement())
+  customerId   Int       @map("customer_id")
+  deviceId     Int?      @map("device_id")     // the DC the delete ran on
+  commandId    Int?      @map("command_id")
+  gpoId        String    @map("gpo_id")        // the domain's own GUID - restore reuses it
+  name         String
+  domain       String?
+  hostname     String?
+  backupId     String?   @map("backup_id")     // Restore-GPO -BackupId
+  backupPath   String?   @map("backup_path")   // ...-Path. Null means no way back.
+  settingCount Int       @default(0) @map("setting_count")
+  linkSnapshot Json?     @map("link_snapshot") // where it used to apply - restore drops links
+  snapshot     Json?                            // the customer_gpos row as it stood
+  deletedBy    Int?      @map("deleted_by")
+  deletedAt    DateTime  @default(now()) @map("deleted_at")
+  restoredAt   DateTime? @map("restored_at")
+  restoredBy   Int?      @map("restored_by")
+
+  @@index([customerId, deletedAt])
+  @@index([customerId, gpoId])
+  @@map("gpo_deletions")
+}

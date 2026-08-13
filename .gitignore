@@ -13,8 +13,12 @@ uploads/
 *.keystore
 
 # Workspace material & customer data — not part of the app (stays on D:\, backed up there)
-# CLAUDE.md stays local too — it references credentials and internal infrastructure.
+# CLAUDE.md stays local too - it references internal infrastructure. Same for the two
+# files beside it: [C] HISTORY.md names internal hosts and retired decisions, and
+# [C] MODULE-MAP.md is generated from source (regenerate it, do not version it).
 CLAUDE.md
+\[C\] HISTORY.md
+\[C\] MODULE-MAP.md
 01 Daily Logs/
 02 Projects/
 Getting Started.pdf

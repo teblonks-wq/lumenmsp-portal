@@ -29,6 +29,7 @@ const BUDGET_MINUTES: Record<string, number> = {
   'gpo.deploy': 15,
   'gpo.delete': 15,
   'gpo.unlink': 15,
+  'gpo.restore': 15,
 };
 const DEFAULT_MINUTES = 10;
 

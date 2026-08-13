@@ -15,6 +15,9 @@ const router = Router();
 const KIND_LABEL: Record<string, string> = {
   'gpo.inventory': 'Reading Group Policy',
   'gpo.deploy': 'Working on the deployment policy',
+  'gpo.delete': 'Backing up, then removing those policies',
+  'gpo.unlink': 'Unlinking those policies',
+  'gpo.restore': 'Putting that policy back',
   'server.facts': 'Collecting server facts',
   'ce.assess': 'Running the Cyber Essentials checks',
   'mesh.install': 'Installing remote access',

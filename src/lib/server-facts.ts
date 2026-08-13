@@ -13,6 +13,8 @@ export interface ServerAlert {
   area: string;      // AD | SQL | Hyper-V | Storage | Certificates | DHCP
   title: string;
   detail?: string;
+  /** Key into SERVER_FIXES (lib/server-fix.ts) when the Portal carries a safe one-click fix. */
+  fix?: string;
 }
 
 const num = (v: any): number | null => {
@@ -44,12 +46,14 @@ export function judge(f: any): ServerAlert[] {
     }
     if (ad.recycleBin === false) {
       out.push({ level: 'warn', area: 'AD', title: 'AD Recycle Bin is not enabled',
-        detail: 'Without it, restoring a deleted user or group means an authoritative restore from backup. It is a one-way switch and it is free.' });
+        detail: 'Without it, restoring a deleted user or group means an authoritative restore from backup. It is a one-way switch and it is free.',
+        fix: 'ad-recycle-bin' });
     }
     const stale = num(ad.staleComputers) || 0;
     if (stale > 0) {
       out.push({ level: 'warn', area: 'AD', title: `${stale} computer account${stale === 1 ? '' : 's'} unused for 90 days`,
-        detail: 'Dormant enabled accounts are the easiest thing for an assessor to point at, and they make every device count wrong.' });
+        detail: 'Dormant enabled accounts are the easiest thing for an assessor to point at, and they make every device count wrong.',
+        fix: 'ad-stale-computers' });
     }
     const pne = num(ad.passwordNeverExpires) || 0;
     if (pne > 0) {

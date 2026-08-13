@@ -9,6 +9,91 @@ import { aiAskCached, parseJsonAnswer, stripTrailingJson, cacheNote, AskUsage } 
 // The value here is the two things GPMC is bad at: seeing the whole estate at once, and
 // answering "what does this actually do" without reading 300 rows of registry policy.
 
+// ── The two policies nobody deletes ─────────────────────────────────────────────
+// Their GUIDs are the same in every Active Directory domain on earth. Guarded here AND
+// in the agent script, because a guard that lives in only one of the two is a guard that
+// somebody routes around by accident. Until this existed they were safe only because they
+// happen to be linked - which is not the same as being protected.
+export const PROTECTED_GPOS: Record<string, string> = {
+  '31b2f340-016d-11d2-945f-00c04fb984f9': 'Default Domain Policy',
+  '6ac1786c-016f-11d2-945f-00c04fb984f9': 'Default Domain Controllers Policy',
+};
+
+export function protectedGpoName(gpoId: string): string | null {
+  const bare = String(gpoId || '').replace(/[{}]/g, '').toLowerCase();
+  return PROTECTED_GPOS[bare] || null;
+}
+
+export type DeleteVerdict = 'never' | 'no' | 'check' | 'safe';
+
+export interface VerdictResult { verdict: DeleteVerdict; label: string; reason: string }
+
+/** What the pre-delete script used to say, said in the Portal instead.
+ *
+ *  Ordered most-protective first on purpose: a policy that is both protected and linked
+ *  reads as protected, and a policy whose settings could not be read is never "safe" -
+ *  "we could not see inside it" and "there is nothing inside it" are different answers
+ *  and only one of them belongs next to a Delete button. */
+export function deleteVerdict(g: {
+  gpo_id: string; link_count?: number; linked_enabled?: number;
+  setting_count?: number; extension_count?: number; report_error?: string | null;
+}): VerdictResult {
+  const prot = protectedGpoName(g.gpo_id);
+  if (prot) {
+    return { verdict: 'never', label: 'Never delete',
+      reason: `${prot} is built into the domain. Removing it breaks things that are hard to put back.` };
+  }
+
+  const enabledLinks = Number(g.linked_enabled) || 0;
+  if (enabledLinks > 0) {
+    return { verdict: 'no', label: 'Do not delete',
+      reason: `Linked and switched on in ${enabledLinks} place${enabledLinks === 1 ? '' : 's'}. It is applying to machines right now.` };
+  }
+
+  const links = Number(g.link_count) || 0;
+  if (links > 0) {
+    return { verdict: 'check', label: 'Check first',
+      reason: `Linked in ${links} place${links === 1 ? '' : 's'}, but every link is switched off. Somebody may be about to switch it back on.` };
+  }
+
+  if (g.report_error) {
+    return { verdict: 'check', label: 'Check first',
+      reason: 'Its settings could not be read, so there is no way to tell from here what would be lost.' };
+  }
+
+  // null and undefined are not zero. Coercing them would turn "nobody has collected this
+  // yet" into "there is nothing in it", which is the one mistranslation this whole column
+  // exists to prevent.
+  const num = (v: unknown): number => (v == null || v === '' ? NaN : Number(v));
+
+  const settings = num(g.setting_count);
+  if (!Number.isFinite(settings)) {
+    return { verdict: 'check', label: 'Check first',
+      reason: 'The Portal does not know what is in this one. Collect again before removing it.' };
+  }
+  if (settings > 0) {
+    return { verdict: 'check', label: 'Check first',
+      reason: `Linked nowhere, but it holds ${settings} setting${settings === 1 ? '' : 's'}. Deleting it throws away work somebody did.` };
+  }
+
+  // Nothing reads as empty until the Portal can prove it looked. A missing or negative
+  // extension count means "we do not know", and "we do not know" must never render as
+  // Safe to delete - that is the same mistake that flagged a working Preferences policy
+  // as empty next to a Delete button.
+  const exts = num(g.extension_count);
+  if (!Number.isFinite(exts) || exts < 0) {
+    return { verdict: 'check', label: 'Check first',
+      reason: 'The Portal cannot tell whether this is genuinely empty or simply could not be read. Collect again to be sure.' };
+  }
+  if (exts > 0) {
+    return { verdict: 'check', label: 'Check first',
+      reason: 'It carries settings the collector could not interpret. This is not an empty policy.' };
+  }
+
+  return { verdict: 'safe', label: 'Safe to delete',
+    reason: 'Linked nowhere and holds no settings. Nothing depends on it.' };
+}
+
 export interface GpoRow {
   id: number; gpo_id: string; name: string; status: string | null; description: string | null;
   domain: string | null; created_on: string | null; modified_on: string | null;
@@ -475,12 +560,13 @@ export async function reviewAndStore(id: number): Promise<PolicyReview & { id: n
   return { ...r, id };
 }
 
-/** A gpo.delete came back. Take out what the domain no longer has, and keep the backup
- *  path so a mistake is a Restore-GPO away rather than a restore from tape. */
+/** A gpo.delete came back. Write down what was removed and how to get it back BEFORE
+ *  taking the row out - the deletion record is the only thing that makes this reversible
+ *  from the Portal, and it has to outlive the policy it describes. */
 export async function ingestGpoDelete(commandId: number): Promise<void> {
   const cmd = (await pool.query(
-    `SELECT ac.output, ad.customer_id, ad.hostname FROM agent_commands ac
-       JOIN agent_devices ad ON ad.id = ac.device_id
+    `SELECT ac.output, ac.requested_by, ac.device_id, ad.customer_id, ad.hostname
+       FROM agent_commands ac JOIN agent_devices ad ON ad.id = ac.device_id
       WHERE ac.id=$1`, [commandId])).rows[0];
   if (!cmd || !cmd.customer_id) return;
 
@@ -490,13 +576,121 @@ export async function ingestGpoDelete(commandId: number): Promise<void> {
   try { parsed = JSON.parse(text); } catch { return; }
 
   const results: any[] = Array.isArray(parsed?.results) ? parsed.results : [];
-  const gone = results.filter((r) => r?.deleted && r?.id).map((r) => String(r.id));
-  if (gone.length) {
-    await pool.query('DELETE FROM customer_gpos WHERE customer_id=$1 AND gpo_id = ANY($2::text[])',
-      [cmd.customer_id, gone]);
+  const gone = results.filter((r) => r?.deleted && r?.id);
+  const backupPath = parsed?.backupPath ? String(parsed.backupPath).slice(0, 500) : null;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const r of gone) {
+      const gpoId = String(r.id);
+      const snap = (await client.query(
+        `SELECT * FROM customer_gpos WHERE customer_id=$1 AND gpo_id=$2`,
+        [cmd.customer_id, gpoId])).rows[0] || null;
+
+      await client.query(
+        `INSERT INTO gpo_deletions (customer_id, device_id, command_id, gpo_id, name, domain, hostname,
+           backup_id, backup_path, setting_count, link_snapshot, snapshot, deleted_by, deleted_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::jsonb,$13,NOW())`,
+        [cmd.customer_id, cmd.device_id || null, commandId, gpoId,
+         String(r.name || snap?.name || '(unnamed)').slice(0, 300),
+         snap?.domain || null, cmd.hostname || null,
+         r.backupId ? String(r.backupId).slice(0, 100) : null, backupPath,
+         Number(snap?.setting_count) || 0,
+         JSON.stringify(snap?.links || []), snap ? JSON.stringify(snap) : null,
+         cmd.requested_by || null]);
+
+      await client.query('DELETE FROM customer_gpos WHERE customer_id=$1 AND gpo_id=$2',
+        [cmd.customer_id, gpoId]);
+    }
+    await client.query('COMMIT');
+  } catch (e: any) {
+    await client.query('ROLLBACK');
+    // Deliberately loud and deliberately NOT swallowed into a half-done state: if the
+    // record could not be written, the row stays, and the Portal disagreeing with the
+    // domain for one collection cycle is far better than an untracked deletion.
+    console.error('[gpo] could not record deletion, rolled back:', e.message);
+    throw e;
+  } finally {
+    client.release();
   }
-  const kept = results.filter((r) => !r?.deleted);
-  console.log(`[gpo] delete on ${cmd.hostname}: ${gone.length} removed, ${kept.length} refused, backups in ${parsed?.backupPath || 'unknown'}`);
+
+  const refused = results.filter((r) => !r?.deleted);
+  for (const r of refused) {
+    console.log(`[gpo] refused "${r.name || r.id}": ${r.error || 'no reason given'}`);
+  }
+  console.log(`[gpo] delete on ${cmd.hostname}: ${gone.length} removed and recorded, ${refused.length} refused, backups in ${backupPath || 'unknown'}`);
+}
+
+/** A gpo.restore came back. Mark the deletion as undone - the policy itself reappears at
+ *  the next collection, which is queued by the route that asked for this. */
+export async function ingestGpoRestore(commandId: number): Promise<void> {
+  const cmd = (await pool.query(
+    `SELECT ac.output, ac.payload, ac.requested_by, ac.device_id, ad.customer_id, ad.hostname
+       FROM agent_commands ac JOIN agent_devices ad ON ad.id = ac.device_id
+      WHERE ac.id=$1`, [commandId])).rows[0];
+  if (!cmd || !cmd.customer_id) return;
+
+  const { text } = jsonFromOutput(String(cmd.output || ''));
+  if (!text) return;
+  let parsed: any;
+  try { parsed = JSON.parse(text); } catch { return; }
+  if (!parsed?.ok || !parsed?.restored) {
+    console.error(`[gpo] restore on ${cmd.hostname} failed: ${parsed?.error || 'no reason given'}`);
+    return;
+  }
+
+  let payload: any = {};
+  try { payload = typeof cmd.payload === 'string' ? JSON.parse(cmd.payload) : (cmd.payload || {}); } catch { }
+  const deletionId = parseInt(String(payload?.deletionId || ''), 10);
+  if (!deletionId) return;
+
+  await pool.query(
+    `UPDATE gpo_deletions SET restored_at=NOW(), restored_by=$1 WHERE id=$2 AND customer_id=$3`,
+    [cmd.requested_by || null, deletionId, cmd.customer_id]);
+
+  // Collect straight away. Without this the tab keeps saying the policy is deleted until
+  // somebody thinks to press Collect, which reads as "the restore did not work".
+  try {
+    const busy = (await pool.query(
+      `SELECT 1 FROM agent_commands WHERE device_id=$1 AND kind='gpo.inventory'
+        AND status IN ('queued','running') LIMIT 1`, [cmd.device_id])).rows.length > 0;
+    if (!busy) {
+      await pool.query(
+        `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
+         VALUES ($1,'gpo.inventory','{}','queued',$2)`, [cmd.device_id, cmd.requested_by || null]);
+    }
+  } catch (e: any) { console.error('[gpo] could not queue a collection after restore:', e.message); }
+
+  console.log(`[gpo] restored "${parsed.name}" on ${cmd.hostname} - it is back but NOT linked`);
+}
+
+/** Deletions for a customer, newest first.
+ *
+ *  Never throws. This hangs off the device page, and a device page that will not load
+ *  because the deletion log is missing would be a worse bug than the one this table was
+ *  added to fix - notably on the first deploy, between the schema landing and the table
+ *  actually existing. */
+export async function recentDeletions(customerId: number, limit = 25): Promise<any[]> {
+  try {
+    return await deletionRows(customerId, limit);
+  } catch (e: any) {
+    console.error('[gpo] could not read the deletion log:', e.message);
+    return [];
+  }
+}
+
+async function deletionRows(customerId: number, limit: number): Promise<any[]> {
+  return (await pool.query(
+    `SELECT d.id, d.gpo_id, d.name, d.hostname, d.backup_id, d.backup_path, d.setting_count,
+            d.link_snapshot, d.deleted_at, d.restored_at,
+            u.display_name AS deleted_by_name,
+            EXTRACT(EPOCH FROM (NOW() - d.deleted_at))::bigint AS age_secs
+       FROM gpo_deletions d
+       LEFT JOIN users u ON u.id = d.deleted_by
+      WHERE d.customer_id=$1
+      ORDER BY d.deleted_at DESC
+      LIMIT $2`, [customerId, limit])).rows;
 }
 
 /** A gpo.unlink came back. The links are gone in the domain, so they go here too - and

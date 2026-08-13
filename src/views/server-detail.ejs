@@ -92,9 +92,22 @@ var vols = facts && Array.isArray(facts.volumes) ? facts.volumes : [];
   <div class="card-header"><h2><%= alerts.length %> worth a look</h2></div>
   <% alerts.forEach(function (a) { %>
     <div class="al">
-      <span class="badge <%= a.level === 'bad' ? 'badge-failed' : 'badge-primary' %>"><%= a.area %></span>
-      <strong style="font-size:13.5px;"><%= a.title %></strong>
-      <% if (a.detail) { %><div class="muted" style="font-size:12.5px;margin-top:4px;"><%= a.detail %></div><% } %>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <div style="min-width:0;">
+          <span class="badge <%= a.level === 'bad' ? 'badge-failed' : 'badge-primary' %>"><%= a.area %></span>
+          <strong style="font-size:13.5px;"><%= a.title %></strong>
+          <% if (a.detail) { %><div class="muted" style="font-size:12.5px;margin-top:4px;"><%= a.detail %></div><% } %>
+        </div>
+        <% if (a.fix && typeof fixes !== 'undefined' && fixes[a.fix]) { var _fp = typeof fixPending !== 'undefined' && fixPending.has(a.fix); %>
+        <form method="post" action="/servers/<%= device.id %>/fix/<%= a.fix %>" style="margin:0;flex-shrink:0;"
+              onsubmit="return this.querySelector('button').disabled ? false : confirm(<%- JSON.stringify(fixes[a.fix].confirm) %>);">
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+          <button class="btn" type="submit" <%= _fp ? 'disabled' : '' %>
+                  title="Runs on the server as SYSTEM via the agent, then re-scans so this list updates itself">
+            <%= _fp ? 'Fixing…' : '✦ ' + fixes[a.fix].label %></button>
+        </form>
+        <% } %>
+      </div>
     </div>
   <% }); %>
 </div>

@@ -3,6 +3,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { judge, refreshStaleServers } from '../lib/server-facts';
+import { SERVER_FIXES } from '../lib/server-fix';
 import { ONLINE_WINDOW_SECS } from '../lib/agent-asset';
 
 // ── Servers ─────────────────────────────────────────────────────────────────────
@@ -123,9 +124,18 @@ router.get('/servers/:id', requireAuth, requireAdmin, async (req: Request, res: 
         AND status IN ('queued','running') LIMIT 1`, [id])).rows.length > 0;
 
     const facts = sf?.facts || null;
+
+    // Fix buttons: which fixes are in flight right now, so a pressed button stays pressed
+    // across a refresh instead of inviting a second copy of the same command.
+    const fixPending = new Set<string>((await pool.query(
+      `SELECT payload->>'fixKey' AS k FROM agent_commands
+        WHERE device_id=$1 AND kind='shell.powershell' AND payload->>'fixKey' IS NOT NULL
+          AND status IN ('queued','running')`, [id])).rows.map((r: any) => String(r.k)));
+
     res.render('server-detail', {
       user: req.session.user!, device, sf, facts,
       alerts: judge(facts), roleLabels: prettyRoles(sf?.roles || null, Number(sf?.sql_instances || 0)),
+      fixes: SERVER_FIXES, fixPending,
       pending, msg: req.query.msg || null, err: req.query.err || null,
       onlineWindowSecs: ONLINE_WINDOW_SECS,
       assetId: (await pool.query(
@@ -137,6 +147,51 @@ router.get('/servers/:id', requireAuth, requireAdmin, async (req: Request, res: 
   } catch (e: any) {
     console.error('[servers] detail failed:', e.message);
     res.redirect('/servers?msg=' + encodeURIComponent('Could not open that server: ' + e.message));
+  }
+});
+
+// ── One-click fixes ─────────────────────────────────────────────────────────────
+// The registry (lib/server-fix.ts) is the allow-list: only a named, reviewed fix can run,
+// never free-text PowerShell. The finding must still be present in the CURRENT facts -
+// a stale tab replaying an old page queues nothing.
+router.post('/servers/:id/fix/:key', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const key = String(req.params.key || '');
+  const fix = SERVER_FIXES[key];
+  try {
+    if (!fix) { res.redirect(`/servers/${id}?err=` + encodeURIComponent('No such fix.')); return; }
+
+    const sf = (await pool.query('SELECT facts FROM server_facts WHERE device_id=$1', [id])).rows[0];
+    const alert = judge(sf?.facts || null).find((a) => a.fix === key);
+    if (!alert) {
+      res.redirect(`/servers/${id}?msg=` + encodeURIComponent('That finding is no longer present in the latest facts - nothing queued.'));
+      return;
+    }
+
+    const already = (await pool.query(
+      `SELECT 1 FROM agent_commands WHERE device_id=$1 AND kind='shell.powershell'
+        AND payload->>'fixKey'=$2 AND status IN ('queued','running') LIMIT 1`, [id, key])).rows.length;
+    if (already) {
+      res.redirect(`/servers/${id}?msg=` + encodeURIComponent('That fix is already queued - it runs on the machine\'s next check-in.'));
+      return;
+    }
+
+    await pool.query(
+      `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
+       VALUES ($1,'shell.powershell',$2,'queued',$3)`,
+      [id, JSON.stringify({ script: fix.script, fixKey: key }), req.session.user!.id]);
+    // Re-collect right behind it, so the finding reconciles itself on the page instead
+    // of sitting there looking broken until somebody presses Scan now.
+    await pool.query(
+      `INSERT INTO agent_commands (device_id, kind, status, requested_by)
+       VALUES ($1,'server.facts','queued',$2)`, [id, req.session.user!.id]);
+
+    await logActivity(req.session.user!.id, 'server_fix', 'agent_devices', id,
+      `${fix.activity} (${key}) on device ${id}`);
+    res.redirect(`/servers/${id}?msg=` + encodeURIComponent(
+      `Queued: ${fix.label.toLowerCase()}. The result lands on this page after the re-scan that follows it - a minute or two on a machine that is switched on.`));
+  } catch (e: any) {
+    res.redirect(`/servers/${id}?err=` + encodeURIComponent('Could not queue the fix: ' + e.message));
   }
 });
 

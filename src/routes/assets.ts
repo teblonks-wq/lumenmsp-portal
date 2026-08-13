@@ -334,10 +334,13 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
          LEFT JOIN server_facts sf ON sf.device_id = ad.id
         WHERE ad.id=$1`, [row.agent_device_id])).rows[0];
     if (dev && dev.customer_id && (dev.is_ad_agent || dev.is_dc || dev.has_ad_role)) {
-      const { judgeGpos, explainInventoryOutcome } = await import('../lib/gpo');
+      const { judgeGpos, explainInventoryOutcome, deleteVerdict, recentDeletions } = await import('../lib/gpo');
       const rows = (await pool.query(
         `SELECT * FROM customer_gpos WHERE customer_id=$1 ORDER BY name`, [dev.customer_id])).rows;
       const findings = judgeGpos(rows as any);
+      // The pre-delete judgement, worked out per row so it can be a column and a filter
+      // rather than something an engineer runs a PowerShell script to find out.
+      for (const r of rows) r.verdict = deleteVerdict(r as any);
       const byGpo = new Map<string, any[]>();
       for (const f of findings) {
         const list = byGpo.get(f.gpoId) || [];
@@ -390,6 +393,8 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
         bad: findings.filter((f: any) => f.level === 'bad').length,
         settings: rows.reduce((a: number, r: any) => a + Number(r.setting_count || 0), 0),
         unlinked: rows.filter((r: any) => Number(r.link_count) === 0).length,
+        safeToDelete: rows.filter((r: any) => r.verdict && r.verdict.verdict === 'safe').length,
+        deletions: await recentDeletions(dev.customer_id),
         pendingId: pending ? pending.id : null,
         lastAt: last ? last.finished_at : null,
         outputLen: last ? Number(last.output_len || 0) : 0,

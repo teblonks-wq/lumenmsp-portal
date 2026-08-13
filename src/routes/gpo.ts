@@ -3,7 +3,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
 import { judgeGpos, gpoCorpus, estateCorpus, askGpo, preflightDeployment, lastDeployRun,
-         explainInventoryOutcome, reviewAndStore, GpoRow } from '../lib/gpo';
+         explainInventoryOutcome, reviewAndStore, protectedGpoName, GpoRow } from '../lib/gpo';
 import { ONLINE_WINDOW_SECS } from '../lib/agent-asset';
 
 // -- Group Policy ---------------------------------------------------------------
@@ -288,6 +288,18 @@ router.post('/gpo/delete', requireAuth, requireAdmin, async (req: Request, res: 
       return;
     }
 
+    // The built-in domain policies are refused here and refused again on the domain
+    // controller. Refused rather than quietly dropped: somebody who selected one meant to
+    // select it, and needs telling why nothing happened to it.
+    const blocked = ids.map((id) => protectedGpoName(id)).filter(Boolean) as string[];
+    if (blocked.length) {
+      res.redirect(back + '?err=' + encodeURIComponent(
+        `${blocked.join(' and ')} ${blocked.length === 1 ? 'is a' : 'are'} built-in domain ` +
+        `polic${blocked.length === 1 ? 'y' : 'ies'} and cannot be deleted. Nothing has been changed — ` +
+        'take them out of the selection and try again.') + '#gpo');
+      return;
+    }
+
     const names = (await pool.query(
       `SELECT name FROM customer_gpos WHERE customer_id=$1 AND gpo_id = ANY($2::text[])`,
       [dev.customer_id, ids])).rows.map((r: any) => r.name);
@@ -305,6 +317,73 @@ router.post('/gpo/delete', requireAuth, requireAdmin, async (req: Request, res: 
     res.redirect(back + '?cmd=' + cmd.id + '#gpo');
   } catch (e: any) {
     console.error('[gpo] delete failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not queue that: ' + e.message) + '#gpo');
+  }
+});
+
+// -- Putting one back -----------------------------------------------------------
+// The half of "recoverable" that was missing. Everything needed is already in the
+// deletion record - the backup id and the folder the agent wrote it to - so nobody has to
+// remote into a domain controller and work out which backup was which.
+//
+// A restore is NOT a full undo and the Portal says so: Restore-GPO brings back the object
+// and its settings under the original GUID, but not its links. Whatever it used to apply
+// to was captured at deletion time and is shown alongside, because that list is what
+// somebody needs in order to finish the job by hand.
+router.post('/gpo/restore', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const deletionId = parseInt(String(b.deletion_id || ''), 10);
+  const assetId = parseInt(String(b.asset_id || ''), 10) || null;
+  const back = assetId ? `/assets/${assetId}` : '/assets';
+
+  if (!deletionId) {
+    res.redirect(back + '?err=' + encodeURIComponent('Nothing selected to restore.') + '#gpo');
+    return;
+  }
+  try {
+    const d = (await pool.query(
+      `SELECT id, customer_id, gpo_id, name, backup_id, backup_path, restored_at
+         FROM gpo_deletions WHERE id=$1`, [deletionId])).rows[0];
+    if (!d) { res.redirect(back + '?err=' + encodeURIComponent('No such deletion.') + '#gpo'); return; }
+
+    if (!d.backup_id || !d.backup_path) {
+      res.redirect(back + '?err=' + encodeURIComponent(
+        `There is no backup recorded for "${d.name}", so the Portal cannot put it back. ` +
+        'It was deleted before the Portal kept deletion records.') + '#gpo');
+      return;
+    }
+    if (d.restored_at) {
+      res.redirect(back + '?err=' + encodeURIComponent(`"${d.name}" has already been restored.`) + '#gpo');
+      return;
+    }
+
+    // Restore has to run on a domain controller for the right domain, and the backup only
+    // exists on the machine that took it. Prefer that exact machine.
+    const dev = (await pool.query(
+      `SELECT id, hostname FROM agent_devices
+        WHERE customer_id=$1 AND revoked=false AND is_ad_agent=true
+        ORDER BY (id = COALESCE((SELECT device_id FROM gpo_deletions WHERE id=$2), -1)) DESC,
+                 last_seen_at DESC NULLS LAST LIMIT 1`,
+      [d.customer_id, deletionId])).rows[0];
+    if (!dev) {
+      res.redirect(back + '?err=' + encodeURIComponent(
+        'No AD agent for this customer to run the restore on.') + '#gpo');
+      return;
+    }
+
+    const cmd = (await pool.query(
+      `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
+       VALUES ($1,'gpo.restore',$2,'queued',$3) RETURNING id`,
+      [dev.id, JSON.stringify({
+        backupId: d.backup_id, backupPath: d.backup_path, deletionId: d.id,
+      }), req.session.user!.id])).rows[0];
+
+    await logActivity(req.session.user!.id, 'gpo_restore', 'agent_devices', dev.id,
+      `Restoring Group Policy object "${d.name}" on ${dev.hostname} from backup ${d.backup_id}`);
+
+    res.redirect(back + '?cmd=' + cmd.id + '#gpo');
+  } catch (e: any) {
+    console.error('[gpo] restore failed:', e.message);
     res.redirect(back + '?err=' + encodeURIComponent('Could not queue that: ' + e.message) + '#gpo');
   }
 });

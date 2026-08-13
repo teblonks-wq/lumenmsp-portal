@@ -12,7 +12,7 @@ import { syncAssetFromAgent } from '../lib/agent-asset';
 import { windowsOsName } from '../lib/os-name';
 import { reapStaleCommands } from '../lib/agent-commands';
 import { ingestServerFacts } from '../lib/server-facts';
-import { ingestGpoInventory, ingestGpoDelete, ingestGpoUnlink } from '../lib/gpo';
+import { ingestGpoInventory, ingestGpoDelete, ingestGpoUnlink, ingestGpoRestore } from '../lib/gpo';
 import { htmlToPlain } from '../lib/whatsapp';
 import { nextTicketNumber } from './tickets';
 
@@ -975,6 +975,9 @@ router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request
     }
     if (r.rows[0].kind === 'gpo.unlink') {
       ingestGpoUnlink(id).catch((err: any) => console.error('[gpo] unlink ingest failed:', err.message));
+    }
+    if (r.rows[0].kind === 'gpo.restore') {
+      ingestGpoRestore(id).catch((err: any) => console.error('[gpo] restore ingest failed:', err.message));
     }
     // The Mesh Agent is now on the machine. Record that here, where we actually learn it.
     // Until this existed, mesh_installed was only ever set by the bridge - so a machine
