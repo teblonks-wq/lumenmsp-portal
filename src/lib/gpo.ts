@@ -28,10 +28,9 @@ export async function ingestGpoInventory(commandId: number): Promise<{ ok: boole
 
   let parsed: any;
   try {
-    const raw = String(cmd.output || '');
-    const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
-    if (a < 0 || b <= a) return { ok: false, error: 'no JSON in the output' };
-    parsed = JSON.parse(raw.slice(a, b + 1));
+    const { text } = jsonFromOutput(String(cmd.output || ''));
+    if (!text) return { ok: false, error: 'no JSON in the output' };
+    parsed = JSON.parse(text);
   } catch (e: any) { return { ok: false, error: 'could not parse: ' + e.message }; }
 
   const gpos: any[] = Array.isArray(parsed?.gpos) ? parsed.gpos : [];
@@ -79,6 +78,26 @@ export async function ingestGpoInventory(commandId: number): Promise<{ ok: boole
 }
 
 /**
+ * Pull the JSON out of a command's raw output.
+ *
+ * PowerShell writes compressed JSON as a single enormous line, and when its host wraps
+ * that line at the console width it inserts real CR/LF *inside* the text. Most land
+ * between tokens, where JSON treats them as whitespace and nothing looks wrong - until
+ * one lands inside a string literal and the whole 25,000-character reply is rejected for
+ * a "bad control character". Compressed JSON never contains a legitimate raw control
+ * character inside a string, so stripping them is a repair, not a guess.
+ */
+export function jsonFromOutput(raw: string): { text: string | null; repaired: boolean } {
+  const s = String(raw || '');
+  const a = s.indexOf('{'), b = s.lastIndexOf('}');
+  if (a < 0 || b <= a) return { text: null, repaired: false };
+  const span = s.slice(a, b + 1);
+  // eslint-disable-next-line no-control-regex
+  const cleaned = span.replace(/[\u0000-\u001F]/g, '');
+  return { text: cleaned, repaired: cleaned.length !== span.length };
+}
+
+/**
  * Why a collection stored what it stored. A run that succeeds on the machine, returns
  * output, and files nothing is the worst kind of failure: every surface says "fine" and
  * the page just stays empty. This turns the stored output back into a sentence.
@@ -92,13 +111,13 @@ export function explainInventoryOutcome(
   if (!text.trim()) {
     return { ok: false, message: 'The agent returned nothing at all. Check the command output on the machine.' };
   }
-  const a = text.indexOf('{'), b = text.lastIndexOf('}');
-  if (a < 0 || b <= a) {
+  const { text: json } = jsonFromOutput(text);
+  if (!json) {
     return { ok: false, message: 'The agent replied, but not with the expected data: ' + text.trim().slice(-300) };
   }
   let parsed: any;
   try {
-    parsed = JSON.parse(text.slice(a, b + 1));
+    parsed = JSON.parse(json);
   } catch (e: any) {
     // The failure that actually happened: a large domain reported more than we kept, so
     // the JSON was cut mid-structure and nothing could be read out of it.
