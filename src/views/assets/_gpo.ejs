@@ -1,35 +1,54 @@
 <%
-// ── Group Policy tab ────────────────────────────────────────────────────────────
-// A domain's Group Policy belongs to its domain controller, so it lives here on that
-// machine's page rather than in an estate-wide list. Read-only: the writing still happens
-// in Group Policy Management, because a browser button that edits a live domain is one
-// click away from a very bad morning.
+// ── Group Policy ────────────────────────────────────────────────────────────────
+// Lives on the machine that holds the domain. Reading and judging are free; the one
+// destructive action backs every policy up before removing it, so a mistake is a
+// Restore-GPO away.
+//
+// On form: the verdict column is state, not magnitude, so it is a chip with a WORD in it
+// rather than a colour alone - the same rule the rest of the Portal follows. Counts are
+// stat figures, not a chart: four numbers do not need axes.
 var _g = gpo;
 function _gdt(d) { return d ? new Date(d).toLocaleString('en-GB') : 'never'; }
+var _flagCounts = { unlinked: 0, empty: 0, unread: 0, disabled: 0, unreadable: 0, filtered: 0, enforced: 0 };
+_g.rows.forEach(function (p) {
+  if (Number(p.link_count) === 0) _flagCounts.unlinked++;
+  if (Number(p.setting_count) === 0 && Number(p.extension_count) === 0) _flagCounts.empty++;
+  if (Number(p.setting_count) === 0 && Number(p.extension_count) !== 0) _flagCounts.unread++;
+  if (String(p.status || '') === 'AllSettingsDisabled') _flagCounts.disabled++;
+  if (p.report_error) _flagCounts.unreadable++;
+  if (p.enforced) _flagCounts.enforced++;
+  (p.findings || []).forEach(function (f) { if (f.title === 'Security filtered') _flagCounts.filtered++; });
+});
 %>
 <section class="dev-tab-panel" data-key="gpo">
-  <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
-    <div style="flex:1;min-width:280px;">
+
+  <!-- Header ------------------------------------------------------------------ -->
+  <div class="gpo-head">
+    <div>
       <p class="dev-subcard-title" style="margin:0;">Group Policy on this domain</p>
       <p class="muted" style="margin:4px 0 0;font-size:12.5px;">
-        Every policy object this domain controller reports, where it is linked and what it actually does.
-        Read-only &mdash; collected by the agent, judged by the Portal.
-        <% if (_g.collectedAt) { %>Last collected <%= _gdt(_g.collectedAt) %>.<% } %>
+        <% if (_g.rows.length) { %>
+          <strong><%= _g.rows.length %></strong> policies &middot;
+          <strong><%= Number(_g.settings).toLocaleString('en-GB') %></strong> settings &middot;
+          collected <%= _gdt(_g.collectedAt) %>
+          <% if (!_g.isAdAgent) { %> &middot; <span title="This machine holds AD but is not the customer's nominated agent">read from this DC</span><% } %>
+        <% } else { %>
+          Nothing collected from this domain controller yet.
+        <% } %>
       </p>
     </div>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <div class="gpo-actions">
       <form method="post" action="/gpo/refresh" style="margin:0;">
         <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
         <input type="hidden" name="customer_id" value="<%= _g.customerId %>">
-        <input type="hidden" name="back" value="/assets/<%= asset.id %>#gpo">
+        <input type="hidden" name="device_id" value="<%= _g.deviceId %>">
+        <input type="hidden" name="back" value="/assets/<%= _g.assetId %>">
         <button class="btn btn-primary" type="submit" <%= _g.pendingId ? 'disabled' : '' %>>
           <%= _g.pendingId ? 'Collecting…' : (_g.rows.length ? 'Collect again' : 'Collect now') %>
         </button>
       </form>
-      <a class="btn" href="/gpo/deploy/<%= _g.customerId %>" title="Push the LumenMSP Agent to every domain-joined machine using Group Policy">&#8681; Deploy the agent by GPO</a>
-      <% if (_g.rows.length) { %>
-        <button class="btn btn-remote" type="button" id="gpoAskBtn">&#10022; Ask Claude</button>
-      <% } %>
+      <a class="btn" href="/gpo/deploy/<%= _g.customerId %>">&#8681; Deploy the agent by GPO</a>
+      <% if (_g.rows.length) { %><button class="btn btn-remote" type="button" id="gpoAskBtn">&#10022; Ask Claude</button><% } %>
     </div>
   </div>
 
@@ -44,65 +63,386 @@ function _gdt(d) { return d ? new Date(d).toLocaleString('en-GB') : 'never'; }
   <% } %>
 
   <% if (_g.rows.length) { %>
-    <div class="dev-info-cols" style="margin-bottom:12px;">
-      <div class="dev-field-row"><div class="k">Policies</div><div class="v"><%= _g.rows.length %></div></div>
-      <div class="dev-field-row"><div class="k">Settings</div><div class="v"><%= Number(_g.settings).toLocaleString('en-GB') %></div></div>
-      <div class="dev-field-row"><div class="k">Not linked</div><div class="v"<%= _g.unlinked ? ' style="color:var(--warn-fg);"' : '' %>><%= _g.unlinked %></div></div>
-      <div class="dev-field-row"><div class="k">Worth a look</div><div class="v"<%= _g.findings ? ' style="color:var(--warn-fg);"' : '' %>><%= _g.findings %></div></div>
-    </div>
 
-    <div id="gpoAskPanel" class="card" style="display:none;margin-bottom:12px;">
-      <div style="display:flex;align-items:flex-start;gap:10px;">
-        <div style="flex:1;">
-          <p class="muted" style="margin:0 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;">Asked Claude</p>
-          <h2 id="gpoAskQ" style="margin:0;font-size:16px;"></h2>
-        </div>
-        <button type="button" id="gpoAskClose" style="border:none;background:none;font-size:22px;line-height:1;cursor:pointer;color:var(--muted);">&times;</button>
-      </div>
-      <form id="gpoAskForm" style="display:flex;gap:8px;margin-top:12px;">
-        <input class="input" id="gpoAskInput" style="flex:1;" autocomplete="off"
-               placeholder="e.g. does anything here weaken security? which policies overlap?">
-        <button class="btn btn-primary" type="submit" id="gpoAskGo">Ask</button>
-      </form>
-      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;" id="gpoAskChips"></div>
-      <div id="gpoAskBody" style="margin-top:12px;"></div>
-    </div>
+  <!-- Counts ------------------------------------------------------------------ -->
+  <div class="gpo-stats">
+    <div class="gpo-stat"><span class="n"><%= _g.rows.length %></span><span class="l">Policies</span></div>
+    <div class="gpo-stat<%= _g.unlinked ? ' warn' : '' %>"><span class="n"><%= _g.unlinked %></span><span class="l">Doing nothing</span></div>
+    <div class="gpo-stat<%= _g.broken ? ' bad' : '' %>"><span class="n"><%= _g.broken %></span><span class="l">Reviewed: broken</span></div>
+    <div class="gpo-stat<%= _g.watch ? ' warn' : '' %>"><span class="n"><%= _g.watch %></span><span class="l">Reviewed: watch</span></div>
+    <div class="gpo-stat"><span class="n"><%= _g.reviewed %>/<%= _g.rows.length %></span><span class="l">Reviewed</span></div>
+  </div>
 
-    <div class="table-wrap">
-      <table class="table">
-        <thead><tr><th>Policy</th><th>Linked to</th><th style="text-align:right;">Settings</th><th>Worth a look</th><th>Modified</th></tr></thead>
-        <tbody>
-          <% _g.rows.forEach(function (p) { %>
-            <% var _links = Array.isArray(p.links) ? p.links : []; %>
-            <tr>
-              <td>
-                <a class="row-link" href="/gpo/<%= p.id %>" style="font-weight:600;"><%= p.name %></a>
-                <% if (p.enforced) { %><span style="font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:4px;border:1px solid var(--warn-line);color:var(--warn-fg);background:var(--warn-bg);">Enforced</span><% } %>
-              </td>
-              <td style="max-width:260px;">
-                <% if (!_links.length) { %><span class="muted">nowhere</span><% } else { %>
-                  <% _links.slice(0, 2).forEach(function (l) { %>
-                    <span style="display:block;font-size:12px;color:var(--muted);"><%= l.target %><%= l.enabled === false ? ' (link off)' : '' %></span>
-                  <% }); %>
-                  <% if (_links.length > 2) { %><span style="display:block;font-size:12px;color:var(--muted);">+<%= _links.length - 2 %> more</span><% } %>
-                <% } %>
-              </td>
-              <td style="text-align:right;font-variant-numeric:tabular-nums;"><%= p.setting_count %></td>
-              <td>
-                <% if (!p.findings.length) { %><span class="muted">&mdash;</span><% } %>
-                <% p.findings.forEach(function (f) { %>
-                  <span title="<%= f.detail || '' %>" style="display:inline-block;font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin:1px 3px 1px 0;border:1px solid <%= f.level === 'bad' ? 'var(--bad-line)' : 'var(--warn-line)' %>;color:<%= f.level === 'bad' ? 'var(--bad-fg)' : 'var(--warn-fg)' %>;background:<%= f.level === 'bad' ? 'var(--bad-bg)' : 'var(--warn-bg)' %>;"><%= f.title %></span>
+  <!-- Toolbar ----------------------------------------------------------------- -->
+  <div class="gpo-bar">
+    <input class="input gpo-search" id="gpoSearch" type="search" placeholder="Search name, description or where it's linked…">
+    <div class="gpo-chips" id="gpoChips">
+      <button type="button" class="gpo-chip on" data-flag="">All <span><%= _g.rows.length %></span></button>
+      <button type="button" class="gpo-chip" data-flag="unlinked">Not linked <span><%= _flagCounts.unlinked %></span></button>
+      <button type="button" class="gpo-chip" data-flag="empty">Genuinely empty <span><%= _flagCounts.empty %></span></button>
+      <button type="button" class="gpo-chip" data-flag="unread">Unreadable settings <span><%= _flagCounts.unread %></span></button>
+      <button type="button" class="gpo-chip" data-flag="disabled">Switched off <span><%= _flagCounts.disabled %></span></button>
+      <button type="button" class="gpo-chip" data-flag="unreadable">Unreadable <span><%= _flagCounts.unreadable %></span></button>
+      <button type="button" class="gpo-chip" data-flag="filtered">Filtered <span><%= _flagCounts.filtered %></span></button>
+      <button type="button" class="gpo-chip" data-flag="enforced">Enforced <span><%= _flagCounts.enforced %></span></button>
+      <button type="button" class="gpo-chip" data-flag="broken">Broken <span><%= _g.broken %></span></button>
+      <button type="button" class="gpo-chip" data-flag="unreviewed">Not reviewed <span><%= _g.rows.length - _g.reviewed %></span></button>
+    </div>
+  </div>
+
+  <!-- Selection bar: appears only when something is ticked -------------------- -->
+  <div class="gpo-selbar" id="gpoSelBar">
+    <span id="gpoSelCount" class="gpo-selcount">0 selected</span>
+    <button class="btn btn-remote btn-small" type="button" id="gpoReviewBtn">&#10022; Review with Claude</button>
+    <span class="gpo-sel-sep"></span>
+    <form method="post" action="/gpo/unlink" id="gpoUnlinkForm" style="margin:0;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <input type="hidden" name="device_id" value="<%= _g.deviceId %>">
+      <input type="hidden" name="asset_id" value="<%= _g.assetId %>">
+      <input type="hidden" name="ids" id="gpoUnlinkIds" value="">
+      <button class="btn btn-small" type="submit" id="gpoUnlinkBtn" title="Stop these applying without deleting them. Reversible.">&#8856; Unlink selected</button>
+    </form>
+    <span id="gpoDelHint" class="muted" style="font-size:12px;"></span>
+    <form method="post" action="/gpo/delete" id="gpoDelForm" style="display:flex;gap:8px;align-items:center;margin:0 0 0 auto;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <input type="hidden" name="device_id" value="<%= _g.deviceId %>">
+      <input type="hidden" name="asset_id" value="<%= _g.assetId %>">
+      <input type="hidden" name="ids" id="gpoDelIds" value="">
+      <input type="hidden" name="force" id="gpoDelForce" value="">
+      <input class="input" name="confirm" id="gpoDelConfirm" placeholder="type DELETE" autocomplete="off" style="width:120px;font-size:12.5px;padding:5px 8px;">
+      <button class="btn btn-small btn-danger" type="submit" id="gpoDelBtn">Delete selected</button>
+    </form>
+  </div>
+
+  <div id="gpoReviewOut"></div>
+
+  <!-- The table --------------------------------------------------------------- -->
+  <div class="table-wrap gpo-tablewrap">
+    <table class="table gpo-table">
+      <thead>
+        <tr>
+          <th class="gpo-cb"><input type="checkbox" id="gpoAll" title="Select everything shown"></th>
+          <th>Policy</th>
+          <th>Verdict</th>
+          <th>Linked to</th>
+          <th style="text-align:right;">Settings</th>
+          <th>Flags</th>
+          <th>Modified</th>
+        </tr>
+      </thead>
+      <tbody id="gpoRows">
+        <% _g.rows.forEach(function (p) { %>
+          <%
+            var _links = Array.isArray(p.links) ? p.links : [];
+            var _flags = [];
+            if (Number(p.link_count) === 0) _flags.push('unlinked');
+            if (Number(p.setting_count) === 0 && Number(p.extension_count) === 0) _flags.push('empty');
+            if (Number(p.setting_count) === 0 && Number(p.extension_count) !== 0) _flags.push('unread');
+            if (String(p.status || '') === 'AllSettingsDisabled') _flags.push('disabled');
+            if (p.report_error) _flags.push('unreadable');
+            if (p.enforced) _flags.push('enforced');
+            (p.findings || []).forEach(function (f) { if (f.title === 'Security filtered') _flags.push('filtered'); });
+            if (p.ai_verdict === 'broken') _flags.push('broken');
+            if (!p.ai_verdict) _flags.push('unreviewed');
+            var _ai = Array.isArray(p.ai_findings) ? p.ai_findings : [];
+            var _hay = [p.name, p.description, _links.map(function(l){ return l.target; }).join(' ')].join(' ').toLowerCase();
+          %>
+          <tr class="gpo-row" data-id="<%= p.id %>" data-gpoid="<%= p.gpo_id %>" data-linked="<%= Number(p.link_count) > 0 ? 1 : 0 %>"
+              data-flags="<%= _flags.join(' ') %>" data-hay="<%= _hay.replace(/"/g, '&quot;') %>" data-name="<%= p.name %>">
+            <td class="gpo-cb"><input type="checkbox" class="gpo-pick" value="<%= p.id %>"></td>
+            <td>
+              <a class="row-link" href="/gpo/<%= p.id %>" style="font-weight:600;"><%= p.name %></a>
+              <% if (p.ai_summary) { %><span class="gpo-sum"><%= p.ai_summary %></span><% } %>
+            </td>
+            <td style="white-space:nowrap;">
+              <% if (p.ai_verdict === 'broken') { %><span class="gpo-v bad">&#9650; Broken</span>
+              <% } else if (p.ai_verdict === 'watch') { %><span class="gpo-v warn">&#9679; Watch</span>
+              <% } else if (p.ai_verdict === 'good') { %><span class="gpo-v ok">&#10003; Sound</span>
+              <% } else { %><span class="gpo-v none">not reviewed</span><% } %>
+              <% if (_ai.length) { %><button type="button" class="gpo-more" data-for="<%= p.id %>"><%= _ai.length %> to fix</button><% } %>
+            </td>
+            <td style="max-width:240px;">
+              <% if (!_links.length) { %><span class="muted">nowhere</span><% } else { %>
+                <% _links.slice(0, 2).forEach(function (l) { %>
+                  <span class="gpo-link"><%= l.target %><%= l.enabled === false ? ' (off)' : '' %></span>
                 <% }); %>
-              </td>
-              <td class="muted" style="font-size:12.5px;white-space:nowrap;"><%= p.modified_on ? String(p.modified_on).slice(0, 10) : '&mdash;' %></td>
-            </tr>
-          <% }); %>
-        </tbody>
-      </table>
+                <% if (_links.length > 2) { %><span class="gpo-link">+<%= _links.length - 2 %> more</span><% } %>
+              <% } %>
+            </td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;"><%= p.setting_count %></td>
+            <td>
+              <% if (!p.findings.length) { %><span class="muted">&mdash;</span><% } %>
+              <% p.findings.forEach(function (f) { %>
+                <span class="gpo-flag <%= f.level === 'bad' ? 'bad' : '' %>" title="<%= f.detail || '' %>"><%= f.title %></span>
+              <% }); %>
+            </td>
+            <td class="muted" style="font-size:12.5px;white-space:nowrap;"><%= p.modified_on ? String(p.modified_on).slice(0, 10) : '—' %></td>
+          </tr>
+          <% if (_ai.length) { %>
+          <tr class="gpo-detail" id="gpo-detail-<%= p.id %>" style="display:none;">
+            <td colspan="7">
+              <div class="gpo-fixes">
+                <% _ai.forEach(function (f) { %>
+                  <div class="gpo-fix">
+                    <div class="gpo-fix-t <%= f.level === 'bad' ? 'bad' : 'warn' %>"><%= f.level === 'bad' ? '▲' : '●' %> <%= f.title %></div>
+                    <% if (f.detail) { %><div class="gpo-fix-d"><%= f.detail %></div><% } %>
+                    <% if (f.fix) { %><div class="gpo-fix-f"><span>Fix</span> <%= f.fix %></div><% } %>
+                  </div>
+                <% }); %>
+              </div>
+            </td>
+          </tr>
+          <% } %>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted" id="gpoNone" style="display:none;font-size:13px;padding:14px 0;">Nothing matches that filter.</p>
+
+  <!-- Ask panel --------------------------------------------------------------- -->
+  <div id="gpoAskPanel" class="card" style="display:none;margin-top:14px;">
+    <div style="display:flex;align-items:flex-start;gap:10px;">
+      <div style="flex:1;">
+        <p class="muted" style="margin:0 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;">Asked Claude</p>
+        <h2 id="gpoAskQ" style="margin:0;font-size:16px;"></h2>
+      </div>
+      <button type="button" id="gpoAskClose" style="border:none;background:none;font-size:22px;line-height:1;cursor:pointer;color:var(--muted);">&times;</button>
     </div>
+    <form id="gpoAskForm" style="display:flex;gap:8px;margin-top:12px;">
+      <input class="input" id="gpoAskInput" style="flex:1;" autocomplete="off"
+             placeholder="e.g. does anything here weaken security? which policies overlap?">
+      <button class="btn btn-primary" type="submit" id="gpoAskGo">Ask</button>
+    </form>
+    <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;" id="gpoAskChips"></div>
+    <div id="gpoAskBody" style="margin-top:12px;"></div>
+  </div>
+
   <% } else if (!_g.problem) { %>
     <div class="empty-state">
-      Nothing collected yet. Press <strong>Collect now</strong> &mdash; it runs on this machine and takes a minute or two.
+      Nothing collected yet. Press <strong>Collect now</strong> &mdash; it runs on this domain controller and takes a minute or two.
     </div>
   <% } %>
 </section>
+
+<style>
+  /* Group Policy tab. Density without noise: the table is the product, everything else
+     gets out of its way. */
+  .gpo-head { display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+  .gpo-head > div:first-child { flex:1; min-width:260px; }
+  .gpo-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+
+  .gpo-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); gap:8px; margin-bottom:14px; }
+  .gpo-stat { border:1px solid var(--line); border-radius:8px; padding:9px 12px; background:var(--card,#fff); }
+  .gpo-stat .n { display:block; font-size:20px; font-weight:700; line-height:1.15; }
+  .gpo-stat .l { display:block; font-size:11px; color:var(--muted); margin-top:2px; }
+  .gpo-stat.warn { border-color:var(--warn-line); } .gpo-stat.warn .n { color:var(--warn-fg); }
+  .gpo-stat.bad  { border-color:var(--bad-line); }  .gpo-stat.bad .n  { color:var(--bad-fg); }
+
+  .gpo-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+  .gpo-search { flex:0 1 320px; min-width:200px; font-size:13px; padding:6px 10px; }
+  .gpo-chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .gpo-chip { font-size:12px; padding:3px 10px; border-radius:999px; cursor:pointer;
+              border:1px solid var(--line-strong); background:transparent; color:var(--text-2); }
+  .gpo-chip span { opacity:.65; margin-left:4px; font-variant-numeric:tabular-nums; }
+  .gpo-chip:hover { border-color:var(--blue); }
+  .gpo-chip.on { background:var(--blue); border-color:var(--blue); color:#fff; }
+  .gpo-chip.on span { opacity:.85; }
+
+  /* Only present when something is ticked - a permanently visible Delete button is an
+     invitation, and this one changes a live domain. */
+  .gpo-selbar { display:none; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;
+                padding:9px 12px; border:1px solid var(--blue); border-radius:8px; background:var(--tint-accent); }
+  .gpo-selbar.on { display:flex; }
+  .gpo-selcount { font-weight:700; font-size:13px; }
+  .gpo-sel-sep { width:1px; height:20px; background:var(--line-strong); }
+  .btn-danger { background:var(--bad-fg); color:#fff; border:0; font-weight:600; }
+  .btn-danger:disabled { opacity:.45; cursor:not-allowed; }
+  .btn-small { font-size:12.5px; padding:4px 10px; }
+
+  .gpo-table th { position:sticky; top:0; background:var(--card,#fff); z-index:2; }
+  .gpo-tablewrap { max-height:640px; overflow:auto; }
+  .gpo-cb { width:34px; }
+  .gpo-row.sel { background:var(--tint-accent); }
+  .gpo-sum { display:block; font-size:12px; color:var(--muted); margin-top:2px; overflow-wrap:anywhere; }
+  .gpo-link { display:block; font-size:12px; color:var(--muted); }
+  .gpo-flag { display:inline-block; font-size:11px; font-weight:600; border-radius:5px; padding:1px 7px;
+              margin:1px 3px 1px 0; border:1px solid var(--warn-line); color:var(--warn-fg); background:var(--warn-bg); }
+  .gpo-flag.bad { border-color:var(--bad-line); color:var(--bad-fg); background:var(--bad-bg); }
+
+  /* Verdict is state, so it carries a word as well as a colour. */
+  .gpo-v { display:inline-block; font-size:11.5px; font-weight:700; border-radius:5px; padding:1px 8px; white-space:nowrap; }
+  .gpo-v.bad  { color:var(--bad-fg); background:var(--bad-bg); border:1px solid var(--bad-line); }
+  .gpo-v.warn { color:var(--warn-fg); background:var(--warn-bg); border:1px solid var(--warn-line); }
+  .gpo-v.ok   { color:var(--ok); border:1px solid var(--ok); }
+  .gpo-v.none { color:var(--faint); font-weight:500; }
+  .gpo-more { margin-left:6px; font-size:11.5px; padding:1px 7px; border-radius:5px; cursor:pointer;
+              border:1px solid var(--line-strong); background:transparent; color:var(--text-2); }
+  .gpo-more:hover { border-color:var(--blue); color:var(--blue); }
+
+  .gpo-fixes { padding:4px 0 8px 34px; }
+  .gpo-fix { padding:7px 0; border-bottom:1px solid var(--surface-3); }
+  .gpo-fix:last-child { border-bottom:none; }
+  .gpo-fix-t { font-weight:700; font-size:13px; }
+  .gpo-fix-t.bad { color:var(--bad-fg); } .gpo-fix-t.warn { color:var(--warn-fg); }
+  .gpo-fix-d { font-size:13px; color:var(--text-2); margin-top:2px; }
+  .gpo-fix-f { font-size:13px; margin-top:3px; }
+  .gpo-fix-f span { font-weight:700; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em;
+                    color:var(--ok); margin-right:5px; }
+</style>
+
+<script>
+(function () {
+  var rows = Array.prototype.slice.call(document.querySelectorAll('.gpo-row'));
+  if (!rows.length) return;
+
+  var search = document.getElementById('gpoSearch');
+  var chips = Array.prototype.slice.call(document.querySelectorAll('#gpoChips .gpo-chip'));
+  var selBar = document.getElementById('gpoSelBar');
+  var selCount = document.getElementById('gpoSelCount');
+  var allBox = document.getElementById('gpoAll');
+  var none = document.getElementById('gpoNone');
+  var delIds = document.getElementById('gpoDelIds');
+  var delForce = document.getElementById('gpoDelForce');
+  var delBtn = document.getElementById('gpoDelBtn');
+  var delHint = document.getElementById('gpoDelHint');
+  var unlinkIds = document.getElementById('gpoUnlinkIds');
+  var unlinkBtn = document.getElementById('gpoUnlinkBtn');
+  var flag = '';
+
+  function detailRow(id) { return document.getElementById('gpo-detail-' + id); }
+  function visible(r) { return r.style.display !== 'none'; }
+
+  function apply() {
+    var q = (search.value || '').trim().toLowerCase();
+    var shown = 0;
+    rows.forEach(function (r) {
+      var okFlag = !flag || (' ' + r.getAttribute('data-flags') + ' ').indexOf(' ' + flag + ' ') >= 0;
+      var okText = !q || r.getAttribute('data-hay').indexOf(q) >= 0;
+      var on = okFlag && okText;
+      r.style.display = on ? '' : 'none';
+      var d = detailRow(r.getAttribute('data-id'));
+      if (d && !on) d.style.display = 'none';
+      if (!on) { var cb = r.querySelector('.gpo-pick'); if (cb.checked) { cb.checked = false; r.classList.remove('sel'); } }
+      if (on) shown++;
+    });
+    none.style.display = shown ? 'none' : 'block';
+    allBox.checked = false;
+    sync();
+  }
+
+  function picked() {
+    return rows.filter(function (r) { return visible(r) && r.querySelector('.gpo-pick').checked; });
+  }
+
+  function sync() {
+    var p = picked();
+    selBar.classList.toggle('on', p.length > 0);
+    selCount.textContent = p.length + ' selected';
+    delIds.value = p.map(function (r) { return r.getAttribute('data-gpoid'); }).join(',');
+    unlinkIds.value = delIds.value;
+
+    // Linked policies are refused by the agent unless forced. Say so here rather than
+    // letting somebody discover it from a result screen.
+    var linked = p.filter(function (r) { return r.getAttribute('data-linked') === '1'; });
+    delForce.value = '';
+    if (linked.length) {
+      delHint.textContent = linked.length + ' of these ' + (linked.length === 1 ? 'is' : 'are')
+        + ' still linked — unlink first, or deletion will be refused.';
+    } else {
+      var unread = p.filter(function (r) { return (' ' + r.getAttribute('data-flags') + ' ').indexOf(' unread ') >= 0; });
+      delHint.textContent = unread.length
+        ? unread.length + ' of these have settings the Portal could not read — they are NOT empty. Check them in Group Policy Management first.'
+        : (p.length ? 'All unlinked. Every one is backed up before removal.' : '');
+    }
+    if (unlinkBtn) unlinkBtn.disabled = linked.length === 0;
+  }
+
+  search.addEventListener('input', apply);
+  chips.forEach(function (c) {
+    c.addEventListener('click', function () {
+      chips.forEach(function (x) { x.classList.remove('on'); });
+      c.classList.add('on');
+      flag = c.getAttribute('data-flag') || '';
+      apply();
+    });
+  });
+
+  allBox.addEventListener('change', function () {
+    rows.forEach(function (r) {
+      if (!visible(r)) return;
+      r.querySelector('.gpo-pick').checked = allBox.checked;
+      r.classList.toggle('sel', allBox.checked);
+    });
+    sync();
+  });
+
+  rows.forEach(function (r) {
+    r.querySelector('.gpo-pick').addEventListener('change', function (e) {
+      r.classList.toggle('sel', e.target.checked);
+      sync();
+    });
+  });
+
+  document.querySelectorAll('.gpo-more').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var d = detailRow(b.getAttribute('data-for'));
+      if (d) d.style.display = d.style.display === 'none' ? '' : 'none';
+    });
+  });
+
+  // Deleting policy from a live domain gets a second pair of eyes, by name.
+  var delForm = document.getElementById('gpoDelForm');
+  delForm.addEventListener('submit', function (ev) {
+    var p = picked();
+    if (!p.length) { ev.preventDefault(); return; }
+    var names = p.map(function (r) { return r.getAttribute('data-name'); });
+    var msg = 'Delete ' + p.length + ' Group Policy object' + (p.length === 1 ? '' : 's') + '?\n\n'
+            + names.slice(0, 12).join('\n') + (names.length > 12 ? '\n…and ' + (names.length - 12) + ' more' : '')
+            + '\n\nEach one is backed up on the domain controller first, so this can be undone with Restore-GPO.';
+    if (!window.confirm(msg)) ev.preventDefault();
+  });
+
+  var unlinkForm = document.getElementById('gpoUnlinkForm');
+  if (unlinkForm) unlinkForm.addEventListener('submit', function (ev) {
+    var p = picked();
+    if (!p.length) { ev.preventDefault(); return; }
+    if (!window.confirm('Unlink ' + p.length + ' policy object' + (p.length === 1 ? '' : 's') + '?\n\n'
+        + 'They stop applying but are not deleted, and the exact links removed are written to the activity log so they can be put back.')) {
+      ev.preventDefault();
+    }
+  });
+
+  // Review the selected policies, then show what came back against each row.
+  var revBtn = document.getElementById('gpoReviewBtn');
+  var revOut = document.getElementById('gpoReviewOut');
+  revBtn.addEventListener('click', function () {
+    var p = picked();
+    if (!p.length) return;
+    var ids = p.map(function (r) { return Number(r.getAttribute('data-id')); });
+    revBtn.disabled = true;
+    revBtn.textContent = 'Reading ' + ids.length + ' polic' + (ids.length === 1 ? 'y' : 'ies') + '…';
+    revOut.innerHTML = '<p class="muted" style="font-size:13px;margin:0 0 10px;">Claude is reading each policy in full. This takes a few seconds each.</p>';
+    var m = document.querySelector('meta[name="csrf-token"]');
+    fetch('/gpo/review.json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': m ? m.getAttribute('content') : '' },
+      body: JSON.stringify({ ids: ids })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) { revOut.innerHTML = '<p style="color:var(--bad-fg);font-size:13px;margin:0 0 10px;">' + (d.error || 'That did not work.') + '</p>'; return; }
+      var bad = d.results.filter(function (x) { return x.ok && x.verdict === 'broken'; }).length;
+      var watch = d.results.filter(function (x) { return x.ok && x.verdict === 'watch'; }).length;
+      revOut.innerHTML = '<p style="font-size:13.5px;margin:0 0 10px;"><strong>Reviewed ' + d.results.length + '</strong> — '
+        + bad + ' broken, ' + watch + ' worth watching. Reloading to show the detail…</p>';
+      setTimeout(function () {
+        var u = new URL(window.location.href); u.hash = 'gpo'; window.location.replace(u.toString());
+      }, 1200);
+    }).catch(function () {
+      revOut.innerHTML = '<p style="color:var(--bad-fg);font-size:13px;">Could not reach the Portal.</p>';
+    }).then(function () {
+      revBtn.disabled = false; revBtn.innerHTML = '&#10022; Review with Claude';
+    });
+  });
+
+  apply();
+})();
+</script>

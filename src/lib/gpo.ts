@@ -13,6 +13,7 @@ export interface GpoRow {
   id: number; gpo_id: string; name: string; status: string | null; description: string | null;
   domain: string | null; created_on: string | null; modified_on: string | null;
   link_count: number; linked_enabled: number; enforced: boolean; setting_count: number;
+  extension_count: number;
   applies_to: string[] | null; links: any[] | null; settings: any[] | null;
   report_error: string | null; collected_at: Date;
 }
@@ -47,12 +48,12 @@ export async function ingestGpoInventory(commandId: number): Promise<{ ok: boole
       const links: any[] = Array.isArray(g.links) ? g.links.filter(Boolean) : [];
       await client.query(
         `INSERT INTO customer_gpos (customer_id, gpo_id, name, status, description, domain, created_on, modified_on,
-           link_count, linked_enabled, enforced, setting_count, applies_to, links, settings, report_error, collected_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14::jsonb,$15::jsonb,$16,NOW(),NOW())
+           link_count, linked_enabled, enforced, setting_count, extension_count, applies_to, links, settings, report_error, collected_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17,NOW(),NOW())
          ON CONFLICT (customer_id, gpo_id) DO UPDATE SET
            name=$3, status=$4, description=$5, domain=$6, created_on=$7, modified_on=$8,
-           link_count=$9, linked_enabled=$10, enforced=$11, setting_count=$12,
-           applies_to=$13::jsonb, links=$14::jsonb, settings=$15::jsonb, report_error=$16,
+           link_count=$9, linked_enabled=$10, enforced=$11, setting_count=$12, extension_count=$13,
+           applies_to=$14::jsonb, links=$15::jsonb, settings=$16::jsonb, report_error=$17,
            collected_at=NOW(), updated_at=NOW()`,
         [cmd.customer_id, gpoId, String(g.name || '(unnamed)').slice(0, 300),
          g.status ? String(g.status).slice(0, 60) : null,
@@ -60,6 +61,9 @@ export async function ingestGpoInventory(commandId: number): Promise<{ ok: boole
          domain, g.created || null, g.modified || null,
          links.length, links.filter((l) => l?.enabled).length, links.some((l) => l?.enforced),
          Number(g.settingCount) || (Array.isArray(g.settings) ? g.settings.length : 0),
+         // An older agent does not report this. -1 says "unknown", which the judge treats
+         // as "do not claim it is empty" rather than as zero.
+         g.extensionCount === undefined || g.extensionCount === null ? -1 : Number(g.extensionCount),
          JSON.stringify(Array.isArray(g.appliesTo) ? g.appliesTo : []),
          JSON.stringify(links), JSON.stringify(Array.isArray(g.settings) ? g.settings : []),
          g.reportError ? String(g.reportError).slice(0, 500) : null]);
@@ -162,7 +166,19 @@ export function judgeGpos(rows: GpoRow[]): GpoFinding[] {
       out.push({ ...base, level: 'warn', title: 'All settings disabled', detail: 'The GPO is switched off at the object level.' });
     }
     if (g.setting_count === 0 && !g.report_error) {
-      out.push({ ...base, level: 'warn', title: 'No settings in it', detail: 'An empty policy still costs a little time at every logon.' });
+      // The distinction that matters: genuinely empty, versus we could not read it. The
+      // first is safe to tidy up; the second is a policy doing real work that we failed to
+      // parse, and calling THAT "empty" next to a Delete button is how you lose a domain.
+      const ext = Number(g.extension_count);
+      if (ext === 0) {
+        out.push({ ...base, level: 'warn', title: 'No settings in it',
+          detail: 'The report contained no settings at all. An empty policy still costs a little time at every logon.' });
+      } else {
+        out.push({ ...base, level: 'warn', title: 'Settings could not be read',
+          detail: ext > 0
+            ? `It carries ${ext} block${ext === 1 ? '' : 's'} of settings the Portal could not interpret, so this policy is NOT empty. Open it in Group Policy Management before touching it.`
+            : 'Collected by an older agent that could not read this policy\'s settings. Collect again to find out what is in it - do not assume it is empty.' });
+      }
     }
     if (g.report_error) {
       out.push({ ...base, level: 'bad', title: 'Could not read its settings', detail: g.report_error });
@@ -363,5 +379,146 @@ export async function lastDeployRun(customerId: number): Promise<DeployRun | nul
       taskName: j.taskName, exists: j.exists };
   } catch {
     return { ...base, error: raw.trim().slice(-400) };
+  }
+}
+
+// ── Reviewing one policy ────────────────────────────────────────────────────────
+// The estate-wide "Ask Claude" answers questions. This is the other half: a verdict on a
+// single policy, stored against it, saying whether it will actually do what somebody
+// intended - including the boring failures that cost the most time, like a typo in a path
+// or a setting quietly cancelled out by another one in the same object.
+
+const REVIEW_SYSTEM = [
+  'You are a senior Windows infrastructure engineer at Lumen IT Solutions, a UK managed-service provider,',
+  'reviewing ONE Group Policy Object for a colleague who has to decide whether to keep, fix or bin it.',
+  '',
+  'Judge it on whether it does what somebody clearly INTENDED, and say so bluntly.',
+  '',
+  'Look for, in rough order of how often they bite:',
+  '- Settings that cannot work as written: a UNC path or drive letter that looks wrong or misspelled,',
+  '  a server name that does not match the domain, a script path that will not resolve for a client,',
+  '  a value outside the range the setting accepts.',
+  '- TYPOS anywhere they matter - policy names, descriptions, paths, group names, script arguments.',
+  '  Quote the exact text and give the exact correction.',
+  '- Settings that contradict each other inside this policy, or cancel each other out.',
+  '- A policy that will never apply: not linked, links disabled, all settings disabled,',
+  '  or filtered to a group that would not contain the intended targets.',
+  '- Anything that WEAKENS security: firewall or Defender off, SMBv1, LM/NTLMv1, relaxed password or',
+  '  lockout policy, scripts run from a writable share, "Everyone" permissions, disabled UAC.',
+  '- Deprecated or removed settings that modern Windows ignores, so the policy is doing nothing',
+  '  even though it looks configured.',
+  '',
+  'Rules:',
+  '- Work ONLY from the data given. Never invent a setting or a link. If the setting list was capped,',
+  '  say your review covers what was shown.',
+  '- Be specific. "Check the path" is useless; "\\\\lvg-fs01\\redirect looks like a typo for \\\\lvg-fs1\\redirect" is not.',
+  '- Every finding gets a concrete fix. If there is nothing wrong, say so and return no findings -',
+  '  a clean verdict is a real answer and padding it destroys trust in the ones that matter.',
+  '- British English. No preamble.',
+  '',
+  'Reply with STRICT JSON only. No prose before or after it, no markdown fences:',
+  '{"verdict":"good|watch|broken","summary":"...","findings":[{"level":"bad|warn","title":"...","detail":"...","fix":"..."}]}',
+  '',
+  '- verdict: "broken" if it will not do what was intended; "watch" if it works but something needs attention;',
+  '  "good" if it is sound.',
+  '- summary: one or two sentences, plain English, what this policy does and whether it is doing it.',
+  '- findings: 0-8. Omit entirely when there are none.',
+].join('\n');
+
+export interface PolicyReview {
+  verdict: 'good' | 'watch' | 'broken';
+  summary: string;
+  findings: { level: string; title: string; detail: string; fix: string }[];
+  cache: string | null;
+}
+
+/** A cheap stable hash of what the verdict was formed on, so it can be invalidated when
+ *  the policy actually changes rather than on every collection. */
+export function policyFingerprint(g: GpoRow): string {
+  const basis = JSON.stringify([g.name, g.status, g.link_count, g.linked_enabled, g.enforced,
+    g.setting_count, g.applies_to, g.links, g.settings]);
+  let h = 0;
+  for (let i = 0; i < basis.length; i++) { h = ((h << 5) - h + basis.charCodeAt(i)) | 0; }
+  return String(h >>> 0) + '-' + basis.length;
+}
+
+export async function reviewPolicy(g: GpoRow): Promise<PolicyReview> {
+  const { text, usage } = await aiAskCached(
+    REVIEW_SYSTEM, gpoCorpus(g),
+    'QUESTION: Review this policy. Will it do what was intended, and what needs correcting?',
+    { maxTokens: 1600, strong: true });
+  const p = parseJsonAnswer<any>(text, { summary: stripTrailingJson(text) });
+  const v = String(p.verdict || '').toLowerCase();
+  return {
+    verdict: v === 'broken' ? 'broken' : v === 'good' ? 'good' : 'watch',
+    summary: String(p.summary || stripTrailingJson(text)).slice(0, 1200),
+    findings: Array.isArray(p.findings) ? p.findings.slice(0, 8).map((f: any) => ({
+      level: f?.level === 'bad' ? 'bad' : 'warn',
+      title: String(f?.title || '').slice(0, 160),
+      detail: String(f?.detail || '').slice(0, 600),
+      fix: String(f?.fix || '').slice(0, 400),
+    })).filter((f: any) => f.title) : [],
+    cache: cacheNote(usage),
+  };
+}
+
+/** Review one policy and remember the verdict against it. */
+export async function reviewAndStore(id: number): Promise<PolicyReview & { id: number }> {
+  const g = (await pool.query(`SELECT * FROM customer_gpos WHERE id=$1`, [id])).rows[0];
+  if (!g) throw new Error('No such policy.');
+  const r = await reviewPolicy(g as GpoRow);
+  await pool.query(
+    `UPDATE customer_gpos
+        SET ai_verdict=$1, ai_summary=$2, ai_findings=$3::jsonb, ai_at=NOW(), ai_fingerprint=$4, updated_at=NOW()
+      WHERE id=$5`,
+    [r.verdict, r.summary, JSON.stringify(r.findings), policyFingerprint(g as GpoRow), id]);
+  return { ...r, id };
+}
+
+/** A gpo.delete came back. Take out what the domain no longer has, and keep the backup
+ *  path so a mistake is a Restore-GPO away rather than a restore from tape. */
+export async function ingestGpoDelete(commandId: number): Promise<void> {
+  const cmd = (await pool.query(
+    `SELECT ac.output, ad.customer_id, ad.hostname FROM agent_commands ac
+       JOIN agent_devices ad ON ad.id = ac.device_id
+      WHERE ac.id=$1`, [commandId])).rows[0];
+  if (!cmd || !cmd.customer_id) return;
+
+  const { text } = jsonFromOutput(String(cmd.output || ''));
+  if (!text) return;
+  let parsed: any;
+  try { parsed = JSON.parse(text); } catch { return; }
+
+  const results: any[] = Array.isArray(parsed?.results) ? parsed.results : [];
+  const gone = results.filter((r) => r?.deleted && r?.id).map((r) => String(r.id));
+  if (gone.length) {
+    await pool.query('DELETE FROM customer_gpos WHERE customer_id=$1 AND gpo_id = ANY($2::text[])',
+      [cmd.customer_id, gone]);
+  }
+  const kept = results.filter((r) => !r?.deleted);
+  console.log(`[gpo] delete on ${cmd.hostname}: ${gone.length} removed, ${kept.length} refused, backups in ${parsed?.backupPath || 'unknown'}`);
+}
+
+/** A gpo.unlink came back. The links are gone in the domain, so they go here too - and
+ *  the targets it removed are written to the log, because that list is the undo. */
+export async function ingestGpoUnlink(commandId: number): Promise<void> {
+  const cmd = (await pool.query(
+    `SELECT ac.output, ad.customer_id, ad.hostname FROM agent_commands ac
+       JOIN agent_devices ad ON ad.id = ac.device_id
+      WHERE ac.id=$1`, [commandId])).rows[0];
+  if (!cmd || !cmd.customer_id) return;
+
+  const { text } = jsonFromOutput(String(cmd.output || ''));
+  if (!text) return;
+  let parsed: any;
+  try { parsed = JSON.parse(text); } catch { return; }
+
+  for (const r of (Array.isArray(parsed?.results) ? parsed.results : [])) {
+    if (!r?.id || !Array.isArray(r.removed) || !r.removed.length) continue;
+    await pool.query(
+      `UPDATE customer_gpos
+          SET links='[]'::jsonb, link_count=0, linked_enabled=0, enforced=false, updated_at=NOW()
+        WHERE customer_id=$1 AND gpo_id=$2`, [cmd.customer_id, String(r.id)]);
+    console.log(`[gpo] unlinked "${r.name}" from ${r.removed.join(', ')} - relink with New-GPLink if that was wrong`);
   }
 }

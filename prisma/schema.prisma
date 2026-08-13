@@ -2465,10 +2465,24 @@ model CustomerGpo {
   linkedEnabled Int     @default(0) @map("linked_enabled")
   enforced     Boolean  @default(false)
   settingCount Int      @default(0) @map("setting_count")
+  // How many extension blocks the report contained. A policy with extension data we could
+  // not interpret is NOT an empty policy - and must never be flagged as one next to a
+  // Delete button. -1 means the collector predates this and we simply do not know.
+  extensionCount Int    @default(-1) @map("extension_count")
   appliesTo    Json?    @map("applies_to")    // security groups the policy filters to
   links        Json?                          // [{target,enabled,enforced,order}]
   settings     Json?                          // the reduced setting list (capped agent-side)
   reportError  String?  @map("report_error")
+
+  // What Claude made of this policy, kept against the policy so a review survives a page
+  // reload and can be filtered on. Cleared whenever the policy's settings change, because
+  // a verdict about settings nobody has now is worse than no verdict.
+  aiVerdict    String?  @map("ai_verdict")     // good | watch | broken
+  aiSummary    String?  @map("ai_summary")
+  aiFindings   Json?    @map("ai_findings")    // [{level,title,detail,fix}]
+  aiAt         DateTime? @map("ai_at")
+  aiFingerprint String? @map("ai_fingerprint") // settings hash the verdict was formed on
+
   collectedAt  DateTime @default(now()) @map("collected_at")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")

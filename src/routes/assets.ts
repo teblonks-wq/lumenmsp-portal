@@ -323,9 +323,17 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   // controller, so it lives on that device's page and nowhere else.
   let gpo: any = null;
   if (row.agent_device_id) {
+    // Group Policy shows up on any machine that actually holds Active Directory - the
+    // nominated agent, or anything the server collector has identified as a domain
+    // controller. Tying it to the nomination alone hid it on every other DC in the estate.
     const dev = (await pool.query(
-      'SELECT id, customer_id, is_ad_agent FROM agent_devices WHERE id=$1', [row.agent_device_id])).rows[0];
-    if (dev && dev.is_ad_agent && dev.customer_id) {
+      `SELECT ad.id, ad.customer_id, ad.is_ad_agent,
+              (sf.server_role = 'domain controller') AS is_dc,
+              (COALESCE(sf.roles,'') LIKE '%AD-Domain-Services%') AS has_ad_role
+         FROM agent_devices ad
+         LEFT JOIN server_facts sf ON sf.device_id = ad.id
+        WHERE ad.id=$1`, [row.agent_device_id])).rows[0];
+    if (dev && dev.customer_id && (dev.is_ad_agent || dev.is_dc || dev.has_ad_role)) {
       const { judgeGpos, explainInventoryOutcome } = await import('../lib/gpo');
       const rows = (await pool.query(
         `SELECT * FROM customer_gpos WHERE customer_id=$1 ORDER BY name`, [dev.customer_id])).rows;
@@ -360,7 +368,11 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
       }
 
       gpo = {
-        deviceId: dev.id, customerId: dev.customer_id, rows,
+        deviceId: dev.id, customerId: dev.customer_id, assetId: row.id, rows,
+        isAdAgent: !!dev.is_ad_agent,
+        reviewed: rows.filter((r: any) => r.ai_verdict).length,
+        broken: rows.filter((r: any) => r.ai_verdict === 'broken').length,
+        watch: rows.filter((r: any) => r.ai_verdict === 'watch').length,
         collectedAt: rows.length ? rows[0].collected_at : null,
         findings: findings.length,
         bad: findings.filter((f: any) => f.level === 'bad').length,

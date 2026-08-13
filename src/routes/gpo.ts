@@ -2,7 +2,8 @@ import { Router, Request, Response } from 'express';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
-import { judgeGpos, gpoCorpus, estateCorpus, askGpo, preflightDeployment, lastDeployRun, explainInventoryOutcome, GpoRow } from '../lib/gpo';
+import { judgeGpos, gpoCorpus, estateCorpus, askGpo, preflightDeployment, lastDeployRun,
+         explainInventoryOutcome, reviewAndStore, GpoRow } from '../lib/gpo';
 import { ONLINE_WINDOW_SECS } from '../lib/agent-asset';
 
 // -- Group Policy ---------------------------------------------------------------
@@ -89,7 +90,15 @@ router.post('/gpo/refresh', requireAuth, requireAdmin, async (req: Request, res:
   const back = /^\/[A-Za-z0-9\/_?=&.#-]*$/.test(asked) && !asked.startsWith('//')
     ? asked.split('#')[0] : '/gpo?customer=' + customerId;
   try {
-    const agent = await adAgentFor(customerId);
+    // A device id means "collect from THIS domain controller" - the tab now appears on any
+    // machine that holds AD, not only the nominated agent.
+    const deviceId = parseInt(String((req.body || {}).device_id || ''), 10) || null;
+    const agent = deviceId
+      ? (await pool.query(
+          `SELECT id, hostname, EXTRACT(EPOCH FROM (NOW() - last_seen_at))::int AS seen_secs
+             FROM agent_devices WHERE id=$1 AND customer_id=$2 AND revoked=false`,
+          [deviceId, customerId])).rows[0] || null
+      : await adAgentFor(customerId);
     if (!agent) {
       res.redirect(back + '&err=' + encodeURIComponent(
         'No AD agent set for this customer. Install the agent on a domain controller or management server, then tick "AD agent" for it on the Agents page.'));
@@ -178,6 +187,125 @@ router.post('/gpo/ask.json', requireAuth, requireAdmin, async (req: Request, res
   } catch (e: any) {
     console.error('[gpo] ask failed:', e?.message || e);
     res.status(400).json({ ok: false, error: e.message || 'Ask failed.' });
+  }
+});
+
+// -- Reviewing policies ---------------------------------------------------------
+// The estate-wide Ask answers questions; this is a verdict on individual policies, stored
+// against them so a review survives a reload and the list can be filtered on it.
+router.post('/gpo/review.json', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const raw = (req.body || {}).ids;
+  const ids = (Array.isArray(raw) ? raw : [raw])
+    .map((v: any) => parseInt(String(v), 10)).filter((n: number) => n > 0).slice(0, 25);
+  if (!ids.length) { res.status(400).json({ ok: false, error: 'Nothing selected to review.' }); return; }
+
+  const started = Date.now();
+  const out: any[] = [];
+  try {
+    // Sequential on purpose: each review is its own call and a burst of twenty-five
+    // concurrent ones is how you find a rate limit at the worst moment.
+    for (const id of ids) {
+      try {
+        const r = await reviewAndStore(id);
+        out.push({ id, ok: true, verdict: r.verdict, summary: r.summary, findings: r.findings });
+      } catch (e: any) {
+        out.push({ id, ok: false, error: e.message || 'Review failed.' });
+      }
+    }
+    await logActivity(req.session.user!.id, 'gpo_review', 'customer_gpos', ids[0],
+      `Reviewed ${ids.length} Group Policy object${ids.length === 1 ? '' : 's'} with Claude`);
+    res.json({ ok: true, results: out, seconds: Math.round((Date.now() - started) / 100) / 10 });
+  } catch (e: any) {
+    console.error('[gpo] review failed:', e?.message || e);
+    res.status(400).json({ ok: false, error: e.message || 'Review failed.' });
+  }
+});
+
+// -- Unlinking policies ---------------------------------------------------------
+// The step that should come first: stop a policy applying without destroying it. Trivially
+// reversible, so it needs no typed confirmation - but the agent reports the exact targets
+// it removed, and those go in the audit log as the undo instructions.
+router.post('/gpo/unlink', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const deviceId = parseInt(String(b.device_id || ''), 10);
+  const assetId = parseInt(String(b.asset_id || ''), 10) || null;
+  const back = assetId ? `/assets/${assetId}` : '/assets';
+  const ids = String(b.ids || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 200);
+
+  if (!deviceId || !ids.length) {
+    res.redirect(back + '?err=' + encodeURIComponent('Nothing selected to unlink.') + '#gpo');
+    return;
+  }
+  try {
+    const dev = (await pool.query(
+      'SELECT id, hostname, customer_id FROM agent_devices WHERE id=$1 AND revoked=false', [deviceId])).rows[0];
+    if (!dev) { res.redirect(back + '?err=' + encodeURIComponent('No such machine.') + '#gpo'); return; }
+
+    const names = (await pool.query(
+      `SELECT name FROM customer_gpos WHERE customer_id=$1 AND gpo_id = ANY($2::text[])`,
+      [dev.customer_id, ids])).rows.map((r: any) => r.name);
+
+    const cmd = (await pool.query(
+      `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
+       VALUES ($1,'gpo.unlink',$2,'queued',$3) RETURNING id`,
+      [dev.id, JSON.stringify({ ids: ids.join(',') }), req.session.user!.id])).rows[0];
+
+    await logActivity(req.session.user!.id, 'gpo_unlink', 'agent_devices', dev.id,
+      `Unlinking ${ids.length} Group Policy object${ids.length === 1 ? '' : 's'} on ${dev.hostname}` +
+      (names.length ? ': ' + names.join(', ').slice(0, 500) : ''));
+
+    res.redirect(back + '?cmd=' + cmd.id + '#gpo');
+  } catch (e: any) {
+    console.error('[gpo] unlink failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not queue that: ' + e.message) + '#gpo');
+  }
+});
+
+// -- Deleting policies ----------------------------------------------------------
+// Recoverable by construction: the agent backs every policy up before removing it, and a
+// policy with a live enabled link is refused outright. Unlinked ones - the whole point of
+// the exercise - go without argument.
+router.post('/gpo/delete', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const deviceId = parseInt(String(b.device_id || ''), 10);
+  const assetId = parseInt(String(b.asset_id || ''), 10) || null;
+  const back = assetId ? `/assets/${assetId}` : '/assets';
+  const ids = String(b.ids || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 200);
+  const force = String(b.force || '') === '1';
+
+  if (!deviceId || !ids.length) {
+    res.redirect(back + '?err=' + encodeURIComponent('Nothing selected to delete.') + '#gpo');
+    return;
+  }
+  try {
+    const dev = (await pool.query(
+      'SELECT id, hostname, customer_id FROM agent_devices WHERE id=$1 AND revoked=false', [deviceId])).rows[0];
+    if (!dev) { res.redirect(back + '?err=' + encodeURIComponent('No such machine.') + '#gpo'); return; }
+
+    // Typed confirmation, because this is the one action here that changes a live domain.
+    if (String(b.confirm || '').trim().toUpperCase() !== 'DELETE') {
+      res.redirect(back + '?err=' + encodeURIComponent('Type DELETE to confirm removing those policies.') + '#gpo');
+      return;
+    }
+
+    const names = (await pool.query(
+      `SELECT name FROM customer_gpos WHERE customer_id=$1 AND gpo_id = ANY($2::text[])`,
+      [dev.customer_id, ids])).rows.map((r: any) => r.name);
+
+    const cmd = (await pool.query(
+      `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
+       VALUES ($1,'gpo.delete',$2,'queued',$3) RETURNING id`,
+      [dev.id, JSON.stringify({ ids: ids.join(','), force: force ? 'true' : 'false' }), req.session.user!.id])).rows[0];
+
+    await logActivity(req.session.user!.id, 'gpo_delete', 'agent_devices', dev.id,
+      `DELETING ${ids.length} Group Policy object${ids.length === 1 ? '' : 's'} on ${dev.hostname}` +
+      (names.length ? ': ' + names.join(', ').slice(0, 500) : '') +
+      (force ? ' (forced - including linked policies)' : ''));
+
+    res.redirect(back + '?cmd=' + cmd.id + '#gpo');
+  } catch (e: any) {
+    console.error('[gpo] delete failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not queue that: ' + e.message) + '#gpo');
   }
 });
 
