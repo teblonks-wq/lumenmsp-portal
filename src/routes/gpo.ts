@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
-import { judgeGpos, gpoCorpus, estateCorpus, askGpo, preflightDeployment, lastDeployRun, GpoRow } from '../lib/gpo';
+import { judgeGpos, gpoCorpus, estateCorpus, askGpo, preflightDeployment, lastDeployRun, explainInventoryOutcome, GpoRow } from '../lib/gpo';
 import { ONLINE_WINDOW_SECS } from '../lib/agent-asset';
 
 // -- Group Policy ---------------------------------------------------------------
@@ -15,6 +15,10 @@ import { ONLINE_WINDOW_SECS } from '../lib/agent-asset';
 // because Get-GPO only exists where the GPMC tools are installed.
 
 const router = Router();
+
+// Must match OUTPUT_LIMITS['gpo.inventory'] in routes/agent-api.ts - it is how the page
+// tells "the domain is empty" apart from "the reply was cut off".
+const GPO_OUTPUT_LIMIT = 4_000_000;
 
 const SELECT_COLS = `id, gpo_id, name, status, description, domain, created_on, modified_on,
   link_count, linked_enabled, enforced, setting_count, applies_to, links, settings,
@@ -41,108 +45,49 @@ async function pendingFor(customerId: number): Promise<boolean> {
   return r.rows.length > 0;
 }
 
-// -- List -----------------------------------------------------------------------
+// -- Where Group Policy lives ---------------------------------------------------
+// There is deliberately no estate-wide policy list. A domain's Group Policy belongs to
+// its domain controller, so these routes only resolve a customer to that machine and send
+// you to its page. Every existing link into /gpo keeps working.
+
+/** The asset page for a customer's nominated AD agent, if there is one. */
+async function adAgentAssetId(customerId: number): Promise<number | null> {
+  const r = await pool.query(
+    `SELECT (SELECT ca.id FROM customer_assets ca
+              WHERE ca.agent_device_id = ad.id AND ca.merged_into_id IS NULL LIMIT 1) AS asset_id
+       FROM agent_devices ad
+      WHERE ad.customer_id=$1 AND ad.is_ad_agent=true AND ad.revoked=false
+      ORDER BY ad.last_seen_at DESC NULLS LAST LIMIT 1`, [customerId]);
+  return r.rows[0]?.asset_id || null;
+}
+
 router.get('/gpo', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const customerId = parseInt(String(req.query.customer || ''), 10) || null;
-  const q = String(req.query.q || '').trim();
-  const only = String(req.query.only || '');   // '' | 'findings'
   try {
-    // Every customer that could have Group Policy: one with a nominated AD agent, or one
-    // we have already collected from. A customer with neither has nothing to show and
-    // would only pad the dropdown.
-    const customers = (await pool.query(
-      `SELECT c.id, c.name,
-              (SELECT COUNT(*)::int FROM customer_gpos g WHERE g.customer_id = c.id) AS gpo_count,
-              (SELECT MAX(g.collected_at) FROM customer_gpos g WHERE g.customer_id = c.id) AS collected_at,
-              (SELECT ad.hostname FROM agent_devices ad
-                WHERE ad.customer_id = c.id AND ad.is_ad_agent = true AND ad.revoked = false
-                ORDER BY ad.last_seen_at DESC NULLS LAST LIMIT 1) AS ad_agent,
-              (SELECT EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at))::int FROM agent_devices ad
-                WHERE ad.customer_id = c.id AND ad.is_ad_agent = true AND ad.revoked = false
-                ORDER BY ad.last_seen_at DESC NULLS LAST LIMIT 1) AS ad_seen_secs,
-              EXISTS (SELECT 1 FROM agent_commands ac JOIN agent_devices ad2 ON ad2.id = ac.device_id
-                       WHERE ad2.customer_id = c.id AND ac.kind='gpo.inventory'
-                         AND ac.status IN ('queued','running')) AS pending
-         FROM customers c
-        WHERE EXISTS (SELECT 1 FROM agent_devices ad WHERE ad.customer_id = c.id AND ad.is_ad_agent = true AND ad.revoked = false)
-           OR EXISTS (SELECT 1 FROM customer_gpos g WHERE g.customer_id = c.id)
-        ORDER BY c.name`)).rows;
-
-    const params: any[] = [];
-    const where: string[] = [];
-    if (customerId) { params.push(customerId); where.push(`g.customer_id = $${params.length}`); }
-    if (q) {
-      params.push('%' + q + '%');
-      where.push(`(g.name ILIKE $${params.length} OR g.description ILIKE $${params.length} OR g.links::text ILIKE $${params.length})`);
-    }
-
-    const rows = (await pool.query(
-      `SELECT g.*, c.name AS customer_name
-         FROM customer_gpos g LEFT JOIN customers c ON c.id = g.customer_id
-        ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-        ORDER BY c.name NULLS LAST, g.name`, params)).rows;
-
-    // judgeGpos is mechanical and cheap; run it over what is on screen and hang the
-    // findings off each row so the list itself says what is worth a look.
-    const findings = judgeGpos(rows as GpoRow[]);
-    const byGpo = new Map<string, any[]>();
-    for (const f of findings) {
-      const list = byGpo.get(f.gpoId) || [];
-      list.push(f);
-      byGpo.set(f.gpoId, list);
-    }
-    for (const r of rows) r.findings = byGpo.get(r.gpo_id) || [];
-
-    const shown = only === 'findings' ? rows.filter((r: any) => r.findings.length) : rows;
-
-    // The failure that will actually happen: the nominated machine is a member server with
-    // no GPMC tools, so Get-GPO does not exist. Without this the page just sits there
-    // looking empty and nobody knows why.
-    let lastRun: any = null;
     if (customerId) {
-      lastRun = (await pool.query(
-        `SELECT ac.status, ac.exit_code, ac.output, ac.finished_at, ad.hostname,
-                EXTRACT(EPOCH FROM (NOW() - ac.finished_at))::int AS age_secs
-           FROM agent_commands ac JOIN agent_devices ad ON ad.id = ac.device_id
-          WHERE ad.customer_id=$1 AND ac.kind='gpo.inventory' AND ac.finished_at IS NOT NULL
-          ORDER BY ac.finished_at DESC LIMIT 1`, [customerId])).rows[0] || null;
-      if (lastRun) {
-        const out = String(lastRun.output || '');
-        lastRun.failed = lastRun.status !== 'done' || out.indexOf('{') < 0;
-        // The tail is where PowerShell puts the reason; the head is usually banner noise.
-        lastRun.reason = /Get-GPO|GroupPolicy|not recognized|not recognised/i.test(out)
-          ? 'That machine does not have the Group Policy tools. On a member server: Install-WindowsFeature GPMC. It is already there on a domain controller.'
-          : (out.trim().slice(-400) || 'The agent returned nothing at all.');
-      }
+      const assetId = await adAgentAssetId(customerId);
+      if (assetId) { res.redirect(`/assets/${assetId}#gpo`); return; }
+      const c = (await pool.query('SELECT name FROM customers WHERE id=$1', [customerId])).rows[0];
+      res.redirect('/assets?servers=1&msg=' + encodeURIComponent(
+        `${c?.name || 'That customer'} has no AD agent yet. Open their domain controller, then tick "AD agent" for it on the Agents page - Group Policy appears on that machine.`));
+      return;
     }
-
-    res.render('gpo/list', {
-      user: req.session.user!, rows: shown, customers, customerId, q, only, lastRun,
-      summary: {
-        gpos: rows.length,
-        unlinked: rows.filter((r: any) => Number(r.link_count) === 0).length,
-        settings: rows.reduce((a: number, r: any) => a + Number(r.setting_count || 0), 0),
-        findings: findings.length,
-        bad: findings.filter((f) => f.level === 'bad').length,
-      },
-      onlineWindowSecs: ONLINE_WINDOW_SECS,
-      msg: req.query.msg || null, error: req.query.err || null,
-    });
+    res.redirect('/assets?servers=1&msg=' + encodeURIComponent(
+      'Group Policy lives on the machine that holds it. Open a customer\'s domain controller and use its Group Policy tab.'));
   } catch (e: any) {
-    console.error('[gpo] list failed:', e.message);
-    res.render('gpo/list', {
-      user: req.session.user!, rows: [], customers: [], customerId, q: '', only: '', lastRun: null,
-      summary: { gpos: 0, unlinked: 0, settings: 0, findings: 0, bad: 0 },
-      onlineWindowSecs: ONLINE_WINDOW_SECS, msg: null, error: e.message,
-    });
+    console.error('[gpo] resolve failed:', e.message);
+    res.redirect('/assets');
   }
 });
 
 // -- Collect --------------------------------------------------------------------
 router.post('/gpo/refresh', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const customerId = parseInt(String((req.body || {}).customer_id || ''), 10);
-  if (!customerId) { res.redirect('/gpo?err=' + encodeURIComponent('Pick a customer first.')); return; }
-  const back = '/gpo?customer=' + customerId;
+  if (!customerId) { res.redirect('/assets?err=' + encodeURIComponent('Pick a customer first.')); return; }
+  // Only ever an internal path: a redirect target from a form is attacker-shaped input.
+  const asked = String((req.body || {}).back || '');
+  const back = /^\/[A-Za-z0-9\/_?=&.#-]*$/.test(asked) && !asked.startsWith('//')
+    ? asked.split('#')[0] : '/gpo?customer=' + customerId;
   try {
     const agent = await adAgentFor(customerId);
     if (!agent) {
@@ -154,16 +99,13 @@ router.post('/gpo/refresh', requireAuth, requireAdmin, async (req: Request, res:
       res.redirect(back + '&msg=' + encodeURIComponent('A collection is already queued for this customer.'));
       return;
     }
-    await pool.query(
-      `INSERT INTO agent_commands (device_id, kind, status, requested_by) VALUES ($1,'gpo.inventory','queued',$2)`,
-      [agent.id, req.session.user!.id]);
+    const cmd = (await pool.query(
+      `INSERT INTO agent_commands (device_id, kind, status, requested_by)
+       VALUES ($1,'gpo.inventory','queued',$2) RETURNING id`,
+      [agent.id, req.session.user!.id])).rows[0];
     await logActivity(req.session.user!.id, 'gpo_collect', 'customers', customerId,
       `Queued a Group Policy collection on ${agent.hostname}`);
-    const live = agent.seen_secs != null && Number(agent.seen_secs) < ONLINE_WINDOW_SECS;
-    res.redirect(back + '&msg=' + encodeURIComponent(
-      `Asked ${agent.hostname} to report its Group Policy.` +
-      (live ? ' It should answer within a minute or two - reload the page.'
-            : ' That machine is offline, so it will run when it next checks in.')));
+    res.redirect(back + (back.indexOf('?') >= 0 ? '&' : '?') + 'cmd=' + cmd.id + '#gpo');
   } catch (e: any) {
     console.error('[gpo] refresh failed:', e.message);
     res.redirect(back + '&err=' + encodeURIComponent('Could not queue that: ' + e.message));

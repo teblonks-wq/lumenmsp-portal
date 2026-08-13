@@ -929,13 +929,29 @@ router.post('/agent/api/commands/:id/progress', requireDevice, async (req: Reque
   }
 });
 
+// How much of a command's output we keep. Console output is chatty and worthless past a
+// screenful; a structured inventory is worthless if it is cut off AT ALL, because the
+// JSON stops parsing and the whole run is thrown away. Truncating one of those in the
+// middle produced a collection that succeeded, stored nothing, and said nothing.
+const OUTPUT_LIMIT_DEFAULT = 400_000;
+const OUTPUT_LIMITS: Record<string, number> = {
+  'gpo.inventory': 4_000_000,   // a large domain reports far more than 400k
+  'server.facts': 2_000_000,
+  'ce.assess': 2_000_000,
+};
+
 router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request, res: Response) => {
   const d = (req as any).agentDevice;
   const id = parseInt(String(req.params.id), 10);
   const b = req.body || {};
   const exitCode = Number.isFinite(parseInt(String(b.exit_code), 10)) ? parseInt(String(b.exit_code), 10) : null;
-  const output = String(b.output ?? '').slice(0, 400000);
   try {
+    // The kind decides how much we keep, so it has to be read before the write.
+    const known = await pool.query('SELECT kind FROM agent_commands WHERE id=$1 AND device_id=$2', [id, d.id]);
+    if (!known.rows.length) { res.status(404).json({ ok: false, error: 'unknown command' }); return; }
+    const kind = String(known.rows[0].kind || '');
+    const output = String(b.output ?? '').slice(0, OUTPUT_LIMITS[kind] ?? OUTPUT_LIMIT_DEFAULT);
+
     // payload=NULL on completion: a reset password must not sit in the database after use.
     const r = await pool.query(
       `UPDATE agent_commands SET status=$1, exit_code=$2, output=$3, finished_at=NOW(), payload=NULL

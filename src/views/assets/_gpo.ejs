@@ -1,0 +1,108 @@
+<%
+// ── Group Policy tab ────────────────────────────────────────────────────────────
+// A domain's Group Policy belongs to its domain controller, so it lives here on that
+// machine's page rather than in an estate-wide list. Read-only: the writing still happens
+// in Group Policy Management, because a browser button that edits a live domain is one
+// click away from a very bad morning.
+var _g = gpo;
+function _gdt(d) { return d ? new Date(d).toLocaleString('en-GB') : 'never'; }
+%>
+<section class="dev-tab-panel" data-key="gpo">
+  <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+    <div style="flex:1;min-width:280px;">
+      <p class="dev-subcard-title" style="margin:0;">Group Policy on this domain</p>
+      <p class="muted" style="margin:4px 0 0;font-size:12.5px;">
+        Every policy object this domain controller reports, where it is linked and what it actually does.
+        Read-only &mdash; collected by the agent, judged by the Portal.
+        <% if (_g.collectedAt) { %>Last collected <%= _gdt(_g.collectedAt) %>.<% } %>
+      </p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <form method="post" action="/gpo/refresh" style="margin:0;">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <input type="hidden" name="customer_id" value="<%= _g.customerId %>">
+        <input type="hidden" name="back" value="/assets/<%= asset.id %>#gpo">
+        <button class="btn btn-primary" type="submit" <%= _g.pendingId ? 'disabled' : '' %>>
+          <%= _g.pendingId ? 'Collecting…' : (_g.rows.length ? 'Collect again' : 'Collect now') %>
+        </button>
+      </form>
+      <a class="btn" href="/gpo/deploy/<%= _g.customerId %>" title="Push the LumenMSP Agent to every domain-joined machine using Group Policy">&#8681; Deploy the agent by GPO</a>
+      <% if (_g.rows.length) { %>
+        <button class="btn btn-remote" type="button" id="gpoAskBtn">&#10022; Ask Claude</button>
+      <% } %>
+    </div>
+  </div>
+
+  <div id="gpoTrack"></div>
+
+  <% if (_g.problem) { %>
+    <div class="alert alert-danger" style="margin-bottom:12px;">
+      <strong>The last collection stored nothing.</strong>
+      <p style="margin:6px 0 0;font-size:13px;"><%= _g.problem %></p>
+      <% if (_g.outputLen) { %><p class="muted" style="margin:4px 0 0;font-size:11.5px;">It replied with <%= Number(_g.outputLen).toLocaleString('en-GB') %> characters, <%= _gdt(_g.lastAt) %>.</p><% } %>
+    </div>
+  <% } %>
+
+  <% if (_g.rows.length) { %>
+    <div class="dev-info-cols" style="margin-bottom:12px;">
+      <div class="dev-field-row"><div class="k">Policies</div><div class="v"><%= _g.rows.length %></div></div>
+      <div class="dev-field-row"><div class="k">Settings</div><div class="v"><%= Number(_g.settings).toLocaleString('en-GB') %></div></div>
+      <div class="dev-field-row"><div class="k">Not linked</div><div class="v"<%= _g.unlinked ? ' style="color:var(--warn-fg);"' : '' %>><%= _g.unlinked %></div></div>
+      <div class="dev-field-row"><div class="k">Worth a look</div><div class="v"<%= _g.findings ? ' style="color:var(--warn-fg);"' : '' %>><%= _g.findings %></div></div>
+    </div>
+
+    <div id="gpoAskPanel" class="card" style="display:none;margin-bottom:12px;">
+      <div style="display:flex;align-items:flex-start;gap:10px;">
+        <div style="flex:1;">
+          <p class="muted" style="margin:0 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;">Asked Claude</p>
+          <h2 id="gpoAskQ" style="margin:0;font-size:16px;"></h2>
+        </div>
+        <button type="button" id="gpoAskClose" style="border:none;background:none;font-size:22px;line-height:1;cursor:pointer;color:var(--muted);">&times;</button>
+      </div>
+      <form id="gpoAskForm" style="display:flex;gap:8px;margin-top:12px;">
+        <input class="input" id="gpoAskInput" style="flex:1;" autocomplete="off"
+               placeholder="e.g. does anything here weaken security? which policies overlap?">
+        <button class="btn btn-primary" type="submit" id="gpoAskGo">Ask</button>
+      </form>
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;" id="gpoAskChips"></div>
+      <div id="gpoAskBody" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Policy</th><th>Linked to</th><th style="text-align:right;">Settings</th><th>Worth a look</th><th>Modified</th></tr></thead>
+        <tbody>
+          <% _g.rows.forEach(function (p) { %>
+            <% var _links = Array.isArray(p.links) ? p.links : []; %>
+            <tr>
+              <td>
+                <a class="row-link" href="/gpo/<%= p.id %>" style="font-weight:600;"><%= p.name %></a>
+                <% if (p.enforced) { %><span style="font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin-left:4px;border:1px solid var(--warn-line);color:var(--warn-fg);background:var(--warn-bg);">Enforced</span><% } %>
+              </td>
+              <td style="max-width:260px;">
+                <% if (!_links.length) { %><span class="muted">nowhere</span><% } else { %>
+                  <% _links.slice(0, 2).forEach(function (l) { %>
+                    <span style="display:block;font-size:12px;color:var(--muted);"><%= l.target %><%= l.enabled === false ? ' (link off)' : '' %></span>
+                  <% }); %>
+                  <% if (_links.length > 2) { %><span style="display:block;font-size:12px;color:var(--muted);">+<%= _links.length - 2 %> more</span><% } %>
+                <% } %>
+              </td>
+              <td style="text-align:right;font-variant-numeric:tabular-nums;"><%= p.setting_count %></td>
+              <td>
+                <% if (!p.findings.length) { %><span class="muted">&mdash;</span><% } %>
+                <% p.findings.forEach(function (f) { %>
+                  <span title="<%= f.detail || '' %>" style="display:inline-block;font-size:11px;font-weight:600;border-radius:5px;padding:1px 7px;margin:1px 3px 1px 0;border:1px solid <%= f.level === 'bad' ? 'var(--bad-line)' : 'var(--warn-line)' %>;color:<%= f.level === 'bad' ? 'var(--bad-fg)' : 'var(--warn-fg)' %>;background:<%= f.level === 'bad' ? 'var(--bad-bg)' : 'var(--warn-bg)' %>;"><%= f.title %></span>
+                <% }); %>
+              </td>
+              <td class="muted" style="font-size:12.5px;white-space:nowrap;"><%= p.modified_on ? String(p.modified_on).slice(0, 10) : '&mdash;' %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } else if (!_g.problem) { %>
+    <div class="empty-state">
+      Nothing collected yet. Press <strong>Collect now</strong> &mdash; it runs on this machine and takes a minute or two.
+    </div>
+  <% } %>
+</section>

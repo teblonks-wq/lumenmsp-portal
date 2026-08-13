@@ -166,6 +166,7 @@ function _ago(d) {
     <button type="button" data-tab="os">OS</button>
 <% var _isServer = (typeof serverFacts !== 'undefined' && serverFacts); %>
 <% if (_isServer) { %><button type="button" data-tab="server">Server<% var _sb = (serverAlerts||[]).filter(function(a){ return a.level==='bad'; }).length; %><% if (_sb) { %> <span style="color:var(--bad-fg);">●</span><% } %></button><% } %>
+<% if (typeof gpo !== 'undefined' && gpo) { %><button type="button" data-tab="gpo">Group Policy<% if (gpo.bad) { %> <span style="color:var(--bad-fg);">&#9679;</span><% } %></button><% } %>
 <% if (user.role === 'admin') { %><button type="button" data-tab="tools">Tools</button><% } %>
     <button type="button" data-tab="backup">Backup<% if (backupPlans.length && backupPlans.some(function(p){ return p.cls==='failed'; })) { %> <span style="color:var(--bad-fg);">●</span><% } %></button>
   </nav>
@@ -246,6 +247,8 @@ function _ago(d) {
   </section>
 
   <% if (_isServer) { %><%- include('_server') %><% } %>
+
+  <% if (typeof gpo !== 'undefined' && gpo) { %><%- include('_gpo', { gpo: gpo, asset: asset, user: user, csrfToken: (typeof csrfToken !== 'undefined' ? csrfToken : '') }) %><% } %>
 
   <% if (user.role === 'admin') { %><%- include('_tools', { asset: asset, agentInfo: (typeof agentInfo !== 'undefined' ? agentInfo : null), user: user }) %><% } %>
 
@@ -339,5 +342,64 @@ function _ago(d) {
 </script>
 
 <%- include('../partials/power-menu') %>
+<%- include('../partials/command-progress') %>
+
+<% if (typeof gpo !== 'undefined' && gpo) { %>
+<%- include('../gpo/_ask-script') %>
+<script>
+(function () {
+  var CUST = <%= gpo.customerId %>;
+  var panel = document.getElementById('gpoAskPanel');
+  if (!panel) return;
+  var form = document.getElementById('gpoAskForm');
+  var input = document.getElementById('gpoAskInput');
+  var go = document.getElementById('gpoAskGo');
+  var head = document.getElementById('gpoAskQ');
+  var body = document.getElementById('gpoAskBody');
+
+  function ask(q) { input.value = q; window.gpoAsk({ customer_id: CUST }, q, head, body, go); }
+
+  var chips = document.getElementById('gpoAskChips');
+  ['Does anything here weaken security?',
+   'Which of these policies overlap or contradict each other?',
+   'Which of these are doing nothing and could go?'].forEach(function (t) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn'; b.style.cssText = 'font-size:12px;padding:3px 10px;';
+    b.textContent = t;
+    b.addEventListener('click', function () { ask(t); });
+    chips.appendChild(b);
+  });
+
+  document.getElementById('gpoAskBtn').addEventListener('click', function () {
+    panel.style.display = 'block';
+    input.focus();
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+  document.getElementById('gpoAskClose').addEventListener('click', function () { panel.style.display = 'none'; });
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var q = (input.value || '').trim();
+    if (q) window.gpoAsk({ customer_id: CUST }, q, head, body, go);
+  });
+})();
+</script>
+<% } %>
+
+<% var _track = (typeof trackCommandId !== 'undefined' && trackCommandId) ? trackCommandId
+                : ((typeof gpo !== 'undefined' && gpo && gpo.pendingId) ? gpo.pendingId : null); %>
+<% if (_track) { %>
+<script>
+// A queued collection follows itself and reloads the page when it lands, so nobody has
+// to sit there pressing refresh wondering whether the button did anything.
+document.addEventListener('DOMContentLoaded', function () {
+  var mount = document.getElementById('gpoTrack');
+  if (mount && window.trackCommand) {
+    window.trackCommand({ id: <%= _track %>, mount: mount, onDone: 'reload', title: 'Reading Group Policy…' });
+    var t = document.querySelector('[data-tab="gpo"]');
+    if (t && location.hash === '#gpo') t.click();
+  }
+});
+</script>
+<% } %>
 
 <%- include('../partials/footer') %>

@@ -1,0 +1,136 @@
+<style>
+  .cmdp { border:1px solid var(--info-line); border-radius:8px; padding:11px 14px; margin:0 0 14px; background:var(--tint-accent); }
+  .cmdp-top { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  .cmdp-title { font-weight:700; font-size:13.5px; }
+  .cmdp-meta { font-size:12px; color:var(--muted); margin-left:auto; font-variant-numeric:tabular-nums; }
+  .cmdp-track { position:relative; height:6px; border-radius:3px; background:var(--surface-3); margin-top:9px; overflow:hidden; }
+  .cmdp-fill { position:absolute; inset:0 auto 0 0; width:0; border-radius:3px; background:var(--blue); transition:width .4s ease; }
+  .cmdp-track.indet .cmdp-fill { width:35%; animation:cmdpSlide 1.5s ease-in-out infinite; }
+  @keyframes cmdpSlide { 0% { left:-35%; } 100% { left:100%; } }
+  .cmdp-note { font-size:12px; color:var(--muted); margin-top:7px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .cmdp.done { border-color:var(--ok); background:var(--ok-bg,var(--tint-accent)); }
+  .cmdp.bad { border-color:var(--bad-line); background:var(--bad-bg); }
+  .cmdp.bad .cmdp-fill { background:var(--bad-fg); }
+</style>
+<script>
+// ── One tracker for every queued agent command ──────────────────────────────────
+// Press a button, watch the thing happen. Before this, every Collect/Refresh/Install in
+// the Portal queued work and then said nothing at all, so "it is running" and "the button
+// did nothing" looked identical and the only move was to keep reloading.
+(function () {
+  if (window.trackCommand) return;
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function secs(n) {
+    n = Math.max(0, Math.round(n || 0));
+    if (n < 60) return n + 's';
+    var m = Math.floor(n / 60);
+    return m + 'm ' + (n % 60) + 's';
+  }
+
+  /**
+   * opts: { id, mount, onDone (fn|'reload'), title }
+   * Polls until the command finishes. Backs off after the first half-minute so a long
+   * install is not a request every second for an hour.
+   */
+  window.trackCommand = function (opts) {
+    var mount = typeof opts.mount === 'string' ? document.getElementById(opts.mount) : opts.mount;
+    if (!mount || !opts.id) return;
+
+    var box = el('div', 'cmdp');
+    var top = el('div', 'cmdp-top');
+    var title = el('span', 'cmdp-title', opts.title || 'Working…');
+    var meta = el('span', 'cmdp-meta', '');
+    top.appendChild(title); top.appendChild(meta);
+    var track = el('div', 'cmdp-track indet');
+    var fill = el('div', 'cmdp-fill');
+    track.appendChild(fill);
+    var note = el('div', 'cmdp-note', '');
+    box.appendChild(top); box.appendChild(track); box.appendChild(note);
+    mount.innerHTML = '';
+    mount.appendChild(box);
+
+    var started = Date.now(), stopped = false;
+
+    function finish(d) {
+      stopped = true;
+      track.classList.remove('indet');
+      fill.style.width = '100%';
+      if (d && d.failed) {
+        box.className = 'cmdp bad';
+        title.textContent = (d.label || 'That') + ' failed on ' + (d.hostname || 'the machine') + '.';
+        note.textContent = d.outputTail || 'No output was returned.';
+      } else {
+        box.className = 'cmdp done';
+        title.textContent = (d && d.label ? d.label : 'Finished') + ' — done.';
+        note.textContent = '';
+        if (opts.onDone === 'reload') {
+          title.textContent += ' Refreshing…';
+          // Drop the ?cmd= so a manual reload later does not re-track a finished command.
+          var u = new URL(window.location.href);
+          u.searchParams.delete('cmd');
+          u.searchParams.delete('msg');
+          setTimeout(function () { window.location.replace(u.toString()); }, 700);
+        } else if (typeof opts.onDone === 'function') {
+          opts.onDone(d);
+        }
+      }
+    }
+
+    function tick() {
+      if (stopped) return;
+      fetch('/commands/' + encodeURIComponent(opts.id) + '/status.json', { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!d.ok) { stopped = true; title.textContent = d.error || 'Could not follow that job.'; track.style.display = 'none'; return; }
+
+          if (d.done) { finish(d); return; }
+
+          if (d.status === 'queued') {
+            title.textContent = d.deviceOffline
+              ? 'Waiting for ' + (d.hostname || 'the machine') + ' to come online'
+              : 'Queued for ' + (d.hostname || 'the machine');
+            note.textContent = d.deviceOffline
+              ? 'It is offline, so this runs when it next checks in. You can leave the page.'
+              : 'It starts within seconds of the next check-in.';
+          } else {
+            title.textContent = (d.label || 'Working') + ' on ' + (d.hostname || 'the machine') + '…';
+            note.textContent = d.progress || '';
+          }
+
+          if (d.pct != null) {
+            track.classList.remove('indet');
+            fill.style.width = Math.max(2, Math.min(100, d.pct)) + '%';
+          } else {
+            track.classList.add('indet');
+          }
+          meta.textContent = secs(d.ageSecs);
+        })
+        .catch(function () { /* a blip is not a failure - the next tick retries */ })
+        .then(function () {
+          if (stopped) return;
+          var elapsed = (Date.now() - started) / 1000;
+          setTimeout(tick, elapsed < 30 ? 1500 : (elapsed < 300 ? 3000 : 6000));
+        });
+    }
+    tick();
+  };
+
+  // Anything on the page carrying data-track-command gets followed automatically.
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('[data-track-command]').forEach(function (m) {
+      window.trackCommand({
+        id: m.getAttribute('data-track-command'),
+        mount: m,
+        title: m.getAttribute('data-track-title') || undefined,
+        onDone: m.getAttribute('data-track-reload') === '1' ? 'reload' : undefined,
+      });
+    });
+  });
+})();
+</script>

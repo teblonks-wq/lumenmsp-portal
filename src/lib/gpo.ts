@@ -78,6 +78,50 @@ export async function ingestGpoInventory(commandId: number): Promise<{ ok: boole
   } finally { client.release(); }
 }
 
+/**
+ * Why a collection stored what it stored. A run that succeeds on the machine, returns
+ * output, and files nothing is the worst kind of failure: every surface says "fine" and
+ * the page just stays empty. This turns the stored output back into a sentence.
+ */
+export function explainInventoryOutcome(
+  raw: string, storedCount: number, keptLimit: number,
+): { ok: boolean; message: string | null } {
+  const text = String(raw || '');
+  if (storedCount > 0) return { ok: true, message: null };
+
+  if (!text.trim()) {
+    return { ok: false, message: 'The agent returned nothing at all. Check the command output on the machine.' };
+  }
+  const a = text.indexOf('{'), b = text.lastIndexOf('}');
+  if (a < 0 || b <= a) {
+    return { ok: false, message: 'The agent replied, but not with the expected data: ' + text.trim().slice(-300) };
+  }
+  let parsed: any;
+  try {
+    parsed = JSON.parse(text.slice(a, b + 1));
+  } catch (e: any) {
+    // The failure that actually happened: a large domain reported more than we kept, so
+    // the JSON was cut mid-structure and nothing could be read out of it.
+    if (text.length >= keptLimit) {
+      return { ok: false, message:
+        `The reply was larger than the ${keptLimit.toLocaleString('en-GB')} characters the Portal keeps, so it was cut off and could not be read. ` +
+        'Collect again now the limit has been raised.' };
+    }
+    return { ok: false, message: 'The reply could not be read as data (' + (e.message || 'parse failed') + ').' };
+  }
+  const gpos = Array.isArray(parsed?.gpos) ? parsed.gpos : null;
+  if (gpos === null) {
+    return { ok: false, message: 'The reply parsed but contained no policy list. ' +
+      (parsed?.error ? 'It said: ' + String(parsed.error).slice(0, 300) : '') };
+  }
+  if (!gpos.length) {
+    return { ok: false, message: 'The domain reported no Group Policy Objects at all. ' +
+      'That is almost never true of a live domain - check the agent is running on a domain controller with the Group Policy tools.' };
+  }
+  return { ok: false, message:
+    `The agent reported ${gpos.length} policies but none were saved, so the Portal failed to file them. Check the server log for "[gpo] ingest failed".` };
+}
+
 export interface GpoFinding { level: 'bad' | 'warn'; gpoId: string; gpoName: string; title: string; detail?: string }
 
 /**

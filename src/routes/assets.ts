@@ -318,8 +318,65 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     ...h, statusLabel: planStatusLabel(h.status), cls: classifyPlanStatus(h.status),
     dataCopiedH: h.dataCopied != null ? fmtBytes(h.dataCopied) : null,
   }));
+  // ── Group Policy, on the machine that holds it ────────────────────────────────
+  // Deliberately not an estate-wide list: a domain's policy belongs to its domain
+  // controller, so it lives on that device's page and nowhere else.
+  let gpo: any = null;
+  if (row.agent_device_id) {
+    const dev = (await pool.query(
+      'SELECT id, customer_id, is_ad_agent FROM agent_devices WHERE id=$1', [row.agent_device_id])).rows[0];
+    if (dev && dev.is_ad_agent && dev.customer_id) {
+      const { judgeGpos, explainInventoryOutcome } = await import('../lib/gpo');
+      const rows = (await pool.query(
+        `SELECT * FROM customer_gpos WHERE customer_id=$1 ORDER BY name`, [dev.customer_id])).rows;
+      const findings = judgeGpos(rows as any);
+      const byGpo = new Map<string, any[]>();
+      for (const f of findings) {
+        const list = byGpo.get(f.gpoId) || [];
+        list.push(f);
+        byGpo.set(f.gpoId, list);
+      }
+      for (const r of rows) r.findings = byGpo.get(r.gpo_id) || [];
+
+      const last = (await pool.query(
+        `SELECT id, status, output, finished_at, length(output) AS output_len
+           FROM agent_commands
+          WHERE device_id=$1 AND kind='gpo.inventory' AND finished_at IS NOT NULL
+          ORDER BY id DESC LIMIT 1`, [dev.id])).rows[0] || null;
+      const pending = (await pool.query(
+        `SELECT id FROM agent_commands WHERE device_id=$1 AND kind='gpo.inventory'
+          AND status IN ('queued','running') ORDER BY id DESC LIMIT 1`, [dev.id])).rows[0] || null;
+
+      let problem: string | null = null;
+      if (last && !rows.length) {
+        if (last.status !== 'done') {
+          const out = String(last.output || '');
+          problem = /Get-GPO|GroupPolicy|not recognized|not recognised/i.test(out)
+            ? 'This machine does not have the Group Policy tools. On a member server: Install-WindowsFeature GPMC.'
+            : (out.trim().slice(-400) || 'The agent returned nothing at all.');
+        } else {
+          problem = explainInventoryOutcome(String(last.output || ''), 0, 4_000_000).message;
+        }
+      }
+
+      gpo = {
+        deviceId: dev.id, customerId: dev.customer_id, rows,
+        collectedAt: rows.length ? rows[0].collected_at : null,
+        findings: findings.length,
+        bad: findings.filter((f: any) => f.level === 'bad').length,
+        settings: rows.reduce((a: number, r: any) => a + Number(r.setting_count || 0), 0),
+        unlinked: rows.filter((r: any) => Number(r.link_count) === 0).length,
+        pendingId: pending ? pending.id : null,
+        lastAt: last ? last.finished_at : null,
+        outputLen: last ? Number(last.output_len || 0) : 0,
+        problem,
+      };
+    }
+  }
+
   res.render('assets/detail', {
-    user: req.session.user!, asset: row, agentInfo,
+    user: req.session.user!, asset: row, agentInfo, gpo,
+    trackCommandId: parseInt(String(req.query.cmd || ''), 10) || null,
     latestAgentVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
     backupPlans, backupHistory,
     // Remote control means OUR remote control. It appears when MeshCentral actually has
