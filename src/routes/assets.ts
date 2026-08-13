@@ -347,23 +347,35 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
       for (const r of rows) r.findings = byGpo.get(r.gpo_id) || [];
 
       const last = (await pool.query(
-        `SELECT id, status, output, finished_at, length(output) AS output_len
+        `SELECT id, status, output, finished_at, length(output) AS output_len,
+                -- Did anything actually get filed as a result of this run? Comparing the
+                -- run to the newest row is the only honest test: a collection that failed
+                -- while older rows were already present used to leave no trace at all.
+                (finished_at > COALESCE(
+                  (SELECT MAX(collected_at) FROM customer_gpos WHERE customer_id=$2), 'epoch'::timestamptz)
+                  + INTERVAL '5 seconds') AS stale
            FROM agent_commands
           WHERE device_id=$1 AND kind='gpo.inventory' AND finished_at IS NOT NULL
-          ORDER BY id DESC LIMIT 1`, [dev.id])).rows[0] || null;
+          ORDER BY id DESC LIMIT 1`, [dev.id, dev.customer_id])).rows[0] || null;
       const pending = (await pool.query(
         `SELECT id FROM agent_commands WHERE device_id=$1 AND kind='gpo.inventory'
           AND status IN ('queued','running') ORDER BY id DESC LIMIT 1`, [dev.id])).rows[0] || null;
 
       let problem: string | null = null;
-      if (last && !rows.length) {
+      // Fire when the run stored nothing at all, OR when it finished without updating a
+      // single row - which is what a failed collection looks like when yesterday's data
+      // is still sitting there.
+      if (last && (!rows.length || last.stale)) {
         if (last.status !== 'done') {
           const out = String(last.output || '');
           problem = /Get-GPO|GroupPolicy|not recognized|not recognised/i.test(out)
             ? 'This machine does not have the Group Policy tools. On a member server: Install-WindowsFeature GPMC.'
             : (out.trim().slice(-400) || 'The agent returned nothing at all.');
         } else {
-          problem = explainInventoryOutcome(String(last.output || ''), 0, 4_000_000).message;
+          problem = explainInventoryOutcome(String(last.output || ''), rows.length && !last.stale ? rows.length : 0, 4_000_000).message;
+          if (problem && rows.length) {
+            problem = 'The policies below are from an earlier collection. ' + problem;
+          }
         }
       }
 

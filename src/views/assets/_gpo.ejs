@@ -56,7 +56,7 @@ _g.rows.forEach(function (p) {
 
   <% if (_g.problem) { %>
     <div class="alert alert-danger" style="margin-bottom:12px;">
-      <strong>The last collection stored nothing.</strong>
+      <strong>The last collection did not update anything.</strong>
       <p style="margin:6px 0 0;font-size:13px;"><%= _g.problem %></p>
       <% if (_g.outputLen) { %><p class="muted" style="margin:4px 0 0;font-size:11.5px;">It replied with <%= Number(_g.outputLen).toLocaleString('en-GB') %> characters, <%= _gdt(_g.lastAt) %>.</p><% } %>
     </div>
