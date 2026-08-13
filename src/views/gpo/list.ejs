@@ -77,7 +77,8 @@ customers.forEach(function (c) { if (customerId === c.id) _cust = c; });
           No AD agent for this customer. Install the agent on a domain controller or management server, then tick &ldquo;AD agent&rdquo; for it on the Agents page.
         </span>
       <% } %>
-      <button class="btn btn-remote" type="button" id="gpoAskBtn" style="margin-left:auto;">&#10022; Ask Claude about these policies</button>
+      <a class="btn" href="/gpo/deploy/<%= _cust.id %>" style="margin-left:auto;" title="Push the LumenMSP Agent to every domain-joined machine using Group Policy">&#8681; Deploy the agent by GPO</a>
+      <button class="btn btn-remote" type="button" id="gpoAskBtn">&#10022; Ask Claude about these policies</button>
     </div>
   <% } else { %>
     <p class="muted" style="margin:12px 0 0;font-size:12.5px;">Pick a customer to collect their Group Policy, or to ask Claude about the whole set at once.</p>

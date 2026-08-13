@@ -1,0 +1,233 @@
+<%- include('../partials/header', { title: 'Deploy the agent - ' + customer.name, user }) %>
+<%
+function ago(s) {
+  if (s == null) return 'never';
+  var m = Math.round(Number(s) / 60);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm ago';
+  var h = Math.round(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+var ready = !!(adAgent && msiUrl && msi);
+var plan = lastRun && lastRun.dryRun && lastRun.ok ? lastRun : null;
+%>
+
+<style>
+  .step { display:flex; gap:12px; align-items:flex-start; padding:10px 0; border-bottom:1px solid var(--surface-3); }
+  .step:last-child { border-bottom:none; }
+  .step-dot { flex:0 0 20px; height:20px; border-radius:50%; display:flex; align-items:center;
+              justify-content:center; font-size:12px; font-weight:700; color:#fff; margin-top:1px; }
+  .step-ok { background:var(--ok); }
+  .step-no { background:var(--bad-fg); }
+  .step-b { font-weight:600; font-size:13.5px; }
+  .step-d { font-size:12.5px; color:var(--muted); }
+  .mono { font-family:ui-monospace,Consolas,monospace; font-size:11.5px; overflow-wrap:anywhere; }
+</style>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 3px;font-size:12.5px;"><a class="row-link" href="/gpo">Group Policy</a> &rsaquo;
+    <a class="row-link" href="/gpo?customer=<%= customer.id %>"><%= customer.name %></a></p>
+  <h1 style="margin:0;">Deploy the agent by Group Policy</h1>
+  <p class="muted" style="margin:4px 0 0;max-width:80ch;">
+    Creates one new policy in <%= customer.name %>'s domain carrying an immediate scheduled task. It runs as
+    SYSTEM at the next policy refresh, pulls this customer's keyed MSI from the Portal over HTTPS and installs it
+    silently. No file share, no reboot, and machines that already have the agent are skipped &mdash; so it is safe
+    to leave in place and it picks up new machines on its own.
+  </p>
+</div>
+
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+<% if (error) { %><div class="alert alert-danger"><%= error %></div><% } %>
+
+<div class="card">
+  <div class="card-header"><h2>Before it can run</h2></div>
+  <div class="step">
+    <span class="step-dot <%= adAgent ? 'step-ok' : 'step-no' %>"><%= adAgent ? '&#10003;' : '!' %></span>
+    <span>
+      <span class="step-b">An AD agent to run it on</span>
+      <span class="step-d">
+        <% if (adAgent) { %><%= adAgent.hostname %> &mdash; <%= adAgentLive ? 'online' : 'last seen ' + ago(adAgent.seen_secs) %>.
+          <% if (!adAgentLive) { %>The job will sit in the queue until it comes back.<% } %>
+        <% } else { %>None nominated. Tick &ldquo;AD agent&rdquo; for a domain controller on the <a class="row-link" href="/agents">Agents page</a>.<% } %>
+      </span>
+    </span>
+  </div>
+  <div class="step">
+    <span class="step-dot <%= msi ? 'step-ok' : 'step-no' %>"><%= msi ? '&#10003;' : '!' %></span>
+    <span>
+      <span class="step-b">An agent MSI published on the Portal</span>
+      <span class="step-d">
+        <% if (msi) { %><%= (msi.size / 1048576).toFixed(1) %> MB, uploaded <%= new Date(msi.mtime).toLocaleString('en-GB') %>.
+        <% } else { %>None uploaded. Put it on the <a class="row-link" href="/agents">Agents page</a> first.<% } %>
+      </span>
+    </span>
+  </div>
+  <div class="step">
+    <span class="step-dot <%= siteKey ? 'step-ok' : 'step-no' %>"><%= siteKey ? '&#10003;' : '!' %></span>
+    <span>
+      <span class="step-b">This customer's own installer link</span>
+      <span class="step-d">
+        <% if (msiUrl) { %><span class="mono"><%= msiUrl %></span><br>
+          The key is in the filename, so the installer needs no command-line options and enrols straight to <%= customer.name %>.
+        <% } else { %>No site key for this customer yet.<% } %>
+      </span>
+    </span>
+  </div>
+  <div class="step">
+    <span class="step-dot <%= gpoCount ? 'step-ok' : 'step-no' %>"><%= gpoCount ? '&#10003;' : '!' %></span>
+    <span>
+      <span class="step-b">Their Group Policy collected</span>
+      <span class="step-d">
+        <% if (gpoCount) { %><%= gpoCount %> policies, collected <%= collectedAt ? new Date(collectedAt).toLocaleString('en-GB') : 'never' %>.
+          Needed for the pre-flight below.
+        <% } else { %>Nothing collected. <a class="row-link" href="/gpo?customer=<%= customer.id %>">Collect it</a> so the pre-flight has something to read.<% } %>
+      </span>
+    </span>
+  </div>
+  <p class="muted" style="margin:10px 0 0;font-size:12.5px;">
+    <%= agentCount %> machine<%= agentCount === 1 ? '' : 's' %> at this customer are already running the agent.
+  </p>
+</div>
+
+<div class="card">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:280px;">
+      <div class="card-header" style="margin:0;"><h2>Pre-flight</h2></div>
+      <p class="muted" style="margin:4px 0 0;font-size:12.5px;">
+        This kind of deployment fails silently &mdash; AppLocker, an execution-policy GPO or a Defender rule blocks
+        the script, nothing installs, and the only symptom is machines that never appear. Claude reads
+        <%= customer.name %>'s policies for exactly that before you commit to anything.
+      </p>
+    </div>
+    <button class="btn btn-remote" type="button" id="pfBtn" <%= gpoCount ? '' : 'disabled' %>>&#10022; Check their policies</button>
+  </div>
+  <div id="pfBody" style="margin-top:12px;"></div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>1. Plan it</h2></div>
+  <p class="muted" style="margin:0 0 10px;font-size:13px;">
+    Runs the identical script on <%= adAgent ? adAgent.hostname : 'the AD agent' %> in dry-run. It reads the domain,
+    counts the machines this would land on and checks the policy name is free. <strong>It writes nothing.</strong>
+  </p>
+  <form method="post" action="/gpo/deploy/<%= customer.id %>/plan" style="margin:0;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <button class="btn btn-primary" type="submit" <%= (ready && !pending) ? '' : 'disabled' %>>
+      <%= pending ? 'Working...' : 'Plan the deployment' %>
+    </button>
+  </form>
+
+  <% if (lastRun) { %>
+    <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">
+      <% if (lastRun.status === 'queued' || lastRun.status === 'running') { %>
+        <p style="margin:0;font-size:13px;">Queued on <%= lastRun.hostname %><%= lastRun.requestedAt ? ' at ' + new Date(lastRun.requestedAt).toLocaleTimeString('en-GB') : '' %>. Reload in a moment.</p>
+      <% } else if (!lastRun.ok) { %>
+        <p style="margin:0;font-size:13px;color:var(--bad-fg);"><strong>The last attempt did not work.</strong></p>
+        <p class="mono" style="margin:6px 0 0;white-space:pre-wrap;"><%= lastRun.error %></p>
+      <% } else { %>
+        <p style="margin:0;font-size:13px;">
+          <strong><%= lastRun.dryRun ? 'Plan' : 'Created' %></strong> on <%= lastRun.hostname %>,
+          <%= lastRun.at ? new Date(lastRun.at).toLocaleString('en-GB') : '' %>:
+        </p>
+        <div style="margin-top:6px;font-size:13px;line-height:1.8;">
+          <div><span class="muted">Domain</span> &middot; <%= lastRun.domain || 'unknown' %></div>
+          <div><span class="muted">Policy</span> &middot; <%= lastRun.gpoName %><% if (lastRun.exists) { %> <span class="muted">(already exists, would be refreshed)</span><% } %><% if (lastRun.created) { %> <span style="color:var(--ok);">(created)</span><% } %></div>
+          <div><span class="muted">Linked at</span> &middot; <span class="mono"><%= lastRun.linkedTo || 'the domain root' %></span></div>
+          <div><span class="muted">Machines in scope</span> &middot;
+            <% if (lastRun.computers === -1) { %><span class="muted">could not count</span>
+            <% } else { %><strong><%= lastRun.computers %></strong> enabled computer objects
+              <% if (lastRun.computers > agentCount) { %><span class="muted">&mdash; <%= lastRun.computers - agentCount %> without our agent</span><% } %>
+            <% } %>
+          </div>
+          <% if (!lastRun.dryRun) { %><div><span class="muted">Task</span> &middot; <%= lastRun.taskName %></div><% } %>
+        </div>
+      <% } %>
+    </div>
+  <% } %>
+</div>
+
+<div class="card" style="<%= plan ? 'border-left:3px solid var(--warn-fg);' : 'opacity:.6;' %>">
+  <div class="card-header"><h2>2. Create it</h2></div>
+  <% if (!plan) { %>
+    <p class="muted" style="margin:0;font-size:13px;">Plan it first. The plan is what tells you how many machines this touches.</p>
+  <% } else { %>
+    <p style="margin:0 0 10px;font-size:13px;">
+      This writes to <strong><%= plan.domain %></strong>. It creates the policy <strong><%= gpoName %></strong>,
+      links it at <span class="mono"><%= plan.linkedTo %></span>, and it will run on
+      <strong><%= plan.computers === -1 ? 'every' : plan.computers %></strong> domain-joined machine at the next policy
+      refresh &mdash; within about 90 minutes, sooner on anything that reboots.
+      Machines already running the agent do nothing.
+    </p>
+    <p class="muted" style="margin:0 0 10px;font-size:12.5px;">
+      It touches nothing else. If a policy of that name already exists that the Portal did not create, it stops and
+      changes nothing. To undo: delete that one GPO in Group Policy Management.
+    </p>
+    <form method="post" action="/gpo/deploy/<%= customer.id %>/run" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <label style="font-size:13px;">Type <strong><%= customer.name %></strong> to confirm:</label>
+      <input class="input" name="confirm" autocomplete="off" style="width:auto;min-width:260px;" placeholder="<%= customer.name %>">
+      <button class="btn btn-primary" type="submit" <%= pending ? 'disabled' : '' %>>Create the policy</button>
+    </form>
+  <% } %>
+</div>
+
+<script>
+(function () {
+  var CID = <%= customer.id %>;
+  var btn = document.getElementById('pfBtn');
+  var body = document.getElementById('pfBody');
+  function el(t, css, txt) { var e = document.createElement(t); if (css) e.style.cssText = css; if (txt != null) e.textContent = txt; return e; }
+  function csrf() { var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
+
+  btn.addEventListener('click', function () {
+    btn.disabled = true; btn.textContent = 'Reading their policies...';
+    body.innerHTML = '';
+    body.appendChild(el('p', 'margin:0;color:var(--muted);font-size:13px;', 'Reading every policy in the domain. A few seconds.'));
+
+    fetch('/gpo/deploy/' + CID + '/preflight.json', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() }, body: '{}'
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      body.innerHTML = '';
+      if (!d.ok) { body.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', d.error || 'That did not work.')); return; }
+
+      var colour = d.verdict === 'blocked' ? 'var(--bad-fg)' : d.verdict === 'caution' ? 'var(--warn-fg)' : 'var(--ok)';
+      var word = d.verdict === 'blocked' ? 'BLOCKED' : d.verdict === 'caution' ? 'WORTH A LOOK' : 'CLEAR';
+      var head = el('div', 'display:flex;gap:10px;align-items:baseline;margin-bottom:8px;flex-wrap:wrap;');
+      head.appendChild(el('span', 'font-size:11px;font-weight:700;letter-spacing:.06em;padding:2px 8px;border-radius:5px;color:#fff;background:' + colour + ';', word));
+      head.appendChild(el('span', 'font-size:16px;font-weight:700;line-height:1.35;', d.headline || ''));
+      body.appendChild(head);
+
+      String(d.answer || '').split(/\n{1,}/).forEach(function (p) {
+        if (p.trim()) body.appendChild(el('p', 'margin:0 0 8px;font-size:13.5px;line-height:1.55;', p.trim()));
+      });
+
+      if (d.blockers && d.blockers.length) {
+        var wrap = el('div', 'margin-top:12px;border-top:1px solid var(--line);padding-top:11px;');
+        wrap.appendChild(el('p', 'margin:0 0 7px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;color:var(--muted);', 'Fix these first'));
+        d.blockers.forEach(function (b) {
+          var row = el('div', 'padding:8px 0;border-bottom:1px solid var(--surface-3);font-size:13px;');
+          var bad = b.level === 'bad';
+          row.appendChild(el('span', 'font-weight:700;color:' + (bad ? 'var(--bad-fg)' : 'var(--warn-fg)') + ';', (bad ? '▲ ' : '● ') + b.title));
+          if (b.gpo) row.appendChild(el('span', 'color:var(--muted);font-size:12px;', '  in ' + b.gpo));
+          if (b.detail) { row.appendChild(document.createElement('br')); row.appendChild(el('span', 'color:var(--text-2);', b.detail)); }
+          if (b.fix) { row.appendChild(document.createElement('br')); row.appendChild(el('span', 'color:var(--muted);font-size:12.5px;', 'Fix: ' + b.fix)); }
+          wrap.appendChild(row);
+        });
+        body.appendChild(wrap);
+      }
+
+      var meta = [];
+      if (d.policies) meta.push(d.policies + ' policies read');
+      if (d.seconds) meta.push(d.seconds + 's');
+      if (d.cache) meta.push(d.cache);
+      if (meta.length) body.appendChild(el('p', 'margin:11px 0 0;font-size:11px;color:var(--faint);', meta.join(' · ')));
+    }).catch(function () {
+      body.innerHTML = '';
+      body.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', 'Could not reach the Portal.'));
+    }).then(function () { btn.disabled = false; btn.innerHTML = '&#10022; Check their policies'; });
+  });
+})();
+</script>
+
+<%- include('../partials/footer') %>

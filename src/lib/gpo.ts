@@ -183,3 +183,122 @@ export async function askGpo(corpus: string, question: string): Promise<GpoAnswe
     cache: cacheNote(usage), usage,
   };
 }
+
+// ── Deploying the agent by Group Policy ─────────────────────────────────────────
+// The pre-flight. A deployment that fails because of AppLocker or an execution-policy
+// GPO fails SILENTLY - the task runs, PowerShell is blocked, nothing installs, and the
+// only symptom is machines that never appear. Reading the policies first is cheap and
+// turns that into a sentence before anybody presses anything.
+
+const PREFLIGHT_SYSTEM = [
+  'You are a Windows infrastructure engineer at Lumen IT Solutions, a UK managed-service provider.',
+  'You are given every Group Policy Object collected from one customer domain.',
+  '',
+  'A deployment is about to be made to that domain. It works like this:',
+  '- a new GPO carries a Group Policy Preferences IMMEDIATE SCHEDULED TASK',
+  '- the task runs as NT AUTHORITY\\System at the next policy refresh',
+  '- it launches powershell.exe with -ExecutionPolicy Bypass -EncodedCommand',
+  '- that script downloads an MSI over HTTPS from portal.lumenmsp.co.uk and runs msiexec /qn',
+  '',
+  'YOUR ONE JOB: say whether anything in these policies would stop that working, and be specific.',
+  '',
+  'Look hard for, and only report, things that actually bite this deployment:',
+  '- AppLocker or Software Restriction Policies restricting scripts, MSIs or executables',
+  '- Windows Defender Application Control / code integrity policy',
+  '- PowerShell execution policy set by policy, PowerShell constrained language mode,',
+  '  script block logging that breaks nothing but is worth knowing, PowerShell v2 removal',
+  '- Attack Surface Reduction rules that block scripts, or block Office/script child processes',
+  '- Windows Installer policy: "Disable Windows Installer", "Always install with elevated privileges",',
+  '  "Prohibit User Installs", MSI restrictions of any kind',
+  '- Proxy settings, WPAD, or firewall rules that would stop an outbound HTTPS fetch from SYSTEM',
+  '  (SYSTEM does not use a per-user proxy - say so if the only proxy is per-user)',
+  '- Anything disabling Group Policy Preferences, scheduled tasks, or the Task Scheduler service',
+  '- Restrictions on Scheduled Task creation, or policy blocking tasks running as SYSTEM',
+  '',
+  'Rules:',
+  '- Work ONLY from the policy data given. Never invent a setting. If the data does not cover',
+  '  something (settings were capped, or a policy could not be read), say which and say so plainly.',
+  '- A clear result is a real, useful answer. Do NOT invent a blocker to seem thorough.',
+  '- For each blocker, say which GPO it is in and what to do about it.',
+  '- British English. Concise. No preamble.',
+  '',
+  'Reply with STRICT JSON only. No prose before or after it, no markdown fences:',
+  '{"verdict":"clear|caution|blocked","headline":"...","answer":"...","blockers":[{"level":"bad|warn","gpo":"...","title":"...","detail":"...","fix":"..."}]}',
+  '',
+  '- verdict: "blocked" only if something WILL stop it; "caution" if something might or the data is incomplete; "clear" if nothing found.',
+  '- headline: one line, max ~15 words, the answer on its own.',
+  '- answer: 1-4 short paragraphs, \\n between them.',
+  '- blockers: omit entirely if there are none. Never pad.',
+].join('\n');
+
+export interface PreflightResult {
+  verdict: 'clear' | 'caution' | 'blocked';
+  headline: string;
+  answer: string;
+  blockers: { level: string; gpo: string; title: string; detail: string; fix: string }[];
+  cache: string | null;
+  usage?: AskUsage;
+}
+
+export async function preflightDeployment(rows: GpoRow[]): Promise<PreflightResult> {
+  const corpus = estateCorpus(rows);
+  const { text, usage } = await aiAskCached(
+    PREFLIGHT_SYSTEM, corpus,
+    'QUESTION: Would anything in these policies stop that deployment working? Answer for this domain specifically.',
+    { maxTokens: 1800, strong: true });
+  const p = parseJsonAnswer<any>(text, { answer: stripTrailingJson(text) });
+  const v = String(p.verdict || '').toLowerCase();
+  return {
+    verdict: v === 'blocked' ? 'blocked' : v === 'clear' ? 'clear' : 'caution',
+    headline: String(p.headline || '').slice(0, 200),
+    answer: String(p.answer || stripTrailingJson(text)).slice(0, 6000),
+    blockers: Array.isArray(p.blockers) ? p.blockers.slice(0, 8).map((b: any) => ({
+      level: b?.level === 'bad' ? 'bad' : 'warn',
+      gpo: String(b?.gpo || '').slice(0, 200),
+      title: String(b?.title || '').slice(0, 160),
+      detail: String(b?.detail || '').slice(0, 500),
+      fix: String(b?.fix || '').slice(0, 400),
+    })).filter((b: any) => b.title) : [],
+    cache: cacheNote(usage), usage,
+  };
+}
+
+/** What the agent reported back from its last gpo.deploy run, plan or real. */
+export interface DeployRun {
+  id: number; status: string; dryRun: boolean; at: Date | null; requestedAt: Date | null;
+  ok: boolean; error: string | null; hostname: string | null;
+  domain?: string; gpoName?: string; gpoId?: string; created?: boolean;
+  linkedTo?: string; computers?: number; taskName?: string; exists?: boolean;
+}
+
+export async function lastDeployRun(customerId: number): Promise<DeployRun | null> {
+  const r = (await pool.query(
+    `SELECT ac.id, ac.status, ac.output, ac.payload, ac.finished_at, ac.requested_at, ad.hostname
+       FROM agent_commands ac JOIN agent_devices ad ON ad.id = ac.device_id
+      WHERE ad.customer_id=$1 AND ac.kind='gpo.deploy'
+      ORDER BY ac.id DESC LIMIT 1`, [customerId])).rows[0];
+  if (!r) return null;
+
+  const base: DeployRun = {
+    id: r.id, status: String(r.status || ''),
+    dryRun: String(r.payload?.dryRun ?? '') === 'true',
+    at: r.finished_at || null, requestedAt: r.requested_at || null,
+    ok: false, error: null, hostname: r.hostname || null,
+  };
+  const raw = String(r.output || '');
+  const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+  if (a < 0 || b <= a) {
+    // Still running, or PowerShell fell over before it could say anything structured.
+    if (r.status === 'queued' || r.status === 'running') return base;
+    return { ...base, error: raw.trim().slice(-400) || 'The agent returned nothing.' };
+  }
+  try {
+    const j = JSON.parse(raw.slice(a, b + 1));
+    return { ...base, ok: j.ok === true, error: j.ok === true ? null : String(j.error || 'Unknown error.'),
+      dryRun: j.dryRun === true, domain: j.domain, gpoName: j.gpoName, gpoId: j.gpoId,
+      created: j.created, linkedTo: j.linkedTo, computers: Number(j.computers),
+      taskName: j.taskName, exists: j.exists };
+  } catch {
+    return { ...base, error: raw.trim().slice(-400) };
+  }
+}

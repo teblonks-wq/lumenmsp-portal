@@ -26,6 +26,7 @@ const BUDGET_MINUTES: Record<string, number> = {
   'ce.assess': 30,
   'server.facts': 20,
   'gpo.inventory': 25,    // Get-GPOReport on a big domain is not quick
+  'gpo.deploy': 15,
 };
 const DEFAULT_MINUTES = 10;
 
