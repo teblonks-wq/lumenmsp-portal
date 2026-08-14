@@ -392,6 +392,78 @@ const TOOLS: Tool[] = [
       return { total_outstanding_gbp: total.rows[0].total, unpaid_invoice_count: total.rows[0].invoices, by_customer: byCustomer.rows };
     },
   },
+
+  {
+    name: 'list_contracts',
+    description:
+      'Contracts for one customer (or across the estate). Each row: number, title, status, service type, term dates, monthly recurring value and line count. Pass a customer id / account number / name to scope it, or omit to list recent contracts. Contracts are the durable agreement of what a customer pays monthly; use get_contract for the lines.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        customer: { type: 'string', description: 'Customer id, account number or name (optional — omit to list recent across the estate)' },
+        status: { type: 'string', description: 'draft | active | expired | cancelled (optional)' },
+        limit: { type: 'number', description: 'Max rows, default 25, max 100' },
+      },
+    },
+    run: async (a) => {
+      const params: any[] = [];
+      const where: string[] = ['ct.deleted_at IS NULL'];
+      if (a.customer != null && String(a.customer).trim() !== '') {
+        const ref = await resolveCustomer(a.customer);
+        if (!ref || 'ambiguous' in ref) return customerNotFound(ref, a.customer);
+        params.push(ref.id); where.push(`ct.customer_id = $${params.length}`);
+      }
+      if (a.status) { params.push(String(a.status)); where.push(`ct.status = $${params.length}`); }
+      const lim = Math.min(Math.max(parseInt(String(a.limit ?? 25), 10) || 25, 1), 100);
+      params.push(lim);
+      const rows = (await pool.query(
+        `SELECT ct.id, ct.contract_number, ct.title, ct.status, ct.service_type,
+                ct.start_date, ct.end_date, ct.support_cover, c.name AS customer_name,
+                (SELECT COUNT(*)::int FROM contract_lines cl WHERE cl.contract_id=ct.id) AS line_count,
+                (SELECT COALESCE(SUM(CASE WHEN cl.billing_frequency='annual' THEN cl.line_total/12
+                                          WHEN cl.billing_frequency='one_off' THEN 0
+                                          ELSE cl.line_total END),0)::numeric(12,2)
+                   FROM contract_lines cl WHERE cl.contract_id=ct.id) AS monthly_value
+           FROM contracts ct LEFT JOIN customers c ON c.id=ct.customer_id
+          WHERE ${where.join(' AND ')}
+          ORDER BY c.name NULLS LAST, ct.contract_number
+          LIMIT $${params.length}`, params)).rows;
+      return { count: rows.length, contracts: rows };
+    },
+  },
+
+  {
+    name: 'get_contract',
+    description:
+      'Full detail of one contract by number (e.g. CON-0007) or id: header (status, service type, term, support cover, renewal) and every line with its section (IT / Cloud / Backup / Comms / Hardware), quantity, unit price, billing frequency and line total. This is how a customer\'s monthly agreement is structured, including how cloud licences are laid out.',
+    inputSchema: {
+      type: 'object',
+      properties: { contract: { type: 'string', description: 'Contract number or numeric id' } },
+      required: ['contract'],
+    },
+    run: async (a) => {
+      const t = String(a.contract ?? '').trim();
+      if (!t) return { error: 'Pass a contract number or id.' };
+      const byId = /^\d+$/.test(t);
+      const head = (await pool.query(
+        `SELECT ct.id, ct.contract_number, ct.title, ct.status, ct.service_type,
+                ct.start_date, ct.end_date, ct.term_months, ct.notice_days, ct.auto_renew,
+                ct.renewal_mode, ct.current_doc_kind, ct.support_cover, ct.payment_method,
+                ct.version, ct.notes, c.id AS customer_id, c.name AS customer_name, c.account_number
+           FROM contracts ct LEFT JOIN customers c ON c.id=ct.customer_id
+          WHERE ct.deleted_at IS NULL AND ${byId ? 'ct.id = $1' : 'ct.contract_number ILIKE $1'} LIMIT 1`,
+        [byId ? Number(t) : t])).rows[0];
+      if (!head) return { error: `No contract found matching "${t}".` };
+      const lines = (await pool.query(
+        `SELECT sort_order, section, description, quantity, unit_price, billing_frequency,
+                line_total, detail, term_start, term_end
+           FROM contract_lines WHERE contract_id=$1 ORDER BY sort_order, id LIMIT 200`, [head.id])).rows;
+      const monthly = lines.reduce((s: number, l: any) =>
+        s + (l.billing_frequency === 'annual' ? Number(l.line_total) / 12
+           : l.billing_frequency === 'one_off' ? 0 : Number(l.line_total)), 0);
+      return { contract: head, lines, monthly_recurring: Math.round(monthly * 100) / 100 };
+    },
+  },
 ];
 
 // ── JSON-RPC plumbing ─────────────────────────────────────────────────────────
