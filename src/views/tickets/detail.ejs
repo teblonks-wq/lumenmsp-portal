@@ -214,9 +214,24 @@
           </div>
           <div id="aiBar" style="display:none;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
             <button type="button" class="btn ai-btn" id="aiMic" style="padding:3px 10px;font-size:12px;">🎤 Dictate</button>
-            <button type="button" class="btn ai-btn" id="aiUpdate" style="padding:3px 10px;font-size:12px;" title="Polishes your draft using the whole ticket — previous messages and notes — as context.">✨ Claude</button>
+            <div style="position:relative;display:inline-block;">
+              <button type="button" class="btn btn-primary" id="aiGreet" style="padding:3px 10px;font-size:12px;" title="Drop a greeting in at the top — three to pick from, named from the To address">👋 Greeting ▾</button>
+              <div id="greetMenu" style="display:none;position:absolute;top:100%;left:0;z-index:40;margin-top:4px;min-width:260px;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.12);padding:4px;"></div>
+            </div>
+            <button type="button" class="btn ai-btn" id="aiUpdate" style="padding:3px 10px;font-size:12px;" title="Polishes your draft using the whole ticket — previous messages and notes — as context. Keeps your greeting; adds your sign-off if you forgot one.">✨ Claude</button>
             <span id="aiStatus" class="muted" style="font-size:12px;"></span>
           </div>
+          <div id="phraseBar" style="display:none;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+            <span class="muted" style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;">Suggested</span>
+            <span id="phraseChips" style="display:contents;"></span>
+            <button type="button" class="btn" id="phraseRefresh" title="Suggest three fresh phrases from the thread" style="padding:2px 8px;font-size:11px;">↻</button>
+          </div>
+          <style>
+            .phrase-chip{padding:3px 10px;font-size:12px;border:1px solid var(--info-line);background:var(--tint-accent);color:var(--info-deep);border-radius:14px;cursor:pointer;}
+            .phrase-chip:hover{filter:brightness(.96);}
+            .greet-opt{display:block;width:100%;text-align:left;border:0;background:none;padding:7px 10px;font-size:12.5px;border-radius:6px;cursor:pointer;color:var(--fg,inherit);}
+            .greet-opt:hover{background:var(--tint-accent);}
+          </style>
           <style>
             /* Reply composer opens at double height and grows with content (scrolls past ~55vh). */
             #ticketNoteEditor.ql-container{height:auto;}
@@ -315,6 +330,88 @@
           fetch('/ai/status').then(function(r){return r.json();}).then(function(d){
             if(d && d.configured){ var b=document.getElementById('aiBar'); if(b) b.style.display='flex'; }
           }).catch(function(){});
+
+          // ── 👋 Greeting: three options, named from the To address ──────────────────
+          function firstName(){
+            var n = getRecipient();                       // contact name, else email local part
+            if(!n) return null;
+            var w = n.trim().split(/\s+/)[0].replace(/[^A-Za-z'\-]/g,'');
+            if(!w) return null;
+            return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+          }
+          function greetWord(){
+            var h = new Date().getHours();
+            return h < 12 ? 'Good Morning' : h < 17 ? 'Good Afternoon' : 'Good Evening';
+          }
+          var greetBtn = document.getElementById('aiGreet');
+          var greetMenu = document.getElementById('greetMenu');
+          function greetOptions(){
+            var n = firstName() || 'there';
+            return [
+              greetWord() + ' ' + n + ',\n\nHope you are well.',
+              'Hi ' + n + ',\n\nThanks for coming back to me.',
+              'Hi ' + n + ',',
+            ];
+          }
+          function insertGreeting(text){
+            var q = window.ticketQuill; if(!q) return;
+            var existing = q.getText().trim();
+            q.insertText(0, text + (existing ? '\n\n' : '\n'), 'user');
+            q.setSelection(q.getLength() - 1, 0, 'user');
+          }
+          if (greetBtn && greetMenu) {
+            greetBtn.addEventListener('click', function(e){
+              e.stopPropagation();
+              if (greetMenu.style.display === 'block') { greetMenu.style.display = 'none'; return; }
+              greetMenu.innerHTML = '';
+              greetOptions().forEach(function(g){
+                var b = document.createElement('button');
+                b.type = 'button'; b.className = 'greet-opt';
+                b.textContent = g.replace(/\n+/g, ' ');
+                b.addEventListener('click', function(){ insertGreeting(g); greetMenu.style.display='none'; loadPhrases(); });
+                greetMenu.appendChild(b);
+              });
+              greetMenu.style.display = 'block';
+            });
+            document.addEventListener('click', function(){ greetMenu.style.display = 'none'; });
+          }
+
+          // ── Suggested-phrase ribbon: lazy, once, from the thread ──────────────────
+          var phraseBar = document.getElementById('phraseBar');
+          var phraseChips = document.getElementById('phraseChips');
+          var phrasesLoaded = false, phrasesLoading = false;
+          function insertPhrase(text){
+            var q = window.ticketQuill; if(!q) return;
+            var len = q.getLength();                       // ends with a trailing newline
+            var before = q.getText(Math.max(0,len-2), 2);
+            var sep = q.getText().trim() ? (/\n$/.test(before.replace(/\n$/,'')) ? '' : '\n\n') : '';
+            q.insertText(len - 1, sep + text + ' ', 'user');
+            q.setSelection(q.getLength() - 1, 0, 'user');
+          }
+          function loadPhrases(force){
+            if (phrasesLoading || (phrasesLoaded && !force) || !phraseBar) return;
+            phrasesLoading = true;
+            fetch('/ai/ticket-phrases', {
+              method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ ticketId: <%= ticket.id %>, recipient: getRecipient() }),
+            }).then(function(r){ return r.json(); }).then(function(d){
+              phrasesLoaded = true;
+              var ps = (d && d.ok && d.phrases) ? d.phrases : [];
+              if (!ps.length) { phraseBar.style.display = 'none'; return; }
+              phraseChips.innerHTML = '';
+              ps.forEach(function(ph){
+                var c = document.createElement('button');
+                c.type='button'; c.className='phrase-chip'; c.textContent = ph;
+                c.addEventListener('click', function(){ insertPhrase(ph); });
+                phraseChips.appendChild(c);
+              });
+              phraseBar.style.display = 'flex';
+            }).catch(function(){ phrasesLoaded = true; }).finally(function(){ phrasesLoading = false; });
+          }
+          var pr = document.getElementById('phraseRefresh');
+          if (pr) pr.addEventListener('click', function(){ loadPhrases(true); });
+          // First touch of the composer fetches the suggestions - a page you never reply on costs nothing.
+          if (window.ticketQuill) window.ticketQuill.root.addEventListener('focus', function(){ loadPhrases(); }, { once:false });
           // Insert template… → paste the canned HTML into the composer at the cursor.
           var TPLS = <%- JSON.stringify((typeof replyTemplates !== 'undefined' ? replyTemplates : []).map(function(t){ return { id: t.id, html: t.body_html }; })) %>;
           var sel = document.getElementById('tplSelect');

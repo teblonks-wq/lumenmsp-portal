@@ -531,6 +531,7 @@ export interface TicketReplyInput {
   context: string;              // the assembled ticket thread (chronological, labelled) incl. internal notes
   recipient?: string | null;    // customer's name for the greeting
   channel?: string | null;      // 'email' | 'teams' | 'whatsapp'
+  signoffName?: string | null;  // engineer's first name — personal sign-off ahead of the corporate signature
 }
 
 // Context-aware "Claude Update": polish the engineer's draft into the next reply on a ticket, using
@@ -548,6 +549,7 @@ export async function aiComposeTicketReply(input: TicketReplyInput): Promise<str
 
   const channel = (input.channel || 'email').toLowerCase();
   const briefChannel = channel === 'whatsapp' || channel === 'teams';
+  if (briefChannel) input = { ...input, signoffName: null };  // a name sign-off reads oddly in chat
 
   const system = [
     'You help a support/IT engineer turn their rough draft into the next reply to a customer on a support ticket.',
@@ -560,11 +562,13 @@ export async function aiComposeTicketReply(input: TicketReplyInput): Promise<str
     '- Internal notes are for YOUR context only — never quote them or reveal anything internal/private to the customer.',
     '- Preserve every fact, name, number and date exactly.',
     'Formatting:',
-    '- Start with an appropriate greeting (use the recipient\'s first name if provided, otherwise "Hi there"), then a well-structured body.',
-    '- DO NOT add any sign-off, closing or sender name — the signature is added automatically. End after the last line of the body.',
+    '- GREETING: if the draft already OPENS with a greeting line (e.g. "Good Morning Sara," or "Hi Dave, hope you are well") keep that opening EXACTLY as the engineer wrote it — never reword, replace or remove it. Only when the draft has no greeting at all, start with an appropriate one (recipient\'s first name if provided, otherwise "Hi there").',
+    input.signoffName
+      ? `- SIGN-OFF: if the draft already ends with a sign-off (e.g. "Regards, ..." / "Thanks, ..."), keep it as written. Otherwise end the message with exactly:\n\nRegards,\n${String(input.signoffName).trim()}\n\n(The corporate signature block is still appended automatically after your text — this personal sign-off sits above it. Never add any other closing.)`
+      : '- DO NOT add any sign-off, closing or sender name — the signature is added automatically. End after the last line of the body.',
     '- Short paragraphs (1-2 sentences) separated by a BLANK LINE.',
     briefChannel
-      ? '- This is a short chat message (Teams/WhatsApp): keep it brief and informal; no long email formalities.'
+      ? '- This is a short chat message (Teams/WhatsApp): keep it brief and informal; no long email formalities, and no sign-off.'
       : '- This is an email: courteous and well-structured.',
     '- Tone: warm and professional.',
     '- Return ONLY the finished message text. No preamble, no explanations, no markdown fences.',
@@ -577,6 +581,36 @@ export async function aiComposeTicketReply(input: TicketReplyInput): Promise<str
   ].filter(Boolean).join('\n\n');
 
   return callClaude(key, model, system, userText, 1200);
+}
+
+// ── Phrase ribbon: three clickable suggestions for the next reply ───────────────
+// The engineer clicks one (or more), adds their own detail, then presses Claude to tidy.
+// Cheap model on purpose: this fires when a composer is first touched, so it must cost
+// pennies, not thinking-time. Greeting and sign-off are handled elsewhere - phrases are
+// body sentences only.
+export async function aiTicketPhrases(input: { context: string; recipient?: string | null }): Promise<string[]> {
+  const key = await resolveKey();
+  if (!key) return [];
+  const model = ((await getSetting('anthropic', 'model')) || '').trim() || DEFAULT_MODEL;
+  const system = [
+    'You suggest the next thing a support/IT engineer might say on a customer support ticket.',
+    'You are given the ticket conversation so far. Produce THREE alternative short phrases the engineer could click to start their next reply.',
+    'Rules:',
+    '- Each phrase is ONE sentence, first person ("I"/"we"), 5-15 words, plain UK English.',
+    '- Grounded in where the thread actually is: a follow-up if we are waiting ("Just checking whether the part arrived yesterday"), a chase if the customer went quiet, a confirmation if work finished, an update request, a booking nudge - whatever fits THIS thread next.',
+    '- The three must be genuinely different moves, not three wordings of the same sentence.',
+    '- NO greeting, NO sign-off, NO placeholder brackets, NO invented facts, dates or promises - only things already true in the thread.',
+    '- Reply with STRICT JSON only: {"phrases":["...","...","..."]} - no prose, no fences.',
+  ].join('\n');
+  const userText = (input.recipient ? `The customer: ${input.recipient}\n\n` : '')
+    + '=== TICKET CONVERSATION SO FAR ===\n' + String(input.context || '').trim();
+  try {
+    const text = await callClaude(key, model, system, userText, 400);
+    const m = text.match(/\{[\s\S]*\}/);
+    const parsed = m ? JSON.parse(m[0]) : null;
+    const arr = Array.isArray(parsed?.phrases) ? parsed.phrases : [];
+    return arr.map((x: any) => String(x || '').trim()).filter(Boolean).slice(0, 3);
+  } catch { return []; }
 }
 
 // ── Marketing content studio ──────────────────────────────────────────────────

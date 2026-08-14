@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth';
-import { aiComposeMessage, aiComposeConfigured, aiComposeTicketReply, aiPolishText } from '../lib/ai-compose';
+import { aiComposeMessage, aiComposeConfigured, aiComposeTicketReply, aiPolishText, aiTicketPhrases } from '../lib/ai-compose';
 import { pool } from '../db/pool';
 
 const router = Router();
@@ -38,6 +38,36 @@ router.post('/ai/compose', requireAuth, async (req: Request, res: Response) => {
 
 // "Claude Update": polish the engineer's draft into the next reply, using the whole ticket thread
 // (messages + notes, incl. internal notes) as context. Stays anchored to the engineer's draft.
+// One thread-context builder shared by Claude Update and the phrase ribbon: the whole
+// conversation, chronological, labelled, internal notes marked as such, capped from the tail.
+async function buildTicketContext(ticketId: number, cap = 16000): Promise<string> {
+  const [msgs, notes] = await Promise.all([
+    pool.query("SELECT message_direction, channel, from_name, from_email, body_html, body_text, received_at, created_at FROM inbox_messages WHERE ticket_id=$1 ORDER BY COALESCE(received_at, created_at)", [ticketId]),
+    pool.query("SELECT nt.note_type, nt.body, nt.created_at, u.display_name AS author FROM inbox_notes nt LEFT JOIN users u ON u.id=nt.user_id WHERE nt.ticket_id=$1 ORDER BY nt.created_at", [ticketId]),
+  ]);
+  const entries: { at: number; line: string }[] = [];
+  for (const m of msgs.rows) {
+    const text = htmlToText(m.body_html || m.body_text || '');
+    if (!text) continue;
+    const who = m.from_name || m.from_email || (m.message_direction === 'inbound' ? 'Customer' : 'Us');
+    const dir = m.message_direction === 'inbound' ? 'Customer message' : 'Our reply';
+    entries.push({ at: new Date(m.received_at || m.created_at).getTime(), line: `${dir} (${m.channel || 'email'}) — ${who}:\n${text}` });
+  }
+  for (const n of notes.rows) {
+    if (n.note_type === 'system_log' || n.note_type === 'bot') continue;
+    const text = htmlToText(n.body || '');
+    if (!text) continue;
+    const label = n.note_type === 'public_reply' ? `Our reply — ${n.author || 'team'}`
+      : n.note_type === 'side_convo' ? `Side conversation (private) — ${n.author || 'team'}`
+      : `INTERNAL NOTE (do not reveal to customer) — ${n.author || 'team'}`;
+    entries.push({ at: new Date(n.created_at).getTime(), line: `${label}:\n${text}` });
+  }
+  entries.sort((a, b) => a.at - b.at);
+  let context = entries.map(e => e.line).join('\n\n');
+  if (context.length > cap) context = '…(earlier messages trimmed)…\n\n' + context.slice(context.length - cap);
+  return context;
+}
+
 router.post('/ai/ticket-update', requireAuth, async (req: Request, res: Response) => {
   try {
     const ticketId = parseInt(String(req.body.ticketId || ''), 10);
@@ -45,43 +75,38 @@ router.post('/ai/ticket-update', requireAuth, async (req: Request, res: Response
     if (!ticketId) { res.status(400).json({ ok: false, error: 'Missing ticket reference.' }); return; }
     if (!draft.trim()) { res.status(400).json({ ok: false, error: 'Type or dictate your update first, then use Claude Update.' }); return; }
 
-    const [msgs, notes] = await Promise.all([
-      pool.query("SELECT message_direction, channel, from_name, from_email, body_html, body_text, received_at, created_at FROM inbox_messages WHERE ticket_id=$1 ORDER BY COALESCE(received_at, created_at)", [ticketId]),
-      pool.query("SELECT nt.note_type, nt.body, nt.created_at, u.display_name AS author FROM inbox_notes nt LEFT JOIN users u ON u.id=nt.user_id WHERE nt.ticket_id=$1 ORDER BY nt.created_at", [ticketId]),
-    ]);
+    const context = await buildTicketContext(ticketId);
 
-    const entries: { at: number; line: string }[] = [];
-    for (const m of msgs.rows) {
-      const text = htmlToText(m.body_html || m.body_text || '');
-      if (!text) continue;
-      const who = m.from_name || m.from_email || (m.message_direction === 'inbound' ? 'Customer' : 'Us');
-      const dir = m.message_direction === 'inbound' ? 'Customer message' : 'Our reply';
-      entries.push({ at: new Date(m.received_at || m.created_at).getTime(), line: `${dir} (${m.channel || 'email'}) — ${who}:\n${text}` });
-    }
-    for (const n of notes.rows) {
-      if (n.note_type === 'system_log' || n.note_type === 'bot') continue;   // skip audit/log noise
-      const text = htmlToText(n.body || '');
-      if (!text) continue;
-      const label = n.note_type === 'public_reply' ? `Our reply — ${n.author || 'team'}`
-        : n.note_type === 'side_convo' ? `Side conversation (private) — ${n.author || 'team'}`
-        : `INTERNAL NOTE (do not reveal to customer) — ${n.author || 'team'}`;
-      entries.push({ at: new Date(n.created_at).getTime(), line: `${label}:\n${text}` });
-    }
-    entries.sort((a, b) => a.at - b.at);
-
-    let context = entries.map(e => e.line).join('\n\n');
-    const CAP = 16000;                                  // keep the most recent context if the thread is huge
-    if (context.length > CAP) context = '…(earlier messages trimmed)…\n\n' + context.slice(context.length - CAP);
+    // Personal sign-off: the engineer's first name ("Regards, Terry" ahead of the
+    // corporate signature) unless the draft already carries one. Terry's ask, 14 Aug.
+    const signoffName = String(req.session.user!.displayName || '').trim().split(/\s+/)[0] || null;
 
     const message = await aiComposeTicketReply({
       draft,
       context,
       recipient: String(req.body.recipient || '').trim() || null,
       channel: String(req.body.channel || '').trim() || null,
+      signoffName,
     });
     res.json({ ok: true, message });
   } catch (e: any) {
     res.status(400).json({ ok: false, error: e.message || 'Claude Update failed' });
+  }
+});
+
+// Phrase ribbon: three thread-grounded phrases the engineer can click into the composer.
+// Fired lazily (first focus of the composer), cheap model, empty array on any failure —
+// the ribbon simply doesn't appear rather than getting in the way.
+router.post('/ai/ticket-phrases', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const ticketId = parseInt(String(req.body.ticketId || ''), 10);
+    if (!ticketId) { res.status(400).json({ ok: false, error: 'Missing ticket reference.' }); return; }
+    const context = await buildTicketContext(ticketId, 9000);
+    if (!context.trim()) { res.json({ ok: true, phrases: [] }); return; }
+    const phrases = await aiTicketPhrases({ context, recipient: String(req.body.recipient || '').trim() || null });
+    res.json({ ok: true, phrases });
+  } catch (e: any) {
+    res.json({ ok: true, phrases: [] });   // never block the composer over suggestions
   }
 });
 
