@@ -574,13 +574,24 @@ export async function aiComposeTicketReply(input: TicketReplyInput): Promise<str
     '- Return ONLY the finished message text. No preamble, no explanations, no markdown fences.',
   ].join('\n');
 
-  const userText = [
+  // Cache shape (same as aiAskCached): the STABLE part — recipient + the whole thread —
+  // is the corpus block; only the draft rides after it. Re-pressing Claude on the same
+  // ticket, or a phrase-ribbon refresh followed by an Update, re-reads the thread from
+  // Anthropic's cache at 0.1x instead of full price. Short threads fall under the model's
+  // cache minimum and are silently uncached — a rounding error either way (see note above
+  // cacheMinimumTokens). The draft goes AFTER the corpus, never woven in: everything up to
+  // and including the cached block must be byte-identical to score a hit.
+  const corpus = [
     input.recipient ? `Recipient (the customer): ${input.recipient}` : null,
     context ? `=== TICKET CONVERSATION SO FAR (context only — includes internal notes you must NOT reveal) ===\n${context}` : null,
-    `=== ENGINEER'S DRAFT REPLY (polish this; do not overstep it) ===\n${draft}`,
-  ].filter(Boolean).join('\n\n');
+  ].filter(Boolean).join('\n\n') || '(no conversation yet — this is the first message on the ticket)';
 
-  return callClaude(key, model, system, userText, 1200);
+  const { text, usage } = await callClaudeCached(key, model, system, corpus,
+    `=== ENGINEER'S DRAFT REPLY (polish this; do not overstep it) ===\n${draft}`, 1200);
+  if (usage.cacheReadTokens || usage.cacheCreationTokens) {
+    console.log(`[ai-compose] ticket-update cache: read ${usage.cacheReadTokens}, wrote ${usage.cacheCreationTokens}, fresh input ${usage.inputTokens}`);
+  }
+  return text;
 }
 
 // ── Phrase ribbon: three clickable suggestions for the next reply ───────────────
@@ -602,10 +613,14 @@ export async function aiTicketPhrases(input: { context: string; recipient?: stri
     '- NO greeting, NO sign-off, NO placeholder brackets, NO invented facts, dates or promises - only things already true in the thread.',
     '- Reply with STRICT JSON only: {"phrases":["...","...","..."]} - no prose, no fences.',
   ].join('\n');
-  const userText = (input.recipient ? `The customer: ${input.recipient}\n\n` : '')
+  const corpus = (input.recipient ? `The customer: ${input.recipient}\n\n` : '')
     + '=== TICKET CONVERSATION SO FAR ===\n' + String(input.context || '').trim();
   try {
-    const text = await callClaude(key, model, system, userText, 400);
+    const { text, usage } = await callClaudeCached(key, model, system, corpus,
+      'Suggest the three phrases now, as strict JSON.', 400);
+    if (usage.cacheReadTokens || usage.cacheCreationTokens) {
+      console.log(`[ai-compose] phrases cache: read ${usage.cacheReadTokens}, wrote ${usage.cacheCreationTokens}`);
+    }
     const m = text.match(/\{[\s\S]*\}/);
     const parsed = m ? JSON.parse(m[0]) : null;
     const arr = Array.isArray(parsed?.phrases) ? parsed.phrases : [];
