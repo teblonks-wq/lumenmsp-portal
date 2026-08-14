@@ -83,6 +83,10 @@
         <h2 style="margin:0 0 6px;color:#16a34a;">✓ Accept this quote</h2>
         <p class="muted" style="margin:0 0 20px;font-size:14px;">Once you submit, your acceptance is confirmed and we'll be in touch to get started.</p>
         <form method="post" action="/q/<%= quote.accept_token %>/accept">
+          <%# CSRF: anonymous visitors are exempt, but anyone WITH a session — staff
+              testing, or a customer signed into /my — is enforced. Without this field
+              those people cannot accept or reject a quote (found 14 Aug, Q-2049). %>
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
           <div style="margin-bottom:14px;"><label class="plabel">Your name</label><input class="pinput" name="name" placeholder="e.g. Jane Smith" autocomplete="name" required></div>
           <div style="margin-bottom:14px;"><label class="plabel">Email <span style="font-weight:400;color:#9ca3af;">(optional)</span></label><input class="pinput" type="email" name="email"></div>
           <div style="margin-bottom:20px;"><label class="plabel">Message <span style="font-weight:400;color:#9ca3af;">(optional)</span></label><textarea class="pinput" name="note" rows="3" placeholder="Any questions before we get started?"></textarea></div>
@@ -95,6 +99,10 @@
         <h2 style="margin:0 0 6px;color:#dc2626;">✕ Decline this quote</h2>
         <p class="muted" style="margin:0 0 20px;font-size:14px;">We're sorry to hear that. Let us know if there's anything we could do differently.</p>
         <form method="post" action="/q/<%= quote.accept_token %>/reject">
+          <%# CSRF: anonymous visitors are exempt, but anyone WITH a session — staff
+              testing, or a customer signed into /my — is enforced. Without this field
+              those people cannot accept or reject a quote (found 14 Aug, Q-2049). %>
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
           <div style="margin-bottom:20px;"><label class="plabel">Reason <span style="font-weight:400;color:#9ca3af;">(optional)</span></label><textarea class="pinput" name="reason" rows="3" placeholder="Let us know why, so we can improve…"></textarea></div>
           <button class="pbtn" type="submit" style="background:#dc2626;color:#fff;">✕ Decline quote</button>
         </form>

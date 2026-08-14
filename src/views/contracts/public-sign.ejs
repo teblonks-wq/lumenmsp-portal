@@ -69,6 +69,9 @@
         <% } else { %>
           <% if (error) { %><div class="err"><%= error %></div><% } %>
           <form method="post" action="/c/<%= token %>/sign" id="signForm">
+            <%# Same CSRF trap as the quote accept page: enforced for anyone WITH a
+                session (staff testing, /my customers). See quotes/public.ejs. %>
+            <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
             <div class="f"><label for="n">Full name</label><input type="text" id="n" name="name" required autocomplete="name" value="<%= prefill.name || '' %>"></div>
             <div class="f"><label for="p">Position</label><input type="text" id="p" name="position" required placeholder="e.g. Managing Director" value="<%= prefill.position || '' %>"></div>
             <div class="f"><label for="e">Email</label><input type="email" id="e" name="email" required autocomplete="email" value="<%= prefill.email || '' %>"></div>
