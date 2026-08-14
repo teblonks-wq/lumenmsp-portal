@@ -1,0 +1,33 @@
+<%- include('partials/header', { title: 'MCP call log', user }) %>
+<%
+function ago(d){ if(!d) return ''; var s=Math.floor((Date.now()-new Date(d))/1000); if(s<60)return s+'s'; var m=Math.floor(s/60); if(m<60)return m+'m'; var h=Math.floor(m/60); if(h<24)return h+'h'; return Math.floor(h/24)+'d'; }
+%>
+<div class="page-header"><h1 style="margin:0;">MCP call log</h1>
+  <p class="muted" style="margin:4px 0 0;">Everything the Portal MCP connector (Claude) has done. Read-only tools; every call is recorded here — our mistakes and our successes.</p>
+</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;">
+  <a class="btn <%= !tool ? 'btn-primary' : '' %>" href="/mcp-log">All</a>
+  <% tools.forEach(function(t){ %>
+    <a class="btn <%= tool===t.tool ? 'btn-primary' : '' %>" href="/mcp-log?tool=<%= encodeURIComponent(t.tool) %>"><%= t.tool %> <span class="muted">(<%= t.n %>)</span></a>
+  <% }); %>
+</div>
+<div class="card">
+  <% if (!rows.length) { %><div class="empty-state">No calls logged yet.</div><% } else { %>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>When</th><th>Tool</th><th>Arguments</th><th>OK</th><th>ms</th><th>IP</th></tr></thead>
+    <tbody>
+      <% rows.forEach(function(r){ %>
+      <tr>
+        <td class="muted" style="white-space:nowrap;font-size:12px;" title="<%= r.created_at %>"><%= ago(r.created_at) %> ago</td>
+        <td><strong><%= r.tool || r.method %></strong></td>
+        <td style="font-family:ui-monospace,Consolas,monospace;font-size:11.5px;max-width:420px;overflow-wrap:anywhere;"><%= r.args ? JSON.stringify(r.args) : '' %><% if (r.error) { %><div style="color:var(--bad-fg);"><%= r.error %></div><% } %></td>
+        <td><% if (r.ok) { %><span style="color:var(--ok);">✓</span><% } else { %><span style="color:var(--bad-fg);">✕</span><% } %></td>
+        <td class="muted" style="font-size:12px;"><%= r.duration_ms == null ? '' : r.duration_ms %></td>
+        <td class="muted" style="font-size:12px;"><%= r.ip || '' %></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <% } %>
+</div>
+<%- include('partials/footer') %>

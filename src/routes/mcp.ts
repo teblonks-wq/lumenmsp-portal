@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { pool } from '../db/pool';
+import { requireAuth, requireAdmin } from '../middleware/auth';
 
 // ── Claude MCP connector (read-only) ──────────────────────────────────────────
 // A minimal, dependency-free Model Context Protocol server over Streamable HTTP,
@@ -27,6 +28,17 @@ import { pool } from '../db/pool';
 //   CSRF guard in index.ts already exempts them (same as /api/leads).
 
 const router = Router();
+
+// ── Audit — every MCP call is logged (Terry, 2026-08-14: "we need to log everything").
+// Fire-and-forget: a logging failure must NEVER break or slow the actual call.
+function auditCall(row: { method: string; tool: string | null; args: any; ok: boolean; error: string | null; durationMs: number; ip: string | null }): void {
+  pool.query(
+    `INSERT INTO mcp_call_log (method, tool, args, ok, error, duration_ms, ip)
+     VALUES ($1,$2,$3::jsonb,$4,$5,$6,$7)`,
+    [row.method, row.tool, row.args != null ? JSON.stringify(row.args) : null, row.ok,
+     row.error ? String(row.error).slice(0, 500) : null, row.durationMs, row.ip]
+  ).catch((e) => console.error('[mcp] audit log failed:', e.message));
+}
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 function tokenOk(supplied: unknown): boolean {
@@ -472,7 +484,7 @@ const rpcErr = (id: any, code: number, message: string) => ({ jsonrpc: '2.0' as 
 
 const SUPPORTED_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
-async function handleRpc(msg: any): Promise<any | null> {
+async function handleRpc(msg: any, ctx: { ip: string | null }): Promise<any | null> {
   const id = msg && msg.id !== undefined ? msg.id : undefined;
   const method = msg && typeof msg.method === 'string' ? msg.method : '';
   if (!msg || msg.jsonrpc !== '2.0' || !method) {
@@ -498,12 +510,18 @@ async function handleRpc(msg: any): Promise<any | null> {
         return rpcOk(id, { tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
       case 'tools/call': {
         const name = String(msg.params?.name || '');
+        const args = msg.params?.arguments || {};
         const tool = TOOLS.find((t) => t.name === name);
-        if (!tool) return rpcErr(id, -32602, `Unknown tool: ${name}`);
+        if (!tool) { auditCall({ method, tool: name, args, ok: false, error: 'unknown tool', durationMs: 0, ip: ctx.ip }); return rpcErr(id, -32602, `Unknown tool: ${name}`); }
+        const started = Date.now();
         try {
-          const result = await tool.run(msg.params?.arguments || {});
+          const result = await tool.run(args);
+          // A tool may hand back { error } for a soft failure (no customer found etc.) — record that too.
+          const soft = result && typeof result === 'object' && 'error' in result ? String((result as any).error) : null;
+          auditCall({ method, tool: name, args, ok: !soft, error: soft, durationMs: Date.now() - started, ip: ctx.ip });
           return rpcOk(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], isError: false });
         } catch (e: any) {
+          auditCall({ method, tool: name, args, ok: false, error: e?.message || String(e), durationMs: Date.now() - started, ip: ctx.ip });
           // Tool-level failure → isError result (not a protocol error), per spec.
           return rpcOk(id, { content: [{ type: 'text', text: `Tool error: ${e?.message || e}` }], isError: true });
         }
@@ -532,7 +550,8 @@ router.post('/mcp/:token', async (req: Request, res: Response) => {
   const body = req.body;
   const isBatch = Array.isArray(body);
   const msgs: any[] = isBatch ? body : [body];
-  const responses = (await Promise.all(msgs.map(handleRpc))).filter((r) => r !== null);
+  const ip = String(req.ip || req.headers['x-forwarded-for'] || '').replace(/^::ffff:/, '').split(',')[0].trim() || null;
+  const responses = (await Promise.all(msgs.map((m) => handleRpc(m, { ip })))).filter((r) => r !== null);
   if (!responses.length) { res.status(202).end(); return; } // notifications only
   res.status(200).json(isBatch ? responses : responses[0]);
 });
@@ -542,6 +561,20 @@ router.post('/mcp/:token', async (req: Request, res: Response) => {
 router.all('/mcp/:token', (req: Request, res: Response) => {
   if (!tokenOk(req.params.token)) { res.status(401).json(rpcErr(null, -32000, 'Unauthorized')); return; }
   res.status(405).set('Allow', 'POST').json(rpcErr(null, -32000, 'Method not allowed — POST only'));
+});
+
+// ── The MCP audit log — staff view (admin only, session-guarded) ────────────────
+// Separate from the token endpoint above: this is Terry reading what the connector did.
+router.get('/mcp-log', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const tool = String(req.query.tool || '').trim() || null;
+  const rows = (await pool.query(
+    `SELECT id, method, tool, args, ok, error, duration_ms, ip, created_at
+       FROM mcp_call_log WHERE ($1::text IS NULL OR tool=$1)
+      ORDER BY created_at DESC LIMIT 300`, [tool])).rows;
+  const tools = (await pool.query(
+    `SELECT tool, COUNT(*)::int n, MAX(created_at) last FROM mcp_call_log
+      WHERE tool IS NOT NULL GROUP BY tool ORDER BY n DESC`)).rows;
+  res.render('mcp-log', { user: req.session.user!, rows, tools, tool });
 });
 
 export default router;

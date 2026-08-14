@@ -617,6 +617,22 @@ model CustomerAsset {
 
 // Durable note against a comms CLI / ref (e.g. "line rental ceasing next month"). Kept in its own
 // table because service_items are wiped & re-imported, so a note on the line itself would be lost.
+model McpCallLog {
+  id         Int      @id @default(autoincrement())
+  method     String                              // JSON-RPC method (tools/call, tools/list, initialize…)
+  tool       String?                             // the tool name for a tools/call
+  args       Json?                               // the tool arguments, verbatim (audit — Terry: "log everything")
+  ok         Boolean  @default(true)             // false = the tool returned an error result
+  error      String?                             // error text when ok=false
+  durationMs Int?     @map("duration_ms")
+  ip         String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([tool])
+  @@map("mcp_call_log")
+}
+
 model CommsLineNote {
   id               Int      @id @default(autoincrement())
   customerId       Int?     @map("customer_id")
