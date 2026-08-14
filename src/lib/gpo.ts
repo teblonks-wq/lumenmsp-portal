@@ -433,6 +433,7 @@ export interface DeployRun {
   ok: boolean; error: string | null; hostname: string | null;
   domain?: string; gpoName?: string; gpoId?: string; created?: boolean;
   linkedTo?: string; computers?: number; taskName?: string; exists?: boolean;
+  siteKey?: string;   // agent 1.0.22+: the enrolment key the deployment carries — proof it cannot orphan
 }
 
 export async function lastDeployRun(customerId: number): Promise<DeployRun | null> {
@@ -461,7 +462,7 @@ export async function lastDeployRun(customerId: number): Promise<DeployRun | nul
     return { ...base, ok: j.ok === true, error: j.ok === true ? null : String(j.error || 'Unknown error.'),
       dryRun: j.dryRun === true, domain: j.domain, gpoName: j.gpoName, gpoId: j.gpoId,
       created: j.created, linkedTo: j.linkedTo, computers: Number(j.computers),
-      taskName: j.taskName, exists: j.exists };
+      taskName: j.taskName, exists: j.exists, siteKey: j.siteKey ? String(j.siteKey) : undefined };
   } catch {
     return { ...base, error: raw.trim().slice(-400) };
   }

@@ -141,6 +141,8 @@ var plan = lastRun && lastRun.dryRun && lastRun.ok ? lastRun : null;
             <% } %>
           </div>
           <% if (!lastRun.dryRun) { %><div><span class="muted">Task</span> &middot; <%= lastRun.taskName %></div><% } %>
+          <% if (lastRun.siteKey) { %><div><span class="muted">Enrols with key</span> &middot; <span class="mono"><%= lastRun.siteKey %></span> <span style="color:var(--ok);">— installs cannot orphan</span></div>
+          <% } else if (lastRun.ok) { %><div class="muted" style="font-size:12px;">No enrolment key in this report — it was made by an agent older than 1.0.22. Re-plan to refresh with the keyed script.</div><% } %>
         </div>
       <% } %>
     </div>
