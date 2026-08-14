@@ -10,6 +10,8 @@
   </div>
   <form method="post" action="/bureau/register/reconcile"><button class="btn btn-primary" type="submit">↻ Reconcile now</button></form>
   <form method="post" action="/bureau/register/backfill-contracts" style="display:inline;margin-left:8px;" title="Re-sync every active IT contract into the register as lumen rows"><button class="btn" type="submit">Sync contracts</button></form>
+  <form method="post" action="/bureau/register/price-from-invoices" style="display:inline;margin-left:8px;" title="Fill unpriced register lines with the sell price from each customer's last invoice" onsubmit="return confirm('Price unpriced register lines from each customer\'s last invoice? Only unpriced lines are touched; set prices are left alone.');"><button class="btn" type="submit">£ Price from last invoices</button></form>
+  <a class="btn" href="/bureau/register/price-preview.json" target="_blank" style="margin-left:6px;" title="Dry-run: see what would be priced and what still won't match">Preview</a>
   <a class="btn" href="/bureau/register/shadow" style="margin-left:8px;" title="Compare the register bill vs the live bill, per customer — the cutover gate">Shadow report →</a>
 </div>
 

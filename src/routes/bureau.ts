@@ -1685,6 +1685,23 @@ router.post('/bureau/register/backfill-contracts', async (req: Request, res: Res
   } catch (e: any) { res.redirect('/bureau/register?err=' + encodeURIComponent(e.message)); }
 });
 
+// Price unpriced register lines from each customer's last invoice. Dry-run preview (JSON).
+router.get('/bureau/register/price-preview.json', async (req: Request, res: Response) => {
+  const { priceRegisterFromInvoices } = await import('../lib/register');
+  try { res.json(await priceRegisterFromInvoices('user:' + req.session.user!.id, false)); }
+  catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Apply the pricing pull (fills 'unpriced' lines only; never overwrites a set price).
+router.post('/bureau/register/price-from-invoices', async (req: Request, res: Response) => {
+  const { priceRegisterFromInvoices } = await import('../lib/register');
+  try {
+    const r = await priceRegisterFromInvoices('user:' + req.session.user!.id, true);
+    res.redirect('/bureau/register?msg=' + encodeURIComponent(
+      `Priced from last invoices: ${r.priced} line(s) across ${r.customers} customer(s); ${r.stillUnpriced} still unpriced (no invoice match).`));
+  } catch (e: any) { res.redirect('/bureau/register?err=' + encodeURIComponent(e.message)); }
+});
+
 // ── Shadow report — register engine vs live engine (the cutover gate) ──────────
 router.get('/bureau/register/shadow', async (req: Request, res: Response) => {
   const { shadowReport } = await import('../lib/register-shadow');

@@ -263,3 +263,86 @@ export async function registerRecentChanges(customerId?: number | null, limit = 
        LEFT JOIN customer_register_lines r ON r.id=g.register_line_id
       WHERE ($1::int IS NULL OR g.customer_id=$1) ORDER BY g.created_at DESC LIMIT $2`, [customerId || null, limit])).rows;
 }
+
+// ── Price unpriced register lines from each customer's last invoice ─────────────
+// The rate card is sparse, but the customer's most recent invoice is what they ACTUALLY
+// pay — so lift the sell price from there onto matching unpriced register lines. Matches
+// per customer, per scheme (comms-feed→CS, cloud/lumen→IC/IT), by CLI → product → exact
+// description. Only ever fills 'unpriced' lines; never overwrites a human/existing price.
+// Idempotent. apply=false computes the match and rolls back (dry-run preview).
+export interface PriceFromInvoicesResult {
+  priced: number;
+  stillUnpriced: number;
+  customers: number;
+  applied: boolean;
+  samples: { customer: string; description: string; via: string; unitPrice: number }[];
+  misses: { customer: string; description: string; source: string }[];
+}
+
+const SCHEME_FOR: Record<string, string[]> = { 'comms-feed': ['CS'], 'cloud-feed': ['IC', 'IT'], 'lumen': ['IC', 'IT'] };
+const normDesc = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+
+export async function priceRegisterFromInvoices(actor = 'invoice-backfill', apply = false): Promise<PriceFromInvoicesResult> {
+  const res: PriceFromInvoicesResult = { priced: 0, stillUnpriced: 0, customers: 0, applied: apply, samples: [], misses: [] };
+  const unpriced = (await pool.query(
+    "SELECT id, customer_id, source, cli, product_id, description FROM customer_register_lines WHERE status='unpriced' AND customer_id IS NOT NULL"
+  )).rows;
+  if (!unpriced.length) return res;
+
+  const byCust = new Map<number, any[]>();
+  for (const r of unpriced) { if (!byCust.has(r.customer_id)) byCust.set(r.customer_id, []); byCust.get(r.customer_id)!.push(r); }
+  const custName = new Map<number, string>();
+  (await pool.query('SELECT id, name FROM customers WHERE id = ANY($1)', [[...byCust.keys()]]))
+    .rows.forEach((c: any) => custName.set(c.id, c.name));
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const [cid, lines] of byCust) {
+      res.customers++;
+      const schemes = Array.from(new Set(lines.flatMap((l: any) => SCHEME_FOR[l.source] || ['IC', 'IT'])));
+      // Price index from the latest invoice per scheme (recurring template preferred, else newest).
+      const byCli = new Map<string, number>(), byProd = new Map<number, number[]>(), byDescMap = new Map<string, number>();
+      for (const scheme of schemes) {
+        const inv = (await client.query(
+          `SELECT id FROM invoices WHERE customer_id=$1 AND invoice_scheme=$2 AND deleted_at IS NULL
+            ORDER BY is_recurring DESC, COALESCE(issue_date, created_at) DESC, id DESC LIMIT 1`, [cid, scheme]
+        )).rows[0];
+        if (!inv) continue;
+        const items = (await client.query(
+          `SELECT product_id, sync_ref, description, unit_price FROM invoice_items
+            WHERE invoice_id=$1 AND COALESCE(is_one_off,false)=false`, [inv.id]
+        )).rows;
+        for (const it of items) {
+          const price = Number(it.unit_price);
+          if (!(price > 0)) continue;
+          const ref = it.sync_ref ? String(it.sync_ref).split('|')[0].trim().toLowerCase() : '';
+          if (ref) byCli.set(ref, price);
+          if (it.product_id) { const a = byProd.get(it.product_id) || []; a.push(price); byProd.set(it.product_id, a); }
+          const nd = normDesc(it.description); if (nd && !byDescMap.has(nd)) byDescMap.set(nd, price);
+        }
+      }
+      for (const l of lines) {
+        let price: number | null = null, via = '';
+        const cliKey = (l.cli || '').toLowerCase();
+        const prodPrices = l.product_id ? byProd.get(l.product_id) : undefined;
+        if (cliKey && byCli.has(cliKey)) { price = byCli.get(cliKey)!; via = 'cli'; }
+        else if (prodPrices && prodPrices.length === 1) { price = prodPrices[0]; via = 'product'; }
+        else { const nd = normDesc(l.description); if (byDescMap.has(nd)) { price = byDescMap.get(nd)!; via = 'description'; } }
+        if (price != null && price > 0) {
+          res.priced++;
+          if (res.samples.length < 60) res.samples.push({ customer: custName.get(cid) || String(cid), description: l.description, via, unitPrice: price });
+          if (apply) {
+            await client.query("UPDATE customer_register_lines SET sale_price=$1, status='active', updated_at=NOW() WHERE id=$2", [price, l.id]);
+            await logChange(client, { lineId: l.id, customerId: cid, type: 'price', old: { salePrice: null }, next: { salePrice: price, via, from: 'last-invoice' }, actor });
+          }
+        } else {
+          res.stillUnpriced++;
+          if (res.misses.length < 60) res.misses.push({ customer: custName.get(cid) || String(cid), description: l.description, source: l.source });
+        }
+      }
+    }
+    if (apply) await client.query('COMMIT'); else await client.query('ROLLBACK');
+  } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  return res;
+}
