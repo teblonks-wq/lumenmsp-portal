@@ -59,7 +59,7 @@ router.get('/servers', requireAuth, requireAdmin, async (req: Request, res: Resp
               ad.logged_in_user, ad.mesh_node_id, ad.reboot_required,
               EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at))::int AS seen_secs,
               (SELECT ca.id FROM customer_assets ca
-                WHERE ca.agent_device_id = ad.id AND ca.merged_into_id IS NULL LIMIT 1) AS asset_id,
+                WHERE ca.agent_device_id = ad.id AND ca.merged_into_id IS NULL AND ca.archived_at IS NULL LIMIT 1) AS asset_id,
               (SELECT 1 FROM agent_commands pc
                 WHERE pc.device_id = ad.id AND pc.kind LIKE 'power.%'
                   AND pc.status IN ('queued','running') LIMIT 1) AS power_pending,
@@ -139,7 +139,7 @@ router.get('/servers/:id', requireAuth, requireAdmin, async (req: Request, res: 
       pending, msg: req.query.msg || null, err: req.query.err || null,
       onlineWindowSecs: ONLINE_WINDOW_SECS,
       assetId: (await pool.query(
-        'SELECT id FROM customer_assets WHERE agent_device_id=$1 AND merged_into_id IS NULL LIMIT 1', [id])).rows[0]?.id || null,
+        'SELECT id FROM customer_assets WHERE agent_device_id=$1 AND merged_into_id IS NULL AND archived_at IS NULL LIMIT 1', [id])).rows[0]?.id || null,
       powerPending: (await pool.query(
         `SELECT 1 FROM agent_commands WHERE device_id=$1 AND kind LIKE 'power.%' AND status IN ('queued','running') LIMIT 1`,
         [id])).rows.length > 0,

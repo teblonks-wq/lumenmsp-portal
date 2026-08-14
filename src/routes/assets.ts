@@ -45,7 +45,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   // to target for a rollout), '' = either. Kept as a string so "without" is expressible.
   const agentFilter = String(req.query.agent || '').trim();
 
-  const where: string[] = ['a.customer_id IS NOT NULL', 'a.merged_into_id IS NULL'];
+  const where: string[] = ['a.customer_id IS NOT NULL', 'a.merged_into_id IS NULL AND a.archived_at IS NULL'];
   const params: any[] = [];
   if (q) { params.push('%' + q + '%'); where.push(`(a.hostname ILIKE $${params.length} OR a.serial_number ILIKE $${params.length} OR a.model ILIKE $${params.length} OR a.last_login_user ILIKE $${params.length} OR ac.full_name ILIKE $${params.length} OR c.name ILIKE $${params.length})`); }
   if (custId) { params.push(custId); where.push(`a.customer_id = $${params.length}`); }
@@ -78,7 +78,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
      ORDER BY c.name, a.hostname`, params
   )).rows;
 
-  const unmatchedCount = (await pool.query('SELECT COUNT(*)::int AS n FROM customer_assets WHERE customer_id IS NULL AND merged_into_id IS NULL')).rows[0].n;
+  const unmatchedCount = (await pool.query('SELECT COUNT(*)::int AS n FROM customer_assets WHERE customer_id IS NULL AND merged_into_id IS NULL AND archived_at IS NULL')).rows[0].n;
   // Cheap enough to run per page load, and it is the kind of mess that has to be visible
   // to get fixed - a silent duplicate is one somebody remotes onto the wrong copy of.
   const duplicateCount = (await findDuplicateAssets()).length;
@@ -102,7 +102,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
 
 // ── Devices Atera has that aren't matched to a portal customer yet ──────────────
 router.get('/assets/unmatched', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const rows = (await pool.query("SELECT * FROM customer_assets WHERE customer_id IS NULL AND merged_into_id IS NULL ORDER BY hostname")).rows;
+  const rows = (await pool.query("SELECT * FROM customer_assets WHERE customer_id IS NULL AND merged_into_id IS NULL AND archived_at IS NULL ORDER BY hostname")).rows;
   res.render('assets/unmatched', { user: req.session.user!, rows, notice: req.query.msg || null });
 });
 
@@ -122,7 +122,7 @@ router.get('/assets/status.json', requireAuth, async (req: Request, res: Respons
               ad.agent_version
          FROM customer_assets a
          LEFT JOIN agent_devices ad ON ad.id = a.agent_device_id AND ad.revoked = false
-        WHERE a.id = ANY($1::int[]) AND a.merged_into_id IS NULL`, [ids])).rows;
+        WHERE a.id = ANY($1::int[]) AND a.merged_into_id IS NULL AND a.archived_at IS NULL`, [ids])).rows;
     res.json({
       ok: true,
       windowSecs: ONLINE_WINDOW_SECS,
@@ -234,6 +234,73 @@ router.post('/assets/:id/assign', requireAuth, async (req: Request, res: Respons
   await pool.query('UPDATE customer_assets SET assigned_contact_id=NULL, updated_at=NOW() WHERE id=$1', [id]);
   await logActivity(req.session.user!.id, 'updated', 'customers', asset.customer_id, `Device ${asset.hostname || id} set to unallocated`);
   res.redirect(`/assets/${id}?msg=` + encodeURIComponent('Set to unallocated'));
+});
+
+// ── Archive a device (remove from the estate) ───────────────────────────────────
+// For Atera imports of machines we will never manage. A hard DELETE is pointless: the
+// nightly Atera sync's upsert would re-create it from Atera's own list. So we archive —
+// the row is kept but hidden from every list, and because the sync's ON CONFLICT never
+// clears archived_at, an archived row stays archived through every future sync. An agent
+// that we DO put on later enrols fresh (adoption skips archived rows), so nothing is lost.
+// Reversible from the archived list. Agent-owned devices are NOT archived here — revoke +
+// delete them on the Agents page instead (this is the Atera/asset side).
+async function archiveAssets(ids: number[], userId: number, reason: string): Promise<{ archived: number; skipped: number }> {
+  let archived = 0, skipped = 0;
+  for (const id of ids) {
+    const a = (await pool.query('SELECT id, hostname, agent_device_id, archived_at FROM customer_assets WHERE id=$1', [id])).rows[0];
+    if (!a || a.archived_at) { skipped++; continue; }
+    if (a.agent_device_id) { skipped++; continue; }   // has a live agent — belongs on the Agents page
+    await pool.query('UPDATE customer_assets SET archived_at=NOW(), archived_reason=$1, updated_at=NOW() WHERE id=$2', [reason.slice(0, 200) || null, id]);
+    await logActivity(userId, 'asset_archived', 'customer_assets', id, `Device archived (${reason || 'no reason'}): ${a.hostname || 'asset ' + id}`);
+    archived++;
+  }
+  return { archived, skipped };
+}
+
+router.post('/assets/:id/archive', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const reason = String((req.body || {}).reason || 'not managed');
+  try {
+    const r = await archiveAssets([id], req.session.user!.id, reason);
+    if (!r.archived) { res.redirect(`/assets/${id}?err=` + encodeURIComponent('Could not archive — it may already be archived, or it has a live agent (revoke it on the Agents page instead).')); return; }
+    res.redirect('/assets?msg=' + encodeURIComponent('Device archived — hidden from the estate and the Atera sync will not bring it back. Undo from the archived list.'));
+  } catch (e: any) {
+    res.redirect(`/assets/${id}?err=` + encodeURIComponent('Archive failed: ' + e.message));
+  }
+});
+
+// Bulk archive — Atera imports come in droves; tick them and clear them in one go.
+router.post('/assets/archive-bulk', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const ids = String((req.body || {}).ids || '').split(',').map((x) => parseInt(x, 10)).filter(Boolean);
+  const reason = String((req.body || {}).reason || 'not managed');
+  if (!ids.length) { res.redirect('/assets?err=' + encodeURIComponent('No devices selected.')); return; }
+  try {
+    const r = await archiveAssets(ids, req.session.user!.id, reason);
+    res.redirect('/assets?msg=' + encodeURIComponent(`${r.archived} device(s) archived${r.skipped ? `, ${r.skipped} skipped (already archived or agent-owned)` : ''}.`));
+  } catch (e: any) {
+    res.redirect('/assets?err=' + encodeURIComponent('Bulk archive failed: ' + e.message));
+  }
+});
+
+// Restore an archived device.
+router.post('/assets/:id/unarchive', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  try {
+    await pool.query('UPDATE customer_assets SET archived_at=NULL, archived_reason=NULL, updated_at=NOW() WHERE id=$1', [id]);
+    await logActivity(req.session.user!.id, 'asset_unarchived', 'customer_assets', id, `Device restored from archive`);
+    res.redirect('/assets/archived?msg=' + encodeURIComponent('Device restored — it is back in the estate.'));
+  } catch (e: any) {
+    res.redirect('/assets/archived?err=' + encodeURIComponent('Restore failed: ' + e.message));
+  }
+});
+
+// The archived list.
+router.get('/assets/archived', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const rows = (await pool.query(
+    `SELECT a.*, c.name AS customer_name FROM customer_assets a
+       LEFT JOIN customers c ON c.id=a.customer_id
+      WHERE a.archived_at IS NOT NULL ORDER BY a.archived_at DESC LIMIT 500`)).rows;
+  res.render('assets/archived', { user: req.session.user!, rows, msg: req.query.msg || null, error: req.query.err || null });
 });
 
 // ── Device detail ────────────────────────────────────────────────────────────────
@@ -482,7 +549,7 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
     `SELECT ad.id, ad.hostname, ad.last_seen_at, c.name AS customer_name,
             EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at))::int AS seen_secs,
             (SELECT ca.id FROM customer_assets ca
-              WHERE ca.agent_device_id = ad.id AND ca.merged_into_id IS NULL LIMIT 1) AS asset_id
+              WHERE ca.agent_device_id = ad.id AND ca.merged_into_id IS NULL AND ca.archived_at IS NULL LIMIT 1) AS asset_id
        FROM agent_devices ad LEFT JOIN customers c ON c.id = ad.customer_id
       WHERE ad.revoked=false AND ad.mesh_node_id IS NULL AND ad.mesh_installed = true
       ORDER BY c.name NULLS LAST, ad.hostname`)).rows : [];

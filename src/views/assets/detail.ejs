@@ -45,6 +45,14 @@
   </div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
     <% if (remoteUrl) { %><a class="btn btn-remote" target="_blank" rel="noopener" href="/assets/<%= asset.id %>/remote-mesh">🖥 Remote control</a><% } %>
+    <% if (!asset.agent_device_id && (user.role === 'admin')) { %>
+    <form method="post" action="/assets/<%= asset.id %>/archive" style="display:inline;"
+          onsubmit="return confirm('Archive ' + <%- JSON.stringify(String(asset.hostname || 'this device')) %> + '?\n\nUse this for an Atera import of a machine you will never manage. It is hidden from the estate and the Atera sync will NOT bring it back. Reversible from the archived list.');">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <input type="hidden" name="reason" value="not managed">
+      <button class="btn" type="submit" style="color:var(--bad-fg);" title="Remove this device from the estate — for Atera imports you will never put an agent on">Archive / remove</button>
+    </form>
+    <% } %>
     <% if (asset.agent_device_id) { %>
     <div class="pw-wrap" style="position:relative;display:inline-block;">
       <button type="button" class="btn pw-btn" <%= (typeof powerPending !== 'undefined' && powerPending) ? 'style="border-color:var(--warn-line);"' : '' %>

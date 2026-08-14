@@ -113,7 +113,7 @@ export async function syncAssetFromAgent(deviceId: number): Promise<number | nul
     const disk = diskSummary(d.disk_info);
 
     let row = (await pool.query(
-      'SELECT id FROM customer_assets WHERE agent_device_id=$1 AND merged_into_id IS NULL ORDER BY id LIMIT 1',
+      'SELECT id FROM customer_assets WHERE agent_device_id=$1 AND merged_into_id IS NULL AND archived_at IS NULL ORDER BY id LIMIT 1',
       [deviceId])).rows[0] || null;
 
     // Serial first - it survives a rename - but only a serial that means something.
@@ -121,7 +121,7 @@ export async function syncAssetFromAgent(deviceId: number): Promise<number | nul
     if (!row && serial) {
       row = (await pool.query(
         `SELECT id FROM customer_assets
-          WHERE customer_id=$1 AND agent_device_id IS NULL AND merged_into_id IS NULL
+          WHERE customer_id=$1 AND agent_device_id IS NULL AND merged_into_id IS NULL AND archived_at IS NULL
             AND ${SERIAL_USABLE('serial_number')} AND UPPER(BTRIM(serial_number)) = $2
           ORDER BY id LIMIT 1`, [d.customer_id, serial])).rows[0] || null;
     }
@@ -130,7 +130,7 @@ export async function syncAssetFromAgent(deviceId: number): Promise<number | nul
     if (!row && host) {
       row = (await pool.query(
         `SELECT id FROM customer_assets
-          WHERE customer_id=$1 AND agent_device_id IS NULL AND merged_into_id IS NULL
+          WHERE customer_id=$1 AND agent_device_id IS NULL AND merged_into_id IS NULL AND archived_at IS NULL
             AND ${HOST_SQL('hostname')} = $2
           ORDER BY id LIMIT 1`, [d.customer_id, host])).rows[0] || null;
     }
@@ -212,7 +212,7 @@ export async function backfillAssetsFromAgents(): Promise<{ bound: number; creat
         WHERE a.agent_device_id IS NULL
           AND ad.revoked = false
           AND ad.customer_id IS NOT NULL
-          AND a.merged_into_id IS NULL
+          AND a.merged_into_id IS NULL AND a.archived_at IS NULL
           AND ad.customer_id = a.customer_id
           AND ( (${SERIAL_USABLE('a.serial_number')} AND ${SERIAL_USABLE('ad.serial_number')}
                  AND UPPER(BTRIM(ad.serial_number)) = UPPER(BTRIM(a.serial_number)))
@@ -236,7 +236,7 @@ export async function backfillAssetsFromAgents(): Promise<{ bound: number; creat
               ad.last_boot_at, NOW(), NOW()
          FROM agent_devices ad
         WHERE ad.revoked = false AND ad.customer_id IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM customer_assets a WHERE a.agent_device_id = ad.id AND a.merged_into_id IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM customer_assets a WHERE a.agent_device_id = ad.id AND a.merged_into_id IS NULL AND a.archived_at IS NULL)
        ON CONFLICT (source_system, external_id) DO NOTHING
        RETURNING id`);
     out.created = created.rows.length;
@@ -288,7 +288,7 @@ export async function backfillAssetsFromAgents(): Promise<{ bound: number; creat
     //    trip to a machine that is switched off.
     await pool.query(
       `UPDATE customer_assets SET online_status=false, updated_at=NOW()
-        WHERE agent_device_id IS NULL AND online_status = true AND merged_into_id IS NULL`);
+        WHERE agent_device_id IS NULL AND online_status = true AND merged_into_id IS NULL AND archived_at IS NULL`);
   } catch (e: any) {
     console.error('[asset] agent backfill failed:', e.message);
   }
@@ -340,7 +340,7 @@ export async function findDuplicateAssets(): Promise<DuplicateGroup[]> {
             ${HOST_SQL('a.hostname')} AS host_key
        FROM customer_assets a
        LEFT JOIN customers c ON c.id = a.customer_id
-      WHERE a.merged_into_id IS NULL AND a.customer_id IS NOT NULL
+      WHERE a.merged_into_id IS NULL AND a.archived_at IS NULL AND a.customer_id IS NOT NULL
       ORDER BY a.id`)).rows;
 
   const groups = new Map<string, DuplicateGroup>();

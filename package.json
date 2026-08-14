@@ -1,7 +1,7 @@
 {
   "name": "lumenmsp-portal",
   "version": "0.1.0",
-  "description": "Lumen MSP Portal — ticketing, quotes, invoicing and customer management",
+  "description": "Lumen MSP Portal \u2014 ticketing, quotes, invoicing and customer management",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -47,7 +47,8 @@
     "import-lumen-charges": "node dist/scripts/import-lumen-charges.js",
     "import-calls": "node dist/scripts/import-calls.js",
     "send-daily-range": "node dist/scripts/send-daily-range.js",
-    "ingest-all-calls": "node dist/scripts/ingest-all-calls.js"
+    "ingest-all-calls": "node dist/scripts/ingest-all-calls.js",
+    "migrate-register": "node dist/scripts/migrate-register.js"
   },
   "dependencies": {
     "@azure/msal-node": "^5.1.0",

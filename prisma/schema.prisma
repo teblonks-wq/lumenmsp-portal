@@ -594,6 +594,11 @@ model CustomerAsset {
   // undone - it is simply filtered out of every list.
   mergedIntoId   Int?      @map("merged_into_id")
   mergedAt       DateTime? @map("merged_at")
+  // Archived = "not ours to manage — never getting an agent" (e.g. an Atera import of a
+  // machine we don't cover). Kept, not deleted, so the Atera sync's upsert can't resurrect
+  // it and a mistake is reversible; filtered out of every list exactly like a merged row.
+  archivedAt     DateTime? @map("archived_at")
+  archivedReason String?   @map("archived_reason")
   raw            Json?     // full source payload, for fields not yet promoted to columns
   syncedAt       DateTime  @default(now()) @map("synced_at")
   createdAt      DateTime  @default(now()) @map("created_at")

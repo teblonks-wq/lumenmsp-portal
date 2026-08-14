@@ -1,0 +1,39 @@
+<%- include('../partials/header', { title: 'Archived devices', user }) %>
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/assets">← Assets</a></p>
+    <h1 style="margin:0;">Archived devices</h1>
+    <p class="muted" style="margin:4px 0 0;">Removed from the estate — hidden from every list and never resurrected by the Atera sync. Restore any that should be back.</p>
+  </div>
+</div>
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error"><%= error %></div><% } %>
+<div class="card">
+  <% if (!rows.length) { %>
+    <div class="empty-state">Nothing archived. Devices you remove from the estate land here.</div>
+  <% } else { %>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Device</th><th>Customer</th><th>Source</th><th>Reason</th><th>Archived</th><th></th></tr></thead>
+        <tbody>
+          <% rows.forEach(function(a){ %>
+          <tr>
+            <td><strong><%= a.hostname || '(unnamed)' %></strong><% if (a.os) { %><div class="muted" style="font-size:12px;"><%= a.os %></div><% } %></td>
+            <td><%= a.customer_name || '—' %></td>
+            <td><span class="muted" style="font-size:12px;"><%= a.data_source || a.source_system || '—' %></span></td>
+            <td><%= a.archived_reason || '—' %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= a.archived_at ? new Date(a.archived_at).toLocaleDateString('en-GB') : '' %></td>
+            <td style="text-align:right;">
+              <form method="post" action="/assets/<%= a.id %>/unarchive" style="display:inline;">
+                <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+                <button class="btn btn-small" type="submit">Restore</button>
+              </form>
+            </td>
+          </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+<%- include('../partials/footer') %>
