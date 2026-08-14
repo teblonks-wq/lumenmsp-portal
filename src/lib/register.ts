@@ -323,7 +323,7 @@ export async function priceRegisterFromInvoices(actor = 'invoice-backfill', appl
       for (const scheme of schemes) {
         const inv = (await client.query(
           `SELECT id FROM invoices WHERE customer_id=$1 AND invoice_scheme=$2 AND deleted_at IS NULL
-            ORDER BY is_recurring DESC, COALESCE(issue_date, created_at) DESC, id DESC LIMIT 1`, [cid, scheme]
+            ORDER BY is_recurring ASC, COALESCE(issue_date, created_at) DESC, id DESC LIMIT 1`, [cid, scheme]
         )).rows[0];
         if (!inv) continue;
         const rows = (await client.query(
@@ -341,8 +341,13 @@ export async function priceRegisterFromInvoices(actor = 'invoice-backfill', appl
       const findPrice = (l: any): { price: number; via: string } | null => {
         const cli = (l.cli || '').toString().trim().toLowerCase();
         if (cli) {
-          const byRef = items.find((it) => it.refs.some((r) => r === cli) || it.desc.toLowerCase().includes(cli));
-          if (byRef) return { price: byRef.price, via: 'ref' };
+          const refHits = items.filter((it) => it.refs.some((r) => r === cli) || it.desc.toLowerCase().includes(cli));
+          if (refHits.length) {
+            const nd = normDesc(l.description).split(' ').filter(Boolean);
+            const overlap = (it: any) => nd.reduce((n: number, w: string) => n + (it.nd.includes(w) ? 1 : 0), 0);
+            const best = refHits.slice().sort((a, b) => overlap(b) - overlap(a))[0];
+            return { price: best.price, via: 'ref' };
+          }
         }
         const nd = normDesc(l.description);
         if (nd) {
@@ -356,7 +361,7 @@ export async function priceRegisterFromInvoices(actor = 'invoice-backfill', appl
         const d = String(l.description || '');
         const onSeatCli = l.cli && seatClis.has(String(l.cli));
         // 1) Seat/recording/handset component that bills through a package → bundle at £0.
-        if (l.source === 'comms-feed' && (REC_RE.test(d) || ((SEAT_RE.test(d) || COMPONENT_RE.test(d) || /busy lamp|\bblf\b|feature pack/i.test(d)) && (onSeatCli || SEAT_RE.test(d))))) {
+        if (l.source === 'comms-feed' && (REC_RE.test(d) || /\bcare\b/i.test(d) || ((SEAT_RE.test(d) || COMPONENT_RE.test(d) || /busy lamp|\bblf\b|feature pack/i.test(d)) && (onSeatCli || SEAT_RE.test(d))))) {
           res.bundled++;
           if (apply) {
             await client.query("UPDATE customer_register_lines SET sale_price=0, status='active', updated_at=NOW() WHERE id=$1", [l.id]);
