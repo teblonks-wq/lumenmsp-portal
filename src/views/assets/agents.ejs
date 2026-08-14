@@ -111,11 +111,25 @@
       <% if (_bad) { %> That is long enough to assume it has stopped.<% } %>
     </p>
   <% } %>
-  <% if (_stranded) { %>
+  <% if (_stranded) { var _srows = typeof meshStrandedRows !== 'undefined' ? meshStrandedRows : []; %>
     <p style="margin:6px 0 0;font-size:13px;">
       <strong style="color:var(--warn-fg);"><%= _stranded %></strong> machine<%= _stranded === 1 ? ' has' : 's have' %>
-      the Mesh Agent installed but no node linked &mdash; remote control will not open on <%= _stranded === 1 ? 'it' : 'them' %>.
-      <% if (_tooSoon || (_mb && _mb.ageSecs < _cycle * 2)) { %><span class="muted">These should link themselves on the bridge's next run.</span><% } %>
+      the Mesh Agent installed but no node linked &mdash; remote control will not open on <%= _stranded === 1 ? 'it' : 'them' %>:
+    </p>
+    <p style="margin:4px 0 0;font-size:12.5px;line-height:1.9;">
+      <% _srows.forEach(function (d) { %>
+        <% if (d.asset_id) { %><a class="row-link" href="/assets/<%= d.asset_id %>" style="font-weight:600;"><%= d.hostname %></a><% } else { %><strong><%= d.hostname %></strong><% } %><% if (d.customer_name) { %> <span class="muted">(<%= d.customer_name %><%= d.seen_secs != null && d.seen_secs > 3600 ? ' · agent quiet ' + Math.round(d.seen_secs/3600) + 'h' : '' %>)</span><% } %><span class="muted"> &nbsp;·&nbsp; </span>
+      <% }); %>
+    </p>
+    <p class="muted" style="margin:4px 0 0;font-size:12px;">
+      <% if (_tooSoon || !_mb || _mb.ageSecs > _cycle * 2) { %>
+        Once the bridge is reporting again these should link on its next run.
+      <% } else { %>
+        The bridge is healthy and has already had its chance &mdash; so their node is <strong>not in MeshCentral at all</strong>:
+        the mesh agent on the machine never connected (machine off since install, outbound blocked, or the install half-finished),
+        or it registered under a different hostname. Open the machine above and use its Tools tab to reinstall remote access;
+        a renamed node needs the mismatch fixing, not a reinstall.
+      <% } %>
     </p>
   <% } %>
   <% if (_loose.length) { %>

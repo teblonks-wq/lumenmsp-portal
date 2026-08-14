@@ -475,9 +475,18 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
   // "not yet, we only just restarted".
   const meshWatchingSecs = Math.round((Date.now() - mesh.PORTAL_STARTED.getTime()) / 1000);
   const meshCycleSecs = mesh.BRIDGE_CYCLE_SECS;
-  const meshStranded = isAdmin ? (await pool.query(
-    `SELECT COUNT(*)::int AS n FROM agent_devices
-      WHERE revoked=false AND mesh_node_id IS NULL AND mesh_installed = true`)).rows[0].n : 0;
+  // Not just how many — WHICH machines. A count sends somebody digging through 138
+  // devices; a name with a link is a fix that starts immediately (learned 13 Aug, when
+  // "4 machines" had to be identified by hand during the bridge outage).
+  const meshStrandedRows = isAdmin ? (await pool.query(
+    `SELECT ad.id, ad.hostname, ad.last_seen_at, c.name AS customer_name,
+            EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at))::int AS seen_secs,
+            (SELECT ca.id FROM customer_assets ca
+              WHERE ca.agent_device_id = ad.id AND ca.merged_into_id IS NULL LIMIT 1) AS asset_id
+       FROM agent_devices ad LEFT JOIN customers c ON c.id = ad.customer_id
+      WHERE ad.revoked=false AND ad.mesh_node_id IS NULL AND ad.mesh_installed = true
+      ORDER BY c.name NULLS LAST, ad.hostname`)).rows : [];
+  const meshStranded = meshStrandedRows.length;
   const meshLoose = isAdmin ? (await pool.query(
     'SELECT node_id, group_id, hostname, seen_at FROM mesh_unmatched_nodes ORDER BY hostname LIMIT 50')).rows : [];
   const ringCounts = (await pool.query(
@@ -487,7 +496,7 @@ router.get('/agents', requireAuth, async (req: Request, res: Response) => {
   res.render('assets/agents', {
     user: req.session.user!, rows, customers, defaults, isAdmin,
     rollout, ringCounts, hostedSha: agentHostedSha256(),
-    meshBridge, meshReject, meshContact, meshStranded, meshLoose, meshWatchingSecs, meshCycleSecs,
+    meshBridge, meshReject, meshContact, meshStranded, meshStrandedRows, meshLoose, meshWatchingSecs, meshCycleSecs,
     packages: isAdmin ? (await pool.query(
       'SELECT id, name, version, file_name, url, size_bytes, install_args FROM agent_packages ORDER BY name')).rows : [],
     msi: agentMsiInfo(), latestVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
