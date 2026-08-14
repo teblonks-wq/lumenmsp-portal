@@ -194,7 +194,7 @@
       <div class="card-header"><h2>Conversation</h2></div>
 
       <form method="post" action="/tickets/<%= ticket.id %>/note" enctype="multipart/form-data" style="margin:0 0 18px;border-bottom:1px solid var(--line);padding-bottom:18px;"
-            onsubmit="document.getElementById('ticketNoteBody').value = window.ticketQuill.root.innerHTML;">
+            onsubmit="var b=document.getElementById('replyUpdateBtn'); if(b && b.dataset.sending) return false; document.getElementById('ticketNoteBody').value = window.ticketQuill.root.innerHTML; if(b){ b.dataset.sending='1'; b.textContent='Sending…'; setTimeout(function(){ b.disabled=true; }, 0); } return true;">
         <input type="hidden" name="body" id="ticketNoteBody">
         <input type="hidden" name="postponed_until" id="composerPostponedUntil">
         <div id="tkRecipients" style="margin-bottom:10px;">

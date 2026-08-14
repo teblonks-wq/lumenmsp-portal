@@ -45,6 +45,19 @@ router.post('/comms', requireAuth, attachmentUpload.array('attachments', 5), asy
 
   if (!ENTITIES[entityType] || !entityId || (htmlIsEmpty(html) && !stored.length && !sendQuote)) { res.redirect(back); return; }
 
+  // Duplicate-send guard (Q-2049, 14 Aug: double-clicked Send = two quote emails). An
+  // identical outbound message on the same record, to the same address, from the same
+  // person, inside 20 seconds is the same click arriving twice - drop it, land on the
+  // thread as if it succeeded (it did - once). 20s is far longer than any double-click
+  // and far shorter than any real "send it again" intent.
+  const dup = await pool.query(
+    `SELECT 1 FROM communications
+      WHERE entity_type=$1 AND entity_id=$2 AND direction='outbound'
+        AND COALESCE(to_email,'')=COALESCE($3,'') AND sent_by_user_id=$4
+        AND created_at > NOW() - INTERVAL '20 seconds' LIMIT 1`,
+    [entityType, entityId, to || null, user.id]);
+  if (dup.rows.length) { res.redirect(back + '#comms'); return; }
+
   let mailSubject = subject || 'Message from Lumen IT Solutions';
   let mailHtml = html;
   let logHtml = html;

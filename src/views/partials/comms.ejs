@@ -35,7 +35,7 @@
   <% } %>
 
   <form method="post" action="/comms" enctype="multipart/form-data" style="border-top:1px solid var(--line);padding-top:16px;"
-        onsubmit="document.getElementById('commsBody<%= entityId %>').value = window.commsQuill<%= entityId %>.root.innerHTML;">
+        onsubmit="var b=document.getElementById('commsSendBtn<%= entityId %>'); if(b && b.disabled) return false; document.getElementById('commsBody<%= entityId %>').value = window.commsQuill<%= entityId %>.root.innerHTML; if(b){ b.disabled=true; b.textContent='Sending…'; } return true;">
     <input type="hidden" name="entity_type" value="<%= entityType %>">
     <input type="hidden" name="entity_id" value="<%= entityId %>">
     <input type="hidden" name="body" id="commsBody<%= entityId %>">
