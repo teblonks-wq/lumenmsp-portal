@@ -20,6 +20,7 @@ import taskRoutes, { startTaskReminders } from './routes/tasks';
 import contactRoutes from './routes/contacts';
 import adminRoutes from './routes/admin';
 import integrationRoutes, { startQbPaymentSync } from './routes/integrations';
+import subscriptionRoutes from './routes/subscriptions';
 import commsRoutes from './routes/comms';
 import searchRoutes from './routes/search';
 import recycleRoutes from './routes/recycle';
@@ -80,6 +81,7 @@ import { startPostponeSweep } from './lib/postpone-sweep';
 import { startBackupCron } from './lib/backup';
 import { startTeamsGraphCron } from './lib/teamsgraph';
 import { startGiacomSync } from './lib/giacom-sync';
+import { startMsSubscriptionsSync } from './lib/ms-subscriptions';
 import { startDwsSync } from './lib/dws-sftp';
 import { startGoCardlessSync } from './lib/gocardless-sync';
 import { startExtLabelSync } from './lib/insights/ext-labels';
@@ -351,6 +353,7 @@ app.use('/', taskRoutes);
 app.use('/', contactRoutes);
 app.use('/', adminRoutes);
 app.use('/', integrationRoutes);
+app.use('/', subscriptionRoutes); // Microsoft/NCE subscriptions + exposure
 app.use('/', commsRoutes);
 app.use('/', searchRoutes);
 app.use('/', recycleRoutes);
@@ -425,6 +428,7 @@ server.listen(config.PORT, () => {
   startBackupCron();
   startTeamsGraphCron();
   startGiacomSync();
+  startMsSubscriptionsSync(); // 05:20 nightly: mirror the Giacom NCE subscription report
   startDwsSync();
   startGoCardlessSync();    // hourly: auto-link new GoCardless mandates by email
   startExtLabelSync();      // 04:30: label CLIs with their extension name from Insights

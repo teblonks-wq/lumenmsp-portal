@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { pool } from '../db/pool';
 import { requireAuth, requireAdmin } from '../middleware/auth';
+import { customerSubscriptions, subscriptionsOverview } from '../lib/ms-subscriptions';
 
 // ── Claude MCP connector (read-only) ──────────────────────────────────────────
 // A minimal, dependency-free Model Context Protocol server over Streamable HTTP,
@@ -474,6 +475,62 @@ const TOOLS: Tool[] = [
         s + (l.billing_frequency === 'annual' ? Number(l.line_total) / 12
            : l.billing_frequency === 'one_off' ? 0 : Number(l.line_total)), 0);
       return { contract: head, lines, monthly_recurring: Math.round(monthly * 100) / 100 };
+    },
+  },
+
+  {
+    name: 'list_subscriptions',
+    description:
+      'Microsoft / NCE subscriptions mirrored from Giacom. Each row: product, seats, term (Annual = a committed 12-month partner obligation; Monthly = flexible), Microsoft renewalDate, cancellableUntil (penalty-free cancel window), monthly buy, and an exposure state (covered / exposed / flexible / unmatched). "exposed" = an Annual term with no contract cover to its renewal date — the customer could leave mid-term and leave Lumen carrying the residual. Scope by customer, or omit for the estate.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        customer: { type: 'string', description: 'Customer id, account number or name (optional — omit for the whole estate)' },
+        exposed_only: { type: 'boolean', description: 'Only return subscriptions flagged as exposed (default false)' },
+      },
+    },
+    run: async (a) => {
+      const compact = (s: any) => ({
+        product: s.name, seats: s.licences, term: s.term, state: s.state, reason: s.reason,
+        renewal_date: s.renewalDate, cancellable_until: s.cancellableUntil,
+        days_to_renewal: s.daysToRenewal, days_to_cancellable: s.daysToCancellable,
+        monthly_buy: s.monthlyBuy, is_nce: s.isNce, status: s.status,
+      });
+      if (a.customer != null && String(a.customer).trim() !== '') {
+        const ref = await resolveCustomer(a.customer);
+        if (!ref || 'ambiguous' in ref) return customerNotFound(ref, a.customer);
+        const cs = await customerSubscriptions(ref.id);
+        const cname = (await pool.query('SELECT name FROM customers WHERE id=$1', [ref.id])).rows[0]?.name || null;
+        let subs = cs.subs;
+        if (a.exposed_only) subs = subs.filter((x) => x.state === 'exposed');
+        return { customer: cname, cover_end: cs.coverEnd, totals: cs.totals, count: subs.length, subscriptions: subs.map(compact) };
+      }
+      const ov = await subscriptionsOverview();
+      const out: any[] = [];
+      for (const g of ov.customers) for (const s of g.subs) {
+        if (a.exposed_only && s.state !== 'exposed') continue;
+        out.push({ customer: g.name, ...compact(s) });
+      }
+      return { last_sync: ov.lastSync, totals: ov.totals, count: out.length, subscriptions: out.slice(0, 300) };
+    },
+  },
+
+  {
+    name: 'subscription_exposure',
+    description:
+      'NCE exposure summary across the estate: how many Annual (committed) subscriptions have no contract cover to their Microsoft renewal date, grouped by customer worst-first. This is the "where could we be left out of pocket if a customer leaves mid-term" view. Each customer: seats, committed count, exposed count, monthly buy, contract cover end, and the exposed products with their renewal dates.',
+    inputSchema: { type: 'object', properties: {} },
+    run: async () => {
+      const ov = await subscriptionsOverview();
+      const exposed = ov.customers.filter((g) => g.exposed > 0).map((g) => ({
+        customer: g.name, seats: g.seats, committed: g.committed, exposed: g.exposed,
+        monthly_buy: g.monthlyBuy, cover_end: g.coverEnd,
+        subscriptions: g.subs.filter((s) => s.state === 'exposed').map((s) => ({
+          product: s.name, seats: s.licences, renewal_date: s.renewalDate,
+          cancellable_until: s.cancellableUntil, monthly_buy: s.monthlyBuy, reason: s.reason,
+        })),
+      }));
+      return { last_sync: ov.lastSync, totals: ov.totals, exposed_customers: exposed.length, customers: exposed };
     },
   },
 ];

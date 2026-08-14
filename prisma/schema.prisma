@@ -2547,3 +2547,40 @@ model GpoDeletion {
   @@index([customerId, gpoId])
   @@map("gpo_deletions")
 }
+
+// Microsoft/NCE subscription mirror — pulled from Giacom Billing "SubscriptionsManagementReport".
+// Read-only reflection of the partner-side commitment: seats, term, and the two dates that
+// drive exposure — renewalDate (the Microsoft anniversary to align a Cloud contract to) and
+// cancellableUntilDate (the penalty-free cancel window). Full-refreshed on each sync.
+model MsSubscription {
+  id                Int       @id @default(autoincrement())
+  customerId        Int?      @map("customer_id")            // resolved: tenantId → mexId → unique name
+  mexId             String?   @map("mex_id")                 // Giacom account id (join to customer_external_ids)
+  tenantId          String?   @map("tenant_id")              // Microsoft tenant GUID (join to customers.entra_tenant_id)
+  customerName      String?   @map("customer_name")          // name as Giacom holds it
+  hasGdap           Boolean?  @map("has_gdap")
+  subscriptionId    String    @unique @map("subscription_id")// Microsoft subscription GUID — stable key
+  name              String                                   // product/offer display name
+  offerId           String?   @map("offer_id")
+  licences          Int       @default(0)                    // seat count
+  term              String?                                  // 'Annual' (committed/exposed) | 'Monthly'
+  billingFrequency  String?   @map("billing_frequency")
+  status            String?
+  isNce             Boolean   @default(false) @map("is_nce")
+  isPromoApplied    Boolean   @default(false) @map("is_promo_applied")
+  orderDate         DateTime? @map("order_date")
+  migratedToNceDate DateTime? @map("migrated_to_nce_date")
+  renewalDate       DateTime? @map("renewal_date")           // NCE anniversary — align Cloud contract term to this
+  cancellableUntil  DateTime? @map("cancellable_until_date") // penalty-free cancel window closes
+  commitmentEndDate DateTime? @map("commitment_end_date")    // (null in current feed — kept for completeness)
+  termEndAction     String?   @map("term_end_action")        // e.g. RenewToNewTerm
+  price             Decimal?  @db.Decimal(12, 4)             // Lumen buy (per unit)
+  erp               Decimal?  @db.Decimal(12, 4)             // Microsoft RRP / sell reference (per unit)
+  raw               Json?                                     // full record as delivered (audit)
+  syncedAt          DateTime  @default(now()) @map("synced_at")
+
+  @@index([customerId])
+  @@index([tenantId])
+  @@index([mexId])
+  @@map("ms_subscription")
+}

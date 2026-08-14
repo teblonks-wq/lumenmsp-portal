@@ -573,6 +573,11 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
   let itcloudHistory: any[] = [];
   try { itcloudHistory = (await pool.query("SELECT description, change_type, old_qty, new_qty, detected_at FROM it_cloud_change_log WHERE customer_id=$1 ORDER BY detected_at DESC LIMIT 40", [customer.id])).rows; } catch { /* not migrated */ }
 
+  // Microsoft / NCE subscriptions — live mirror of the Giacom SubscriptionsManagementReport,
+  // assessed against this customer's contract cover (exposure). Returns empty pre-migration.
+  let subs: any = null;
+  try { const { customerSubscriptions } = await import('../lib/ms-subscriptions'); subs = await customerSubscriptions(customer.id); } catch { subs = null; }
+
   // Device inventory (Assets tab) — synced from Atera, read-only.
   let assets: any[] = []; let remoteTemplate = '';
   try {
@@ -653,7 +658,7 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
 
   res.render('customers/detail', {
     user, customer, contacts, sites: sitesRes.rows, domains: domainsRes.rows, keyContacts, insights, itcloud, itcloudTpl, itcloudHistory,
-    assets, remoteTemplate, backupView, backupCompanies, backupCustNames, health, graphConsentUrl,
+    assets, subs, remoteTemplate, backupView, backupCompanies, backupCustNames, health, graphConsentUrl,
     quotes: quotesRes.rows, invoices: invoicesRes.rows, contracts: contractsRes.rows,
     serviceItems: serviceItemsRes.rows, lead, credentials, canVault, creditBalance, documents,
     comms, commsTo: primaryEmail, graphClientId: config.GRAPH_CLIENT_ID,

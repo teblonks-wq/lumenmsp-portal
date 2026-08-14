@@ -1,0 +1,123 @@
+<%- include('../partials/header', { title: 'Subscriptions', user }) %>
+<%
+function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function d(v){ if(!v) return '—'; var x=new Date(v); return x.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
+function since(v){ if(!v) return 'never'; var mins=Math.round((Date.now()-new Date(v).getTime())/60000); if(mins<60) return mins+'m ago'; var h=Math.round(mins/60); if(h<48) return h+'h ago'; return Math.round(h/24)+'d ago'; }
+function dd(n){ if(n==null) return ''; if(n<0) return '<span style="color:var(--bad-fg,#b91c1c);">'+Math.abs(n)+'d ago</span>'; if(n<=14) return '<span style="color:var(--warn-deep,#b45309);font-weight:600;">in '+n+'d</span>'; return '<span class="muted">in '+n+'d</span>'; }
+var SB = {
+  exposed:  {bg:'var(--bad-bg,#fee2e2)', fg:'var(--bad-fg,#b91c1c)', label:'⚠ Exposed'},
+  covered:  {bg:'#dcfce7', fg:'#15803d', label:'✓ Covered'},
+  flexible: {bg:'#f1f5f9', fg:'#475569', label:'↺ Monthly'},
+  unmatched:{bg:'var(--tint-warn,#fef3c7)', fg:'var(--warn-deep,#b45309)', label:'? Unmatched'}
+};
+function badge(state){ var s=SB[state]||SB.covered; return '<span class="badge" style="background:'+s.bg+';color:'+s.fg+';font-size:11px;font-weight:600;">'+s.label+'</span>'; }
+var ov = overview;
+%>
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+    <div><h1 style="margin:0;">Microsoft subscriptions</h1><p class="muted" style="margin:2px 0 0;">NCE commitments from Giacom, matched to portal contracts. Exposure = an Annual term with no contract cover to its Microsoft renewal date.</p></div>
+    <form method="post" action="/settings/subscriptions/sync" style="margin:0;">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button class="btn btn-primary" type="submit">↻ Sync from Giacom</button>
+      <div class="muted" style="font-size:11px;text-align:right;margin-top:4px;">synced <%= since(ov.lastSync) %></div>
+    </form>
+  </div>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:1000px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="max-width:1000px;"><%= error %></div><% } %>
+<% if (!ov.configured) { %><div class="alert alert-error" style="max-width:1000px;">Giacom Billing API key isn't set — add it under <a class="row-link" href="/settings/integrations">Integrations</a> first.</div><% } %>
+
+<style>
+  .sub-stats { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+  .sub-stat { flex:1; min-width:130px; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .sub-stat .n { font-size:26px; font-weight:800; line-height:1; }
+  .sub-stat .l { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-top:6px; }
+  .sub-cust { background:var(--surface); border:1px solid var(--line); border-radius:12px; margin-bottom:12px; overflow:hidden; }
+  .sub-cust.exposed { border-color:var(--bad-fg,#b91c1c); }
+  .sub-cust > summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:12px; padding:14px 18px; }
+  .sub-cust > summary::-webkit-details-marker { display:none; }
+  .sub-cust .cname { font-weight:700; font-size:15px; }
+  .sub-cust .csub { color:var(--muted); font-size:12px; }
+  .sub-cust .grow { flex:1; }
+  .sub-tbl { width:100%; border-collapse:collapse; font-size:13px; }
+  .sub-tbl th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); padding:6px 18px; border-top:1px solid var(--line); background:var(--tint-info-2,#f8fafc); }
+  .sub-tbl td { padding:8px 18px; border-top:1px solid var(--line); vertical-align:top; }
+  .term-a { background:#e0e7ff; color:#3730a3; }
+  .term-m { background:#f1f5f9; color:#475569; }
+  .tbadge { font-size:10px; font-weight:600; padding:1px 7px; border-radius:20px; }
+</style>
+
+<div class="sub-stats">
+  <div class="sub-stat"><div class="n"><%= ov.totals.subs %></div><div class="l">Subscriptions</div></div>
+  <div class="sub-stat"><div class="n"><%= ov.totals.committed %></div><div class="l">Annual (committed)</div></div>
+  <div class="sub-stat"><div class="n" style="color:<%= ov.totals.exposed ? 'var(--bad-fg,#b91c1c)' : 'inherit' %>;"><%= ov.totals.exposed %></div><div class="l">Exposed</div></div>
+  <div class="sub-stat"><div class="n"><%= ov.totals.seats.toLocaleString('en-GB') %></div><div class="l">Seats</div></div>
+  <div class="sub-stat"><div class="n"><%= money(ov.totals.monthlyBuy) %></div><div class="l">Monthly buy</div></div>
+</div>
+
+<% function renderCust(g, isUnmatched){ %>
+  <details class="sub-cust <%= g.worst==='exposed' ? 'exposed' : '' %>" <%= g.worst==='exposed' ? 'open' : '' %>>
+    <summary>
+      <div>
+        <div class="cname"><% if (g.customerId) { %><a class="row-link" href="/customers/<%= g.customerId %>#subscriptions"><%= g.name %></a><% } else { %><%= g.name %><% } %></div>
+        <div class="csub"><%= g.subs.length %> sub<%= g.subs.length===1?'':'s' %> · <%= g.seats %> seats · <%= money(g.monthlyBuy) %>/mo buy<% if (g.coverEnd) { %> · cover to <%= d(g.coverEnd) %><% } else if (g.customerId) { %> · <span style="color:var(--bad-fg,#b91c1c);">no cloud contract cover</span><% } %></div>
+      </div>
+      <div class="grow"></div>
+      <% if (g.exposed) { %><span class="badge" style="background:var(--bad-bg,#fee2e2);color:var(--bad-fg,#b91c1c);"><%= g.exposed %> exposed</span><% } %>
+      <%- badge(g.worst) %>
+    </summary>
+    <table class="sub-tbl">
+      <thead><tr><th>Product</th><th>Seats</th><th>Term</th><th>Renewal</th><th>Cancel by</th><th>Buy/mo</th><th>Status</th></tr></thead>
+      <tbody>
+      <% g.subs.forEach(function(s){ %>
+        <tr>
+          <td><strong><%= s.name %></strong><% if (s.reason && s.state==='exposed') { %><div style="color:var(--bad-fg,#b91c1c);font-size:11px;margin-top:2px;"><%= s.reason %></div><% } %></td>
+          <td><%= s.licences %></td>
+          <td><span class="tbadge <%= s.committed ? 'term-a':'term-m' %>"><%= s.term || '—' %></span></td>
+          <td><%= d(s.renewalDate) %><% if (s.daysToRenewal!=null) { %><div style="font-size:11px;"><%- dd(s.daysToRenewal) %></div><% } %></td>
+          <td><% if (s.committed && s.cancellableUntil) { %><%= d(s.cancellableUntil) %><div style="font-size:11px;"><%- dd(s.daysToCancellable) %></div><% } else { %><span class="muted">—</span><% } %></td>
+          <td><%= s.monthlyBuy!=null ? money(s.monthlyBuy) : '—' %></td>
+          <td><%- badge(s.state) %></td>
+        </tr>
+      <% }); %>
+      </tbody>
+    </table>
+    <% if (isUnmatched) { %>
+      <div style="padding:12px 18px;border-top:1px solid var(--line);background:var(--tint-info-2,#f8fafc);display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <form method="post" action="/settings/subscriptions/link" style="margin:0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="mex_id" value="<%= g.mexId || '' %>">
+          <input type="hidden" name="tenant_id" value="<%= g.tenantId || '' %>">
+          <span class="muted" style="font-size:12px;">Link to</span>
+          <select name="customer_id" class="input" style="min-width:220px;padding:5px 8px;">
+            <option value="">— choose customer —</option>
+            <% customers.forEach(function(c){ %><option value="<%= c.id %>"><%= c.name %></option><% }); %>
+          </select>
+          <button class="btn" type="submit">Link</button>
+        </form>
+        <form method="post" action="/settings/subscriptions/ignore" style="margin:0;" onsubmit="return confirm('Ignore this account? It will be hidden from the report and its rows dropped.');">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="mex_id" value="<%= g.mexId || '' %>">
+          <input type="hidden" name="tenant_id" value="<%= g.tenantId || '' %>">
+          <button class="btn" type="submit" style="color:var(--muted);">Ignore (demo/internal)</button>
+        </form>
+        <span class="muted" style="font-size:11px;">tenant <%= g.tenantId || '—' %> · mex <%= g.mexId || '—' %></span>
+      </div>
+    <% } %>
+  </details>
+<% } %>
+
+<h2 style="margin:22px 0 10px;">Exposure by customer <span class="muted" style="font-weight:500;font-size:13px;">— worst first</span></h2>
+<% if (!ov.customers.length) { %>
+  <p class="muted">No matched subscriptions yet. Hit <strong>Sync from Giacom</strong>, then link any unmatched accounts below.</p>
+<% } else { ov.customers.forEach(function(g){ renderCust(g, false); }); } %>
+
+<% if (ov.unmatched.length) { %>
+  <h2 style="margin:24px 0 10px;">Unmatched accounts <span class="badge" style="background:var(--tint-warn,#fef3c7);color:var(--warn-deep,#b45309);"><%= ov.unmatched.length %></span></h2>
+  <p class="muted" style="margin:0 0 10px;">Not tied to a portal customer — link them (also stamps the tenant + Giacom id) or ignore demo/internal tenants.</p>
+  <% ov.unmatched.forEach(function(g){ renderCust(g, true); }); %>
+<% } %>
+
+<%- include('../partials/footer') %>

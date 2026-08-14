@@ -971,6 +971,71 @@
       </div>
     </div>
 
+    <!-- MICROSOFT / NCE SUBSCRIPTIONS -->
+    <% var msub = (typeof subs!=='undefined' && subs) ? subs : null; %>
+    <%
+      function msD(v){ if(!v) return '—'; var x=new Date(v); return x.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
+      function msSince(v){ if(!v) return 'never'; var m=Math.round((Date.now()-new Date(v).getTime())/60000); if(m<60) return m+'m ago'; var h=Math.round(m/60); if(h<48) return h+'h ago'; return Math.round(h/24)+'d ago'; }
+      function msDD(n){ if(n==null) return ''; if(n<0) return '<span style="color:var(--bad-fg,#b91c1c);">'+Math.abs(n)+'d ago</span>'; if(n<=30) return '<span style="color:var(--warn-deep,#b45309);font-weight:600;">in '+n+'d</span>'; return '<span class="muted">in '+n+'d</span>'; }
+      var MSB={exposed:{b:'var(--bad-fg,#b91c1c)',bg:'var(--bad-bg,#fee2e2)',l:'Exposed'},covered:{b:'#15803d',bg:'#dcfce7',l:'Covered'},flexible:{b:'#64748b',bg:'#f1f5f9',l:'Monthly'},unmatched:{b:'#b45309',bg:'var(--tint-warn,#fef3c7)',l:'Unmatched'}};
+    %>
+    <div class="card" id="subscriptions" style="padding:0;margin-bottom:14px;">
+      <div class="card-header" style="padding:16px 20px 4px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <h2 style="margin:0;">Microsoft subscriptions <span class="muted" style="font-weight:500;font-size:12px;">— NCE commitments &amp; renewal exposure</span></h2>
+        <form method="post" action="/settings/subscriptions/sync" style="margin:0;display:flex;align-items:center;gap:8px;">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="return" value="/customers/<%= customer.id %>#subscriptions">
+          <span class="muted" style="font-size:11px;">synced <%= msub ? msSince(msub.lastSync) : 'never' %></span>
+          <button class="btn" type="submit" style="font-size:12px;padding:3px 10px;">↻ Refresh</button>
+        </form>
+      </div>
+      <% if (!msub || !msub.subs.length) { %>
+        <p class="muted" style="padding:0 20px 16px;">No Microsoft subscriptions linked to this customer.<% if (!customer.entra_tenant_id) { %> Add their <strong>Entra tenant ID</strong> (on the record, below) so NCE subscriptions attach automatically,<% } %> or match the account on the <a class="row-link" href="/settings/subscriptions">Subscriptions page</a>.</p>
+      <% } else { %>
+        <% if (msub.worst==='exposed') { %>
+          <div style="margin:8px 20px 4px;padding:10px 14px;border-radius:10px;background:var(--bad-bg,#fee2e2);color:var(--bad-fg,#b91c1c);font-size:13px;">
+            <strong>⚠ <%= msub.totals.exposed %> committed subscription<%= msub.totals.exposed===1?'':'s' %> not covered to the Microsoft renewal date.</strong>
+            If this customer leaves mid-term, Lumen carries the residual Microsoft commitment. Align a Cloud contract to the renewal date<% if (msub.coverEnd) { %> (cover currently ends <%= msD(msub.coverEnd) %>)<% } else { %> (no cloud contract cover found)<% } %>.
+          </div>
+        <% } %>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;padding:12px 20px 4px;">
+          <div class="msub-chip"><b><%= msub.totals.seats.toLocaleString('en-GB') %></b> seats</div>
+          <div class="msub-chip"><b><%= msub.totals.committed %></b> annual</div>
+          <div class="msub-chip" style="<%= msub.totals.exposed?'color:var(--bad-fg,#b91c1c);':'' %>"><b><%= msub.totals.exposed %></b> exposed</div>
+          <div class="msub-chip"><b><%= money(msub.totals.monthlyBuy) %></b>/mo buy</div>
+          <% if (msub.nextRenewal) { %><div class="msub-chip">next renewal <b><%= msD(msub.nextRenewal) %></b></div><% } %>
+          <% if (msub.nextCancellable) { %><div class="msub-chip">cancel-by <b><%= msD(msub.nextCancellable) %></b></div><% } %>
+        </div>
+        <div class="msub-grid">
+          <% msub.subs.forEach(function(s){ var st=MSB[s.state]||MSB.covered; %>
+            <div class="msub-card" style="border-left:4px solid <%= st.b %>;">
+              <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
+                <div class="msub-name"><%= s.name %></div>
+                <span class="tbadge" style="background:<%= st.bg %>;color:<%= st.b %>;white-space:nowrap;"><%= st.l %></span>
+              </div>
+              <div class="msub-meta"><%= s.licences %> seat<%= s.licences===1?'':'s' %> · <span class="tbadge" style="background:<%= s.committed?'#e0e7ff':'#f1f5f9' %>;color:<%= s.committed?'#3730a3':'#475569' %>;"><%= s.term||'—' %></span><% if (s.monthlyBuy!=null) { %> · <%= money(s.monthlyBuy) %>/mo<% } %></div>
+              <div class="msub-rows">
+                <div><span>Renewal</span><span><%= msD(s.renewalDate) %> <%- msDD(s.daysToRenewal) %></span></div>
+                <% if (s.committed && s.cancellableUntil) { %><div><span>Cancel by</span><span><%= msD(s.cancellableUntil) %> <%- msDD(s.daysToCancellable) %></span></div><% } %>
+              </div>
+              <% if (s.state==='exposed') { %><div class="msub-reason"><%= s.reason %></div><% } %>
+            </div>
+          <% }); %>
+        </div>
+        <p class="muted" style="padding:8px 20px 14px;font-size:11px;">Live from Giacom's subscription report. <strong>Exposed</strong> = an Annual (committed) term whose Microsoft renewal falls after your contract cover — align a Cloud contract line's term-end to the renewal date to close it. Prices are buy (ex VAT).</p>
+      <% } %>
+    </div>
+    <style>
+      .msub-chip{background:var(--tint-info-2,#f8fafc);border:1px solid var(--line);border-radius:20px;padding:4px 12px;font-size:12px;color:var(--muted);} .msub-chip b{color:var(--text,#0f172a);font-size:13px;}
+      .msub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;padding:10px 20px 4px;}
+      .msub-card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;}
+      .msub-name{font-weight:700;font-size:13px;line-height:1.25;}
+      .msub-meta{color:var(--muted);font-size:12px;margin:6px 0 8px;}
+      .msub-rows > div{display:flex;justify-content:space-between;font-size:12px;padding:2px 0;} .msub-rows span:first-child{color:var(--muted);}
+      .msub-reason{margin-top:8px;font-size:11px;color:var(--bad-fg,#b91c1c);border-top:1px dashed var(--line);padding-top:6px;}
+      .msub-card .tbadge, .msub-meta .tbadge{font-size:10px;font-weight:600;padding:1px 8px;border-radius:20px;}
+    </style>
+
     <!-- GIACOM (auto, priced from the product list) -->
     <div class="card" style="padding:0;margin-bottom:14px;">
       <div class="card-header" style="padding:16px 20px 4px;"><h2>Giacom services <span class="muted" style="font-weight:500;font-size:12px;">— auto from the feed · priced from the product list · ✓ standard / ◆ override</span></h2></div>
