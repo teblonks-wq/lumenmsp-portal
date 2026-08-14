@@ -1698,7 +1698,7 @@ router.post('/bureau/register/price-from-invoices', async (req: Request, res: Re
   try {
     const r = await priceRegisterFromInvoices('user:' + req.session.user!.id, true);
     res.redirect('/bureau/register?msg=' + encodeURIComponent(
-      `Priced from last invoices: ${r.priced} line(s) across ${r.customers} customer(s); ${r.stillUnpriced} still unpriced (no invoice match).`));
+      `Priced from last invoices: ${r.priced} standalone line(s) priced, ${r.bundled} seat/recording component(s) marked bundled, ${r.unmatched} still unmatched — across ${r.customers} customer(s).`));
   } catch (e: any) { res.redirect('/bureau/register?err=' + encodeURIComponent(e.message)); }
 });
 

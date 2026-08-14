@@ -1,4 +1,5 @@
 import { pool } from '../db/pool';
+import { SEAT_RE, REC_RE, COMPONENT_RE } from './comms-billing';
 
 // ── The Customer Register — Phase 1 of the billing register rebuild ─────────────
 // (design: 02 Projects/[C] Billing Register Rebuild - Design & Build Plan.md)
@@ -265,25 +266,34 @@ export async function registerRecentChanges(customerId?: number | null, limit = 
 }
 
 // ── Price unpriced register lines from each customer's last invoice ─────────────
-// The rate card is sparse, but the customer's most recent invoice is what they ACTUALLY
-// pay — so lift the sell price from there onto matching unpriced register lines. Matches
-// per customer, per scheme (comms-feed→CS, cloud/lumen→IC/IT), by CLI → product → exact
-// description. Only ever fills 'unpriced' lines; never overwrites a human/existing price.
-// Idempotent. apply=false computes the match and rolls back (dry-run preview).
+// Comms bills are PACKAGED: the invoice sells "Simply VoIP Seat" / "Call Recording"
+// bundles plus standalone lines (internet circuits, line rental, iCS, static IP).
+// So the register's seat/recording/handset components never carry a per-line price —
+// they bill through the seat/recording package rate. Only the STANDALONE lines need a
+// per-line sell, and those we can lift from the last invoice by matching the circuit /
+// CLI ref (which sits inside the invoice line text). This routine therefore does two
+// things, both conservative:
+//   • price  — a standalone line matched to an invoice line → take its unit sell
+//   • bundle — a seat/recording/handset component on a seat CLI → set £0 (active), so it
+//              stops reading as "unpriced"; the seat/recording package already sells it
+// Anything else is left untouched and reported as "unmatched" for manual pricing.
+// Only ever touches 'unpriced' lines. apply=false = dry-run (rolls back).
 export interface PriceFromInvoicesResult {
   priced: number;
-  stillUnpriced: number;
+  bundled: number;
+  unmatched: number;
   customers: number;
   applied: boolean;
-  samples: { customer: string; description: string; via: string; unitPrice: number }[];
-  misses: { customer: string; description: string; source: string }[];
+  samples: { customer: string; description: string; ref: string | null; via: string; unitPrice: number }[];
+  misses: { customer: string; description: string; cli: string | null; source: string }[];
 }
 
 const SCHEME_FOR: Record<string, string[]> = { 'comms-feed': ['CS'], 'cloud-feed': ['IC', 'IT'], 'lumen': ['IC', 'IT'] };
-const normDesc = (s: any) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+const normDesc = (s: any) => String(s || '').toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/[—–-].*$/, ' ').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+const BUNDLED = (d: string) => SEAT_RE.test(d) || REC_RE.test(d) || COMPONENT_RE.test(d) || /busy lamp|\bblf\b|feature pack/i.test(d);
 
 export async function priceRegisterFromInvoices(actor = 'invoice-backfill', apply = false): Promise<PriceFromInvoicesResult> {
-  const res: PriceFromInvoicesResult = { priced: 0, stillUnpriced: 0, customers: 0, applied: apply, samples: [], misses: [] };
+  const res: PriceFromInvoicesResult = { priced: 0, bundled: 0, unmatched: 0, customers: 0, applied: apply, samples: [], misses: [] };
   const unpriced = (await pool.query(
     "SELECT id, customer_id, source, cli, product_id, description FROM customer_register_lines WHERE status='unpriced' AND customer_id IS NOT NULL"
   )).rows;
@@ -300,46 +310,73 @@ export async function priceRegisterFromInvoices(actor = 'invoice-backfill', appl
     await client.query('BEGIN');
     for (const [cid, lines] of byCust) {
       res.customers++;
+      const name = custName.get(cid) || String(cid);
+
+      // Which CLIs are seats (carry an HV Select licence) — their components are all bundled.
+      const seatClis = new Set<string>();
+      (await client.query("SELECT cli, description FROM customer_register_lines WHERE customer_id=$1 AND source='comms-feed' AND cli IS NOT NULL", [cid]))
+        .rows.forEach((r: any) => { if (SEAT_RE.test(String(r.description || ''))) seatClis.add(String(r.cli)); });
+
+      // Invoice price index from the latest invoice per needed scheme (recurring template preferred).
       const schemes = Array.from(new Set(lines.flatMap((l: any) => SCHEME_FOR[l.source] || ['IC', 'IT'])));
-      // Price index from the latest invoice per scheme (recurring template preferred, else newest).
-      const byCli = new Map<string, number>(), byProd = new Map<number, number[]>(), byDescMap = new Map<string, number>();
+      const items: { desc: string; nd: string; refs: string[]; price: number }[] = [];
       for (const scheme of schemes) {
         const inv = (await client.query(
           `SELECT id FROM invoices WHERE customer_id=$1 AND invoice_scheme=$2 AND deleted_at IS NULL
             ORDER BY is_recurring DESC, COALESCE(issue_date, created_at) DESC, id DESC LIMIT 1`, [cid, scheme]
         )).rows[0];
         if (!inv) continue;
-        const items = (await client.query(
-          `SELECT product_id, sync_ref, description, unit_price FROM invoice_items
-            WHERE invoice_id=$1 AND COALESCE(is_one_off,false)=false`, [inv.id]
+        const rows = (await client.query(
+          "SELECT description, unit_price FROM invoice_items WHERE invoice_id=$1 AND COALESCE(is_one_off,false)=false", [inv.id]
         )).rows;
-        for (const it of items) {
+        for (const it of rows) {
           const price = Number(it.unit_price);
           if (!(price > 0)) continue;
-          const ref = it.sync_ref ? String(it.sync_ref).split('|')[0].trim().toLowerCase() : '';
-          if (ref) byCli.set(ref, price);
-          if (it.product_id) { const a = byProd.get(it.product_id) || []; a.push(price); byProd.set(it.product_id, a); }
-          const nd = normDesc(it.description); if (nd && !byDescMap.has(nd)) byDescMap.set(nd, price);
+          const d = String(it.description || '');
+          const refs = (d.match(/\(([^)]+)\)/g) || []).map((x) => x.replace(/[()]/g, '').trim().toLowerCase());
+          items.push({ desc: d, nd: normDesc(d), refs, price });
         }
       }
-      for (const l of lines) {
-        let price: number | null = null, via = '';
-        const cliKey = (l.cli || '').toLowerCase();
-        const prodPrices = l.product_id ? byProd.get(l.product_id) : undefined;
-        if (cliKey && byCli.has(cliKey)) { price = byCli.get(cliKey)!; via = 'cli'; }
-        else if (prodPrices && prodPrices.length === 1) { price = prodPrices[0]; via = 'product'; }
-        else { const nd = normDesc(l.description); if (byDescMap.has(nd)) { price = byDescMap.get(nd)!; via = 'description'; } }
-        if (price != null && price > 0) {
-          res.priced++;
-          if (res.samples.length < 60) res.samples.push({ customer: custName.get(cid) || String(cid), description: l.description, via, unitPrice: price });
-          if (apply) {
-            await client.query("UPDATE customer_register_lines SET sale_price=$1, status='active', updated_at=NOW() WHERE id=$2", [price, l.id]);
-            await logChange(client, { lineId: l.id, customerId: cid, type: 'price', old: { salePrice: null }, next: { salePrice: price, via, from: 'last-invoice' }, actor });
-          }
-        } else {
-          res.stillUnpriced++;
-          if (res.misses.length < 60) res.misses.push({ customer: custName.get(cid) || String(cid), description: l.description, source: l.source });
+
+      const findPrice = (l: any): { price: number; via: string } | null => {
+        const cli = (l.cli || '').toString().trim().toLowerCase();
+        if (cli) {
+          const byRef = items.find((it) => it.refs.some((r) => r === cli) || it.desc.toLowerCase().includes(cli));
+          if (byRef) return { price: byRef.price, via: 'ref' };
         }
+        const nd = normDesc(l.description);
+        if (nd) {
+          const byDesc = items.find((it) => it.nd === nd || it.nd.startsWith(nd) || nd.startsWith(it.nd));
+          if (byDesc) return { price: byDesc.price, via: 'description' };
+        }
+        return null;
+      };
+
+      for (const l of lines) {
+        const d = String(l.description || '');
+        const onSeatCli = l.cli && seatClis.has(String(l.cli));
+        // 1) Seat/recording/handset component that bills through a package → bundle at £0.
+        if (l.source === 'comms-feed' && (REC_RE.test(d) || ((SEAT_RE.test(d) || COMPONENT_RE.test(d) || /busy lamp|\bblf\b|feature pack/i.test(d)) && (onSeatCli || SEAT_RE.test(d))))) {
+          res.bundled++;
+          if (apply) {
+            await client.query("UPDATE customer_register_lines SET sale_price=0, status='active', updated_at=NOW() WHERE id=$1", [l.id]);
+            await logChange(client, { lineId: l.id, customerId: cid, type: 'price', old: { salePrice: null }, next: { salePrice: 0, bundled: true }, actor });
+          }
+          continue;
+        }
+        // 2) Standalone line → price from the matching invoice line.
+        const hit = findPrice(l);
+        if (hit) {
+          res.priced++;
+          if (res.samples.length < 60) res.samples.push({ customer: name, description: d, ref: l.cli || null, via: hit.via, unitPrice: hit.price });
+          if (apply) {
+            await client.query("UPDATE customer_register_lines SET sale_price=$1, status='active', updated_at=NOW() WHERE id=$2", [hit.price, l.id]);
+            await logChange(client, { lineId: l.id, customerId: cid, type: 'price', old: { salePrice: null }, next: { salePrice: hit.price, via: hit.via, from: 'last-invoice' }, actor });
+          }
+          continue;
+        }
+        res.unmatched++;
+        if (res.misses.length < 80) res.misses.push({ customer: name, description: d, cli: l.cli || null, source: l.source });
       }
     }
     if (apply) await client.query('COMMIT'); else await client.query('ROLLBACK');
