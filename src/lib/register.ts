@@ -312,10 +312,6 @@ export async function priceRegisterFromInvoices(actor = 'invoice-backfill', appl
       res.customers++;
       const name = custName.get(cid) || String(cid);
 
-      // Which CLIs are seats (carry an HV Select licence) — their components are all bundled.
-      const seatClis = new Set<string>();
-      (await client.query("SELECT cli, description FROM customer_register_lines WHERE customer_id=$1 AND source='comms-feed' AND cli IS NOT NULL", [cid]))
-        .rows.forEach((r: any) => { if (SEAT_RE.test(String(r.description || ''))) seatClis.add(String(r.cli)); });
 
       // Invoice price index from the latest invoice per needed scheme (recurring template preferred).
       const schemes = Array.from(new Set(lines.flatMap((l: any) => SCHEME_FOR[l.source] || ['IC', 'IT'])));
@@ -359,9 +355,8 @@ export async function priceRegisterFromInvoices(actor = 'invoice-backfill', appl
 
       for (const l of lines) {
         const d = String(l.description || '');
-        const onSeatCli = l.cli && seatClis.has(String(l.cli));
         // 1) Seat/recording/handset component that bills through a package → bundle at £0.
-        if (l.source === 'comms-feed' && (REC_RE.test(d) || /\bcare\b/i.test(d) || ((SEAT_RE.test(d) || COMPONENT_RE.test(d) || /busy lamp|\bblf\b|feature pack/i.test(d)) && (onSeatCli || SEAT_RE.test(d))))) {
+        if (l.source === 'comms-feed' && (SEAT_RE.test(d) || REC_RE.test(d) || COMPONENT_RE.test(d) || /\bcare\b|busy lamp|\bblf\b|feature pack/i.test(d))) {
           res.bundled++;
           if (apply) {
             await client.query("UPDATE customer_register_lines SET sale_price=0, status='active', updated_at=NOW() WHERE id=$1", [l.id]);
