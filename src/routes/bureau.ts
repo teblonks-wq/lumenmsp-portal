@@ -1674,4 +1674,18 @@ router.post('/bureau/register/reconcile', async (req: Request, res: Response) =>
   } catch (e: any) { res.redirect('/bureau/register?err=' + encodeURIComponent(e.message)); }
 });
 
+// ── Shadow report — register engine vs live engine (the cutover gate) ──────────
+router.get('/bureau/register/shadow', async (req: Request, res: Response) => {
+  const { shadowReport } = await import('../lib/register-shadow');
+  const period = String(req.query.period || '') || null;
+  try {
+    const report = await shadowReport(period);
+    res.render('bureau-register-shadow', { user: req.session.user!, ...report,
+      notice: req.query.msg || null, error: req.query.err || null });
+  } catch (e: any) {
+    res.render('bureau-register-shadow', { user: req.session.user!, period, rows: [],
+      summary: { green: 0, amber: 0, red: 0, total: 0 }, notice: null, error: e.message });
+  }
+});
+
 export default router;

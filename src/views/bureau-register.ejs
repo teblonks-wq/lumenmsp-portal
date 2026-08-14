@@ -9,6 +9,7 @@
     <p class="muted"><%= lines.length %> line<%= lines.length===1?'':'s' %> · the durable rate card each bill will render from. Updated automatically after every comms import and nightly Giacom sync.</p>
   </div>
   <form method="post" action="/bureau/register/reconcile"><button class="btn btn-primary" type="submit">↻ Reconcile now</button></form>
+  <a class="btn" href="/bureau/register/shadow" style="margin-left:8px;" title="Compare the register bill vs the live bill, per customer — the cutover gate">Shadow report →</a>
 </div>
 
 <% if (notice) { %><div class="alert alert-success"><%= notice %></div><% } %>

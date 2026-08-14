@@ -1,0 +1,47 @@
+<%- include('partials/header', { title: 'Register shadow report', user }) %>
+<%
+function money(n){ return '£' + (Number(n)||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+var chip = { green:'#16a34a', amber:'#d97706', red:'#dc2626' };
+%>
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/bureau/register">← Register</a></p>
+    <h1 style="margin:0;">Shadow report</h1>
+    <p class="muted" style="margin:4px 0 0;">Every customer's bill computed BOTH ways for <strong><%= period || 'the current period' %></strong> — the live engine and the register — with a penny diff. Nothing is billed. The cutover gate: go when every row is green, or every red is explained.</p>
+  </div>
+</div>
+<% if (notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error"><%= error %></div><% } %>
+
+<div style="display:flex;gap:10px;margin:0 0 16px;flex-wrap:wrap;">
+  <div class="card" style="flex:1;min-width:120px;text-align:center;padding:14px;"><div style="font-size:26px;font-weight:700;color:<%= chip.green %>;"><%= summary.green %></div><div class="muted" style="font-size:12px;">Green (match)</div></div>
+  <div class="card" style="flex:1;min-width:120px;text-align:center;padding:14px;"><div style="font-size:26px;font-weight:700;color:<%= chip.amber %>;"><%= summary.amber %></div><div class="muted" style="font-size:12px;">Amber (expected gap)</div></div>
+  <div class="card" style="flex:1;min-width:120px;text-align:center;padding:14px;"><div style="font-size:26px;font-weight:700;color:<%= chip.red %>;"><%= summary.red %></div><div class="muted" style="font-size:12px;">Red (disagree)</div></div>
+  <div class="card" style="flex:1;min-width:120px;text-align:center;padding:14px;"><div style="font-size:26px;font-weight:700;"><%= summary.total %></div><div class="muted" style="font-size:12px;">Bills compared</div></div>
+</div>
+
+<div class="card">
+  <% if (!rows.length) { %>
+    <div class="empty-state">Nothing to compare — the register may not be seeded yet. Go to <a class="row-link" href="/bureau/register">the register</a> and press Reconcile now.</div>
+  <% } else { %>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th></th><th>Customer</th><th>Scheme</th><th style="text-align:right;">Live engine</th><th style="text-align:right;">Register</th><th style="text-align:right;">Diff</th><th>Note</th></tr></thead>
+        <tbody>
+          <% rows.forEach(function(r){ %>
+          <tr>
+            <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:<%= chip[r.verdict] %>;" title="<%= r.verdict %>"></span></td>
+            <td><a class="row-link" href="/bureau/register?customer=<%= r.customerId %>"><%= r.customer %></a></td>
+            <td><span class="badge"><%= r.scheme %></span></td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;"><%= money(r.live) %></td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;"><%= money(r.register) %></td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:<%= Math.abs(r.diff)<0.01?'inherit':chip[r.verdict] %>;"><%= (r.diff>0?'+':'') + money(r.diff) %></td>
+            <td class="muted" style="font-size:12.5px;"><%= r.note %></td>
+          </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+<%- include('partials/footer') %>
