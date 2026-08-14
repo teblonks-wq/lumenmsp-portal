@@ -338,7 +338,14 @@
             <form method="post" action="/agents/<%= d.id %>/revoke" style="display:inline;" onsubmit="return confirm('Revoke this device? Its agent stops working until the MSI is reinstalled.');">
               <button class="btn btn-small" type="submit">Revoke</button>
             </form>
-            <% } else { %><span class="muted" style="font-size:12px;">revoked</span><% } %>
+            <% } else { %>
+            <span class="muted" style="font-size:12px;">revoked</span>
+            <form method="post" action="/agents/<%= d.id %>/delete" style="display:inline;margin-left:6px;"
+                  onsubmit="return confirm('Delete ' + <%- JSON.stringify(String(d.hostname || 'this device')) %> + ' FOREVER?\n\nIts commands, software list, patch and CE results go with it. The asset record survives as \'agent required\' and tickets keep their history. This cannot be undone.');">
+              <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+              <button class="btn" type="submit" style="color:var(--bad-fg);padding:2px 8px;font-size:11.5px;">Delete</button>
+            </form>
+            <% } %>
           </td>
           <% } %>
         </tr>

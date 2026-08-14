@@ -714,4 +714,55 @@ router.post('/agents/:id/revoke', requireAuth, requireAdmin, async (req: Request
   res.redirect('/agents?msg=' + encodeURIComponent('Device revoked — its agent can no longer talk to the portal.'));
 });
 
+// Delete a device FOREVER. Deliberately two-step: only a device that is already revoked
+// can be deleted, so a live machine can never be nuked in one click. Hard rows go
+// (commands, software, patches, CE results, server facts, remote-session index, GPO-run
+// references); business records keep their history — the linked asset survives with the
+// device link cleared and its status set honestly, tickets keep their case but lose the
+// device pointer. Everything in one transaction; the activity log records the hostname.
+router.post('/agents/:id/delete', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  try {
+    const d = (await pool.query('SELECT id, hostname, revoked FROM agent_devices WHERE id=$1', [id])).rows[0];
+    if (!d) { res.redirect('/agents?err=' + encodeURIComponent('No such device.')); return; }
+    if (!d.revoked) {
+      res.redirect('/agents?err=' + encodeURIComponent('Revoke it first — delete is only for revoked devices, so a live machine can never vanish in one click.'));
+      return;
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM agent_commands WHERE device_id=$1', [id]);
+      await client.query('DELETE FROM agent_software WHERE device_id=$1', [id]);
+      await client.query('DELETE FROM device_patches WHERE device_id=$1', [id]);
+      await client.query('DELETE FROM ce_device_results WHERE device_id=$1', [id]);
+      await client.query('DELETE FROM ce_findings WHERE device_id=$1', [id]);
+      await client.query('DELETE FROM server_facts WHERE device_id=$1', [id]);
+      await client.query('DELETE FROM remote_sessions WHERE device_id=$1', [id]);
+      // History that references the device but belongs to something bigger: keep the row,
+      // clear the pointer.
+      await client.query('UPDATE ce_assessments SET device_id=NULL WHERE device_id=$1', [id]);
+      await client.query('UPDATE customer_networks SET device_id=NULL WHERE device_id=$1', [id]);
+      await client.query('UPDATE gpo_deletions SET device_id=NULL WHERE device_id=$1', [id]);
+      await client.query('UPDATE inbox_tickets SET agent_device_id=NULL WHERE agent_device_id=$1', [id]);
+      await client.query(
+        `UPDATE customer_assets SET agent_device_id=NULL, online_status=false,
+                data_source='agent required', updated_at=NOW() WHERE agent_device_id=$1`, [id]);
+      await client.query('DELETE FROM agent_devices WHERE id=$1', [id]);
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+    await logActivity(req.session.user!.id, 'agent_deleted', 'agent_devices', id,
+      `Device DELETED forever: ${d.hostname || 'device ' + id}`);
+    res.redirect('/agents?msg=' + encodeURIComponent(`${d.hostname || 'Device'} deleted. Its asset record survives as "agent required"; reinstalling the agent re-adopts it.`));
+  } catch (e: any) {
+    console.error('[agents] delete failed:', e.message);
+    res.redirect('/agents?err=' + encodeURIComponent('Could not delete: ' + e.message));
+  }
+});
+
 export default router;
