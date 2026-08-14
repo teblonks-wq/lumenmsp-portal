@@ -13,7 +13,7 @@ import { invoiceEmailHtml } from '../lib/emails';
 import { invoiceViewUrl } from '../lib/invoice-link';
 import { syncGoCardlessMandates, linkGcPaymentsToInvoices, syncGoCardlessPayments } from '../lib/gocardless-sync';
 const isEmailAddr = (e: any): boolean => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(e || '').trim());
-import { giacomBillingTest } from '../lib/giacom';
+import { giacomBillingTest, GiacomBilling, GiacomPartner } from '../lib/giacom';
 import { syncGiacomBilling } from '../lib/giacom-sync';
 import { dwsConfigured, fetchDwsBillRuns } from '../lib/dws-sftp';
 import { teamsGraphStatus, teamsGraphAuthUrl, teamsGraphExchangeCode, teamsGraphDisconnect, teamsGraphDebug } from '../lib/teamsgraph';
@@ -314,6 +314,28 @@ router.post('/settings/integrations/giacom', requireAuth, requireAdmin, async (r
   await setSetting('giacom', 'billing_base_url', (b.billing_base_url || '').trim() || null);
   await setSetting('giacom', 'partnercenter_base_url', (b.partnercenter_base_url || '').trim() || null);
   res.redirect('/settings/integrations?msg=Giacom+settings+saved');
+});
+
+router.get('/settings/giacom/subscriptions-probe.json', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const q: Record<string, any> = { pageSize: 5 };
+  if (req.query.account) q.accountId = String(req.query.account);
+  const candidates: { api: 'billing' | 'partner'; path: string }[] = [
+    { api: 'billing', path: '/Subscriptions Management Report' },
+    { api: 'billing', path: '/SubscriptionsManagementReport' },
+    { api: 'billing', path: '/Subscriptions' },
+    { api: 'partner', path: '/Subscriptions' },
+    { api: 'partner', path: '/subscriptions' },
+    { api: 'partner', path: '/Customers/Subscriptions' },
+  ];
+  const attempts: any[] = [];
+  for (const c of candidates) {
+    try {
+      const data = c.api === 'billing' ? await GiacomBilling.raw(c.path, { query: q }) : await GiacomPartner.raw(c.path, { query: q });
+      res.json({ ok: true, matched: c, fields: Array.isArray(data) && data[0] ? Object.keys(data[0]) : (data && typeof data === 'object' ? Object.keys(data) : []), sample: Array.isArray(data) ? data.slice(0, 3) : data });
+      return;
+    } catch (e: any) { attempts.push({ ...c, error: String(e.message).slice(0, 160) }); }
+  }
+  res.json({ ok: false, error: 'No subscriptions endpoint responded — see attempts.', attempts });
 });
 
 router.post('/settings/integrations/giacom/test', requireAuth, requireAdmin, async (req: Request, res: Response) => {
