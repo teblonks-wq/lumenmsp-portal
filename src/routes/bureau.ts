@@ -1674,6 +1674,17 @@ router.post('/bureau/register/reconcile', async (req: Request, res: Response) =>
   } catch (e: any) { res.redirect('/bureau/register?err=' + encodeURIComponent(e.message)); }
 });
 
+// Re-sync all active IT contracts into the register (lumen rows). Idempotent; use after
+// contracts change. The bulk first-time creation is npm run backfill-it-contracts.
+router.post('/bureau/register/backfill-contracts', async (req: Request, res: Response) => {
+  const { backfillContractsToRegister } = await import('../lib/register');
+  try {
+    const r = await backfillContractsToRegister('user:' + req.session.user!.id);
+    res.redirect('/bureau/register?msg=' + encodeURIComponent(
+      `Contracts synced to the register: +${r.added} new, ${r.updated} updated, ${r.ceased} ceased.`));
+  } catch (e: any) { res.redirect('/bureau/register?err=' + encodeURIComponent(e.message)); }
+});
+
 // ── Shadow report — register engine vs live engine (the cutover gate) ──────────
 router.get('/bureau/register/shadow', async (req: Request, res: Response) => {
   const { shadowReport } = await import('../lib/register-shadow');

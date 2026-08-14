@@ -177,6 +177,77 @@ export async function reconcileCloudRegister(actor = 'cloud-sync'): Promise<Reco
   return reconcileSource('cloud-feed', feed, actor, { noticeDays: NOTICE_DAYS });
 }
 
+// ── Contracts → register (lumen rows) ──────────────────────────────────────────
+// The IT-contract half of the register. Mirrors itCloudAccount EXACTLY (active IT
+// contracts, monthly lines) so the register's IC bill can match the live one line for
+// line. Keyed by contract_line_id, so it is the single ongoing bridge: run it as a
+// back-fill now, and again whenever a contract changes. Idempotent — a re-run updates
+// what moved and ceases lines whose contract line has gone, never duplicates.
+export async function backfillContractsToRegister(actor = 'contract-backfill'): Promise<{ added: number; updated: number; ceased: number; unchanged: number }> {
+  const res = { added: 0, updated: 0, ceased: 0, unchanged: 0 };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const rows = (await client.query(
+      `SELECT ct.customer_id, cl.id AS line_id, cl.description, cl.quantity, cl.line_total
+         FROM contracts ct JOIN contract_lines cl ON cl.contract_id = ct.id
+        WHERE ct.service_type='IT' AND ct.status='active' AND ct.deleted_at IS NULL
+          AND ct.customer_id IS NOT NULL AND cl.billing_frequency='monthly'`)).rows;
+
+    const liveLineIds = new Set<number>();
+    for (const r of rows) {
+      liveLineIds.add(Number(r.line_id));
+      const key = 'contract:' + r.line_id;
+      const qty = Number(r.quantity) || 1;
+      const total = Number(r.line_total) || 0;
+      const saleEach = qty ? total / qty : total;   // render does sale_price × qty = line_total
+      const ex = (await client.query(
+        `SELECT id, qty, sale_price, description, status FROM customer_register_lines
+          WHERE customer_id=$1 AND source='lumen' AND source_key=$2`, [r.customer_id, key])).rows[0];
+      if (!ex) {
+        const ins = await client.query(
+          `INSERT INTO customer_register_lines (customer_id, source, source_key, description, invoice_category, qty, unit_cost, sale_price, status, contract_line_id)
+           VALUES ($1,'lumen',$2,$3,'it_services',$4,0,$5,'active',$6) RETURNING id`,
+          [r.customer_id, key, String(r.description || 'IT service'), qty, saleEach, Number(r.line_id)]);
+        await logChange(client, { lineId: ins.rows[0].id, customerId: r.customer_id, type: 'added',
+          next: { source: 'contract', contractLineId: r.line_id, description: r.description, qty, salePrice: saleEach }, actor });
+        res.added++;
+        continue;
+      }
+      const changed = Math.abs(Number(ex.qty) - qty) > 0.005 || Math.abs(Number(ex.sale_price ?? -1) - saleEach) > 0.005
+        || String(ex.description) !== String(r.description || 'IT service') || ex.status === 'ceased';
+      if (changed) {
+        await client.query(
+          `UPDATE customer_register_lines SET qty=$1, sale_price=$2, description=$3, status='active',
+             ceased_at=NULL, cease_effective=NULL, updated_at=NOW() WHERE id=$4`,
+          [qty, saleEach, String(r.description || 'IT service'), ex.id]);
+        await logChange(client, { lineId: ex.id, customerId: r.customer_id, type: ex.status === 'ceased' ? 'reinstated' : 'price',
+          old: { qty: Number(ex.qty), salePrice: ex.sale_price === null ? null : Number(ex.sale_price) },
+          next: { qty, salePrice: saleEach }, actor });
+        res.updated++;
+      } else { res.unchanged++; }
+    }
+
+    // A lumen contract row whose contract line has gone (line deleted, contract ended/cancelled)
+    // → cease it, so the register stops billing something the live engine already dropped.
+    const orphans = (await client.query(
+      `SELECT id, customer_id, source_key, qty, sale_price FROM customer_register_lines
+        WHERE source='lumen' AND source_key LIKE 'contract:%' AND status <> 'ceased'`)).rows;
+    for (const o of orphans) {
+      const lineId = parseInt(String(o.source_key).slice('contract:'.length), 10);
+      if (liveLineIds.has(lineId)) continue;
+      await client.query(
+        `UPDATE customer_register_lines SET status='ceased', ceased_at=NOW(), cease_effective=NOW(), updated_at=NOW() WHERE id=$1`, [o.id]);
+      await logChange(client, { lineId: o.id, customerId: o.customer_id, type: 'ceased',
+        old: { qty: Number(o.qty), salePrice: o.sale_price === null ? null : Number(o.sale_price) },
+        next: { reason: 'contract line removed' }, actor });
+      res.ceased++;
+    }
+    await client.query('COMMIT');
+  } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  return res;
+}
+
 // ── Read helpers for the Phase 1 view ───────────────────────────────────────────
 export async function registerLines(customerId?: number | null): Promise<any[]> {
   return (await pool.query(

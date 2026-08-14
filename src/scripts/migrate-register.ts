@@ -95,7 +95,10 @@ async function migrateTemplates(client: any): Promise<void> {
         continue;
       }
       if (src === 'calls') continue; // arrears calls never live on the register
-      // manual/contract → lumen row
+      // Contract lines are owned by backfillContractsToRegister (keyed by contract_line_id);
+      // skip them here so the two sources can never double-count the same line.
+      if (it.contract_line_id) continue;
+      // pure manual recurring line → lumen row
       const key = 'm:' + it.id;
       const ex = (await client.query(
         `SELECT id FROM customer_register_lines WHERE customer_id=$1 AND source='lumen' AND source_key=$2`,

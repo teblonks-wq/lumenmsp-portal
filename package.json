@@ -48,7 +48,8 @@
     "import-calls": "node dist/scripts/import-calls.js",
     "send-daily-range": "node dist/scripts/send-daily-range.js",
     "ingest-all-calls": "node dist/scripts/ingest-all-calls.js",
-    "migrate-register": "node dist/scripts/migrate-register.js"
+    "migrate-register": "node dist/scripts/migrate-register.js",
+    "backfill-it-contracts": "node dist/scripts/backfill-it-contracts.js"
   },
   "dependencies": {
     "@azure/msal-node": "^5.1.0",
