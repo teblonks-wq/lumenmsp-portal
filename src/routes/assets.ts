@@ -324,7 +324,9 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   try {
     agentInfo = (await pool.query(
       `SELECT id, last_seen_at, agent_version, logged_in_user, local_ips, public_ip, disk_info,
-              EXTRACT(EPOCH FROM (NOW() - last_seen_at)) AS seen_secs FROM agent_devices
+              security_json, security_at, patch_scan_at, patch_pending, reboot_required, patch_last_installed,
+              EXTRACT(EPOCH FROM (NOW() - last_seen_at)) AS seen_secs,
+              EXTRACT(EPOCH FROM (NOW() - security_at)) AS security_age_secs FROM agent_devices
        WHERE revoked = false AND customer_id = $1
          AND (id = $4
            OR ($4::int IS NULL AND (($2::text IS NOT NULL AND serial_number = $2)
@@ -470,8 +472,37 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     }
   }
 
+  // ── Security tab: what the agent reported about AV / anti-spyware / firewall ──
+  const security = agentInfo ? deriveSecurity(agentInfo) : null;
+
+  // ── Manage lightboxes (admin): pending patches + the shared script library ────
+  let patches: any[] = [];
+  let patchMeta: any = null;
+  let agentScripts: any[] = [];
+  if (req.session.user!.role === 'admin' && row.agent_device_id) {
+    try {
+      patches = (await pool.query(
+        `SELECT *, EXTRACT(EPOCH FROM (NOW() - COALESCE(first_seen, NOW())))/86400 AS age_days
+           FROM device_patches WHERE device_id=$1
+          ORDER BY CASE LOWER(COALESCE(severity,'')) WHEN 'critical' THEN 0 WHEN 'important' THEN 1 ELSE 2 END, title`,
+        [row.agent_device_id])).rows;
+      patchMeta = {
+        deviceId: row.agent_device_id,
+        scanAt: agentInfo ? agentInfo.patch_scan_at : null,
+        scanAgo: agentInfo && agentInfo.patch_scan_at
+          ? agoWords((Date.now() - new Date(agentInfo.patch_scan_at).getTime()) / 1000) : 'never',
+        rebootRequired: !!(agentInfo && agentInfo.reboot_required),
+        lastInstalled: agentInfo ? agentInfo.patch_last_installed : null,
+      };
+    } catch (e: any) { console.error('[assets] patch lightbox data failed:', e.message); }
+    try {
+      agentScripts = (await pool.query(
+        'SELECT id, name, shell, run_as, script FROM agent_scripts ORDER BY name')).rows;
+    } catch { /* table appears with the next prisma db push */ }
+  }
+
   res.render('assets/detail', {
-    user: req.session.user!, asset: row, agentInfo, gpo,
+    user: req.session.user!, asset: row, agentInfo, gpo, security, patches, patchMeta, agentScripts,
     trackCommandId: parseInt(String(req.query.cmd || ''), 10) || null,
     latestAgentVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
     backupPlans, backupHistory,
@@ -831,5 +862,107 @@ router.post('/agents/:id/delete', requireAuth, requireAdmin, async (req: Request
     res.redirect('/agents?err=' + encodeURIComponent('Could not delete: ' + e.message));
   }
 });
+
+
+// ── Security status, judged ───────────────────────────────────────────────────────
+// The agent reports facts (what Get-MpComputerStatus and SecurityCenter2 said); the
+// Portal decides what is OK - so tightening the standard is a deploy, not an agent
+// rollout. Mirrors the ce.assess split on purpose.
+function agoWords(secs: number): string {
+  const m = Math.round(secs / 60);
+  if (m < 2) return 'just now';
+  if (m < 60) return `${m} minutes ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`;
+  const d = Math.round(h / 24);
+  return `${d} day${d === 1 ? '' : 's'} ago`;
+}
+
+function deriveSecurity(agentInfo: any): any {
+  let j: any = null;
+  try { j = agentInfo.security_json ? JSON.parse(agentInfo.security_json) : null; } catch { j = null; }
+  if (!j) return { awaiting: true };
+
+  const rows: any[] = [];
+  const list = (v: any) => (Array.isArray(v) ? v : v ? [v] : []);
+  const def = j.defender || null;
+  const sigNote = (days: any) => (days == null ? null : Number(days) <= 0 ? 'definitions from today' : `definitions ${Number(days)} day${Number(days) === 1 ? '' : 's'} old`);
+
+  // Antivirus - Security Center's registered products first (third-party aware), the
+  // Defender facts as the fallback (servers have no SecurityCenter2).
+  const av = list(j.av);
+  if (av.length) {
+    for (const p of av) {
+      const ok = !!p.enabled && p.updated !== false;
+      rows.push({
+        area: 'Antivirus', product: p.name || 'Antivirus',
+        ok, detail: !p.enabled ? 'Not active' : (p.updated === false ? 'Active, definitions out of date' : 'Active and updated'),
+        extra: /defender/i.test(String(p.name || '')) && def ? sigNote(def.av_sig_age_days) : null,
+      });
+    }
+  } else if (def) {
+    const fresh = def.av_sig_age_days == null || Number(def.av_sig_age_days) <= 3;
+    const ok = def.av_enabled !== false && def.rtp_enabled !== false && fresh;
+    rows.push({
+      area: 'Antivirus', product: 'Microsoft Defender Antivirus',
+      ok, detail: def.av_enabled === false ? 'Not active'
+        : def.rtp_enabled === false ? 'Real-time protection off'
+        : !fresh ? 'Active, definitions out of date' : 'Active and updated',
+      extra: sigNote(def.av_sig_age_days),
+    });
+  } else {
+    rows.push({ area: 'Antivirus', product: 'Unknown', ok: false, detail: 'Nothing reported', extra: null });
+  }
+
+  // Anti-spyware - same shape.
+  const asw = list(j.antispyware);
+  if (asw.length) {
+    for (const p of asw) {
+      const ok = !!p.enabled && p.updated !== false;
+      rows.push({
+        area: 'Anti-spyware', product: p.name || 'Anti-spyware',
+        ok, detail: !p.enabled ? 'Not active' : (p.updated === false ? 'Active, definitions out of date' : 'Active and updated'),
+        extra: /defender/i.test(String(p.name || '')) && def ? sigNote(def.as_sig_age_days) : null,
+      });
+    }
+  } else if (def) {
+    const fresh = def.as_sig_age_days == null || Number(def.as_sig_age_days) <= 3;
+    const ok = def.antispyware_enabled !== false && fresh;
+    rows.push({
+      area: 'Anti-spyware', product: 'Microsoft Defender Antivirus',
+      ok, detail: def.antispyware_enabled === false ? 'Not active' : !fresh ? 'Active, definitions out of date' : 'Active and updated',
+      extra: sigNote(def.as_sig_age_days),
+    });
+  }
+
+  // Firewall - the per-profile truth beats the Security Center registration.
+  const profiles = list(j.firewall_profiles);
+  const fwProducts = list(j.firewall_products);
+  const fwName = fwProducts.length ? fwProducts.map((p: any) => p.name).filter(Boolean).join(', ') : 'Windows Firewall';
+  if (profiles.length) {
+    const off = profiles.filter((p: any) => p.enabled === false).map((p: any) => p.profile);
+    rows.push({
+      area: 'Firewall', product: fwName,
+      ok: off.length === 0,
+      detail: off.length === 0 ? 'Active on every profile' : `OFF on the ${off.join(' and ')} profile${off.length === 1 ? '' : 's'}`,
+      extra: profiles.map((p: any) => `${p.profile}: ${p.enabled === false ? 'off' : 'on'}`).join(' · '),
+    });
+  } else if (fwProducts.length) {
+    for (const p of fwProducts) {
+      rows.push({ area: 'Firewall', product: p.name || 'Firewall', ok: !!p.enabled, detail: p.enabled ? 'Active' : 'Not active', extra: null });
+    }
+  } else {
+    rows.push({ area: 'Firewall', product: 'Unknown', ok: false, detail: 'Nothing reported', extra: null });
+  }
+
+  const ageSecs = agentInfo.security_age_secs != null ? Number(agentInfo.security_age_secs) : null;
+  return {
+    rows,
+    bad: rows.some((r) => !r.ok),
+    collectedAt: agentInfo.security_at,
+    ageSecs,
+    stale: ageSecs != null && ageSecs > 2 * 86400,
+  };
+}
 
 export default router;

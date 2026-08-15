@@ -28,6 +28,12 @@ const BUDGET_MINUTES: Record<string, number> = {
   'gpo.inventory': 25,    // Get-GPOReport on a big domain is not quick
   'gpo.deploy': 15,
   'gpo.delete': 15,
+  'process.list': 5,
+  'process.kill': 5,
+  'events.list': 10,
+  'useractivity.list': 15,
+  'patch.history': 15,
+  'security.status': 10,
   'gpo.unlink': 15,
   'gpo.restore': 15,
 };

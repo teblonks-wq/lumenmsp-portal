@@ -65,6 +65,12 @@ const KINDS: Record<string, { label: string; ad?: boolean; destructive?: boolean
   'users.disable': { label: 'Disabled a local user', destructive: true },
   'users.enable': { label: 'Enabled a local user', destructive: true },
   'users.resetpw': { label: 'Reset a local user password', destructive: true },
+  'process.list': { label: 'Listed running processes' },
+  'process.kill': { label: 'Ended a process', destructive: true },
+  'events.list': { label: 'Read the event log' },
+  'useractivity.list': { label: 'Read the sign-in history' },
+  'patch.history': { label: 'Read the installed-update history' },
+  'security.status': { label: 'Refreshed the security status' },
   'ad.users.list': { label: 'Listed AD users', ad: true },
   'ad.user.disable': { label: 'Disabled an AD account', ad: true, destructive: true },
   'ad.user.enable': { label: 'Enabled an AD account', ad: true, destructive: true },
@@ -204,6 +210,24 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
         payload.args = String(b.args || '/qn /norestart').slice(0, 200);
         payload.name = url.split('/').pop() || 'package';
       }
+    }
+    if (kind === 'process.kill') {
+      const procId = parseInt(String(b.pid || ''), 10);
+      if (!procId || procId < 1) { res.status(400).json({ ok: false, error: 'No process id given.' }); return; }
+      payload.pid = String(procId);
+      payload.name = String(b.name || '').slice(0, 200);
+    }
+    if (kind === 'events.list') {
+      payload.log = ['System', 'Application', 'Security', 'Setup'].includes(String(b.log)) ? String(b.log) : 'System';
+      const hours = parseInt(String(b.hours || '24'), 10) || 24;
+      payload.hours = String(Math.min(Math.max(hours, 1), 720));
+      const level = parseInt(String(b.level || '0'), 10);
+      payload.level = String(level >= 1 && level <= 5 ? level : 0);
+      payload.q = String(b.q || '').slice(0, 120);
+    }
+    if (kind === 'useractivity.list') {
+      const days = parseInt(String(b.days || '7'), 10) || 7;
+      payload.days = String(Math.min(Math.max(days, 1), 90));
     }
     if (kind === 'users.resetpw' || kind === 'ad.user.resetpw') {
       // Either generate one or take the admin's. A typed password is echoed back so the
@@ -404,6 +428,60 @@ router.post('/agent-packages/:id/delete', requireAuth, requireAdmin, async (req:
     await logActivity(req.session.user!.id, 'agent_package', null, null, `Removed package: ${p.name}`);
   }
   res.redirect('/agents?msg=' + encodeURIComponent('Package removed.'));
+});
+
+// ── Run-script library ──────────────────────────────────────────────────────────
+// Saved scripts are shared across the estate: save once on any device page, run on all
+// of them. Running one goes through the same audited shell kinds as the console, so the
+// library adds no new execution surface - only convenience.
+router.get('/agent-scripts.json', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const rows = (await pool.query('SELECT id, name, shell, run_as, script FROM agent_scripts ORDER BY name')).rows;
+    res.json({ ok: true, rows });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: 'Could not read the script library.' });
+  }
+});
+
+router.post('/agent-scripts', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim().slice(0, 200);
+  const script = String(b.script || '').slice(0, 16000);
+  const shell = String(b.shell) === 'cmd' ? 'cmd' : 'powershell';
+  const runAs = String(b.run_as) === 'user' ? 'user' : 'system';
+  const id = parseInt(String(b.id || ''), 10) || null;
+  if (!name) { res.status(400).json({ ok: false, error: 'Give the script a name.' }); return; }
+  if (!script.trim()) { res.status(400).json({ ok: false, error: 'There is no script to save.' }); return; }
+  try {
+    let row: any;
+    if (id) {
+      row = (await pool.query(
+        `UPDATE agent_scripts SET name=$1, script=$2, shell=$3, run_as=$4, updated_at=NOW() WHERE id=$5
+         RETURNING id, name, shell, run_as, script`, [name, script, shell, runAs, id])).rows[0];
+      if (!row) { res.status(404).json({ ok: false, error: 'That script is gone.' }); return; }
+      await logActivity(req.session.user!.id, 'agent_script', null, row.id, `Updated saved script: ${name}`);
+    } else {
+      row = (await pool.query(
+        `INSERT INTO agent_scripts (name, script, shell, run_as, created_by) VALUES ($1,$2,$3,$4,$5)
+         RETURNING id, name, shell, run_as, script`, [name, script, shell, runAs, req.session.user!.id])).rows[0];
+      await logActivity(req.session.user!.id, 'agent_script', null, row.id, `Saved a new script: ${name}`);
+    }
+    res.json({ ok: true, script: row });
+  } catch (e: any) {
+    console.error('[agent-scripts] save failed:', e.message);
+    res.status(500).json({ ok: false, error: 'Could not save that script.' });
+  }
+});
+
+router.post('/agent-scripts/:id/delete', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  try {
+    const r = (await pool.query('DELETE FROM agent_scripts WHERE id=$1 RETURNING name', [id])).rows[0];
+    if (r) await logActivity(req.session.user!.id, 'agent_script', null, id, `Deleted saved script: ${r.name}`);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: 'Could not delete that script.' });
+  }
 });
 
 // Mark/unmark a device as the customer's AD agent (the box that runs directory actions).

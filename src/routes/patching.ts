@@ -179,7 +179,8 @@ router.post('/patching/device/:id/install', requireAuth, requireAdmin, async (re
   const when = String(req.body.when || 'now') === 'window' ? 'window' : 'now';
   const raw = req.body.update_ids;
   const picked = (Array.isArray(raw) ? raw : raw ? [raw] : []).map((v: any) => String(v)).filter(Boolean);
-  const back = `/patching/device/${id}`;
+  // The device page's patch lightbox posts here too and wants to land back on the device.
+  const back = String(req.body.back || '').startsWith('/') ? String(req.body.back) : `/patching/device/${id}`;
   const go = (m: string) => res.redirect(back + '?msg=' + encodeURIComponent(m));
 
   try {

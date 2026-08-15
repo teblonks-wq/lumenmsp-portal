@@ -473,6 +473,12 @@ model AgentDevice {
   // Patching. Every one of these has been dropped by `prisma db push` once already,
   // because it was created with raw SQL and never declared here. Declare first, always.
   patchExcluded      Boolean?  @default(false) @map("patch_excluded")
+  // Security posture as the agent last reported it (Defender, Security Center products,
+  // firewall profiles). JSON blob + timestamp: the Portal derives the verdicts at render
+  // time, so what counts as "OK" can change without an agent rollout. Nullable - agents
+  // below 1.0.24 never send it.
+  securityJson       String?   @map("security_json")
+  securityAt         DateTime? @map("security_at")
   patchClass         String?   @map("patch_class")        // force workstation|server, else inferred from the OS
   patchPolicyId      Int?      @map("patch_policy_id")    // per-device override; null = inherit the customer
   tokenHash    String    @unique @map("token_hash")
@@ -509,6 +515,22 @@ model AgentSoftware {
   @@index([deviceId])
   @@index([name])
   @@map("agent_software")
+}
+
+// The Run-script library: saved scripts any device's Manage menu can run. Execution goes
+// through the same audited shell kinds as the console - this table is convenience, not a
+// new execution path.
+model AgentScript {
+  id        Int      @id @default(autoincrement())
+  name      String
+  shell     String   @default("powershell") @map("shell") // powershell | cmd
+  runAs     String   @default("system") @map("run_as")    // system | user
+  script    String
+  createdBy Int?     @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("agent_scripts")
 }
 
 // An MSI uploaded to the Portal (or a plain URL) that can be pushed to a device.

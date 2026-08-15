@@ -826,6 +826,26 @@ router.post('/agent/api/patches', requireDevice, async (req: Request, res: Respo
   } finally { client.release(); }
 });
 
+// ── Security status ─────────────────────────────────────────────────────────────
+// Posted on the daily inventory pass (and on demand via the security.status command).
+// Facts only - the agent reports what Windows said, and the Portal judges it, so the
+// bar for "OK" can tighten without touching an agent on a customer machine.
+router.post('/agent/api/security', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  const sec = (req.body || {}).security;
+  if (!sec || typeof sec !== 'object') { res.status(400).json({ ok: false, error: 'security object required' }); return; }
+  try {
+    const json = JSON.stringify(sec).slice(0, 20000);
+    await pool.query(
+      `UPDATE agent_devices SET security_json=$1, security_at=NOW(), updated_at=NOW() WHERE id=$2`,
+      [json, d.id]);
+    res.json({ ok: true });
+  } catch (e: any) {
+    console.error('[agent] security store failed:', e.message);
+    res.status(500).json({ ok: false, error: 'security not stored' });
+  }
+});
+
 // Package download for software deployment. Device-token auth: an uploaded MSI is not
 // public, and the agent runs whatever this returns as SYSTEM.
 router.get('/agent/api/package/:id', requireDevice, async (req: Request, res: Response) => {

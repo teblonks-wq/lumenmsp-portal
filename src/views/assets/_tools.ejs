@@ -50,6 +50,42 @@
   .tool-tabs { display:flex; flex-wrap:wrap; gap:2px; margin:0 0 16px; border-bottom:1px solid var(--line); }
   .tool-tabs button { background:none; border:none; padding:8px 14px; font-size:13px; font-weight:600; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; }
   .tool-tabs button.active { color:var(--accent); border-bottom-color:var(--accent); }
+  /* ── Manage lightbox ─────────────────────────────────────────────────────────
+     Every remote tool opens in one centred sheet over the page (the Atera pattern):
+     the tool is the whole job while it is open, and the page behind it is not. The
+     tool nav lives inside the sheet, so switching tools never means going back out. */
+  .lb-overlay { display:none; position:fixed; inset:0; z-index:880; background:rgba(15,23,42,.45);
+                align-items:flex-start; justify-content:center; padding:4vh 16px; }
+  .lb-overlay.on { display:flex; }
+  .lb-sheet { background:var(--surface,#fff); border-radius:14px; width:min(1100px,100%);
+              max-height:90vh; display:flex; flex-direction:column; overflow:hidden;
+              box-shadow:0 24px 60px rgba(15,23,42,.28); }
+  .lb-sheet.max { width:96vw; max-width:96vw; height:94vh; max-height:94vh; }
+  .lb-head { display:flex; align-items:center; gap:10px; padding:14px 20px 12px; border-bottom:1px solid var(--line); flex:none; }
+  .lb-title { margin:0; font-size:15px; font-weight:700; }
+  .lb-sub { margin:2px 0 0; font-size:12px; color:var(--muted); }
+  .lb-body { padding:14px 20px 20px; overflow:auto; flex:1; }
+  /* ── Manage menu (the Atera-style grouped dropdown) ─────────────────────────── */
+  .mg-menu { display:none; position:absolute; z-index:890; min-width:230px;
+             background:var(--card,#fff); border:1px solid var(--line-strong); border-radius:9px;
+             box-shadow:0 8px 22px rgba(0,0,0,.16); text-align:left; padding:4px 0; }
+  .mg-menu.on { display:block; }
+  .mg-menu > button, .mg-sub > button { display:block; width:100%; text-align:left; border:0; background:none;
+             padding:8px 14px; font:inherit; font-size:13px; cursor:pointer; color:var(--ink); }
+  .mg-menu > button:hover, .mg-sub > button:hover { background:var(--tint-accent); }
+  .mg-sep { height:1px; background:var(--line); margin:4px 0; }
+  .mg-has-sub { position:relative; }
+  .mg-has-sub > button { display:block; width:100%; text-align:left; border:0; background:none;
+             padding:8px 14px; font:inherit; font-size:13px; cursor:pointer; color:var(--ink); }
+  .mg-has-sub > button::after { content:'\25B8'; float:right; color:var(--muted); }
+  .mg-has-sub > button:hover { background:var(--tint-accent); }
+  .mg-sub { display:none; position:absolute; right:100%; top:-5px; min-width:190px; background:var(--card,#fff);
+            border:1px solid var(--line-strong); border-radius:9px; box-shadow:0 8px 22px rgba(0,0,0,.16); padding:4px 0; }
+  .mg-has-sub:hover .mg-sub { display:block; }
+  /* Sub-tabs inside a tool (patch management's Available/Installed) */
+  .pt-tabs { display:flex; gap:2px; border-bottom:1px solid var(--line); margin:0 0 12px; }
+  .pt-tabs button { background:none; border:none; padding:8px 14px; font-size:13px; font-weight:600; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px; }
+  .pt-tabs button.active { color:var(--accent); border-bottom-color:var(--accent); }
   .tool-panel { display:none; }
   .tool-panel.active { display:block; }
   .tool-out { background:#0f172a; color:#e2e8f0; font-family:ui-monospace,Consolas,monospace; font-size:12px; line-height:1.5;
@@ -88,19 +124,25 @@
   .pw-reveal code { font-size:14px; font-weight:700; user-select:all; }
 </style>
 
-<section class="dev-tab-panel" data-key="tools">
-  <% if (!agentInfo) { %>
-    <div class="alert alert-info" style="margin:0;">
-      Remote tools need the LumenMSP Agent installed on this device.
-      <a class="row-link" href="/agents#download">Download the agent &rarr;</a>
+<%
+  // Remote tools, Atera-style: a Manage menu on the device page, every tool in a
+  // centred lightbox. This partial renders nothing visible until the menu opens one.
+%>
+<div id="manageTools">
+  <% if (!agentInfo) { %><% } else { %>
+
+  <div class="lb-overlay" id="lbOverlay">
+  <div class="lb-sheet" id="lbSheet" role="dialog" aria-modal="true">
+  <div class="lb-head">
+    <div style="min-width:0;">
+      <h3 class="lb-title" id="lbTitle">Tools</h3>
+      <p class="lb-sub">on <strong><%= asset.hostname %></strong> &mdash; runs as SYSTEM through the LumenMSP Agent; every action is audited. AD actions route via the customer's AD agent.</p>
     </div>
-  <% } else { %>
-
-  <p class="muted" style="font-size:12.5px;margin:0 0 14px;">
-    These run as <strong>SYSTEM on <%= asset.hostname %></strong> through the LumenMSP Agent. Every action is
-    recorded in the activity log against your account. AD actions are routed to this customer's designated AD agent.
-  </p>
-
+    <span style="flex:1;"></span>
+    <button type="button" class="btn" id="lbMax" title="Expand" style="padding:2px 10px;">&#10530;</button>
+    <button type="button" class="btn" id="lbClose" title="Close" style="padding:2px 10px;">&#10005;</button>
+  </div>
+  <div class="lb-body">
   <nav class="tool-tabs">
     <button type="button" data-tool="console">Console</button>
     <button type="button" data-tool="software">Installed software</button>
@@ -108,6 +150,11 @@
     <button type="button" data-tool="users">Users</button>
     <button type="button" data-tool="files">File system</button>
     <button type="button" data-tool="registry">Registry</button>
+    <button type="button" data-tool="patching">Patching</button>
+    <button type="button" data-tool="taskmgr">Task Manager</button>
+    <button type="button" data-tool="events">Events</button>
+    <button type="button" data-tool="script">Run script</button>
+    <button type="button" data-tool="activity">User activity</button>
   </nav>
 
   <!-- Console: a real terminal, not a text box. The agent keeps a PowerShell session
@@ -298,6 +345,203 @@
     </p>
   </div>
 
+  <!-- Patch management: the same data as /patching/device, in a lightbox on the device's
+       own page. Available is served from the Portal's stored scan (works offline);
+       Installed asks the machine for its Windows Update history (needs it online). -->
+  <div class="tool-panel" data-panel="patching">
+    <% var _pm = (typeof patchMeta !== 'undefined' && patchMeta) ? patchMeta : null; %>
+    <% var _pt = (typeof patches !== 'undefined' && patches) ? patches : []; %>
+    <% if (!_pm) { %>
+      <p class="muted" style="font-size:13px;">No LumenMSP Agent on this device, so there is no patch data.</p>
+    <% } else { %>
+    <div class="pt-tabs">
+      <button type="button" id="ptTabAvail" class="active">Available patches (<%= _pt.length %>)</button>
+      <button type="button" id="ptTabInst">Installed patches</button>
+      <span style="flex:1;"></span>
+      <span class="muted" style="font-size:11.5px;align-self:center;">
+        scanned <%= _pm.scanAgo %> · <a class="row-link" href="/patching/device/<%= _pm.deviceId %>">full patching page →</a>
+      </span>
+    </div>
+
+    <div id="ptAvail">
+      <% if (_pm.rebootRequired) { %>
+      <div class="alert" style="border:1px solid var(--warn-line);padding:8px 12px;font-size:12.5px;">
+        <strong>A restart is outstanding.</strong>
+        <span class="muted">Updates have installed but won't take effect until this machine is restarted.</span>
+      </div>
+      <% } %>
+      <form method="post" action="/patching/device/<%= _pm.deviceId %>/install">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <input type="hidden" name="back" value="/assets/<%= asset.id %>">
+        <div style="display:flex;gap:8px;margin:0 0 10px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary" type="submit" name="when" value="now" <%= _pt.length ? '' : 'disabled' %>
+            onclick="return confirm('Install all <%= _pt.length %> pending update(s) on <%= asset.hostname %> now?\n\nNothing will be restarted.');">
+            &#11015; Install everything now
+          </button>
+          <button class="btn" type="submit" name="when" value="window" <%= _pt.length ? '' : 'disabled' %>
+            onclick="return confirm('Hold these until this machine\'s maintenance window?');">
+            Install in the maintenance window
+          </button>
+          <span class="muted" style="font-size:12px;" id="ptSelNote">ticked rows install; none ticked = everything</span>
+        </div>
+        <div class="table-wrap"><table class="tool-tbl">
+          <thead><tr>
+            <th style="width:30px;"><input type="checkbox" id="ptAll" title="Select all"></th>
+            <th>Update</th><th>Source</th><th>Severity</th><th style="text-align:right;">Size</th><th style="text-align:right;">Outstanding</th>
+          </tr></thead>
+          <tbody>
+          <% if (!_pt.length) { %>
+            <tr><td colspan="6" class="muted" style="padding:16px 8px;"><%= _pm.scanAt ? 'Nothing pending — this machine is up to date.' : 'Not scanned yet. The agent scans on its daily inventory pass.' %></td></tr>
+          <% } %>
+          <% _pt.forEach(function (p) {
+               var isDrv = /driver/i.test(String(p.categories || ''));
+               var src = isDrv ? 'driver' : String(p.source || 'windows');
+          %>
+            <tr>
+              <td><input type="checkbox" class="pt-one" name="update_ids" value="<%= p.update_id %>"></td>
+              <td><%= p.title %><% if (p.kb) { %> <span class="muted" style="font-size:11px;">(KB<%= String(p.kb).replace(/^KB/i,'') %>)</span><% } %>
+                  <% if (p.available_version) { %><div class="muted" style="font-size:11px;"><%= p.current_version || '?' %> &rarr; <%= p.available_version %></div><% } %></td>
+              <td><span class="badge badge-inactive" style="font-size:10.5px;"><%= src %></span></td>
+              <td><% if (p.severity) { %><span class="badge <%= String(p.severity).toLowerCase()==='critical' ? 'badge-failed' : 'badge-inactive' %>" style="font-size:10.5px;"><%= p.severity %></span><% } else { %><span class="muted">&mdash;</span><% } %></td>
+              <td style="text-align:right;white-space:nowrap;"><%= p.size_mb != null ? Number(p.size_mb).toFixed(1) + ' MB' : '—' %></td>
+              <td style="text-align:right;white-space:nowrap;"><%= Math.floor(Number(p.age_days || 0)) %>d</td>
+            </tr>
+          <% }); %>
+          </tbody>
+        </table></div>
+      </form>
+      <p class="muted" style="font-size:11.5px;margin:10px 0 0;">
+        Windows updates install as one batch; applications go through WinGet or Chocolatey. Nothing here restarts the machine.
+        Policy, exclusions and scheduling live on the <a class="row-link" href="/patching/device/<%= _pm.deviceId %>">full patching page</a>.
+      </p>
+    </div>
+
+    <div id="ptInst" style="display:none;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn btn-primary" type="button" id="ptInstLoad">Load from device</button>
+        <input class="input" id="ptInstFilter" placeholder="Filter…" style="max-width:220px;font-size:12.5px;">
+        <span class="tool-busy" id="patchhistBusy"></span>
+        <span class="muted" style="font-size:11.5px;">Windows Update history, straight from the machine — it needs to be online.</span>
+      </div>
+      <div id="ptInstResult"></div>
+    </div>
+    <% } %>
+  </div>
+
+  <!-- Task Manager: live process list, sorted by memory, with End process. -->
+  <div class="tool-panel" data-panel="taskmgr">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <button class="btn btn-primary" type="button" data-load="taskmgr">Refresh</button>
+      <input class="input" id="tmFilter" placeholder="Filter by name or user…" style="max-width:240px;font-size:12.5px;">
+      <span class="tool-busy" id="taskmgrBusy"></span>
+      <span class="muted" style="font-size:11.5px;">Top 400 by memory. CPU is total processor time, not a live percentage.</span>
+    </div>
+    <div id="taskmgrResult"></div>
+  </div>
+
+  <!-- Event Viewer: read-only window on the Windows event logs. -->
+  <div class="tool-panel" data-panel="events">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <select class="input" id="evLog" style="width:auto;font-size:12.5px;">
+        <option value="System">System</option>
+        <option value="Application">Application</option>
+        <option value="Security">Security</option>
+        <option value="Setup">Setup</option>
+      </select>
+      <select class="input" id="evLevel" style="width:auto;font-size:12.5px;">
+        <option value="0">All levels</option>
+        <option value="1">Critical</option>
+        <option value="2">Error</option>
+        <option value="3">Warning</option>
+        <option value="4">Information</option>
+      </select>
+      <select class="input" id="evRange" style="width:auto;font-size:12.5px;">
+        <option value="1">Last hour</option>
+        <option value="24" selected>Last 24 hours</option>
+        <option value="168">Last 7 days</option>
+        <option value="720">Last 30 days</option>
+      </select>
+      <input class="input" id="evQ" placeholder="Contains text or event id…" style="max-width:220px;font-size:12.5px;">
+      <button class="btn btn-primary" type="button" id="evLoad">Load</button>
+      <span class="tool-busy" id="eventsBusy"></span>
+      <span class="muted" style="font-size:11.5px;">newest 300</span>
+    </div>
+    <div id="eventsResult"></div>
+  </div>
+
+  <!-- Run script: one-off scripts and a saved library, on top of the same audited
+       shell kinds the console uses. -->
+  <div class="tool-panel" data-panel="script">
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px;">
+      <label style="flex:2;min-width:220px;font-size:12px;">Saved scripts
+        <select class="input" id="scLib" style="font-size:12.5px;"><option value="">— new script —</option></select>
+      </label>
+      <label style="flex:2;min-width:200px;font-size:12px;">Name
+        <input class="input" id="scName" placeholder="e.g. Clear print queue" style="font-size:12.5px;">
+      </label>
+      <button class="btn" type="button" id="scSave" title="Save to the library so it can be run on any device">Save</button>
+      <button class="btn" type="button" id="scDelete" style="display:none;color:var(--bad-fg);">Delete</button>
+    </div>
+    <textarea class="input" id="scBody" rows="10" spellcheck="false" placeholder="# PowerShell (or cmd) — runs on <%= asset.hostname %> exactly as typed"
+              style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;width:100%;"></textarea>
+    <div style="display:flex;gap:10px;align-items:center;margin:8px 0 0;flex-wrap:wrap;">
+      <label style="display:flex;gap:5px;align-items:center;font-size:13px;"><input type="radio" name="scShell" value="shell.powershell" checked> PowerShell</label>
+      <label style="display:flex;gap:5px;align-items:center;font-size:13px;"><input type="radio" name="scShell" value="shell.cmd"> Command line</label>
+      <span style="width:1px;height:18px;background:var(--line);"></span>
+      <label style="display:flex;gap:5px;align-items:center;font-size:13px;"><input type="radio" name="scRunAs" value="system" checked> SYSTEM</label>
+      <label style="display:flex;gap:5px;align-items:center;font-size:13px;"><input type="radio" name="scRunAs" value="user"> Signed-in user</label>
+      <button class="btn btn-primary" type="button" id="scRun">&#9654; Run on <%= asset.hostname %></button>
+      <span class="tool-busy" id="scriptBusy"></span>
+    </div>
+    <div class="tool-out" id="scOut"></div>
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0;">Runs in the console's session (120s limit per run) and is audited like any console command. Saved scripts are shared — every device's Run script tool sees the same library.</p>
+  </div>
+
+  <!-- User activity: who signed in and when, from the Security event log. -->
+  <div class="tool-panel" data-panel="activity">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <select class="input" id="uaDays" style="width:auto;font-size:12.5px;">
+        <option value="1">Last 24 hours</option>
+        <option value="7" selected>Last 7 days</option>
+        <option value="30">Last 30 days</option>
+      </select>
+      <button class="btn btn-primary" type="button" data-load="activity">Load</button>
+      <span class="tool-busy" id="activityBusy"></span>
+      <span class="muted" style="font-size:11.5px;">Interactive, remote-desktop and unlock events — service accounts and machine logons are filtered out.</span>
+    </div>
+    <div id="activityResult"></div>
+  </div>
+
+  </div><!-- /lb-body -->
+  </div><!-- /lb-sheet -->
+  </div><!-- /lb-overlay -->
+
+<!-- The Manage menu itself. Positioned by JS under the Manage button in the page header. -->
+<div class="mg-menu" id="mgMenu">
+  <button type="button" data-mg="patching">Patch management</button>
+  <button type="button" data-mg="software">Software inventory</button>
+  <button type="button" data-mg="software-install">Software installation</button>
+  <div class="mg-sep"></div>
+  <button type="button" data-mg="script">Run script</button>
+  <button type="button" data-mg="services">Service Manager</button>
+  <button type="button" data-mg="taskmgr">Task Manager</button>
+  <button type="button" data-mg="power">Shutdown actions</button>
+  <div class="mg-sep"></div>
+  <button type="button" data-mg="console-cmd">Command Prompt</button>
+  <button type="button" data-mg="console-ps">PowerShell</button>
+  <div class="mg-sep"></div>
+  <button type="button" data-mg="activity">User activity</button>
+  <div class="mg-has-sub">
+    <button type="button">More tools</button>
+    <div class="mg-sub">
+      <button type="button" data-mg="files">File transfer</button>
+      <button type="button" data-mg="events">Event Viewer</button>
+      <button type="button" data-mg="registry">Registry Editor</button>
+      <button type="button" data-mg="users">Users &amp; passwords</button>
+    </div>
+  </div>
+</div>
+
   <script>
   (function(){
     var ASSET = <%= asset.id %>;
@@ -312,7 +556,7 @@
       panels.forEach(function(p){ p.classList.toggle('active', p.getAttribute('data-panel') === k); });
     }
     tabs.forEach(function(b){ b.addEventListener('click', function(){ showTool(b.getAttribute('data-tool')); }); });
-    showTool('console');
+    showTool('console');   // initial active panel for when the lightbox first opens
 
     // Every JSON call goes through here. If the server answers with HTML instead of JSON
     // we say WHY (status + what it looks like) rather than leaking a parser error.
@@ -1365,7 +1609,267 @@
     document.getElementById('filesRoot').addEventListener('click', function(){ browse(''); });
     document.getElementById('filesGo').addEventListener('click', function(){ browse(filesPath.value.trim()); });
     filesPath.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); browse(filesPath.value.trim()); } });
+
+    // ══ Lightbox framework + Manage menu ════════════════════════════════════════
+    var lbOverlay = document.getElementById('lbOverlay');
+    var lbSheet = document.getElementById('lbSheet');
+    var lbTitle = document.getElementById('lbTitle');
+    var TOOL_TITLES = { console:'Console', software:'Software inventory', services:'Service Manager',
+      users:'Users & passwords', files:'File system', registry:'Registry Editor', patching:'Patch management',
+      taskmgr:'Task Manager', events:'Event Viewer', script:'Run script', activity:'User activity' };
+    var _showTool = showTool;
+    showTool = function(k){ _showTool(k); if (lbTitle && TOOL_TITLES[k]) lbTitle.textContent = TOOL_TITLES[k]; };
+    function openTool(k){
+      lbOverlay.classList.add('on');
+      document.body.style.overflow = 'hidden';
+      // Route through the nav button so every tool's lazy first-load fires exactly as it
+      // did when these were tabs.
+      var b = document.querySelector('.tool-tabs [data-tool="' + k + '"]');
+      if (b) b.click(); else showTool(k);
+    }
+    function closeLb(){ lbOverlay.classList.remove('on'); document.body.style.overflow = ''; }
+    document.getElementById('lbClose').addEventListener('click', closeLb);
+    document.getElementById('lbMax').addEventListener('click', function(){ lbSheet.classList.toggle('max'); });
+    lbOverlay.addEventListener('mousedown', function(e){ if (e.target === lbOverlay) closeLb(); });
+    document.addEventListener('keydown', function(e){
+      if (e.key !== 'Escape') return;
+      if (swModal.style.display !== 'none') return;   // the install-software sheet closes itself first
+      if (lbOverlay.classList.contains('on')) closeLb();
+    });
+    window.lmaOpenTool = openTool;
+    window.lmaRun = run;
+
+    // The Manage ▾ dropdown, positioned under the button in the page header.
+    var mgMenu = document.getElementById('mgMenu');
+    var mgBtn = document.getElementById('manageBtn');
+    if (mgBtn && mgMenu) {
+      document.body.appendChild(mgMenu);
+      var mgOpen = false;
+      var mgClose = function(){ mgMenu.classList.remove('on'); mgOpen = false; };
+      mgBtn.addEventListener('click', function(e){
+        e.stopPropagation();
+        if (mgOpen) { mgClose(); return; }
+        mgMenu.classList.add('on');
+        var r = mgBtn.getBoundingClientRect();
+        mgMenu.style.left = Math.max(8, window.scrollX + r.right - mgMenu.offsetWidth) + 'px';
+        mgMenu.style.top = (window.scrollY + r.bottom + 3) + 'px';
+        mgOpen = true;
+      });
+      document.addEventListener('click', function(e){ if (mgOpen && !mgMenu.contains(e.target)) mgClose(); });
+      mgMenu.addEventListener('click', function(e){
+        var b = e.target.closest('[data-mg]'); if (!b) return;
+        var k = b.getAttribute('data-mg');
+        mgClose();
+        if (k === 'power') {
+          var pw = document.querySelector('.pw-btn');
+          if (pw) pw.click(); else alert('No live agent on this machine, so there is nothing to shut down remotely.');
+          return;
+        }
+        if (k === 'software-install') { openTool('software'); swOpen(true); return; }
+        if (k === 'console-cmd' || k === 'console-ps') {
+          var v = k === 'console-cmd' ? 'shell.cmd' : 'shell.powershell';
+          var radio = document.querySelector('input[name="shellKind"][value="' + v + '"]');
+          if (radio && !radio.checked) { radio.checked = true; radio.dispatchEvent(new Event('change')); }
+          openTool('console');
+          setTimeout(function(){ termIn.focus(); }, 50);
+          return;
+        }
+        openTool(k);
+      });
+    }
+
+    // Security tab "Refresh from device" (the button lives on the Security tab, outside
+    // this partial, so it reaches in through this hook).
+    window.lmaSecurityRefresh = function(btn){
+      var busy = document.getElementById('secBusy');
+      if (btn) btn.disabled = true;
+      run('security.status', {}, busy).then(function(r){
+        if (busy) busy.textContent = '';
+        if (r.status === 'done' && !r.exit_code) { location.reload(); return; }
+        alert(r.output || 'The device did not respond.');
+        if (btn) btn.disabled = false;
+      }).catch(function(e){
+        if (busy) busy.textContent = '';
+        alert(e.message);
+        if (btn) btn.disabled = false;
+      });
+    };
+
+    // ── Patch management: sub-tabs + installed history ─────────────────────────
+    (function(){
+      var tabA = document.getElementById('ptTabAvail'), tabI = document.getElementById('ptTabInst');
+      if (!tabA) return;   // no agent on this device
+      var paneA = document.getElementById('ptAvail'), paneI = document.getElementById('ptInst');
+      function ptShow(inst){
+        tabA.classList.toggle('active', !inst); tabI.classList.toggle('active', inst);
+        paneA.style.display = inst ? 'none' : ''; paneI.style.display = inst ? '' : 'none';
+      }
+      tabA.addEventListener('click', function(){ ptShow(false); });
+      tabI.addEventListener('click', function(){ ptShow(true); });
+      var all = document.getElementById('ptAll');
+      if (all) all.addEventListener('change', function(){
+        Array.prototype.slice.call(document.querySelectorAll('.pt-one')).forEach(function(t){ t.checked = all.checked; });
+      });
+      var instResult = document.getElementById('ptInstResult');
+      document.getElementById('ptInstLoad').addEventListener('click', function(){
+        instResult.innerHTML = '';
+        run('patch.history', {}, document.getElementById('patchhistBusy')).then(function(r){
+          renderTable(instResult, parseRows(r.output), [
+            { k:'date', t:'Installed' }, { k:'title', t:'Update' }, { k:'kb', t:'KB' },
+            { k:'result', t:'Result', render:function(x){
+                var bad = /fail/i.test(String(x.result));
+                return '<span style="font-weight:600;color:' + (bad ? 'var(--bad-fg)' : 'var(--ok)') + ';">' + esc(x.result) + '</span>';
+              } }
+          ], document.getElementById('ptInstFilter'));
+        }).catch(function(e){ fail(instResult, e.message); });
+      });
+    })();
+
+    // ── Task Manager ───────────────────────────────────────────────────────────
+    var taskmgrResult = document.getElementById('taskmgrResult');
+    function loadProcesses(){
+      taskmgrResult.innerHTML = '';
+      run('process.list', {}, document.getElementById('taskmgrBusy')).then(function(r){
+        renderTable(taskmgrResult, parseRows(r.output), [
+          { k:'name', t:'Name' }, { k:'pid', t:'PID' }, { k:'user', t:'User' },
+          { k:'cpu_s', t:'CPU (s)' }, { k:'mem_mb', t:'Memory (MB)' }, { k:'started', t:'Started' }
+        ], document.getElementById('tmFilter'), function(x){
+          return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-kill="' + esc(x.pid) + '" data-pname="' + esc(x.name) + '">End process</button>';
+        });
+      }).catch(function(e){ fail(taskmgrResult, e.message); });
+    }
+    document.querySelector('[data-load="taskmgr"]').addEventListener('click', loadProcesses);
+    document.querySelector('[data-tool="taskmgr"]').addEventListener('click', function(){ if (!taskmgrResult.innerHTML) loadProcesses(); });
+    taskmgrResult.addEventListener('click', function(e){
+      var b = e.target.closest('[data-kill]'); if (!b) return;
+      var pid = b.getAttribute('data-kill'), nm = b.getAttribute('data-pname');
+      if (!confirm('End "' + nm + '" (PID ' + pid + ') on <%= asset.hostname %>?\n\nUnsaved work in that program is lost.')) return;
+      b.disabled = true;
+      run('process.kill', { pid: pid, name: nm }, document.getElementById('taskmgrBusy'))
+        .then(function(r){ if (r.exit_code) alert(r.output || 'Failed.'); loadProcesses(); })
+        .catch(function(err){ alert(err.message); b.disabled = false; });
+    });
+
+    // ── Event Viewer ───────────────────────────────────────────────────────────
+    var eventsResult = document.getElementById('eventsResult');
+    var EV_COLOR = { Critical: 'var(--bad-fg)', Error: 'var(--bad-fg)', Warning: 'var(--warn-fg)' };
+    function loadEvents(){
+      eventsResult.innerHTML = '';
+      run('events.list', {
+        log: document.getElementById('evLog').value,
+        level: document.getElementById('evLevel').value,
+        hours: document.getElementById('evRange').value,
+        q: document.getElementById('evQ').value.trim()
+      }, document.getElementById('eventsBusy')).then(function(r){
+        renderTable(eventsResult, parseRows(r.output), [
+          { k:'time', t:'Time' },
+          { k:'level', t:'Level', render:function(x){
+              var c = EV_COLOR[x.level];
+              return '<span style="font-weight:600;' + (c ? 'color:' + c + ';' : '') + '">' + esc(x.level) + '</span>';
+            } },
+          { k:'source', t:'Source' }, { k:'id', t:'Event ID' },
+          { k:'message', t:'Message', render:function(x){
+              return '<span style="white-space:pre-wrap;overflow-wrap:anywhere;">' + esc(x.message || '') + '</span>';
+            } }
+        ]);
+      }).catch(function(e){ fail(eventsResult, e.message); });
+    }
+    document.getElementById('evLoad').addEventListener('click', loadEvents);
+    document.getElementById('evQ').addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); loadEvents(); } });
+    document.querySelector('[data-tool="events"]').addEventListener('click', function(){ if (!eventsResult.innerHTML) loadEvents(); });
+
+    // ── Run script ─────────────────────────────────────────────────────────────
+    var SCRIPTS = <%- JSON.stringify((typeof agentScripts !== 'undefined' && agentScripts) ? agentScripts : []).replace(/</g, '\\u003c') %>;
+    var scLib = document.getElementById('scLib');
+    var scName = document.getElementById('scName');
+    var scBody = document.getElementById('scBody');
+    var scOut = document.getElementById('scOut');
+    var scDeleteBtn = document.getElementById('scDelete');
+    function scFillLib(keepId){
+      scLib.innerHTML = '<option value="">— new script —</option>';
+      SCRIPTS.forEach(function(s){
+        var o = document.createElement('option');
+        o.value = s.id; o.textContent = s.name;
+        scLib.appendChild(o);
+      });
+      if (keepId) scLib.value = String(keepId);
+    }
+    scFillLib();
+    scLib.addEventListener('change', function(){
+      var s = SCRIPTS.filter(function(x){ return String(x.id) === scLib.value; })[0];
+      scDeleteBtn.style.display = s ? '' : 'none';
+      if (!s) { scName.value = ''; scBody.value = ''; return; }
+      scName.value = s.name; scBody.value = s.script;
+      var sh = document.querySelector('input[name="scShell"][value="' + (s.shell === 'cmd' ? 'shell.cmd' : 'shell.powershell') + '"]');
+      if (sh) sh.checked = true;
+      var ra = document.querySelector('input[name="scRunAs"][value="' + (s.run_as === 'user' ? 'user' : 'system') + '"]');
+      if (ra) ra.checked = true;
+    });
+    document.getElementById('scSave').addEventListener('click', function(){
+      var name = scName.value.trim(), body = scBody.value;
+      if (!name) { alert('Give the script a name first.'); scName.focus(); return; }
+      if (!body.trim()) { alert('There is no script to save.'); return; }
+      var payload = {
+        id: scLib.value || null, name: name, script: body,
+        shell: (document.querySelector('input[name="scShell"]:checked') || {}).value === 'shell.cmd' ? 'cmd' : 'powershell',
+        run_as: (document.querySelector('input[name="scRunAs"]:checked') || {}).value === 'user' ? 'user' : 'system'
+      };
+      jsonFetch('/agent-scripts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        .then(function(j){
+          if (!j.ok) throw new Error(j.error || 'Could not save.');
+          var existing = SCRIPTS.filter(function(x){ return String(x.id) === String(j.script.id); })[0];
+          if (existing) Object.assign(existing, j.script); else SCRIPTS.push(j.script);
+          SCRIPTS.sort(function(a, b){ return String(a.name).localeCompare(String(b.name)); });
+          scFillLib(j.script.id);
+          scDeleteBtn.style.display = '';
+          scOut.textContent = 'Saved "' + j.script.name + '" to the library.';
+        }).catch(function(e){ alert(e.message); });
+    });
+    scDeleteBtn.addEventListener('click', function(){
+      var id = scLib.value; if (!id) return;
+      var s = SCRIPTS.filter(function(x){ return String(x.id) === id; })[0];
+      if (!confirm('Delete "' + (s ? s.name : 'this script') + '" from the library?\n\nEvery device loses it — running copies are not affected.')) return;
+      jsonFetch('/agent-scripts/' + id + '/delete', { method: 'POST' }).then(function(j){
+        if (!j.ok) throw new Error(j.error || 'Could not delete.');
+        SCRIPTS = SCRIPTS.filter(function(x){ return String(x.id) !== id; });
+        scFillLib(); scLib.value = ''; scName.value = ''; scBody.value = '';
+        scDeleteBtn.style.display = 'none';
+        scOut.textContent = 'Deleted.';
+      }).catch(function(e){ alert(e.message); });
+    });
+    document.getElementById('scRun').addEventListener('click', function(){
+      var body = scBody.value;
+      if (!body.trim()) { alert('Type or pick a script first.'); return; }
+      var kind = (document.querySelector('input[name="scShell"]:checked') || {}).value || 'shell.powershell';
+      var runAs = (document.querySelector('input[name="scRunAs"]:checked') || {}).value || 'system';
+      scOut.textContent = '';
+      run(kind, { script: body, run_as: runAs }, document.getElementById('scriptBusy')).then(function(r){
+        var out = String(r.output || '');
+        var k = out.lastIndexOf('___LMA_CWD___');
+        if (k >= 0) out = out.slice(0, k).replace(/\s+$/, '');
+        scOut.textContent = out || '(no output)';
+      }).catch(function(e){ scOut.textContent = e.message; });
+    });
+
+    // ── User activity ──────────────────────────────────────────────────────────
+    var activityResult = document.getElementById('activityResult');
+    function loadActivity(){
+      activityResult.innerHTML = '';
+      run('useractivity.list', { days: document.getElementById('uaDays').value }, document.getElementById('activityBusy'))
+        .then(function(r){
+          renderTable(activityResult, parseRows(r.output), [
+            { k:'time', t:'Time' }, { k:'user', t:'User' },
+            { k:'action', t:'Action', render:function(x){
+                var bad = /fail/i.test(String(x.action));
+                return '<span style="font-weight:600;' + (bad ? 'color:var(--bad-fg);' : '') + '">' + esc(x.action) + '</span>';
+              } },
+            { k:'type', t:'Type' }
+          ]);
+        }).catch(function(e){ fail(activityResult, e.message); });
+    }
+    document.querySelector('[data-load="activity"]').addEventListener('click', loadActivity);
+    document.querySelector('[data-tool="activity"]').addEventListener('click', function(){ if (!activityResult.innerHTML) loadActivity(); });
   })();
   </script>
   <% } %>
-</section>
+</div>
