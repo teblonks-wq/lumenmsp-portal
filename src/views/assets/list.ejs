@@ -33,40 +33,37 @@ var _agent   = rows.filter(function (a) { return a.agent_device_id; }).length;
 var _servers = rows.filter(function (a) { return String(a.device_type || '').toLowerCase().indexOf('server') >= 0; }).length;
 var _nouser  = rows.filter(function (a) { return !a.assigned_name && !a.last_login_user; }).length;
 var _pct     = rows.length ? Math.round((_agent / rows.length) * 100) : 0;
-var _anyFilter = !!(filters.q || filters.customer || filters.type || filters.online || filters.nouser || filters.agent || filters.servers);
+var _patchDue = rows.filter(function (a) { return a.patch_due; }).length;
+var _secBad   = rows.filter(function (a) { return a.security_bad === true; }).length;
+var _secKnown = rows.filter(function (a) { return a.security_bad !== null && a.security_bad !== undefined; }).length;
+var _anyFilter = !!(filters.q || filters.customer || filters.type || filters.online || filters.nouser || filters.agent || filters.servers || filters.patch || filters.sec);
 // Each tile is a filter you can click. Carries the other filters through (so "servers" inside
 // one customer works) and clicking an active tile clears just that one.
 function tileHref(over){
   var f = { q: filters.q, customer: filters.customer, type: filters.type,
             online: filters.online ? '1' : '', agent: filters.agent,
-            nouser: filters.nouser ? '1' : '', servers: filters.servers ? '1' : '' };
+            nouser: filters.nouser ? '1' : '', servers: filters.servers ? '1' : '',
+            patch: filters.patch ? '1' : '', sec: filters.sec ? '1' : '' };
   Object.keys(over).forEach(function (k) { f[k] = over[k]; });
   var parts = [];
-  ['q','customer','type','online','agent','nouser','servers'].forEach(function (k) {
+  ['q','customer','type','online','agent','nouser','servers','patch','sec'].forEach(function (k) {
     if (f[k]) parts.push(k + '=' + encodeURIComponent(f[k]));
   });
   return '/assets' + (parts.length ? '?' + parts.join('&') : '');
 }
 %>
 <style>
-  .hero { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin:0 0 14px; }
-  .hero .tile { background:var(--card,#fff); border:1px solid var(--line); border-radius:12px; padding:14px 16px; display:block; text-decoration:none; color:inherit; transition:border-color .12s, box-shadow .12s, transform .12s; }
-  .hero a.tile:hover { border-color:var(--accent); box-shadow:0 3px 10px rgba(0,0,0,.07); transform:translateY(-1px); }
-  .hero a.tile:focus-visible { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--focus-ring); }
-  .hero .tile.on { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
-  .hero .tile .h { font-size:11px; font-weight:600; color:var(--accent); margin-top:6px; visibility:hidden; }
-  .hero a.tile:hover .h, .hero .tile.on .h { visibility:visible; }
-  .hero .tile .n { font-size:26px; font-weight:800; line-height:1.05; }
-  .hero .tile .l { font-size:12px; color:var(--muted); margin-top:2px; }
   .hero-actions { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 18px; }
 </style>
 
-<div class="hero">
+<div class="stat-band acc-assets">
   <a class="tile" href="/assets" title="Show every device - clears every filter"><div class="n"><%= rows.length %></div><div class="l">devices shown</div><div class="h"><%= _anyFilter ? 'show all devices' : 'all devices' %></div></a>
-  <a class="tile<%= filters.online ? ' on' : '' %>" href="<%= tileHref({ online: filters.online ? '' : '1' }) %>" title="Only devices the LumenMSP Agent has checked in from recently"><div class="n" id="tileOnline" style="color:var(--ok-fg);"><%= _online %></div><div class="l">online now</div><div class="h"><%= filters.online ? 'filtering - click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= filters.online ? ' on' : '' %>" href="<%= tileHref({ online: filters.online ? '' : '1' }) %>" title="Only devices the LumenMSP Agent has checked in from recently"><div class="n good" id="tileOnline"><%= _online %></div><div class="l">online now</div><div class="h"><%= filters.online ? 'filtering - click to clear' : 'click to filter' %></div></a>
   <a class="tile<%= filters.agent === '1' ? ' on' : '' %>" href="<%= tileHref({ agent: filters.agent === '1' ? '' : '1' }) %>" title="Only devices with the LumenMSP Agent installed"><div class="n"><%= _agent %> <span style="font-size:14px;font-weight:600;color:var(--muted);"><%= _pct %>%</span></div><div class="l">running our agent</div><div class="h"><%= filters.agent === '1' ? 'filtering - click to clear' : 'click to filter' %></div></a>
   <a class="tile<%= filters.servers ? ' on' : '' %>" href="<%= tileHref({ servers: filters.servers ? '' : '1', type: '' }) %>" title="Only devices typed as a server"><div class="n"><%= _servers %></div><div class="l">servers</div><div class="h"><%= filters.servers ? 'filtering - click to clear' : 'click to filter' %></div></a>
-  <a class="tile<%= filters.nouser ? ' on' : '' %>" href="<%= tileHref({ nouser: filters.nouser ? '' : '1' }) %>" title="Devices with no assigned contact and no last logged-in user"><div class="n" style="<%= _nouser ? 'color:var(--warn-fg);' : '' %>"><%= _nouser %></div><div class="l">no known user</div><div class="h"><%= filters.nouser ? 'filtering - click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= filters.nouser ? ' on' : '' %>" href="<%= tileHref({ nouser: filters.nouser ? '' : '1' }) %>" title="Devices with no assigned contact and no last logged-in user"><div class="n<%= _nouser ? ' warn' : '' %>"><%= _nouser %></div><div class="l">no known user</div><div class="h"><%= filters.nouser ? 'filtering - click to clear' : 'click to filter' %></div></a>
+  <a class="tile acc-warn<%= filters.patch ? ' on' : '' %>" href="<%= tileHref({ patch: filters.patch ? '' : '1' }) %>" title="Devices with pending updates or an outstanding restart"><div class="n<%= _patchDue ? ' warn' : '' %>"><%= _patchDue %></div><div class="l">patching due</div><div class="h"><%= filters.patch ? 'filtering - click to clear' : 'click to filter' %></div></a>
+  <a class="tile acc-bad<%= filters.sec ? ' on' : '' %>" href="<%= tileHref({ sec: filters.sec ? '' : '1' }) %>" title="Devices whose agent reports an antivirus, anti-spyware or firewall problem<%= _secKnown ? '' : ' - none reporting yet (agent v1.0.24 rolls this out)' %>"><div class="n<%= _secBad ? ' bad' : '' %>"><%= _secBad %></div><div class="l">security attention</div><div class="h"><%= filters.sec ? 'filtering - click to clear' : 'click to filter' %></div></a>
   <% if (unmatchedCount > 0) { %>
   <a class="tile" href="/assets/unmatched" style="text-decoration:none;color:inherit;"><div class="n" style="color:var(--warn-fg);"><%= unmatchedCount %></div><div class="l">unmatched — click to fix</div></a>
   <% } %>
@@ -181,15 +178,16 @@ function tileHref(over){
   })();
 </script>
 
-<div class="card" style="padding:0;">
+<div class="card" style="padding:0;border-top:3px solid var(--accent);">
   <div class="table-wrap">
-    <table class="table">
+    <table class="table table-lift">
       <thead><tr><th></th><th>Hostname</th><th>Customer</th><th>Type</th><th>Backup</th><th>OS</th><th>Manufacturer / Model</th><th>User</th><th>Last seen</th><th></th></tr></thead>
       <tbody>
         <% if (rows.length===0) { %><tr><td colspan="10"><div class="empty-state">No devices match. Machines appear here as soon as the LumenMSP Agent enrols on them — use "↻ Import from Atera" to pull in the ones that do not have it yet.</div></td></tr><% } %>
-        <% rows.forEach(function(a){ %>
-          <tr>
-            <% var _lv = _isLive(a); %>
+        <% rows.forEach(function(a){
+             var _lv = _isLive(a);
+             var _re = a.security_bad === true ? 're-bad' : a.patch_due ? 're-warn' : (_lv ? 're-ok' : ''); %>
+          <tr class="<%= _re %>">
             <td><span class="dot-live" data-asset="<%= a.id %>" data-agent="<%= a.agent_device_id ? '1' : '' %>" title="<%= _lv ? 'Online - the LumenMSP Agent checked in recently' : (a.agent_device_id ? 'Offline' : 'Offline - no LumenMSP Agent on this machine, so the Portal has no live status for it') %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= _lv ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
             <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/assets') %>"><%= a.hostname || '(unnamed device)' %></a><% if (a.agent_device_id) { %> <img src="/static/img/lumen-agent-16.png" width="14" height="14" alt="LumenMSP Agent" style="vertical-align:-2px;margin-left:5px;" title="LumenMSP Agent<%= a.agent_agent_version ? ' v' + a.agent_agent_version : '' %> — last seen <%= secsAgo(a.agent_seen_secs) %>"><% if (a.agent_agent_version) { %><span class="muted" style="font-size:10.5px;margin-left:3px;">v<%= a.agent_agent_version %></span><% } %><% } %></td>
             <td class="muted"><% if (a.customer_id) { %><a class="row-link" href="/customers/<%= a.customer_id %>#assets"><%= a.customer_name %></a><% } else { %>—<% } %></td>

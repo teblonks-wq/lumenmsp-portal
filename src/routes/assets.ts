@@ -44,6 +44,10 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   // Tri-state agent filter: '1' = has the LumenMSP Agent, '0' = without it (the machines
   // to target for a rollout), '' = either. Kept as a string so "without" is expressible.
   const agentFilter = String(req.query.agent || '').trim();
+  // Estate-health tiles: patching backlog and security attention. Applied AFTER the query
+  // (see below) because the security verdict is judged in Node, not in SQL.
+  const patchOnly = req.query.patch === '1';
+  const secOnly = req.query.sec === '1';
 
   const where: string[] = ['a.customer_id IS NOT NULL', 'a.merged_into_id IS NULL AND a.archived_at IS NULL'];
   const params: any[] = [];
@@ -60,12 +64,15 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   const rows = (await pool.query(
     `SELECT a.*, c.name AS customer_name, c.agent_site_key, ac.full_name AS assigned_name,
             agd.id AS agent_device_id, agd.last_seen_at AS agent_last_seen, agd.agent_version AS agent_agent_version,
-            agd.seen_secs AS agent_seen_secs, agd.mesh_node_id AS agent_mesh_node_id
+            agd.seen_secs AS agent_seen_secs, agd.mesh_node_id AS agent_mesh_node_id,
+            agd.patch_pending AS agent_patch_pending, agd.reboot_required AS agent_reboot_required,
+            agd.security_json AS agent_security_json
      FROM customer_assets a
      LEFT JOIN customers c ON c.id = a.customer_id
      LEFT JOIN customer_contacts ac ON ac.id = a.assigned_contact_id
      LEFT JOIN LATERAL (
        SELECT ag.id, ag.last_seen_at, ag.agent_version, ag.mesh_node_id,
+              ag.patch_pending, ag.reboot_required, ag.security_json,
               EXTRACT(EPOCH FROM (NOW() - ag.last_seen_at)) AS seen_secs FROM agent_devices ag
        WHERE ag.revoked = false AND ag.customer_id = a.customer_id
          AND (ag.id = a.agent_device_id
@@ -78,6 +85,18 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
      ORDER BY c.name, a.hostname`, params
   )).rows;
 
+  // Judge each device's reported security posture once, here - the tile, the row flag and
+  // the sec=1 filter all read the same verdict. Devices that have not reported yet are
+  // null (unknown), and unknown is never counted as bad.
+  for (const r of rows) {
+    r.patch_due = !!(Number(r.agent_patch_pending) > 0 || r.agent_reboot_required);
+    if (r.agent_security_json) {
+      try { r.security_bad = !!deriveSecurity({ security_json: r.agent_security_json }).bad; }
+      catch { r.security_bad = null; }
+    } else r.security_bad = null;
+  }
+  const shown = rows.filter((r: any) => (!patchOnly || r.patch_due) && (!secOnly || r.security_bad === true));
+
   const unmatchedCount = (await pool.query('SELECT COUNT(*)::int AS n FROM customer_assets WHERE customer_id IS NULL AND merged_into_id IS NULL AND archived_at IS NULL')).rows[0].n;
   // Cheap enough to run per page load, and it is the kind of mess that has to be visible
   // to get fixed - a silent duplicate is one somebody remotes onto the wrong copy of.
@@ -89,8 +108,8 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   const backupState = await backupStateByComputer();
 
   res.render('assets/list', {
-    user: req.session.user!, rows, unmatchedCount, duplicateCount, types, customers, backupState,
-    filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentFilter, servers: serversOnly },
+    user: req.session.user!, rows: shown, unmatchedCount, duplicateCount, types, customers, backupState,
+    filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentFilter, servers: serversOnly, patch: patchOnly, sec: secOnly },
     // For the "agent required" copy button: the same keyed one-liner the Agents page hands out.
     baseUrl: req.protocol + '://' + req.get('host'),
     onlineWindowSecs: ONLINE_WINDOW_SECS,

@@ -18,6 +18,29 @@
   </div>
 </div>
 
+<%
+  // Stat band - the book at a glance, tiles into the matching tab. Graph health is
+  // computed from the rows shown, the same way the badge in the column is.
+  var _gOk = 0, _gBad = 0;
+  customers.forEach(function (c) {
+    if (!c.entra_tenant_id) return;
+    if (c.graph_status === 'ok') _gOk++; else _gBad++;
+  });
+  function _chref(st){ return '/customers' + (st ? '?status=' + st : '') + (search ? (st ? '&' : '?') + 'search=' + encodeURIComponent(search) : ''); }
+%>
+<div class="stat-band acc-customers">
+  <a class="tile<%= status==='active' ? ' on' : '' %>" href="<%= _chref(status==='active' ? '' : 'active') %>">
+    <div class="n good"><%= statusCounts.active||0 %></div><div class="l">active customers</div><div class="h"><%= status==='active' ? 'filtering — click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= status==='lead' ? ' on' : '' %>" href="<%= _chref(status==='lead' ? '' : 'lead') %>">
+    <div class="n info"><%= statusCounts.lead||0 %></div><div class="l">leads</div><div class="h"><%= status==='lead' ? 'filtering — click to clear' : 'click to filter' %></div></a>
+  <a class="tile acc-plain<%= status==='inactive' ? ' on' : '' %>" href="<%= _chref(status==='inactive' ? '' : 'inactive') %>">
+    <div class="n"><%= statusCounts.inactive||0 %></div><div class="l">inactive</div><div class="h"><%= status==='inactive' ? 'filtering — click to clear' : 'click to filter' %></div></a>
+  <span class="tile" title="Tenants with full Graph access, of those with a tenant recorded (rows shown)">
+    <div class="n <%= _gBad ? 'warn' : 'good' %>"><%= _gOk %><small> of <%= _gOk + _gBad %></small></div><div class="l">graph connected</div></span>
+  <a class="tile acc-warn" href="/customers/data-missing" title="Customers missing a default domain, address, phone or key contact">
+    <div class="n">&#9998;</div><div class="l">data missing sheet</div><div class="h">open the sheet</div></a>
+</div>
+
 <div class="tabs" style="margin-bottom:16px;">
   <a class="tab-btn <%= status === '' ? 'active' : '' %>" href="/customers<%= search ? '?search=' + encodeURIComponent(search) : '' %>">All <span class="muted">(<%= (statusCounts.active||0)+(statusCounts.lead||0)+(statusCounts.inactive||0) %>)</span></a>
   <a class="tab-btn <%= status === 'active' ? 'active' : '' %>" href="/customers?status=active<%= search ? '&search=' + encodeURIComponent(search) : '' %>">Active <span class="muted">(<%= statusCounts.active || 0 %>)</span></a>
@@ -25,9 +48,9 @@
   <a class="tab-btn <%= status === 'inactive' ? 'active' : '' %>" href="/customers?status=inactive<%= search ? '&search=' + encodeURIComponent(search) : '' %>">Inactive <span class="muted">(<%= statusCounts.inactive || 0 %>)</span></a>
 </div>
 
-<div class="card" style="padding:0;">
+<div class="card" style="padding:0;border-top:3px solid var(--blue-bright);">
   <div class="table-wrap">
-    <table class="table">
+    <table class="table table-lift">
       <thead>
         <tr>
           <th>Account</th>
@@ -45,8 +68,10 @@
         <% if (customers.length === 0) { %>
           <tr><td colspan="9"><div class="empty-state">No customers match.</div></td></tr>
         <% } %>
-        <% customers.forEach(function (c) { %>
-          <tr>
+        <% customers.forEach(function (c) {
+             var _re = c.status==='lead' ? 're-info' : c.status==='inactive' ? 're-dim'
+                     : (c.entra_tenant_id && c.graph_status && c.graph_status !== 'ok') ? 're-warn' : ''; %>
+          <tr class="<%= _re %>">
             <td class="muted"><%= c.account_number || '—' %></td>
             <td><a class="row-link" href="/customers/<%= c.id %>"><%= c.name %></a></td>
             <td>

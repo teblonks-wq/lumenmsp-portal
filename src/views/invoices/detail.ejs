@@ -3,12 +3,17 @@
 <% function sbadge(s){ return s==='paid'?'badge-sent':s==='issued'?'badge-primary':s==='void'?'badge-failed':'badge-inactive'; } %>
 <% function pbadge(s){ return s==='paid'?'badge-sent':s==='pending'?'badge-primary':s==='failed'?'badge-failed':'badge-inactive'; } %>
 
-<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--ok),var(--accent));">
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div>
     <% var _back = (typeof back !== 'undefined' && back) ? back : null; %>
     <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="<%= _back || '/invoices' %>">← <%= _back ? (_back.indexOf('/customers/') === 0 ? 'Back to customer' : 'Back') : 'Invoices' %></a></p>
-    <h1 style="margin:0;"><%= invoice.invoice_number %></h1>
-    <p class="muted" style="margin:4px 0 0;">
+    <p class="doc-kicker">Invoice<% if (invoice.is_recurring) { %> · recurring template<% } %></p>
+    <h1><%= invoice.invoice_number %>
+      <span class="badge <%= sbadge(invoice.status) %>"><%= String(invoice.status||'').charAt(0).toUpperCase()+String(invoice.status||'').slice(1) %></span>
+      <% if (invoice.status !== 'void' && invoice.payment_status) { %><span class="badge <%= pbadge(invoice.payment_status) %>"><%= invoice.payment_status === 'paid' ? 'Paid' : (Number(invoice.balance||0) > 0 && Number(invoice.balance) < Number(invoice.total||0) ? 'Part-paid' : 'Unpaid') %></span><% } %>
+    </h1>
+    <p class="doc-sub">
       <%= invoice.title %>
       <% if (invoice.customer_name) { %> · <a class="row-link" href="/customers/<%= invoice.customer_id %>"><%= invoice.customer_name %></a><% } %>
       <% if (invoice.quote_number) { %> · from quote <a class="row-link" href="/quotes/<%= invoice.quote_id %>"><%= invoice.quote_number %></a><% } %>
@@ -43,6 +48,15 @@
       </div>
     </details>
   </div>
+</div>
+<% var _od = invoice.due_date && new Date(invoice.due_date) < new Date(new Date().toDateString()) && invoice.payment_status !== 'paid' && invoice.status !== 'void' && invoice.status !== 'draft'; %>
+<div class="doc-stats">
+  <div class="ds"><div class="n tabnum"><%= money(invoice.total) %></div><div class="l">Total inc. VAT</div></div>
+  <div class="ds"><div class="n <%= Number(invoice.balance||0) > 0 ? (_od ? 'bad' : 'warn') : 'good' %>"><%= Number(invoice.balance||0) > 0 ? money(invoice.balance) : (invoice.payment_status === 'paid' ? 'Paid' : money(0)) %></div><div class="l">Outstanding</div></div>
+  <div class="ds"><div class="n"><%= invoice.issue_date ? new Date(invoice.issue_date).toLocaleDateString('en-GB') : '—' %></div><div class="l">Issued</div></div>
+  <div class="ds"><div class="n <%= _od ? 'bad' : '' %>"><%= invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('en-GB') : '—' %></div><div class="l"><%= _od ? 'Due — overdue' : 'Due' %></div></div>
+  <div class="ds"><div class="n" style="font-size:15px;line-height:1.5;"><%= invoice.invoice_scheme || '—' %> · <%= invoice.payment_method || '—' %><% if (invoice.gocardless_mandate_id) { %> · DD<% } %></div><div class="l">Scheme · payment</div></div>
+</div>
 </div>
 
 <!-- ── Lightbox modals (Cancel / Log overpayment / Make recurring) ── -->
@@ -167,13 +181,6 @@
     <% if (invoice.contract_type==='IT') { %><a class="btn" href="/invoices/<%= invoice.id %>/licenses" style="font-size:12px;padding:3px 10px;">Licences</a><% } %></p>
 </div>
 <% } %>
-
-<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
-  <div class="card"><div class="card-header"><h2>Issued</h2></div><div><%= invoice.issue_date ? new Date(invoice.issue_date).toLocaleDateString('en-GB') : '—' %></div></div>
-  <div class="card"><div class="card-header"><h2>Due</h2></div><div><%= invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('en-GB') : '—' %></div></div>
-  <div class="card"><div class="card-header"><h2>Scheme</h2></div><div><%= invoice.invoice_scheme %> · <%= invoice.payment_method %></div></div>
-  <div class="card"><div class="card-header"><h2>Total</h2></div><div class="stat" style="font-size:24px;"><%= money(invoice.total) %></div></div>
-</div>
 
 <div class="card">
   <div class="card-header"><h2>Payment &amp; references</h2></div>

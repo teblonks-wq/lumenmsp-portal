@@ -10,7 +10,7 @@
    } %>
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-  <div><h1>Invoices</h1><p class="muted"><%= invoices.length %> shown · <%= money(total) %><% if (Number(outstanding) > 0) { %> · <strong style="color:var(--warn-fg);"><%= money(outstanding) %> outstanding</strong><% } %><% if (period && period.from) { %> · <%= period.label %><% } %></p></div>
+  <div><h1>Invoices</h1><p class="muted"><%= invoices.length %> shown<% if (period && period.from) { %> · <%= period.label %><% } %></p></div>
   <button class="btn" type="button" onclick="finOpen()" style="color:var(--accent-deep);border-color:var(--accent-line);" title="Finance Agent — customer-wide money questions: every invoice, every GoCardless collection, credits, reconciliation pre-computed">&pound; Finance Agent</button>
   <a class="btn btn-primary" href="/invoices/new">+ New invoice</a>
 </div>
@@ -22,6 +22,32 @@
     return '/invoices' + (a.length?'?'+a.join('&'):''); }
 %>
 
+<%
+  // Stat band. Money figures follow the current filter (they come from the rows shown),
+  // so drilling into one customer or one month keeps the numbers honest. Overdue is
+  // computed the same way the badge on each row is - one definition, not two.
+  var _today = new Date(new Date().toDateString());
+  var _overdue = 0, _overdueVal = 0;
+  invoices.forEach(function (i) {
+    if (i.status === 'void' || i.payment_status === 'paid' || !(Number(i.balance) > 0 || i.payment_status !== 'paid')) return;
+    if (i.due_date && new Date(i.due_date) < _today && i.status !== 'draft') { _overdue++; _overdueVal += Number(i.balance || i.total) || 0; }
+  });
+%>
+<div class="stat-band acc-invoices">
+  <a class="tile" href="<%= qs({status:'', search:'', paid:''}) %>" title="Everything in the current period">
+    <div class="n"><%= money(total) %></div><div class="l">billed · shown</div><div class="h">clear filters</div></a>
+  <a class="tile acc-warn<%= paid==='unpaid' ? ' on' : '' %>" href="<%= qs({paid: paid==='unpaid' ? '' : 'unpaid'}) %>" title="Invoices still carrying a balance">
+    <div class="n <%= Number(outstanding) > 0 ? 'warn' : '' %>"><%= money(outstanding) %></div><div class="l">outstanding</div><div class="h"><%= paid==='unpaid' ? 'filtering — click to clear' : 'show unpaid' %></div></a>
+  <a class="tile acc-bad" href="<%= qs({paid:'unpaid'}) %>" title="Unpaid and past the due date, in the rows shown">
+    <div class="n <%= _overdue ? 'bad' : '' %>"><%= _overdue %><% if (_overdueVal) { %> <small><%= money(_overdueVal) %></small><% } %></div><div class="l">overdue</div><div class="h">show unpaid</div></a>
+  <a class="tile acc-plain<%= status==='draft' ? ' on' : '' %>" href="<%= qs({status: status==='draft' ? '' : 'draft'}) %>">
+    <div class="n"><%= statusCounts.draft||0 %></div><div class="l">draft</div><div class="h"><%= status==='draft' ? 'filtering — click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= status==='issued' ? ' on' : '' %>" href="<%= qs({status: status==='issued' ? '' : 'issued'}) %>">
+    <div class="n info"><%= statusCounts.issued||0 %></div><div class="l">issued</div><div class="h"><%= status==='issued' ? 'filtering — click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= status==='paid' ? ' on' : '' %>" href="<%= qs({status: status==='paid' ? '' : 'paid'}) %>">
+    <div class="n good"><%= statusCounts.paid||0 %></div><div class="l">paid</div><div class="h"><%= status==='paid' ? 'filtering — click to clear' : 'click to filter' %></div></a>
+</div>
+
 <!-- Status tabs -->
 <div class="tabs" style="margin-bottom:14px;">
   <a class="tab-btn <%= status==='' ? 'active' : '' %>" href="<%= qs({status:''}) %>">All</a>
@@ -30,69 +56,91 @@
   <% }); %>
 </div>
 
-<!-- Filter bar: source + date period + search -->
-<form method="get" action="/invoices" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;">
+<%
+  // How many of the folded filters are live - the count sits on the Filters button so a
+  // narrowed list can never masquerade as the whole picture.
+  var _folded = 0;
+  [source, paid, dd, (typeof gc!=='undefined'?gc:''), (typeof qb!=='undefined'?qb:''), (typeof recurring!=='undefined'?recurring:''), (typeof emailed!=='undefined'?emailed:'')].forEach(function(v){ if (v) _folded++; });
+%>
+<!-- Toolbar: search + period stay out; everything else folds into one Filters panel -->
+<form method="get" action="/invoices" class="toolbar" autocomplete="off">
   <input type="hidden" name="status" value="<%= status %>">
-  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Source</label>
-    <select class="input" name="source" style="width:auto;" onchange="this.form.submit()">
-      <option value="" <%= source===''?'selected':'' %>>All invoices</option>
-      <option value="portal" <%= source==='portal'?'selected':'' %>>Portal-native</option>
-      <option value="legacy" <%= source==='legacy'?'selected':'' %>>Legacy (QuickBooks) (<%= legacyCount %>)</option>
-      <% if (unmatchedCount) { %><option value="nocustomer" <%= source==='nocustomer'?'selected':'' %>>⚠ No customer (<%= unmatchedCount %>)</option><% } %>
-    </select>
+  <input class="input grow" type="search" name="search" value="<%= search %>" placeholder="Search number, title, customer, line item…" style="min-width:240px;">
+  <select class="input" name="period" id="inv-period" style="width:auto;" onchange="invPeriodToggle();this.form.submit()">
+    <% periodOptions.forEach(function(o){ %><option value="<%= o.key %>" <%= (period&&period.key)===o.key?'selected':'' %>><%= o.label %></option><% }); %>
+  </select>
+  <span class="inv-custom" style="<%= (period&&period.key)==='custom'?'':'display:none;' %>"><input class="input" type="date" name="from" value="<%= from %>" title="From"></span>
+  <span class="inv-custom" style="<%= (period&&period.key)==='custom'?'':'display:none;' %>"><input class="input" type="date" name="to" value="<%= to %>" title="To"></span>
+  <div class="filters-pop">
+    <button class="btn" type="button" id="invFiltersBtn" aria-expanded="false">Filters<% if (_folded) { %><span class="filters-count"><%= _folded %></span><% } %></button>
+    <div class="filters-panel" id="invFiltersPanel">
+      <label class="fl">Source
+        <select class="input" name="source" onchange="this.form.submit()">
+          <option value="" <%= source===''?'selected':'' %>>All invoices</option>
+          <option value="portal" <%= source==='portal'?'selected':'' %>>Portal-native</option>
+          <option value="legacy" <%= source==='legacy'?'selected':'' %>>Legacy (QuickBooks) (<%= legacyCount %>)</option>
+          <% if (unmatchedCount) { %><option value="nocustomer" <%= source==='nocustomer'?'selected':'' %>>&#9888; No customer (<%= unmatchedCount %>)</option><% } %>
+        </select>
+      </label>
+      <label class="fl">Payment
+        <select class="input" name="paid" onchange="this.form.submit()">
+          <option value="" <%= paid===''?'selected':'' %>>All</option>
+          <option value="unpaid" <%= paid==='unpaid'?'selected':'' %>>Unpaid</option>
+          <option value="paid" <%= paid==='paid'?'selected':'' %>>Paid</option>
+        </select>
+      </label>
+      <label class="fl">Direct Debit
+        <select class="input" name="dd" onchange="this.form.submit()">
+          <option value="" <%= dd===''?'selected':'' %>>Any</option>
+          <option value="yes" <%= dd==='yes'?'selected':'' %>>DD only</option>
+          <option value="no" <%= dd==='no'?'selected':'' %>>Non-DD</option>
+        </select>
+      </label>
+      <label class="fl">Sent to GC
+        <select class="input" name="gc" onchange="this.form.submit()">
+          <option value="" <%= (typeof gc==='undefined'||gc==='')?'selected':'' %>>Any</option>
+          <option value="yes" <%= gc==='yes'?'selected':'' %>>Sent to GC</option>
+          <option value="no" <%= gc==='no'?'selected':'' %>>Not sent</option>
+        </select>
+      </label>
+      <label class="fl">Sent to QB
+        <select class="input" name="qb" onchange="this.form.submit()">
+          <option value="" <%= (typeof qb==='undefined'||qb==='')?'selected':'' %>>Any</option>
+          <option value="yes" <%= qb==='yes'?'selected':'' %>>Sent to QB</option>
+          <option value="no" <%= qb==='no'?'selected':'' %>>Not sent</option>
+        </select>
+      </label>
+      <label class="fl">Show
+        <select class="input" name="recurring" onchange="this.form.submit()">
+          <option value="" <%= (typeof recurring==='undefined'||recurring==='')?'selected':'' %>>Invoices</option>
+          <option value="yes" <%= (typeof recurring!=='undefined'&&recurring==='yes')?'selected':'' %>>&#9851; Templates</option>
+        </select>
+      </label>
+      <label class="fl">Emailed
+        <select class="input" name="emailed" onchange="this.form.submit()">
+          <option value="" <%= (typeof emailed==='undefined'||emailed==='')?'selected':'' %>>Any</option>
+          <option value="yes" <%= emailed==='yes'?'selected':'' %>>Emailed</option>
+          <option value="no" <%= emailed==='no'?'selected':'' %>>Not emailed</option>
+        </select>
+      </label>
+      <div class="fp-foot">
+        <% if (_folded) { %><a class="btn" href="<%= qs({source:'',paid:'',dd:'',gc:'',qb:'',recurring:'',emailed:''}) %>">Reset these</a><% } %>
+        <button class="btn btn-primary" type="submit">Apply</button>
+      </div>
+    </div>
   </div>
-  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Payment</label>
-    <select class="input" name="paid" style="width:auto;" onchange="this.form.submit()">
-      <option value="" <%= paid===''?'selected':'' %>>All</option>
-      <option value="unpaid" <%= paid==='unpaid'?'selected':'' %>>Unpaid</option>
-      <option value="paid" <%= paid==='paid'?'selected':'' %>>Paid</option>
-    </select>
-  </div>
-  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Direct Debit</label>
-    <select class="input" name="dd" style="width:auto;" onchange="this.form.submit()">
-      <option value="" <%= dd===''?'selected':'' %>>Any</option>
-      <option value="yes" <%= dd==='yes'?'selected':'' %>>DD only</option>
-      <option value="no" <%= dd==='no'?'selected':'' %>>Non-DD</option>
-    </select>
-  </div>
-  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Sent to GC</label>
-    <select class="input" name="gc" style="width:auto;" onchange="this.form.submit()">
-      <option value="" <%= (typeof gc==='undefined'||gc==='')?'selected':'' %>>Any</option>
-      <option value="yes" <%= gc==='yes'?'selected':'' %>>Sent to GC</option>
-      <option value="no" <%= gc==='no'?'selected':'' %>>Not sent</option>
-    </select>
-  </div>
-  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Sent to QB</label>
-    <select class="input" name="qb" style="width:auto;" onchange="this.form.submit()">
-      <option value="" <%= (typeof qb==='undefined'||qb==='')?'selected':'' %>>Any</option>
-      <option value="yes" <%= qb==='yes'?'selected':'' %>>Sent to QB</option>
-      <option value="no" <%= qb==='no'?'selected':'' %>>Not sent</option>
-    </select>
-  </div>
-  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Show</label>
-    <select class="input" name="recurring" style="width:auto;" onchange="this.form.submit()">
-      <option value="" <%= (typeof recurring==='undefined'||recurring==='')?'selected':'' %>>Invoices</option>
-      <option value="yes" <%= (typeof recurring!=='undefined'&&recurring==='yes')?'selected':'' %>>♻ Templates</option>
-    </select>
-  </div>
-  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Emailed</label>
-    <select class="input" name="emailed" style="width:auto;" onchange="this.form.submit()">
-      <option value="" <%= (typeof emailed==='undefined'||emailed==='')?'selected':'' %>>Any</option>
-      <option value="yes" <%= emailed==='yes'?'selected':'' %>>Emailed</option>
-      <option value="no" <%= emailed==='no'?'selected':'' %>>Not emailed</option>
-    </select>
-  </div>
-  <div class="form-group" style="margin:0;"><label style="font-size:12px;">Period</label>
-    <select class="input" name="period" id="inv-period" style="width:auto;" onchange="invPeriodToggle();this.form.submit()">
-      <% periodOptions.forEach(function(o){ %><option value="<%= o.key %>" <%= (period&&period.key)===o.key?'selected':'' %>><%= o.label %></option><% }); %>
-    </select>
-  </div>
-  <div class="form-group inv-custom" style="margin:0;<%= (period&&period.key)==='custom'?'':'display:none;' %>"><label style="font-size:12px;">From</label><input class="input" type="date" name="from" value="<%= from %>"></div>
-  <div class="form-group inv-custom" style="margin:0;<%= (period&&period.key)==='custom'?'':'display:none;' %>"><label style="font-size:12px;">To</label><input class="input" type="date" name="to" value="<%= to %>"></div>
-  <input class="input" type="search" name="search" value="<%= search %>" placeholder="Search number, title, customer, line item…" style="min-width:220px;">
-  <button class="btn" type="submit">Filter</button>
-  <% if (status||search||source||paid||dd||(period&&period.from)) { %><a class="btn" href="/invoices">Clear</a><% } %>
+  <button class="btn" type="submit">Search</button>
+  <% if (status||search||source||paid||dd||(period&&period.from)) { %><a class="btn" href="/invoices">Clear all</a><% } %>
 </form>
+<script>
+  (function(){
+    var btn = document.getElementById('invFiltersBtn'), panel = document.getElementById('invFiltersPanel');
+    if (!btn || !panel) return;
+    btn.addEventListener('click', function(e){ e.stopPropagation(); panel.classList.toggle('on'); btn.setAttribute('aria-expanded', panel.classList.contains('on') ? 'true' : 'false'); });
+    document.addEventListener('click', function(e){ if (!panel.contains(e.target) && e.target !== btn) panel.classList.remove('on'); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') panel.classList.remove('on'); });
+  })();
+</script>
 <script>
   function invPeriodToggle(){ var v=document.getElementById('inv-period').value; document.querySelectorAll('.inv-custom').forEach(function(e){ e.style.display = v==='custom'?'':'none'; }); }
 </script>
@@ -190,14 +238,17 @@
   })();
 </script>
 
-<div class="card" style="padding:0;">
+<div class="card" style="padding:0;border-top:3px solid var(--ok);">
   <div class="table-wrap">
-    <table class="table">
+    <table class="table table-lift">
       <thead><tr><th style="width:30px;"><input type="checkbox" id="batchAll" title="Select all"></th><th>Number</th><th>Title</th><th>Customer</th><th>Paid?</th><th style="text-align:right;">Total</th><th style="text-align:right;">Outstanding</th><th>Issued</th><th style="text-align:center;">Sync</th></tr></thead>
       <tbody>
         <% if (invoices.length===0) { %><tr><td colspan="9"><div class="empty-state">No invoices.</div></td></tr><% } %>
-        <% invoices.forEach(function(i){ var on='var(--accent)', off='var(--line-strong)'; %>
-          <tr>
+        <% invoices.forEach(function(i){ var on='var(--accent)', off='var(--line-strong)';
+             var ps = pstate(i);
+             var _re = ps.label==='Overdue' ? 're-bad' : ps.label==='Part-paid' ? 're-warn'
+                     : ps.label==='Paid' ? 're-ok' : ps.label==='Void' ? 're-dim' : ''; %>
+          <tr class="<%= _re %>">
             <td style="text-align:center;"><input type="checkbox" class="batch-chk" name="ids" value="<%= i.id %>" form="batchForm"></td>
             <td><a class="row-link" href="/invoices/<%= i.id %>"><%= i.invoice_number %></a><% if (i.is_recurring) { %> <span title="Recurring template">♻</span><% } %><% if (i.is_legacy) { %> <span class="badge badge-inactive" title="Imported from QuickBooks" style="font-size:10px;">Legacy</span><% } %></td>
             <td><%= i.title %>
@@ -207,11 +258,11 @@
             </td>
             <td class="muted"><% if (i.customer_id) { %><a class="row-link" href="/customers/<%= i.customer_id %>"><%= i.customer_name %></a><% } else { %>—<% } %></td>
             <td>
-              <% var ps = pstate(i); %><span class="badge <%= ps.cls %>"><%= ps.label %></span>
+              <span class="badge <%= ps.cls %>"><%= ps.label %></span>
               <% if (i.gocardless_mandate_id) { %><br><span class="muted" style="font-size:11px;">Direct Debit</span><% } %>
             </td>
-            <td style="text-align:right;"><%= money(i.total) %></td>
-            <td style="text-align:right;"><% if (Number(i.balance) > 0) { %><span style="color:var(--warn-fg);font-weight:600;"><%= money(i.balance) %></span><% } else if (i.payment_status==='paid') { %><span class="muted">—</span><% } else { %><span class="muted"><%= money(i.total) %></span><% } %></td>
+            <td class="money"><%= money(i.total) %></td>
+            <td class="money"><% if (Number(i.balance) > 0) { %><span style="color:var(--warn-fg);"><%= money(i.balance) %></span><% } else if (i.payment_status==='paid') { %><span class="muted">—</span><% } else { %><span class="muted"><%= money(i.total) %></span><% } %></td>
             <td class="muted"><%= i.issue_date ? new Date(i.issue_date).toLocaleDateString('en-GB') : '—' %></td>
             <td style="text-align:center;white-space:nowrap;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.emailed ? 'var(--blue)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title>Emailed to customer</title><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>

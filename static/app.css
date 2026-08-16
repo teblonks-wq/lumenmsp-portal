@@ -708,3 +708,102 @@ a.card:hover { transform: translateY(-2px); box-shadow: 0 14px 30px rgba(2,6,23,
 
 /* Badges — a hair bolder so status reads at a glance. */
 .badge { font-weight: 700; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   V4.2 Page lift (2026-08-15) — the dashboard's language on the working pages.
+   Shared components so invoices, quotes, assets and customers read as siblings
+   of the dashboard rather than its paperwork: a clickable stat band up top,
+   module accent colours, filters folded into one panel, lifted tables and a
+   hero header on document pages. Tokens only — every theme keeps working.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Module accents — the same colours the dashboard cards carry */
+.acc-invoices  { --tile-accent: var(--ok); }
+.acc-quotes    { --tile-accent: var(--violet); }
+.acc-assets    { --tile-accent: var(--accent); }
+.acc-customers { --tile-accent: var(--blue-bright); }
+.acc-warn      { --tile-accent: var(--warn); }
+.acc-bad       { --tile-accent: var(--bad); }
+.acc-plain     { --tile-accent: var(--line-strong); }
+
+/* Stat band — clickable KPI tiles (the assets hero, promoted estate-wide) */
+.stat-band { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:0 0 16px; }
+.stat-band .tile { position:relative; background:var(--card); border:1px solid var(--card-border, var(--line));
+                   border-radius:12px; padding:13px 16px 11px 18px; display:block; text-decoration:none; color:inherit;
+                   box-shadow:var(--card-shadow, none); overflow:hidden;
+                   transition:border-color .12s, box-shadow .12s, transform .12s; }
+.stat-band .tile::before { content:''; position:absolute; top:0; left:0; bottom:0; width:4px;
+                           background:var(--tile-accent, var(--accent)); opacity:.9; }
+.stat-band a.tile:hover { border-color:var(--tile-accent, var(--accent)); box-shadow:0 8px 20px -8px rgba(2,6,23,.25); transform:translateY(-1px); }
+.stat-band a.tile:focus-visible { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--focus-ring); }
+.stat-band .tile.on { border-color:var(--tile-accent, var(--accent)); box-shadow:inset 0 0 0 1px var(--tile-accent, var(--accent)); }
+.stat-band .tile .n { font-size:26px; font-weight:800; line-height:1.05; letter-spacing:-.5px; font-variant-numeric:tabular-nums; color:var(--ink); }
+.stat-band .tile .n small { font-size:13px; font-weight:600; color:var(--muted); letter-spacing:0; }
+.stat-band .tile .l { font-size:10.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:4px; }
+.stat-band .tile .h { font-size:11px; font-weight:600; color:var(--accent); margin-top:5px; visibility:hidden; }
+.stat-band a.tile:hover .h, .stat-band .tile.on .h { visibility:visible; }
+.stat-band .n.good { color:var(--ok-fg); } .stat-band .n.warn { color:var(--warn-fg); }
+.stat-band .n.bad { color:var(--bad-fg); } .stat-band .n.info { color:var(--accent); }
+.stat-band .n.violet { color:var(--violet-deep); }
+html.theme-carbon .stat-band .tile { background:linear-gradient(180deg,#111a2c,#0d1422); }
+html.theme-carbon .stat-band .n.good { color:#4ade80; } html.theme-carbon .stat-band .n.warn { color:#fbbf24; }
+html.theme-carbon .stat-band .n.bad { color:#f87171; } html.theme-carbon .stat-band .n.violet { color:#a78bfa; }
+
+/* Toolbar + folded Filters panel */
+.toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 0 14px; }
+.toolbar .grow { flex:1; }
+.filters-pop { position:relative; }
+.filters-count { display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px;
+                 padding:0 5px; margin-left:6px; border-radius:9px; background:var(--accent); color:#fff;
+                 font-size:11px; font-weight:700; vertical-align:1px; }
+.filters-panel { display:none; position:absolute; right:0; top:calc(100% + 6px); z-index:80; background:var(--card);
+                 border:1px solid var(--line-strong); border-radius:12px; box-shadow:0 18px 44px rgba(2,6,23,.22);
+                 padding:16px; width:min(560px, 92vw); }
+.filters-panel.on { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px 14px; }
+.filters-panel label.fl { font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; display:block; }
+.filters-panel label.fl .input { width:100%; margin-top:4px; font-weight:400; text-transform:none; letter-spacing:0; }
+.filters-panel .fp-foot { grid-column:1 / -1; display:flex; gap:8px; justify-content:flex-end; border-top:1px solid var(--line); padding-top:12px; }
+
+/* Lifted tables */
+.table-lift thead th { position:sticky; top:0; background:var(--card); z-index:5; box-shadow:0 1px 0 var(--line); }
+html.theme-carbon .table-lift thead th { background:#101827; }
+.table-lift tbody tr { transition:background .1s ease; }
+.table-lift tbody tr:hover { background:var(--surface-2); }
+html.theme-carbon .table-lift tbody tr:hover { background:rgba(148,163,184,.07); }
+.table-lift .money { text-align:right; font-variant-numeric:tabular-nums; font-weight:600; white-space:nowrap; }
+.table-lift .money.muted, .table-lift td.money .muted { font-weight:400; }
+/* Status edge on a row — colour along the left, matching the badge it carries */
+.table-lift tr.re-ok   > td:first-child { box-shadow:inset 3px 0 0 var(--ok); }
+.table-lift tr.re-warn > td:first-child { box-shadow:inset 3px 0 0 var(--warn); }
+.table-lift tr.re-bad  > td:first-child { box-shadow:inset 3px 0 0 var(--bad-bright); }
+.table-lift tr.re-info > td:first-child { box-shadow:inset 3px 0 0 var(--blue-bright); }
+.table-lift tr.re-violet > td:first-child { box-shadow:inset 3px 0 0 var(--violet); }
+.table-lift tr.re-dim  > td { opacity:.62; }
+.table-lift tr.re-dim:hover > td { opacity:1; }
+
+/* Hero header for document pages (invoice, quote, customer, device) */
+.doc-hero { position:relative; background:var(--card); border:1px solid var(--card-border, var(--line));
+            border-radius:var(--radius-card); box-shadow:var(--card-shadow, none);
+            padding:20px 24px 18px; margin-bottom:16px; overflow:hidden; }
+.doc-hero::before { content:''; position:absolute; top:0; left:0; right:0; height:4px;
+                    background:var(--hero-accent, var(--grad)); }
+html.theme-carbon .doc-hero { background:linear-gradient(180deg,#111a2c,#0d1422); }
+.doc-hero .doc-kicker { font-size:11px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); margin:0 0 2px; }
+.doc-hero h1 { margin:0; display:flex; align-items:center; gap:12px; flex-wrap:wrap; letter-spacing:-.4px; }
+.doc-hero .doc-sub { margin:5px 0 0; color:var(--muted); font-size:14px; }
+.doc-hero .doc-stats { display:flex; gap:10px 28px; flex-wrap:wrap; margin-top:16px; padding-top:14px; border-top:1px solid var(--line-soft); }
+.doc-hero .ds { min-width:110px; }
+.doc-hero .ds .n { font-size:21px; font-weight:800; letter-spacing:-.4px; line-height:1.1; font-variant-numeric:tabular-nums; color:var(--ink); }
+.doc-hero .ds .l { font-size:10.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:3px; }
+.doc-hero .ds .n.good { color:var(--ok-fg); } .doc-hero .ds .n.warn { color:var(--warn-fg); }
+.doc-hero .ds .n.bad { color:var(--bad-fg); } .doc-hero .ds .n.info { color:var(--accent); }
+html.theme-carbon .doc-hero .ds .n.good { color:#4ade80; } html.theme-carbon .doc-hero .ds .n.warn { color:#fbbf24; }
+html.theme-carbon .doc-hero .ds .n.bad { color:#f87171; }
+
+/* Big money figure that stays aligned (invoice totals etc.) */
+.tabnum { font-variant-numeric:tabular-nums; }
+
+/* badge('invoiced') has emitted .badge-active since the quotes page shipped, but the
+   class was never defined - it rendered as an unstyled pill. Same look as badge-sent. */
+.badge-active { background: var(--ok-bg); color: var(--ok-fg); }
+html.theme-carbon .badge-active { border: 1px solid var(--ok-line); }

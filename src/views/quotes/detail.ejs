@@ -4,12 +4,14 @@
 <% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
 <% function mcol(p){ return p>=20 ? 'var(--ok-fg)' : p>0 ? 'var(--warn-fg)' : 'var(--bad-fg)'; } %>
 
-<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--violet),var(--accent));">
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div>
     <% var _back = (typeof back !== 'undefined' && back) ? back : null; %>
     <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="<%= _back || '/quotes' %>">← <%= _back ? (_back.indexOf('/customers/') === 0 ? 'Back to customer' : 'Back') : 'Quotes' %></a></p>
-    <h1 style="margin:0;display:flex;align-items:center;gap:12px;"><%= quote.quote_number %> <span class="badge <%= badge(quote.status) %>"><%= quote.status.charAt(0).toUpperCase()+quote.status.slice(1) %></span></h1>
-    <p class="muted" style="margin:4px 0 0;"><%= quote.title %><% if (quote.customer_name) { %> · <a class="row-link" href="/customers/<%= quote.customer_id %>"><%= quote.customer_name %></a><% } %><% if (quote.ticket_number) { %> · <a class="row-link" href="/tickets/<%= quote.inbox_ticket_id %>">Case <%= quote.ticket_number %></a><% } %></p>
+    <p class="doc-kicker">Quote</p>
+    <h1><%= quote.quote_number %> <span class="badge <%= badge(quote.status) %>"><%= quote.status.charAt(0).toUpperCase()+quote.status.slice(1) %></span></h1>
+    <p class="doc-sub"><%= quote.title %><% if (quote.customer_name) { %> · <a class="row-link" href="/customers/<%= quote.customer_id %>"><%= quote.customer_name %></a><% } %><% if (quote.ticket_number) { %> · <a class="row-link" href="/tickets/<%= quote.inbox_ticket_id %>">Case <%= quote.ticket_number %></a><% } %></p>
   </div>
   <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
     <a class="btn" href="/quotes/<%= quote.id %>/edit">Edit</a>
@@ -36,6 +38,21 @@
     <form method="post" action="/quotes/<%= quote.id %>/delete" onsubmit="return confirm('Move this quote to the recycle bin?');" style="margin:0;"><button class="btn" type="submit" style="color:var(--lumen-dark);">Delete</button></form>
   </div>
 </div>
+<%
+  // Margin, judged the same way the profit table below judges it - one definition.
+  var _hb=0, _hs=0;
+  items.forEach(function(it){ var q=Number(it.quantity)||0; _hb+=(Number(it.buy_price)||0)*q; _hs+=(Number(it.unit_price)||0)*q; });
+  var _hm=_hs-_hb, _hp=_hs>0?(_hm/_hs*100):0;
+%>
+<div class="doc-stats">
+  <div class="ds"><div class="n tabnum"><%= money(quote.total) %></div><div class="l">Total inc. VAT</div></div>
+  <div class="ds"><div class="n <%= _hm>=0 ? (_hp>=20 ? 'good' : 'warn') : 'bad' %>"><%= _hp.toFixed(1) %>%<% if (_hs) { %> <small style="font-size:12px;font-weight:600;color:var(--muted);"><%= money(_hm) %></small><% } %></div><div class="l">Margin — internal</div></div>
+  <div class="ds"><div class="n"><%= quote.issue_date ? new Date(quote.issue_date).toLocaleDateString('en-GB') : '—' %></div><div class="l">Issued</div></div>
+  <% var _exp = quote.valid_until && new Date(quote.valid_until) < new Date() && quote.status==='sent'; %>
+  <div class="ds"><div class="n <%= _exp ? 'bad' : '' %>"><%= quote.valid_until ? new Date(quote.valid_until).toLocaleDateString('en-GB') : '—' %></div><div class="l"><%= _exp ? 'Valid until — expired' : 'Valid until' %></div></div>
+  <% if (quote.accept_token) { %><div class="ds"><div class="n info"><%= quote.view_count||0 %></div><div class="l">Customer views</div></div><% } %>
+</div>
+</div>
 
 <% if ((typeof invoices !== 'undefined' ? invoices : []).length) { %>
 <div class="alert" style="background:var(--tint-teal);border:1px solid var(--ok-line);">
@@ -51,12 +68,6 @@
   <span class="muted">Viewed <%= quote.view_count %> time(s)</span>
 </div>
 <% } %>
-
-<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
-  <div class="card"><div class="card-header"><h2>Issued</h2></div><div><%= quote.issue_date ? new Date(quote.issue_date).toLocaleDateString('en-GB') : '—' %></div></div>
-  <div class="card"><div class="card-header"><h2>Valid until</h2></div><div><%= quote.valid_until ? new Date(quote.valid_until).toLocaleDateString('en-GB') : '—' %></div></div>
-  <div class="card"><div class="card-header"><h2>Total (inc. VAT)</h2></div><div class="stat" style="font-size:24px;"><%= money(quote.total) %></div></div>
-</div>
 
 <div class="card" style="padding:0;">
   <div class="card-header" style="padding:20px 24px 0;"><h2>Line items</h2></div>

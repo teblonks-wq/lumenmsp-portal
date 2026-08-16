@@ -28,6 +28,31 @@
 
 <% if (typeof msg !== 'undefined' && msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
 
+<%
+  var _pipe = 0, _won = 0, _openN = 0;
+  quotes.forEach(function (q) {
+    var t = Number(q.total) || 0;
+    if (q.status === 'sent') { _pipe += t; _openN++; }
+    else if (q.status === 'draft') { _openN++; }
+    else if (q.status === 'accepted' || q.status === 'invoiced') { _won += t; }
+  });
+  function _qhref(st){ return '/quotes' + (st ? '?status=' + st : '') + (search ? (st ? '&' : '?') + 'search=' + encodeURIComponent(search) : ''); }
+%>
+<div class="stat-band acc-quotes">
+  <a class="tile" href="<%= _qhref('') %>" title="Everything shown">
+    <div class="n violet">&pound;<%= (Number(_pipe)||0).toLocaleString('en-GB', {maximumFractionDigits:0}) %></div><div class="l">pipeline · sent</div><div class="h">show all</div></a>
+  <a class="tile acc-invoices" href="<%= _qhref('accepted') %>" title="Accepted or invoiced, in the rows shown">
+    <div class="n good">&pound;<%= (Number(_won)||0).toLocaleString('en-GB', {maximumFractionDigits:0}) %></div><div class="l">won value</div><div class="h">show accepted</div></a>
+  <a class="tile acc-plain<%= status==='draft' ? ' on' : '' %>" href="<%= _qhref(status==='draft' ? '' : 'draft') %>">
+    <div class="n"><%= statusCounts.draft||0 %></div><div class="l">draft</div><div class="h"><%= status==='draft' ? 'filtering — click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= status==='sent' ? ' on' : '' %>" href="<%= _qhref(status==='sent' ? '' : 'sent') %>">
+    <div class="n info"><%= statusCounts.sent||0 %></div><div class="l">sent</div><div class="h"><%= status==='sent' ? 'filtering — click to clear' : 'click to filter' %></div></a>
+  <a class="tile<%= status==='accepted' ? ' on' : '' %>" href="<%= _qhref(status==='accepted' ? '' : 'accepted') %>">
+    <div class="n good"><%= statusCounts.accepted||0 %></div><div class="l">accepted</div><div class="h"><%= status==='accepted' ? 'filtering — click to clear' : 'click to filter' %></div></a>
+  <a class="tile acc-bad<%= status==='lost' ? ' on' : '' %>" href="<%= _qhref(status==='lost' ? '' : 'lost') %>">
+    <div class="n"><%= statusCounts.lost||0 %></div><div class="l">lost</div><div class="h"><%= status==='lost' ? 'filtering — click to clear' : 'click to filter' %></div></a>
+</div>
+
 <div class="tabs" style="margin-bottom:16px;">
   <a class="tab-btn <%= status==='' ? 'active' : '' %>" href="/quotes">All</a>
   <% ['draft','sent','accepted','invoiced','lost'].forEach(function(s){ %>
@@ -51,9 +76,9 @@
   <a class="btn" href="#" onclick="bulkClear();return false;" style="margin-left:auto;">Clear</a>
 </div>
 
-<div class="card" style="padding:0;">
+<div class="card" style="padding:0;border-top:3px solid var(--violet);">
   <div class="table-wrap">
-    <table class="table">
+    <table class="table table-lift">
       <thead>
         <tr>
           <th class="tick"><input type="checkbox" id="tickAll" onclick="bulkAll(this.checked)" title="Select all"></th>
@@ -63,14 +88,16 @@
       </thead>
       <tbody>
         <% if (quotes.length===0) { %><tr><td colspan="9"><div class="empty-state">No quotes.</div></td></tr><% } %>
-        <% quotes.forEach(function(q){ %>
-          <tr>
+        <% quotes.forEach(function(q){
+             var _re = (q.status==='accepted'||q.status==='invoiced') ? 're-ok'
+                     : q.status==='sent' ? 're-info' : q.status==='lost' ? 're-dim' : ''; %>
+          <tr class="<%= _re %>">
             <td class="tick"><input type="checkbox" class="tick-one" name="ids" value="<%= q.id %>" onclick="bulkSync()"></td>
             <td><a class="row-link" href="/quotes/<%= q.id %>"><%= q.quote_number %></a></td>
             <td><%= q.title %></td>
             <td class="muted"><% if (q.customer_id) { %><a class="row-link" href="/customers/<%= q.customer_id %>"><%= q.customer_name %></a><% } else { %>—<% } %></td>
             <td><span class="badge <%= badge(q.status) %>"><%= q.status.charAt(0).toUpperCase()+q.status.slice(1) %></span></td>
-            <td style="text-align:right;"><%= money(q.total) %></td>
+            <td class="money"><%= money(q.total) %></td>
             <td>
               <% if (q.invoice_id) { %>
                 <a class="row-link" href="/invoices/<%= q.invoice_id %>"><%= q.invoice_number || 'draft' %></a>
