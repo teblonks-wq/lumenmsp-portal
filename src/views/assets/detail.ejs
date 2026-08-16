@@ -429,17 +429,18 @@ function _ago(d) {
 
 <script>
   (function () {
-    var KEY = 'assetTab:<%= asset.id %>';
     var tabs = Array.prototype.slice.call(document.querySelectorAll('.dev-tabs button'));
     var panels = Array.prototype.slice.call(document.querySelectorAll('.dev-tab-panel'));
     function show(k) {
       tabs.forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-tab') === k); });
       panels.forEach(function (p) { p.classList.toggle('active', p.getAttribute('data-key') === k); });
-      try { localStorage.setItem(KEY, k); } catch (e) {}
     }
     tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.getAttribute('data-tab')); }); });
-    var saved = null; try { saved = localStorage.getItem(KEY); } catch (e) {}
-    show((saved && document.querySelector('.dev-tab-panel[data-key="' + saved + '"]')) ? saved : 'overview');
+    // Always open on the first tab. A deep link (#gpo, #security, #backup) still jumps
+    // straight to its tab - what we no longer do is restore whichever tab happened to be
+    // open on the last visit, which made "go to a device" land somewhere different every time.
+    var hash = (location.hash || '').replace('#', '');
+    show((hash && document.querySelector('.dev-tab-panel[data-key="' + hash + '"]')) ? hash : 'overview');
   })();
 </script>
 

@@ -1416,21 +1416,18 @@
 
 <script>
   (function () {
-    var KEY = 'custTab:<%= customer.id %>';
     var tabs = Array.prototype.slice.call(document.querySelectorAll('.cust-tabs button'));
     var panels = Array.prototype.slice.call(document.querySelectorAll('.tab-panel'));
     function show(k) {
       tabs.forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-tab') === k); });
       panels.forEach(function (p) { p.classList.toggle('active', p.getAttribute('data-key') === k); });
-      try { localStorage.setItem(KEY, k); } catch (e) {}
     }
     tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.getAttribute('data-tab')); }); });
-    var saved = null; try { saved = localStorage.getItem(KEY); } catch (e) {}
-    // allow deep-link via #hash (e.g. #contacts)
+    // Always open on Overview. A deep link (#assets, #contacts, #integrations) still
+    // jumps straight to its tab - what we no longer do is restore whichever tab happened
+    // to be open on the last visit.
     var hash = (location.hash || '').replace('#', '');
-    var start = (hash && document.querySelector('.tab-panel[data-key="' + hash + '"]')) ? hash
-              : (saved && document.querySelector('.tab-panel[data-key="' + saved + '"]')) ? saved : 'overview';
-    show(start);
+    show((hash && document.querySelector('.tab-panel[data-key="' + hash + '"]')) ? hash : 'overview');
 
     // In-table row filters (Contacts / Quotes / Invoices).
     document.querySelectorAll('.card-filter').forEach(function (inp) {
