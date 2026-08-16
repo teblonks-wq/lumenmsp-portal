@@ -18,12 +18,12 @@
   .dev-subcard-title { font-size:13px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); margin:0 0 6px; }
 </style>
 
-<div class="page-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--accent),var(--blue-bright));">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
   <div>
     <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="<%= back %>">← Back</a></p>
-    <h1 style="margin:0;display:flex;align-items:center;gap:12px;">
-      <%= asset.hostname || '(unnamed device)' %>
-    </h1>
+    <p class="doc-kicker">Device · <%= asset.device_type || 'Unknown type' %><% if (asset.customer_name) { %> · <%= asset.customer_name %><% } %></p>
+    <h1><%= asset.hostname || '(unnamed device)' %></h1>
     <p class="muted" style="margin:6px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <% var _hw = (typeof onlineWindowSecs !== 'undefined' && onlineWindowSecs) ? onlineWindowSecs : 180;
          var _live = !!asset.agent_device_id && typeof agentInfo !== 'undefined' && agentInfo
@@ -67,6 +67,52 @@
     </div>
     <% } %>
   </div>
+</div>
+<%
+  // The device's vitals as one strip - status, patching, security, backup, agent - so an
+  // engineer reads the machine's state before scrolling an inch. Every figure is the same
+  // source the tabs below use; nothing here is a second opinion.
+  var _ai = (typeof agentInfo !== 'undefined') ? agentInfo : null;
+  var _sec = (typeof security !== 'undefined') ? security : null;
+  var _bp = (typeof backupPlans !== 'undefined' && backupPlans) ? backupPlans : [];
+  var _bpFailed = _bp.filter(function(p){ return p.cls === 'failed'; }).length;
+  var _patchN = _ai && _ai.patch_pending != null ? Number(_ai.patch_pending) : null;
+  var _reboot = !!(_ai && _ai.reboot_required);
+%>
+<% if (_ai) { %>
+<div class="doc-stats">
+  <div class="ds">
+    <div class="n <%= _live ? 'good' : '' %>"><%= _live ? 'Online' : 'Offline' %></div>
+    <div class="l"><%= _live ? 'agent checked in' : ('last seen ' + (_ai.last_seen_at ? dt(_ai.last_seen_at) : 'never')) %></div>
+  </div>
+  <div class="ds">
+    <div class="n <%= (_patchN != null && _patchN > 0) || _reboot ? 'warn' : (_patchN === 0 ? 'good' : '') %>"><%= _patchN != null ? _patchN : '—' %><% if (_reboot) { %> <small style="font-size:12px;font-weight:700;color:var(--warn-fg);">restart due</small><% } %></div>
+    <div class="l">updates pending</div>
+  </div>
+  <div class="ds">
+    <% if (_sec && !_sec.awaiting) { var _secBadN = _sec.rows.filter(function(r){ return !r.ok; }).length; %>
+    <div class="n <%= _secBadN ? 'bad' : 'good' %>"><%= _secBadN ? _secBadN + ' issue' + (_secBadN===1?'':'s') : 'Protected' %></div>
+    <div class="l">security</div>
+    <% } else { %>
+    <div class="n" style="font-size:15px;line-height:1.5;color:var(--muted);">awaiting agent</div>
+    <div class="l">security</div>
+    <% } %>
+  </div>
+  <div class="ds">
+    <% if (_bp.length) { %>
+    <div class="n <%= _bpFailed ? 'bad' : 'good' %>"><%= _bpFailed ? 'Attention' : 'Protected' %></div>
+    <div class="l">backup · <%= _bp.length %> plan<%= _bp.length===1?'':'s' %></div>
+    <% } else { %>
+    <div class="n" style="font-size:15px;line-height:1.5;color:var(--muted);">no plans</div>
+    <div class="l">backup</div>
+    <% } %>
+  </div>
+  <div class="ds">
+    <div class="n" style="font-size:15px;line-height:1.5;">v<%= _ai.agent_version || '?' %><% if (typeof latestAgentVersion !== 'undefined' && latestAgentVersion && _ai.agent_version && _ai.agent_version !== latestAgentVersion) { %> <span class="badge badge-inactive" style="font-size:10px;">update due</span><% } %></div>
+    <div class="l">LumenMSP agent</div>
+  </div>
+</div>
+<% } %>
 </div>
 
 <% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success"><%= notice %></div><% } %>

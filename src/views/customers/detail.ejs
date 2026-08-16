@@ -10,10 +10,12 @@
   .tab-panel.active { display:block; }
 </style>
 
-<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--blue-bright),var(--accent));">
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div>
     <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/customers">← Customers</a></p>
-    <h1 style="margin:0;display:flex;align-items:center;gap:12px;">
+    <p class="doc-kicker">Customer · <%= customer.account_number || 'no account number' %></p>
+    <h1>
       <%= customer.name %>
       <% if (customer.status === 'active') { %><span class="badge badge-sent">Active</span>
       <% } else if (customer.status === 'lead') { %><span class="badge badge-primary">Lead</span>
@@ -21,9 +23,8 @@
       <% if (typeof lead !== 'undefined' && lead) { %><a class="row-link" href="/leads/<%= lead.id %>" style="font-size:13px;font-weight:600;">View lead →</a>
       <% } else { %><a class="row-link" href="/leads/new?customer=<%= customer.id %>" style="font-size:13px;">+ Lead</a><% } %>
     </h1>
-    <p class="muted" style="margin:4px 0 0;">
-      <%= customer.account_number || 'No account number' %>
-      <% if (customer.is_itsm) { %> · <span class="badge badge-primary">Support</span><% } %>
+    <p class="doc-sub">
+      <% if (customer.is_itsm) { %><span class="badge badge-primary">Support</span><% } %>
       <% if (customer.has_internet) { %> <span class="badge badge-primary">Internet</span><% } %>
       <% if (customer.has_phones) { %> <span class="badge badge-primary">Phones</span><% } %>
       <% if (customer.has_cloud) { %> <span class="badge badge-primary">Cloud</span><% } %>
@@ -37,6 +38,7 @@
       <button class="btn" type="submit" style="color:var(--lumen-dark);">Delete</button>
     </form>
   </div>
+</div>
 </div>
 
 <% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
@@ -52,13 +54,17 @@
 <% var hv = (typeof health!=='undefined') ? health : null; %>
 <% if (hv) { %>
 <style>
-  .svc-strip { display:flex; gap:10px; flex-wrap:wrap; margin:0 0 16px; }
-  .svc-tile { flex:1 1 150px; min-width:150px; max-width:220px; background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:10px 14px; text-decoration:none; color:inherit; display:block; }
-  .svc-tile:hover { border-color:var(--accent); }
-  .svc-tile .t { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-bottom:4px; display:flex; align-items:center; gap:6px; }
-  .svc-tile .v { font-size:17px; font-weight:800; }
-  .svc-tile .s { font-size:11px; color:var(--muted); margin-top:2px; }
-  .svc-dot { display:inline-block; width:8px; height:8px; border-radius:50%; }
+  .svc-strip { display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); gap:12px; margin:0 0 16px; }
+  .svc-tile { position:relative; background:var(--card); border:1px solid var(--card-border, var(--line)); border-radius:12px;
+              padding:12px 16px 11px 18px; text-decoration:none; color:inherit; display:block; overflow:hidden;
+              box-shadow:var(--card-shadow, none); transition:border-color .12s, box-shadow .12s, transform .12s; }
+  .svc-tile::before { content:''; position:absolute; top:0; left:0; bottom:0; width:4px; background:var(--svc-accent, var(--line-strong)); opacity:.9; }
+  a.svc-tile:hover { border-color:var(--svc-accent, var(--accent)); box-shadow:0 8px 20px -8px rgba(2,6,23,.25); transform:translateY(-1px); }
+  html.theme-carbon .svc-tile { background:linear-gradient(180deg,#111a2c,#0d1422); }
+  .svc-tile .t { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin-bottom:5px; display:flex; align-items:center; gap:6px; }
+  .svc-tile .v { font-size:22px; font-weight:800; letter-spacing:-.4px; line-height:1.05; font-variant-numeric:tabular-nums; }
+  .svc-tile .s { font-size:11.5px; color:var(--muted); margin-top:3px; }
+  .svc-dot { display:inline-block; width:8px; height:8px; border-radius:50%; flex:none; }
 </style>
 <div class="svc-strip">
   <a class="svc-tile" href="/dmarc">
@@ -89,6 +95,13 @@
     <div class="s">open case<%= hv.openTickets===1?'':'s' %></div>
   </a>
 </div>
+<script>
+  // The tile edge takes the status dot's colour, so the strip and its dots can never disagree.
+  document.querySelectorAll('.svc-tile').forEach(function (t) {
+    var d = t.querySelector('.svc-dot');
+    if (d && d.style.background) t.style.setProperty('--svc-accent', d.style.background);
+  });
+</script>
 <% } %>
 
   <% if (hv && customer.entra_tenant_id) { %>
