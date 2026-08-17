@@ -30,7 +30,10 @@ const DEFAULT_BASE = 'https://cloudgz.gravityzone.bitdefender.com/api';
 const API_VERSION = 'v1.0';
 
 /** The services we use. Kept as data so testConnection can walk them. */
-export const GZ_SERVICES = ['companies', 'network', 'packages', 'licensing', 'incidents', 'accounts'] as const;
+export const GZ_SERVICES = ['companies', 'network', 'packages', 'licensing', 'incidents', 'accounts',
+  // Added 2026-08-17 for Terry's three asks: policy exclusions, quarantine restore, and
+  // device/company event history. The API key already has all three scopes enabled.
+  'policies', 'quarantine', 'push'] as const;
 export type GzService = typeof GZ_SERVICES[number];
 
 export interface GzConfig { key: string; base: string }
@@ -185,6 +188,50 @@ export async function testConnection(): Promise<{ ok: boolean; probes: ProbeResu
     (r) => `${r?.total ?? (r?.items?.length || 0)} installation packages`);
   await add('licensing', 'getLicenseInfo', {},
     (r) => `licence seats: ${r?.totalSlots ?? '?'} total, ${r?.usedSlots ?? '?'} used`);
+
+  // ── Capability probes for what Terry asked for on 17 Aug ─────────────────────────
+  // "we wll need to be able to add exaptions from portal", "we always want to be able to
+  // restore files if needed", "we must be able to see events on the device level and
+  // compnay level in portal".
+  //
+  // Whether each of those is buildable depends on what THIS tenant's API actually
+  // exposes, and the documentation has already been wrong three times on this
+  // integration (wrong service path, wrong parameter name, fields absent from the list
+  // row). So we ask the tenant instead of trusting a page. Every probe below is
+  // READ-ONLY — none of them changes a policy, releases a file or enables a push
+  // subscription; they establish only whether the door opens.
+  //
+  // What the answers mean:
+  //  * policies readable + a policy's exclusions visible → the Portal can at minimum
+  //    VERIFY our agent exclusions are present in every policy (RULE ONE) and show
+  //    exactly what is missing. Writing them needs a write method to exist; the public
+  //    Policies API has historically been read-only, in which case exclusions stay a
+  //    one-off human edit per policy and the Portal audits rather than authors them.
+  //  * quarantine readable → "restore if needed" is buildable, because the restore
+  //    counterpart is a task-creating method on the same service.
+  //  * push settings readable → events can be PUSHED to the Portal in real time rather
+  //    than polled, which is what makes device-level and company-level event history
+  //    affordable.
+  await add('policies', 'getPoliciesList', { page: 1, perPage: 5 },
+    (r) => `${r?.total ?? (r?.items?.length || 0)} policies readable` +
+           ` — needed to audit the agent exclusions in every policy`);
+  try {
+    const pl: any = await rpc('policies', 'getPoliciesList', { page: 1, perPage: 5 });
+    const p0 = (Array.isArray(pl) ? pl : pl?.items || [])[0];
+    if (p0?.id) {
+      await add('policies', 'getPolicyDetails', { policyId: p0.id },
+        (r) => `read policy "${r?.name || p0.name || p0.id}" — exclusions ` +
+               (r?.antimalware?.settings?.exclusions || r?.exclusions ? 'ARE visible' : 'not visible in this shape'));
+    }
+  } catch { /* the list probe above already said why */ }
+  await add('quarantine', 'getQuarantineItemsList', { page: 1, perPage: 5, endpointId: null },
+    (r) => `${r?.total ?? (r?.items?.length || 0)} quarantined item(s) readable` +
+           ` — restore-a-file needs this to answer`);
+  await add('push', 'getPushEventSettings', {},
+    (r) => `event push is ${r?.status ? 'ENABLED' : 'available but off'}` +
+           `${r?.serviceType ? ' (' + r.serviceType + ')' : ''} — this is how events reach the Portal live`);
+  await add('incidents', 'getBlocklistItems', { page: 1, perPage: 5 },
+    (r) => `${r?.total ?? (r?.items?.length || 0)} blocklist item(s) readable`);
 
   return { ok: probes.some((p) => p.ok), probes };
 }

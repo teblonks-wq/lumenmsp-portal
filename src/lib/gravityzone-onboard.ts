@@ -1,5 +1,6 @@
 import { pool } from '../db/pool';
 import { rpc, rpcAny, gzConfigured } from './gravityzone';
+import { getSetting, setSetting } from './settings';
 import { logActivity } from './activity';
 
 // ─────────────────────────────────────────────────────────────────────────────────
@@ -37,6 +38,23 @@ import { logActivity } from './activity';
 
 /** Endpoint Security. Not EDR (3), not PHASR (5) — those are chargeable products. */
 const PRODUCT_ENDPOINT_SECURITY = 0;
+/**
+ * Terry, 17 Aug: "we will start with Just Endpoint Security as standard."
+ *
+ * From his Giacom reseller price list, per endpoint per month:
+ *   aLaCarte / Endpoint Security  £0.99   ← this. Plain AV, no EDR.
+ *   mspSecure                     £1.93   adds EDR
+ *   mspSecurePlus                 £4.00   adds MDR Foundations
+ *   mspSecureExtra                £5.07   adds XDR Identity & Productivity
+ *
+ * Leaving this UNSET inherits whatever Giacom made the partner default, which could be
+ * any of the four — so an unset model is a blank cheque. At 100 endpoints the gap
+ * between the cheapest and dearest is about £4,900 a year, on a product Lumen gives
+ * away with the Managed IT package. Hence: pinned, and if GravityZone refuses the value
+ * we FAIL rather than fall back, because a silent fallback is the expensive outcome.
+ */
+const DEFAULT_PROTECTION_MODEL = 'aLaCarte';
+const PROTECTION_MODELS = ['aLaCarte', 'mspSecure', 'mspSecurePlus', 'mspSecureExtra'];
 /** licenseSubscription.type 3 = monthly subscription. 1 = trial, which is the trap. */
 const SUBSCRIPTION_MONTHLY = 3;
 /** createCompany.type 1 = Customer company (0 would create a sub-Partner). */
@@ -50,6 +68,21 @@ export interface OnboardOutcome {
   gzCompanyId: string | null;
   action: 'created' | 'already-there' | 'skipped' | 'failed';
   detail: string;
+}
+
+/**
+ * The protection model new companies are put on. Settable so a change of Giacom
+ * agreement is a settings edit, not a deploy — but it can only ever be one of the four
+ * real values, so a typo cannot quietly become an expensive tier.
+ */
+export async function protectionModel(): Promise<string> {
+  const v = await getSetting('gravityzone', 'protection_model');
+  return v && PROTECTION_MODELS.includes(v) ? v : DEFAULT_PROTECTION_MODEL;
+}
+
+export async function setProtectionModel(model: string): Promise<void> {
+  if (!PROTECTION_MODELS.includes(model)) throw new Error('Unknown protection model.');
+  await setSetting('gravityzone', 'protection_model', model);
 }
 
 /** Lumen's own company id — the parent every managed company hangs from. */
@@ -121,6 +154,7 @@ export async function onboardCustomer(
   // Deliberately minimal. Address/phone are sent when we have them because the
   // GravityZone console is easier to work in when companies are recognisable, but
   // nothing here is required and nothing chargeable is switched on.
+  const model = await protectionModel();
   const params: any = {
     type: COMPANY_TYPE_CUSTOMER,
     name,
@@ -129,9 +163,9 @@ export async function onboardCustomer(
       type: SUBSCRIPTION_MONTHLY,                    // never omit: omitting means TRIAL
       assignedProductType: PRODUCT_ENDPOINT_SECURITY,
       additionalProductTypes: [PRODUCT_ENDPOINT_SECURITY],
+      assignedProtectionModel: model,                // pinned — see DEFAULT_PROTECTION_MODEL
       // no reservedSlots  → shared pool → usage-billed, per the Giacom MSP agreement
       // no manage* add-ons → nothing chargeable is enabled
-      // no assignedProtectionModel → inherits whatever the partner agreement provides
     },
   };
   if (parentId) params.parentId = parentId;
