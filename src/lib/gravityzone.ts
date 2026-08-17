@@ -98,6 +98,24 @@ export async function rpc<T = any>(service: GzService | string, method: string, 
   return json.result as T;
 }
 
+/**
+ * Try the same method on several service paths and return the first that answers.
+ *
+ * This exists because of a real hour lost: `getCompaniesList` is documented under
+ * PARTNERS > Public API > **Network**, not under a `companies` service, so calling
+ * /jsonrpc/companies returns "Method not found" on a perfectly good partner tenant
+ * with every API enabled on the key. Rather than hard-code one guess, ask the tenant.
+ * Throws the LAST error if nothing works, so the message is still useful.
+ */
+export async function rpcAny<T = any>(candidates: Array<[string, string]>, params: any = {}): Promise<{ result: T; service: string; method: string }> {
+  let last: any = new GzError('No candidate services were tried.');
+  for (const [service, method] of candidates) {
+    try { return { result: await rpc<T>(service, method, params), service, method }; }
+    catch (e: any) { last = e; }
+  }
+  throw last;
+}
+
 export interface ProbeResult { service: string; method: string; ok: boolean; note: string; sample?: any }
 
 /**
@@ -120,16 +138,17 @@ export async function testConnection(): Promise<{ ok: boolean; probes: ProbeResu
     }
   };
 
-  // Companies: getCompaniesList is PARTNER/MSP-only. Lumen's tenant answered "Method
-  // not found" with every API enabled on the key (Terry, 2026-08-17), which is how we
-  // know it is a single-company tenant — so grouping has to come from the network
-  // tree's folders instead. Both probes stay: the answer identifies the tenant type.
-  await add('companies', 'getCompaniesList', { page: 1, perPage: 5 },
-    (r) => `${r?.total ?? (r?.items?.length || 0)} companies visible (partner tenant)`);
+  // Companies. NOTE the service path: getCompaniesList is documented under
+  // PARTNERS > Public API > NETWORK, not under `companies` — calling /jsonrpc/companies
+  // returns "Method not found" on a healthy partner tenant (Lumen, 2026-08-17). Both
+  // paths are probed so the working one is visible rather than assumed.
+  await add('network', 'getCompaniesList', {},
+    (r) => `${(Array.isArray(r) ? r.length : r?.items?.length) || 0} managed company/companies (via network)`);
+  await add('companies', 'getCompaniesList', {},
+    (r) => `${(Array.isArray(r) ? r.length : r?.items?.length) || 0} companies (via companies)`);
   await add('companies', 'getCompanyDetails', {},
     (r) => `own company: ${r?.name || '(unnamed)'}`);
-  // The folders in Network. On a single-company tenant this is where per-customer
-  // separation actually lives, so it matters more than companies do.
+  // The folders in Network — the fallback boundary if companies are ever unreadable.
   await add('network', 'getContainers', {},
     (r) => `${(Array.isArray(r) ? r.length : r?.items?.length) || 0} folder(s) in the network tree`);
   await add('network', 'getEndpointsList', { page: 1, perPage: 5 },
@@ -201,13 +220,18 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
   let companies: any[] = [];
   let partnerTenant = false;
   try {
-    companies = await pageThrough('companies', 'getCompaniesList', {});
-    partnerTenant = companies.length > 1;
+    // getCompaniesList lives on the NETWORK service (see rpcAny's note) and returns a
+    // bare array of { id, name } — the managed companies under Lumen.
+    const got = await rpcAny<any>([['network', 'getCompaniesList'], ['companies', 'getCompaniesList']], {});
+    const items = Array.isArray(got.result) ? got.result : (got.result?.items || []);
+    companies = items.filter((c: any) => c?.id);
+    partnerTenant = companies.length > 0;
+    if (partnerTenant) out.warnings.push(`Partner tenant: ${companies.length} managed company/companies via ${got.service}/${got.method}.`);
   } catch {
     try {
-      const own: any = await rpc('companies', 'getCompanyDetails', {});
-      if (own?.id) companies = [own];
-    } catch { /* single-company tenant with no companies service at all — fine */ }
+      const own = await rpcAny<any>([['companies', 'getCompanyDetails'], ['network', 'getCompanyDetails']], {});
+      if (own.result?.id) companies = [own.result];
+    } catch { /* no companies service at all — folders below carry the boundary */ }
   }
 
   // Folders. On a single-company tenant these ARE the per-customer boundary, so they
@@ -254,6 +278,11 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
   const companyIds = companies.filter((c) => !c.__folder).map((c) => s(c.id)).filter(Boolean) as string[];
   const batches: Array<{ gzCompanyId: string | null; items: any[] }> = [];
   if (partnerTenant) {
+    // Lumen's own machines sit at the root, not under a managed company, so the flat
+    // list is fetched too. Ordered FIRST so the per-company calls below win on any
+    // endpoint that appears in both.
+    try { batches.push({ gzCompanyId: null, items: await pageThrough('network', 'getEndpointsList', {}) }); }
+    catch { /* the per-company calls are the ones that matter */ }
     for (const cid of companyIds) {
       try { batches.push({ gzCompanyId: cid, items: await pageThrough('network', 'getEndpointsList', { companyId: cid }) }); }
       catch (e: any) { out.warnings.push(`Endpoints for company ${cid}: ${e.message}`); }
@@ -307,7 +336,13 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
             policy_name, agent_version, outdated, infected, modules_on, last_seen_at, raw, synced_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
          ON CONFLICT (gz_id) DO UPDATE SET
-           gz_company_id=EXCLUDED.gz_company_id, customer_id=EXCLUDED.customer_id,
+           -- COALESCE, not plain assignment: the same endpoint can arrive twice in one
+           -- run (root flat list, then its company's list). A later pass that does not
+           -- know the company must not erase attribution a previous pass established.
+           -- A genuine move to another company still updates, because that value is
+           -- not null.
+           gz_company_id=COALESCE(EXCLUDED.gz_company_id, security_endpoints.gz_company_id),
+           customer_id=COALESCE(EXCLUDED.customer_id, security_endpoints.customer_id),
            asset_id=COALESCE(EXCLUDED.asset_id, security_endpoints.asset_id),
            name=EXCLUDED.name, fqdn=EXCLUDED.fqdn, ip=EXCLUDED.ip, os_name=EXCLUDED.os_name,
            is_managed=EXCLUDED.is_managed, policy_name=EXCLUDED.policy_name,
