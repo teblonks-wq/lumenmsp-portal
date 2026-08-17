@@ -2779,3 +2779,55 @@ model SecurityDetection {
   @@index([detectedAt])
   @@map("security_detections")
 }
+
+// One Bitdefender installation package per customer, with its download links cached.
+// The links are what our agent is actually pointed at, so they are resolved server side
+// and stored here — never accepted from a browser, exactly like agent_packages.
+model SecurityPackage {
+  customerId        Int      @id @map("customer_id")
+  gzCompanyId       String   @map("gz_company_id")
+  packageName       String   @map("package_name")
+  // Bitdefender's competitive removal. Recorded so the estate can prove a machine was
+  // installed with removal ON rather than left running two AV products.
+  removeCompetitors Boolean  @default(true) @map("remove_competitors")
+  urlWindows        String?  @map("url_windows")
+  urlMac            String?  @map("url_mac")
+  urlMacArm         String?  @map("url_mac_arm")
+  urlLinux          String?  @map("url_linux")
+  // Bitdefender builds kits asynchronously: status 2 = ready, anything else = not yet.
+  // Deploying from a kit that is still building is a guaranteed silent failure.
+  readyWindows      Boolean  @default(false) @map("ready_windows")
+  raw               Json?
+  refreshedAt       DateTime @default(now()) @map("refreshed_at")
+
+  @@map("security_packages")
+}
+
+// The rollout record for one machine: what we asked for, what happened, and — the part
+// that matters — whether BOTH sides agree it worked.
+model SecurityDeployment {
+  id          Int       @id @default(autoincrement())
+  deviceId    Int       @unique @map("device_id")
+  customerId  Int?      @map("customer_id")
+  // queued | running | installed | protected | failed | excluded
+  // 'installed' means our agent sees Bitdefender locally. 'protected' additionally means
+  // GravityZone has the endpoint — either signal alone can lie, which is exactly how a
+  // deployment reported "complete" on a machine that had nothing on it.
+  state       String    @default("queued")
+  commandId   Int?      @map("command_id")
+  attempts    Int       @default(0)
+  lastError   String?   @map("last_error")
+  // What was protecting the machine before we touched it — the before half of the
+  // evidence that a Webroot removal actually happened.
+  avBefore    String?   @map("av_before")
+  avAfter     String?   @map("av_after")
+  agentSeenAt DateTime? @map("agent_seen_at")
+  gzSeenAt    DateTime? @map("gz_seen_at")
+  requestedBy Int?      @map("requested_by")
+  requestedAt DateTime  @default(now()) @map("requested_at")
+  settledAt   DateTime? @map("settled_at")
+
+  @@index([customerId])
+  @@index([state])
+  @@map("security_deployments")
+}
