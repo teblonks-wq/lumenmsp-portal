@@ -1,0 +1,134 @@
+<%- include('../partials/header', { title: 'Endpoint Security settings', user }) %>
+<% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--accent),var(--violet));margin-bottom:14px;">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/security">← Endpoint Security</a></p>
+  <p class="doc-kicker">Bitdefender GravityZone</p>
+  <h1>Connection &amp; scope</h1>
+  <p class="doc-sub">The API key is a credential to every customer's security console. It is stored server-side, never shown back, and never belongs in a repo, a URL or a chat window.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div class="card" style="margin-bottom:14px;">
+  <h3 style="margin-top:0;">API key</h3>
+  <p class="muted" style="font-size:13px;margin:0 0 12px;">
+    In GravityZone: <strong>My Account → API keys → Add</strong>. Tick at least <strong>Companies</strong>,
+    <strong>Network</strong> and <strong>Incidents</strong> (add <strong>Packages</strong> too and the deploy
+    pipeline will not need a second trip). The access URL is shown beside the key.
+    <% if (keyTail) { %><br>A key ending <strong>…<%= keyTail %></strong> is stored. Leave the field blank to keep it.<% } %>
+  </p>
+  <form method="post" action="/security/settings" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <label style="flex:2;min-width:280px;">API key
+      <input class="input" type="password" name="api_key" autocomplete="off" spellcheck="false"
+             placeholder="<%= keyTail ? 'leave blank to keep the stored key' : 'paste the key here' %>">
+    </label>
+    <label style="flex:2;min-width:280px;">Access URL
+      <input class="input" type="url" name="base_url" value="<%= baseUrl %>">
+    </label>
+    <button class="btn btn-primary" type="submit">Save</button>
+  </form>
+  <form method="post" action="/security/test" style="margin-top:12px;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <button class="btn" type="submit" <%= configured ? '' : 'disabled' %>>Test connection</button>
+    <span class="muted" style="font-size:12px;margin-left:8px;">Harmless — it only reads. Shows exactly what the key can reach, and the first raw record from each service.</span>
+  </form>
+  <% if (lastSync) { %><p class="muted" style="font-size:12px;margin:12px 0 0;">Last sync: <%= dt(lastSync) %>.</p><% } %>
+</div>
+
+<% if (probes) { %>
+<div class="card" style="margin-bottom:14px;border-left:3px solid <%= probes.some(function(p){return p.ok;}) ? 'var(--ok)' : 'var(--bad-fg)' %>;">
+  <h3 style="margin-top:0;">What the key can reach</h3>
+  <p class="muted" style="font-size:12.5px;margin:0 0 10px;">
+    A failure here is usually a missing scope on the key, or a service this tenant does not expose — both are
+    worth knowing before we build on them. The raw record is the real field names from <em>your</em> tenant.
+  </p>
+  <% probes.forEach(function(p){ %>
+  <div style="border:1px solid var(--line);border-left:4px solid <%= p.ok ? 'var(--ok)' : 'var(--bad-fg)' %>;border-radius:9px;padding:9px 12px;margin-bottom:8px;">
+    <div style="font-weight:700;font-size:13px;">
+      <%= p.ok ? '✓' : '✗' %> <%= p.service %> · <%= p.method %>
+    </div>
+    <div class="muted" style="font-size:12.5px;margin-top:2px;"><%= p.note %></div>
+    <% if (p.ok && p.sample) { %>
+    <details style="margin-top:6px;">
+      <summary style="cursor:pointer;font-size:12px;color:var(--muted);">raw record</summary>
+      <pre style="font-size:11px;overflow:auto;max-height:280px;background:var(--surface-2,#f8fafc);padding:8px;border-radius:6px;margin:6px 0 0;"><%= JSON.stringify(p.sample, null, 2) %></pre>
+    </details>
+    <% } %>
+  </div>
+  <% }); %>
+</div>
+<% } %>
+
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-header" style="display:flex;align-items:baseline;gap:10px;">
+    <h2 style="margin:0;">GravityZone companies → Portal customers</h2>
+    <span class="muted" style="font-size:12px;">an exact name match is suggested; a human confirms it</span>
+  </div>
+  <p class="muted" style="font-size:12.5px;margin:0 0 10px;">
+    Mapping is deliberately not a guess: getting it wrong would show one client another client's machines.
+    Confirming a mapping moves that company's endpoints with it.
+  </p>
+  <% if (!companies.length) { %>
+    <div class="empty-state">Nothing synced yet — save a key, test it, then run a sync from the Endpoint Security page.</div>
+  <% } else { %>
+  <div class="table-wrap"><table class="table table-lift">
+    <thead><tr><th>GravityZone company</th><th style="text-align:right;">Endpoints</th><th>Portal customer</th><th></th></tr></thead>
+    <tbody>
+      <% companies.forEach(function(c){ %>
+      <tr class="<%= c.customer_id ? 're-ok' : 're-warn' %>">
+        <td><%= c.name %><div class="muted" style="font-size:11px;">id <%= c.gz_id %></div></td>
+        <td class="money"><%= c.endpoints %></td>
+        <td colspan="2">
+          <form method="post" action="/security/companies/<%= encodeURIComponent(c.gz_id) %>/map" style="display:flex;gap:8px;align-items:center;margin:0;">
+            <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+            <select class="input" name="customer_id" style="width:auto;">
+              <option value="">— not mapped —</option>
+              <% customers.forEach(function(x){ %>
+              <option value="<%= x.id %>" <%= Number(c.customer_id) === Number(x.id) ? 'selected' : '' %>><%= x.name %></option>
+              <% }); %>
+            </select>
+            <button class="btn" type="submit" style="padding:3px 12px;font-size:12px;">Save</button>
+          </form>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <% } %>
+</div>
+
+<div class="card">
+  <div class="card-header" style="display:flex;align-items:baseline;gap:10px;">
+    <h2 style="margin:0;">Who is in scope</h2>
+    <span class="muted" style="font-size:12px;">antivirus is included with Managed IT, so those customers are in by default</span>
+  </div>
+  <div class="table-wrap"><table class="table table-lift">
+    <thead><tr><th>Customer</th><th>In scope</th><th>Why</th><th></th></tr></thead>
+    <tbody>
+      <% scope.forEach(function(sc){ %>
+      <tr class="<%= sc.inScope ? 're-ok' : 're-dim' %>">
+        <td><a class="row-link" href="/security/assessment/<%= sc.id %>"><%= sc.name %></a></td>
+        <td style="font-weight:700;color:<%= sc.inScope ? 'var(--ok)' : 'var(--muted)' %>;"><%= sc.inScope ? 'Yes' : 'No' %></td>
+        <td class="muted" style="font-size:12.5px;"><%= sc.reason %></td>
+        <td>
+          <form method="post" action="/security/scope/<%= sc.id %>" style="display:flex;gap:6px;margin:0;">
+            <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+            <input type="hidden" name="back" value="/security/settings">
+            <button class="btn" name="in_scope" value="<%= sc.inScope ? 'off' : 'on' %>" type="submit" style="padding:2px 10px;font-size:12px;">
+              <%= sc.inScope ? 'Take out of scope' : 'Put in scope' %>
+            </button>
+            <% if (sc.reason.indexOf('by hand') > -1) { %>
+            <button class="btn" name="in_scope" value="auto" type="submit" style="padding:2px 10px;font-size:12px;" title="Go back to following their contract">Follow contract</button>
+            <% } %>
+          </form>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+
+<%- include('../partials/footer') %>

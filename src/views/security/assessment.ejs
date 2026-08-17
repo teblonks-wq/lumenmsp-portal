@@ -1,0 +1,157 @@
+<%- include('../partials/header', { title: 'Migration assessment — ' + customer.name, user }) %>
+<%
+  function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+  var CAT = {
+    clean:       { label: 'Nothing to remove', cls: 're-ok',   note: 'Bitdefender installs straight over Defender.' },
+    auto_remove: { label: 'Auto-removable',    cls: 're-info', note: "Bitdefender's competitive removal handles it during install." },
+    manual:      { label: 'Manual removal',    cls: 're-warn', note: 'Needs taking off by hand (or from its own console) first.' },
+    unknown:     { label: 'No agent data',     cls: 're-dim',  note: 'Our agent goes on first, then this machine can be assessed.' },
+  };
+  var counts = { clean:0, auto_remove:0, manual:0, unknown:0 };
+  (items || []).forEach(function(i){ if (counts[i.category] != null) counts[i.category]++; });
+  var isAdmin = user.role === 'admin';
+  var approved = assessment && assessment.status === 'approved';
+%>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--violet),var(--accent));margin-bottom:14px;">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/security">← Endpoint Security</a></p>
+    <p class="doc-kicker">Migration assessment<% if (assessment) { %> · <%= approved ? 'APPROVED' : 'draft' %><% } %></p>
+    <h1><%= customer.name %></h1>
+    <p class="doc-sub">
+      What is protecting each machine today, and what has to happen before Bitdefender goes on. Computed from the
+      data our agent already collects — no site visit, no questionnaire.
+      <% if (scope) { %><br><strong><%= scope.inScope ? 'In scope' : 'Not in scope' %></strong> — <%= scope.reason %>.<% } %>
+    </p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <a class="btn" href="/customers/<%= customer.id %>">Customer 360 ↗</a>
+    <% if (isAdmin) { %>
+    <form method="post" action="/security/assessment/<%= customer.id %>/build" style="display:inline;"
+          <% if (assessment) { %>onsubmit="return confirm('Rebuild from today\'s agent data?\n\nThe current assessment is kept as history — approvals are a record of what was true when they were given.');"<% } %>>
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <button class="btn btn-primary" type="submit"><%= assessment ? 'Rebuild' : 'Build the assessment' %></button>
+    </form>
+    <% } %>
+  </div>
+</div>
+<% if (assessment) { %>
+<div class="doc-stats">
+  <div class="ds"><div class="n"><%= items.length %></div><div class="l">Machines</div></div>
+  <div class="ds"><div class="n good"><%= counts.clean %></div><div class="l">Nothing to remove</div></div>
+  <div class="ds"><div class="n info"><%= counts.auto_remove %></div><div class="l">Auto-removable</div></div>
+  <div class="ds"><div class="n warn"><%= counts.manual %></div><div class="l">Manual removal</div></div>
+  <div class="ds"><div class="n" style="color:var(--muted);"><%= counts.unknown %></div><div class="l">No agent yet</div></div>
+</div>
+<% } %>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<% if (!assessment) { %>
+<div class="card">
+  <div class="empty-state" style="padding:26px;">
+    <p style="margin:0 0 10px;font-weight:600;">No assessment yet for <%= customer.name %>.</p>
+    <p class="muted" style="font-size:13px;margin:0;">
+      Building one reads what our agent has already reported about every machine of theirs and sorts it into
+      what can be deployed straight away, what Bitdefender will uninstall on its way in, and what needs a
+      pair of hands first.
+    </p>
+  </div>
+</div>
+<% } else { %>
+
+<% if (approved) { %>
+<div class="card" style="border-left:3px solid var(--ok);margin-bottom:14px;">
+  <p style="margin:0;font-size:13.5px;">
+    <strong>Approved by <%= assessment.approved_name || 'a Lumen admin' %></strong> on <%= dt(assessment.approved_at) %>.
+    <%= items.filter(function(i){ return i.included; }).length %> of <%= items.length %> machines are cleared for Bitdefender.
+    New machines for this customer are picked up automatically from now on.
+  </p>
+  <% if (assessment.notes) { %><p class="muted" style="font-size:12.5px;margin:8px 0 0;"><%= assessment.notes %></p><% } %>
+</div>
+<% } %>
+
+<form method="post" action="/security/assessment/<%= assessment.id %>/approve">
+<input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+
+<div class="card" style="padding:0;border-top:3px solid var(--violet);">
+  <div class="card-header" style="padding:20px 24px 6px;display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;">
+    <h2 style="margin:0;">Every machine, and what happens to it</h2>
+    <span class="muted" style="font-size:12px;">built <%= dt(assessment.created_at) %><%= assessment.created_name ? ' by ' + assessment.created_name : '' %></span>
+  </div>
+  <div class="table-wrap">
+    <table class="table table-lift">
+      <thead><tr>
+        <th style="width:42px;" title="Include this machine in the rollout">Go</th>
+        <th>Machine</th><th>Protecting it today</th><th>What has to happen</th>
+      </tr></thead>
+      <tbody>
+        <% if (!items.length) { %>
+          <tr><td colspan="4"><div class="empty-state">No devices on record for this customer.</div></td></tr>
+        <% } %>
+        <% items.forEach(function(i){ var c = CAT[i.category] || CAT.unknown; %>
+        <tr class="<%= c.cls %>">
+          <td style="text-align:center;">
+            <input type="checkbox" name="include" value="<%= i.id %>" <%= i.included ? 'checked' : '' %>
+                   <%= (approved || !isAdmin) ? 'disabled' : '' %>
+                   title="Untick to hold this machine back">
+          </td>
+          <td>
+            <% if (i.asset_id) { %><a class="row-link" href="/assets/<%= i.asset_id %>"><%= i.hostname %></a>
+            <% } else { %><%= i.hostname %><% } %>
+          </td>
+          <td class="muted"><%= i.current_av || '—' %>
+            <div style="font-size:11.5px;font-weight:700;color:var(--muted);"><%= c.label %></div>
+          </td>
+          <td style="font-size:12.5px;"><%= i.plan || c.note %></td>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<% if (isAdmin && !approved && items.length) { %>
+<div class="card" style="margin-top:14px;border-left:3px solid var(--warn-fg);">
+  <h3 style="margin-top:0;">Lumen's sign-off</h3>
+  <p class="muted" style="font-size:13px;margin:0 0 10px;">
+    We are the ITSM — this is our decision, not the customer's. Approving records who said yes and when, and it is
+    the authority for anything the rollout later uninstalls. Untick any machine above to hold it back;
+    nothing is removed from a machine that is not ticked.
+  </p>
+  <label style="display:block;margin-bottom:10px;">Notes for the record <span class="muted" style="font-weight:400;">(optional)</span>
+    <input class="input" type="text" name="notes" placeholder="e.g. leaving the two CAD workstations until after the deadline">
+  </label>
+  <button class="btn btn-primary" type="submit"
+          onclick="return confirm('Approve the Bitdefender rollout for <%= customer.name.replace(/'/g, "\\'") %>?\n\nThis is Lumen\'s authority to remove the software listed and install Bitdefender on the ticked machines.');">
+    Approve this rollout
+  </button>
+</div>
+<% } %>
+</form>
+
+<% if (history && history.length > 1) { %>
+<details class="card" style="margin-top:14px;">
+  <summary style="cursor:pointer;font-weight:700;">Earlier assessments (<%= history.length - 1 %>)</summary>
+  <div class="table-wrap" style="margin-top:10px;"><table class="table table-lift">
+    <thead><tr><th>Built</th><th>Status</th><th style="text-align:right;">Machines</th><th>Approved</th></tr></thead>
+    <tbody>
+      <% history.forEach(function(h){ if (assessment && h.id === assessment.id) return; %>
+      <tr class="re-dim">
+        <td class="muted"><%= dt(h.created_at) %></td>
+        <td class="muted"><%= h.status %></td>
+        <td class="money"><%= h.n %></td>
+        <td class="muted"><%= h.approved_at ? dt(h.approved_at) + (h.approved_name ? ' · ' + h.approved_name : '') : '—' %></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</details>
+<% } %>
+
+<% } %>
+
+<%- include('../partials/footer') %>

@@ -2675,3 +2675,107 @@ model DiaryEntryPerson {
   @@index([userId])
   @@map("diary_entry_people")
 }
+
+// ── Endpoint Security — Bitdefender / GravityZone ────────────────────────────────
+// Lumen gives AV away with the Managed IT package: scope follows the CONTRACT
+// (customers.is_itsm) rather than being sold per seat, and once a customer is
+// enabled every new machine of theirs is picked up automatically. GravityZone is the
+// engine; these tables are the Portal's mirror of it plus the migration paperwork.
+// All new tables — db-push safe.
+model SecurityCompany {
+  id           Int       @id @default(autoincrement())
+  gzId         String    @unique @map("gz_id")
+  name         String
+  // Null until matched to a Portal customer. Matching is by name, confirmed by a
+  // human — guessing a customer wrong here would show one client another's machines.
+  customerId   Int?      @map("customer_id")
+  licenseTotal Int?      @map("license_total")
+  licenseUsed  Int?      @map("license_used")
+  raw          Json?
+  syncedAt     DateTime  @default(now()) @map("synced_at")
+
+  @@index([customerId])
+  @@map("security_companies")
+}
+
+model SecurityEndpoint {
+  id           Int       @id @default(autoincrement())
+  gzId         String    @unique @map("gz_id")
+  gzCompanyId  String?   @map("gz_company_id")
+  customerId   Int?      @map("customer_id")
+  // Our device, matched on hostname (and serial where GravityZone reports one).
+  assetId      Int?      @map("asset_id")
+  name         String
+  fqdn         String?
+  ip           String?
+  osName       String?   @map("os_name")
+  isManaged    Boolean   @default(false) @map("is_managed")
+  policyName   String?   @map("policy_name")
+  agentVersion String?   @map("agent_version")
+  outdated     Boolean   @default(false)
+  infected     Boolean   @default(false)
+  modulesOn    String?   @map("modules_on")
+  lastSeenAt   DateTime? @map("last_seen_at")
+  // The whole endpoint record as GravityZone gave it. Display fields above are
+  // derived; keeping the raw means a field we read wrong is a one-line fix, not a
+  // re-sync of the estate.
+  raw          Json?
+  syncedAt     DateTime  @default(now()) @map("synced_at")
+
+  @@index([customerId])
+  @@index([assetId])
+  @@map("security_endpoints")
+}
+
+// The migration paperwork: what is on a customer's machines today, what has to come
+// off, and Lumen's sign-off. "We are the ITSM — we do" (Terry): the customer never
+// approves, and nothing is uninstalled without a deliberate Lumen decision.
+model SecurityAssessment {
+  id         Int       @id @default(autoincrement())
+  customerId Int       @map("customer_id")
+  status     String    @default("draft") // draft | approved | superseded
+  createdBy  Int?      @map("created_by")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  approvedBy Int?      @map("approved_by")
+  approvedAt DateTime? @map("approved_at")
+  notes      String?
+
+  @@index([customerId])
+  @@map("security_assessments")
+}
+
+model SecurityAssessmentItem {
+  id           Int     @id @default(autoincrement())
+  assessmentId Int     @map("assessment_id")
+  assetId      Int?    @map("asset_id")
+  hostname     String
+  currentAv    String? @map("current_av")
+  // clean = Defender only, Bitdefender installs straight over
+  // auto_remove = third-party AV that Bitdefender's competitive removal handles
+  // manual = needs uninstalling by hand first
+  // unknown = no agent data yet, so the agent goes on first
+  category     String
+  plan         String?
+  included     Boolean @default(true)
+
+  @@index([assessmentId])
+  @@map("security_assessment_items")
+}
+
+// One row per real detection, deduped, so an outbreak raises one case per machine
+// and threat rather than fifty.
+model SecurityDetection {
+  id           Int      @id @default(autoincrement())
+  dedupeKey    String   @unique @map("dedupe_key")
+  customerId   Int?     @map("customer_id")
+  endpointGzId String?  @map("endpoint_gz_id")
+  hostname     String?
+  threatName   String?  @map("threat_name")
+  detail       String?
+  ticketId     Int?     @map("ticket_id")
+  detectedAt   DateTime @default(now()) @map("detected_at")
+
+  @@index([customerId])
+  @@index([detectedAt])
+  @@map("security_detections")
+}
