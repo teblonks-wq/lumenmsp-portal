@@ -116,6 +116,21 @@ export async function rpcAny<T = any>(candidates: Array<[string, string]>, param
   throw last;
 }
 
+/**
+ * The query every endpoint listing needs, and none of it is optional in practice:
+ *
+ *  - allItemsRecursively: WITHOUT this the API returns only the top level of a
+ *    company's inventory, so machines inside groups are silently missing. Default
+ *    is false, which is the sort of default that produces a confident wrong answer.
+ *  - returnProductOutdated / includeScanLogs: these attributes are omitted from the
+ *    response unless asked for. "productOutdated" absent reads exactly like
+ *    "not outdated", so this must be on.
+ */
+export const EP_QUERY = {
+  filters: { depth: { allItemsRecursively: true } },
+  options: { returnProductOutdated: true, includeScanLogs: true },
+};
+
 export interface ProbeResult { service: string; method: string; ok: boolean; note: string; sample?: any }
 
 /**
@@ -148,11 +163,24 @@ export async function testConnection(): Promise<{ ok: boolean; probes: ProbeResu
     (r) => `${(Array.isArray(r) ? r.length : r?.items?.length) || 0} companies (via companies)`);
   await add('companies', 'getCompanyDetails', {},
     (r) => `own company: ${r?.name || '(unnamed)'}`);
-  // The folders in Network — the fallback boundary if companies are ever unreadable.
-  await add('network', 'getContainers', {},
-    (r) => `${(Array.isArray(r) ? r.length : r?.items?.length) || 0} folder(s) in the network tree`);
-  await add('network', 'getEndpointsList', { page: 1, perPage: 5 },
-    (r) => `${r?.total ?? (r?.items?.length || 0)} endpoints on the first page`);
+  // Groups within a company — the fallback boundary if companies are ever unreadable.
+  // (getContainers does NOT exist on this API; the real method is getCustomGroupsList.)
+  await add('network', 'getCustomGroupsList', {},
+    (r) => `${(Array.isArray(r) ? r.length : r?.items?.length) || 0} custom group(s)`);
+  // Endpoints at the API key's own level. On a partner tenant this is Lumen's own
+  // Computers and Groups, so 0 here is normal — customers' machines need parentId.
+  await add('network', 'getEndpointsList', { page: 1, perPage: 5, ...EP_QUERY },
+    (r) => `${r?.total ?? (r?.items?.length || 0)} endpoints at the key's own level` +
+           ` (0 is expected on a partner tenant — customers' machines sit under their company)`);
+  // ...so probe the first managed company too, which is the number that actually matters.
+  try {
+    const cl: any = await rpc('network', 'getCompaniesList', {});
+    const first = (Array.isArray(cl) ? cl : cl?.items || [])[0];
+    if (first?.id) {
+      await add('network', 'getEndpointsList', { parentId: first.id, page: 1, perPage: 5, ...EP_QUERY },
+        (r) => `${r?.total ?? (r?.items?.length || 0)} endpoints under "${first.name}"`);
+    }
+  } catch { /* the companies probe above already reported why */ }
   await add('packages', 'getPackagesList', { page: 1, perPage: 5 },
     (r) => `${r?.total ?? (r?.items?.length || 0)} installation packages`);
   await add('licensing', 'getLicenseInfo', {},
@@ -234,16 +262,16 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
     } catch { /* no companies service at all — folders below carry the boundary */ }
   }
 
-  // Folders. On a single-company tenant these ARE the per-customer boundary, so they
+  // Groups. On a single-company tenant these ARE the per-customer boundary, so they
   // are synced as groupings too and can be mapped to customers exactly the same way.
   if (!partnerTenant) {
     try {
-      const containers: any = await rpc('network', 'getContainers', {});
-      const items = Array.isArray(containers) ? containers : (containers?.items || []);
-      for (const c of items) if (c?.id) companies.push({ id: c.id, name: c.name || '(unnamed folder)', __folder: true });
-      if (items.length) out.warnings.push(`Single-company tenant: using the ${items.length} network folder(s) as the customer boundary.`);
+      const got = await rpcAny<any>([['network', 'getCustomGroupsList'], ['network', 'getContainers']], {});
+      const items = Array.isArray(got.result) ? got.result : (got.result?.items || []);
+      for (const c of items) if (c?.id) companies.push({ id: c.id, name: c.name || '(unnamed group)', __folder: true });
+      if (items.length) out.warnings.push(`Single-company tenant: using the ${items.length} group(s) as the customer boundary.`);
     } catch (e: any) {
-      out.warnings.push('No network folders readable (' + e.message + ') — endpoints will be attributed by hostname only.');
+      out.warnings.push('No groups readable (' + e.message + ') — endpoints will be attributed by hostname only.');
     }
   }
 
@@ -281,20 +309,28 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
     // Lumen's own machines sit at the root, not under a managed company, so the flat
     // list is fetched too. Ordered FIRST so the per-company calls below win on any
     // endpoint that appears in both.
-    try { batches.push({ gzCompanyId: null, items: await pageThrough('network', 'getEndpointsList', {}) }); }
+    try { batches.push({ gzCompanyId: null, items: await pageThrough('network', 'getEndpointsList', EP_QUERY) }); }
     catch { /* the per-company calls are the ones that matter */ }
+    // parentId — NOT companyId. companyId is not a parameter of this method, so it was
+    // silently ignored and every company came back empty.
     for (const cid of companyIds) {
-      try { batches.push({ gzCompanyId: cid, items: await pageThrough('network', 'getEndpointsList', { companyId: cid }) }); }
+      try { batches.push({ gzCompanyId: cid, items: await pageThrough('network', 'getEndpointsList', { parentId: cid, ...EP_QUERY }) }); }
       catch (e: any) { out.warnings.push(`Endpoints for company ${cid}: ${e.message}`); }
     }
   } else {
-    try { batches.push({ gzCompanyId: companyIds[0] ?? null, items: await pageThrough('network', 'getEndpointsList', {}) }); }
+    try { batches.push({ gzCompanyId: companyIds[0] ?? null, items: await pageThrough('network', 'getEndpointsList', EP_QUERY) }); }
     catch (e: any) { out.warnings.push('Endpoints: ' + e.message); }
   }
 
   const compMap = new Map<string, number | null>(
     (await pool.query(`SELECT gz_id, customer_id FROM security_companies`)).rows
       .map((r: any) => [String(r.gz_id), r.customer_id ? Number(r.customer_id) : null]));
+
+  // One detail call per managed endpoint, but bounded: a runaway sync must not hammer
+  // the API and trip its rate limit for everything else Lumen does.
+  const DETAIL_CAP = 750;
+  let detailCalls = 0;
+  let detailBadReported = 0;
 
   for (const batch of batches) {
     for (const e of batch.items) {
@@ -303,8 +339,23 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
       const gzCompanyId = s(e.companyId) || s(e.groupId) || batch.gzCompanyId;
       let customerId = gzCompanyId ? (compMap.get(gzCompanyId) ?? null) : null;
       const name = s(e.name) || s(e.label) || s(e.fqdn) || gzId;
-      const agent = e.agent || {};
-      const malware = e.malwareStatus || {};
+
+      // getEndpointsList does NOT return agent version, modules, malware status or a
+      // last-seen time — those live only on getManagedEndpointDetails. Reading them off
+      // the list row (which is what this code did first) yields undefined everywhere,
+      // i.e. "healthy, nothing to report", which is the worst possible wrong answer for
+      // a security screen. So managed endpoints get one detail call each, capped, and a
+      // failure degrades to list-only data rather than losing the endpoint.
+      let d: any = {};
+      if (bool(e.isManaged) && detailCalls < DETAIL_CAP) {
+        detailCalls++;
+        try { d = (await rpc<any>('network', 'getManagedEndpointDetails', { endpointId: gzId })) || {}; }
+        catch (err: any) {
+          if (detailBadReported < 3) { out.warnings.push(`Details unavailable for ${name}: ${err.message}`); detailBadReported++; }
+        }
+      }
+      const agent = d.agent || {};
+      const malware = d.malwareStatus || {};
 
       // Match to one of our devices by hostname — the one thing both sides agree on.
       //
@@ -348,13 +399,23 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
            is_managed=EXCLUDED.is_managed, policy_name=EXCLUDED.policy_name,
            agent_version=EXCLUDED.agent_version, outdated=EXCLUDED.outdated, infected=EXCLUDED.infected,
            modules_on=EXCLUDED.modules_on, last_seen_at=EXCLUDED.last_seen_at, raw=EXCLUDED.raw, synced_at=NOW()`,
-        [gzId, gzCompanyId, customerId, assetId, name, s(e.fqdn), s(e.ip),
-         s(e.operatingSystemVersion) || s(e.operatingSystem), bool(e.isManaged),
-         s(e.policy?.name), s(agent.engineVersion) || s(agent.version),
-         bool(agent.productOutdated) || bool(agent.productUpdateAvailable),
+        [gzId, gzCompanyId, customerId, assetId, name, s(e.fqdn) || s(d.fqdn), s(e.ip) || s(d.ip),
+         s(e.operatingSystemVersion) || s(d.operatingSystemVersion),
+         // "Managed" for our purposes means the security agent is actually on it, which
+         // is managedWithBest — isManaged alone can be true for an unprotected machine
+         // that GravityZone merely knows about.
+         bool(e.managedWithBest) || bool(d.managedWithBest),
+         s(e.policy?.name) || s(d.policy?.name),
+         s(agent.engineVersion) || s(agent.version),
+         // productOutdated is TOP-LEVEL on the list row (and only present because
+         // EP_QUERY asks for it), not under agent.
+         bool(e.productOutdated) || bool(d.productOutdated) || bool(agent.productOutdated) || bool(agent.productUpdateAvailable),
          bool(malware.infected) || bool(malware.detection),
-         modulesOn(e.modules), when(e.lastSeen) || when(e.lastSuccessfulScan),
-         JSON.stringify(e)]);
+         modulesOn(d.modules),
+         // There is no lastSeen on the list row; the details call has one, and the last
+         // successful scan is the honest fallback.
+         when(d.lastSeen) || when(e.lastSuccessfulScan?.date) || when(d.lastSuccessfulScan?.date),
+         JSON.stringify(Object.keys(d).length ? { ...e, __details: d } : e)]);
       out.endpoints++;
 
       // Infected? That is a case, not a dashboard number somebody might notice.
