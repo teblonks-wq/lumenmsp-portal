@@ -1,0 +1,318 @@
+<%- include('../partials/header', { title: 'Diary', user }) %>
+<%
+  function tmHM(ep){ return new Date(ep*1000).toLocaleTimeString('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit'}); }
+  function dayLabel(dk){ return new Date(dk+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}); }
+  var PEOPLE = people; var ME = user.id;
+  function initials(n){ return String(n||'?').split(/\s+/).map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase(); }
+
+  // Which entries this lens shows. company = everything; u<id> = that person's;
+  // support = remote work; onsite = onsite work. One pool, many lenses.
+  function inLens(e){
+    if (view === 'company') return true;
+    if (view === 'support') return e.kind === 'remote' || (e.feed === 'maintenance');
+    if (view === 'onsite')  return e.kind === 'onsite';
+    var uid = view === 'mine' ? ME : (view.charAt(0) === 'u' ? parseInt(view.slice(1), 10) : NaN);
+    if (!isNaN(uid)) return e.people.some(function(p){ return p.id === uid; });
+    return true;
+  }
+  var shown = entries.filter(inLens);
+  var stats = {
+    booked: shown.filter(function(e){ return e.s != null && !e.feed && e.status==='booked'; }).length,
+    onsite: shown.filter(function(e){ return e.kind==='onsite' && e.status==='booked'; }).length,
+    daylane: shown.filter(function(e){ return e.s == null && e.kind!=='timeoff'; }).length,
+    off: shown.filter(function(e){ return e.kind==='timeoff'; }).length,
+  };
+%>
+<style>
+  .dy-week { display:grid; grid-template-columns:repeat(7, minmax(0,1fr)); gap:10px; align-items:start; }
+  .dy-day { background:var(--surface,#fff); border:1px solid var(--line); border-radius:12px; min-height:180px; overflow:hidden; }
+  .dy-day.today { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  .dy-dhead { padding:8px 10px; font-size:12px; font-weight:700; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+  .dy-dhead .n { color:var(--muted); font-weight:600; }
+  .dy-body { padding:8px; display:flex; flex-direction:column; gap:6px; }
+  .dy-card { border:1px solid var(--line); border-left:4px solid var(--muted); border-radius:8px; padding:6px 8px; font-size:12px; cursor:pointer; background:var(--card,#fff); }
+  .dy-card:hover { box-shadow:0 3px 10px rgba(15,23,42,.10); }
+  .dy-card .t { font-weight:700; line-height:1.25; }
+  .dy-card .m { color:var(--muted); font-size:11px; margin-top:2px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .dy-card.done { opacity:.55; } .dy-card.done .t { text-decoration:line-through; }
+  .dy-card.feed { border-style:dashed; cursor:default; background:var(--surface-2,#f8fafc); }
+  .dy-chip { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%;
+             background:var(--tint-accent); color:var(--accent); font-size:10px; font-weight:800; }
+  .dy-lens { display:flex; gap:6px; flex-wrap:wrap; }
+  .dy-lens a { padding:5px 12px; border-radius:999px; border:1px solid var(--line-strong); font-size:12.5px; text-decoration:none; color:var(--ink); }
+  .dy-lens a.on { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
+  /* New/edit lightbox */
+  .dy-overlay { display:none; position:fixed; inset:0; z-index:920; background:rgba(15,23,42,.45); align-items:flex-start; justify-content:center; padding:6vh 16px; }
+  .dy-overlay.on { display:flex; }
+  .dy-modal { background:var(--surface,#fff); border-radius:14px; width:min(640px,100%); max-height:88vh; overflow:auto;
+              box-shadow:0 24px 60px rgba(15,23,42,.28); padding:18px 20px; }
+  .dy-modal label { font-size:12px; font-weight:700; color:var(--muted); display:block; margin:10px 0 4px; }
+  .dy-modal input[type=text], .dy-modal input[type=date], .dy-modal input[type=time], .dy-modal input[type=number],
+  .dy-modal select, .dy-modal textarea {
+    width:100%; font:inherit; font-size:13px; padding:7px 10px; border:1px solid var(--line-strong); border-radius:8px;
+    background:var(--card,#fff); color:var(--ink); box-sizing:border-box; }
+  .dy-kinds { display:flex; gap:6px; flex-wrap:wrap; }
+  .dy-kinds button { font:inherit; font-size:12.5px; padding:5px 11px; border-radius:999px; border:1px solid var(--line-strong); background:none; cursor:pointer; color:var(--ink); }
+  .dy-kinds button.on { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
+  .dy-block { display:none; margin-top:12px; border:1px solid var(--bad-line,#fecaca); background:var(--tint-bad,#fef2f2); border-radius:10px; padding:10px 12px; }
+  .dy-block h4 { margin:0 0 6px; font-size:13px; color:var(--bad-fg); }
+  .dy-block .c { font-size:12.5px; padding:3px 0; }
+  .dy-warn { display:none; margin-top:10px; font-size:12px; color:var(--warn-deep,#92400e); }
+</style>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--accent),var(--violet));margin-bottom:14px;">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="doc-kicker">The company diary — every promise, in time order</p>
+    <h1>Diary</h1>
+    <p class="doc-sub">One pool of commitments across <%= PEOPLE.map(function(p){return p.name.split(' ')[0];}).join(' & ') %> — clashes are blocked, not warned. Postponed cases and booked maintenance appear on their day automatically.</p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <a class="btn" href="/diary/week?w=<%= prevW %>&view=<%= view %>">‹</a>
+    <a class="btn" href="/diary/week?view=<%= view %>">This week</a>
+    <a class="btn" href="/diary/week?w=<%= nextW %>&view=<%= view %>">›</a>
+    <button class="btn btn-primary" type="button" onclick="dyOpen(null)">+ New entry</button>
+  </div>
+</div>
+<div style="margin-top:12px;" class="dy-lens">
+  <a href="?w=<%= monday %>&view=company" class="<%= view==='company'?'on':'' %>">Company week</a>
+  <a href="?w=<%= monday %>&view=mine" class="<%= view==='mine'?'on':'' %>">Mine</a>
+  <% PEOPLE.forEach(function(p){ if (p.id === ME) return; %>
+    <a href="?w=<%= monday %>&view=u<%= p.id %>" class="<%= view===('u'+p.id)?'on':'' %>"><%= p.name.split(' ')[0] %>'s</a>
+  <% }); %>
+  <a href="?w=<%= monday %>&view=support" class="<%= view==='support'?'on':'' %>">Support</a>
+  <a href="?w=<%= monday %>&view=onsite" class="<%= view==='onsite'?'on':'' %>">Onsite</a>
+</div>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div class="stat-band">
+  <span class="tile" style="display:block;"><span class="n info" style="display:block;"><%= stats.booked %></span><span class="l" style="display:block;">booked this week</span></span>
+  <span class="tile" style="display:block;"><span class="n" style="display:block;color:var(--accent);"><%= stats.onsite %></span><span class="l" style="display:block;">onsite visits</span></span>
+  <span class="tile" style="display:block;"><span class="n good" style="display:block;"><%= stats.daylane %></span><span class="l" style="display:block;">promises &amp; tasks due</span></span>
+  <span class="tile acc-plain" style="display:block;"><span class="n" style="display:block;color:var(--muted);"><%= stats.off %></span><span class="l" style="display:block;">time off</span></span>
+</div>
+
+<div class="dy-week">
+  <% days.forEach(function(dk){
+       var dayItems = shown.filter(function(e){ return e.dayKey === dk; });
+       var lane = dayItems.filter(function(e){ return e.s == null; });
+       var timed = dayItems.filter(function(e){ return e.s != null; }).sort(function(a,b){ return a.s - b.s; });
+  %>
+  <div class="dy-day <%= dk === today ? 'today' : '' %>">
+    <div class="dy-dhead"><span><%= dayLabel(dk) %></span><span class="n"><%= (lane.length + timed.length) || '' %></span></div>
+    <div class="dy-body">
+      <% lane.forEach(function(e){ %>
+        <div class="dy-card <%= e.status==='done'?'done':'' %> <%= e.feed?'feed':'' %>"
+             style="border-left-color:<%- KINDS[e.kind] ? KINDS[e.kind].accent : 'var(--muted)' %>;"
+             <% if (!e.feed) { %>data-e="<%= JSON.stringify(e) %>" onclick="dyOpen(this.getAttribute('data-e'))"<% } else if (e.link) { %>onclick="location.href='<%= e.link %>'"<% } %>>
+          <div class="t"><%= e.title %></div>
+          <div class="m">
+            <span><%= KINDS[e.kind] ? KINDS[e.kind].label : e.kind %><%= e.feed === 'postponed' ? ' · postponed case' : '' %></span>
+            <% if (e.customerName) { %><span>· <%= e.customerName %></span><% } %>
+            <% e.people.forEach(function(p){ %><span class="dy-chip" title="<%= p.name %>"><%= initials(p.name) %></span><% }); %>
+          </div>
+        </div>
+      <% }); %>
+      <% timed.forEach(function(e){ %>
+        <div class="dy-card <%= e.status==='done'?'done':'' %> <%= e.feed?'feed':'' %>"
+             style="border-left-color:<%- KINDS[e.kind] ? KINDS[e.kind].accent : 'var(--muted)' %>;"
+             <% if (!e.feed) { %>data-e="<%= JSON.stringify(e) %>" onclick="dyOpen(this.getAttribute('data-e'))"<% } else if (e.link) { %>onclick="location.href='<%= e.link %>'"<% } %>>
+          <div class="t"><%= tmHM(e.s) %>–<%= tmHM(e.e) %> · <%= e.title %></div>
+          <div class="m">
+            <span><%= KINDS[e.kind] ? KINDS[e.kind].label : e.kind %><%= e.feed === 'maintenance' ? ' · scheduled' : '' %></span>
+            <% if (e.customerName) { %><span>· <%= e.customerName %></span><% } %>
+            <% if (e.bufferMins) { %><span>· +<%= e.bufferMins %>m travel</span><% } %>
+            <% e.people.forEach(function(p){ %><span class="dy-chip" title="<%= p.name %>"><%= initials(p.name) %></span><% }); %>
+          </div>
+        </div>
+      <% }); %>
+      <% if (!lane.length && !timed.length) { %><div class="muted" style="font-size:11.5px;text-align:center;padding:14px 0;">—</div><% } %>
+    </div>
+  </div>
+  <% }); %>
+</div>
+<p class="muted" style="font-size:12px;margin:12px 0 0;">
+  Dashed cards arrive on their own — postponed cases returning to their owner, and restarts or patch installs already scheduled on devices. They live where the work lives; the diary just shows you the day they land.
+</p>
+
+<!-- New / edit entry -->
+<div class="dy-overlay" id="dyOverlay">
+  <div class="dy-modal" role="dialog" aria-modal="true">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h2 id="dyTitle" style="margin:0;font-size:16px;">New diary entry</h2>
+      <button type="button" class="btn" onclick="dyClose()" style="padding:2px 10px;">×</button>
+    </div>
+
+    <label>What kind of entry?</label>
+    <div class="dy-kinds" id="dyKinds">
+      <% Object.keys(KINDS).forEach(function(k){ %>
+        <button type="button" data-k="<%= k %>"><%= KINDS[k].label %></button>
+      <% }); %>
+    </div>
+
+    <label>Title</label>
+    <input type="text" id="dyT" placeholder="e.g. Server room tidy — Larkmead">
+
+    <label>Who</label>
+    <div style="display:flex;gap:14px;">
+      <% PEOPLE.forEach(function(p){ %>
+        <label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:600;color:var(--ink);font-size:13px;">
+          <input type="checkbox" class="dyP" value="<%= p.id %>" <%= p.id===ME?'checked':'' %>> <%= p.name.split(' ')[0] %>
+        </label>
+      <% }); %>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      <div>
+        <label>Customer <span style="font-weight:400;">(optional)</span></label>
+        <select id="dyC"><option value="">—</option>
+          <% customers.forEach(function(c){ %><option value="<%= c.id %>"><%= c.name %></option><% }); %>
+        </select>
+      </div>
+      <div>
+        <label>Case # <span style="font-weight:400;">(optional)</span></label>
+        <input type="number" id="dyTk" placeholder="ticket id">
+      </div>
+    </div>
+
+    <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="dyTimed" checked style="width:auto;"> Timed booking</label>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 0.8fr;gap:10px;" id="dyWhen">
+      <div><label>Date</label><input type="date" id="dyD"></div>
+      <div id="dyWrapS"><label>Start</label><input type="time" id="dyS" value="09:00" step="300"></div>
+      <div id="dyWrapE"><label>End</label><input type="time" id="dyE" value="10:00" step="300"></div>
+      <div id="dyWrapB"><label>Travel ±min</label><input type="number" id="dyB" value="30" min="0" max="240" step="5"></div>
+    </div>
+
+    <label>Notes</label>
+    <textarea id="dyN" rows="2"></textarea>
+
+    <div class="dy-block" id="dyBlock">
+      <h4>Blocked — this time is already spoken for</h4>
+      <div id="dyBlockList"></div>
+      <p class="muted" style="font-size:11.5px;margin:6px 0 0;">The diary hard-blocks clashes. Move or cancel the conflicting entry first if this booking must happen.</p>
+    </div>
+    <p class="dy-warn" id="dyWarn"></p>
+    <p class="dy-warn" id="dyErr" style="color:var(--bad-fg);"></p>
+
+    <div style="display:flex;justify-content:space-between;gap:8px;margin-top:14px;">
+      <div id="dyExisting" style="display:none;gap:8px;">
+        <form method="post" id="dyDoneF" style="display:inline;"><input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>"><input type="hidden" name="status" value="done"><input type="hidden" name="back" value="/diary/week?w=<%= monday %>&view=<%= view %>"><button class="btn" type="submit">✓ Mark done</button></form>
+        <form method="post" id="dyCancelF" style="display:inline;" onsubmit="return confirm('Cancel this entry? Its calendar copies are removed too.');"><input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>"><input type="hidden" name="status" value="cancelled"><input type="hidden" name="back" value="/diary/week?w=<%= monday %>&view=<%= view %>"><button class="btn" type="submit" style="color:var(--bad-fg);">Cancel entry</button></form>
+      </div>
+      <div style="display:flex;gap:8px;margin-left:auto;">
+        <button class="btn" type="button" onclick="dyClose()">Close</button>
+        <button class="btn btn-primary" type="button" id="dyGo" onclick="dySave()">Book it</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var KINDS = <%- JSON.stringify(Object.keys(KINDS)) %>;
+  var TIMED_DEFAULT = { onsite:true, remote:true, catchup:true, timeoff:false, promise:false, task:false };
+  var editId = null;
+
+  function $(id){ return document.getElementById(id); }
+  function kind(){ var b = document.querySelector('#dyKinds button.on'); return b ? b.getAttribute('data-k') : 'onsite'; }
+  function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
+
+  function setKind(k){
+    document.querySelectorAll('#dyKinds button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-k')===k); });
+    $('dyTimed').checked = !!TIMED_DEFAULT[k];
+    syncTimed();
+  }
+  function syncTimed(){
+    var t = $('dyTimed').checked;
+    $('dyWrapS').style.display = t ? '' : 'none';
+    $('dyWrapE').style.display = t ? '' : 'none';
+    $('dyWrapB').style.display = t && kind()==='onsite' ? '' : 'none';
+  }
+  document.querySelectorAll('#dyKinds button').forEach(function(b){
+    b.addEventListener('click', function(){ setKind(b.getAttribute('data-k')); });
+  });
+  $('dyTimed').addEventListener('change', syncTimed);
+
+  window.dyOpen = function(json){
+    var e = json ? JSON.parse(json) : null;
+    editId = e ? e.id : null;
+    $('dyTitle').textContent = e ? 'Edit entry' : 'New diary entry';
+    $('dyGo').textContent = e ? 'Save changes' : 'Book it';
+    setKind(e ? e.kind : 'onsite');
+    $('dyT').value = e ? e.title : '';
+    $('dyN').value = e && e.notes ? e.notes : '';
+    $('dyC').value = e && e.customerId ? String(e.customerId) : '';
+    $('dyTk').value = e && e.ticketId ? String(e.ticketId) : '';
+    document.querySelectorAll('.dyP').forEach(function(c){
+      c.checked = e ? e.people.some(function(p){ return String(p.id)===c.value; }) : (c.value === '<%= ME %>');
+    });
+    var today = '<%= today %>';
+    if (e && e.s) {
+      var sd = new Date(e.s*1000), ed = new Date(e.e*1000);
+      $('dyTimed').checked = true;
+      $('dyD').value = e.dayKey;
+      $('dyS').value = sd.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+      $('dyE').value = ed.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+    } else {
+      $('dyTimed').checked = e ? false : !!TIMED_DEFAULT[kind()];
+      $('dyD').value = e ? e.dayKey : today;
+    }
+    $('dyB').value = e ? String(e.bufferMins || 0) : '30';
+    $('dyBlock').style.display = 'none'; $('dyWarn').style.display='none'; $('dyErr').style.display='none';
+    if (e) {
+      $('dyExisting').style.display = 'flex';
+      $('dyDoneF').action = '/diary/entries/' + e.id + '/status';
+      $('dyCancelF').action = '/diary/entries/' + e.id + '/status';
+    } else { $('dyExisting').style.display = 'none'; }
+    syncTimed();
+    $('dyOverlay').classList.add('on');
+  };
+  window.dyClose = function(){ $('dyOverlay').classList.remove('on'); };
+  $('dyOverlay').addEventListener('click', function(ev){ if (ev.target === $('dyOverlay')) dyClose(); });
+  document.addEventListener('keydown', function(ev){ if (ev.key==='Escape') dyClose(); });
+
+  window.dySave = function(){
+    var timed = $('dyTimed').checked;
+    var body = {
+      kind: kind(), title: $('dyT').value.trim(), notes: $('dyN').value.trim(),
+      customer_id: $('dyC').value || null, ticket_id: $('dyTk').value || null,
+      people: Array.prototype.slice.call(document.querySelectorAll('.dyP:checked')).map(function(c){ return c.value; }),
+      buffer_mins: kind()==='onsite' && timed ? parseInt($('dyB').value||'0',10) : 0,
+      _csrf: csrf(),
+    };
+    if (timed) {
+      if (!$('dyD').value || !$('dyS').value || !$('dyE').value) { err('Pick the date and times.'); return; }
+      body.start_epoch = Math.floor(new Date($('dyD').value + 'T' + $('dyS').value).getTime()/1000);
+      body.end_epoch   = Math.floor(new Date($('dyD').value + 'T' + $('dyE').value).getTime()/1000);
+    } else {
+      body.day_key = $('dyD').value;
+    }
+    $('dyGo').disabled = true;
+    fetch(editId ? '/diary/entries/' + editId : '/diary/entries', {
+      method:'POST', headers:{'Content-Type':'application/json','x-csrf-token':csrf()}, body: JSON.stringify(body),
+    }).then(function(r){ return r.json(); }).then(function(r){
+      $('dyGo').disabled = false;
+      if (r.ok) { location.href = '/diary/week?w=<%= monday %>&view=<%= view %>&msg=' + encodeURIComponent('In the diary.' + (r.warning ? ' (' + r.warning + ')' : '')); return; }
+      if (r.blocked && r.clashes) {
+        var list = $('dyBlockList'); list.innerHTML = '';
+        r.clashes.forEach(function(c){
+          var d = document.createElement('div'); d.className = 'c';
+          d.textContent = c.who + ' — ' + c.title + ' · ' + c.whenText + (c.source==='outlook' ? ' (from Outlook)' : '');
+          list.appendChild(d);
+        });
+        $('dyBlock').style.display = 'block';
+        if (r.warning) { $('dyWarn').textContent = r.warning; $('dyWarn').style.display='block'; }
+        return;
+      }
+      err(r.error || 'Could not save that.');
+      if (r.warning) { $('dyWarn').textContent = r.warning; $('dyWarn').style.display='block'; }
+    }).catch(function(e){ $('dyGo').disabled = false; err(e.message); });
+  };
+  function err(m){ $('dyErr').textContent = m; $('dyErr').style.display='block'; }
+})();
+</script>
+
+<%- include('../partials/footer') %>

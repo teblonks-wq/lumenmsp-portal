@@ -48,8 +48,48 @@ var _standalone = (typeof standalone !== 'undefined' && !!standalone);
               <% }); %>
             </select>
             <button type="button" class="btn" id="lnkBtn" style="padding:3px 10px;font-size:12px;" title="Insert a link with your own label (e.g. 'Book your appointment' instead of the raw URL)">🔗 Labelled link</button>
+            <button type="button" class="btn" id="promiseBtn" style="padding:3px 10px;font-size:12px;" title="&quot;I'll call you Thursday&quot; — log it to your Diary and to this case in one click">🤝 Promise</button>
             <a class="muted" href="/ticket-templates" style="font-size:12px;" title="Add or edit templates">manage</a>
           </div>
+          <%# The promise row is NOT a <form> — the composer already is one, and forms
+              cannot nest. "Log it" builds and submits its own form via JS instead. %>
+          <div id="promiseRow" style="display:none;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;background:var(--tint-yellow,#fefce8);border:1px solid var(--warn-line,#fde68a);border-radius:8px;padding:6px 8px;">
+            <span style="font-size:12px;font-weight:700;">I promise to</span>
+            <input class="input" type="text" id="promiseText" placeholder="call Kim back about the printer" style="flex:1;min-width:180px;font-size:12.5px;padding:4px 8px;">
+            <span style="font-size:12px;font-weight:700;">by</span>
+            <input class="input" type="date" id="promiseDay" style="width:auto;font-size:12.5px;padding:4px 8px;">
+            <button class="btn btn-primary" type="button" id="promiseGo" style="padding:3px 12px;font-size:12px;">Log it</button>
+            <span class="muted" style="font-size:11px;">Goes in your Diary's day list and onto the case as a note — the customer sees nothing.</span>
+          </div>
+          <script>
+          (function(){
+            var b = document.getElementById('promiseBtn'), row = document.getElementById('promiseRow');
+            if (!b || !row) return;
+            b.addEventListener('click', function(){
+              row.style.display = (row.style.display === 'flex') ? 'none' : 'flex';
+              if (row.style.display === 'flex') {
+                var d = document.getElementById('promiseDay');
+                if (d && !d.value) {
+                  var t = new Date(Date.now() + 86400000);
+                  d.value = t.getFullYear() + '-' + String(t.getMonth()+1).padStart(2,'0') + '-' + String(t.getDate()).padStart(2,'0');
+                }
+                document.getElementById('promiseText').focus();
+              }
+            });
+            document.getElementById('promiseGo').addEventListener('click', function(){
+              var text = document.getElementById('promiseText').value.trim();
+              var day = document.getElementById('promiseDay').value;
+              if (!text || !day) { alert('A promise needs the what and the when.'); return; }
+              var m = document.querySelector('meta[name="csrf-token"]');
+              var f = document.createElement('form');
+              f.method = 'post'; f.action = '/tickets/<%= ticket.id %>/promise';
+              [['_csrf', m ? m.getAttribute('content') : ''], ['text', text], ['day', day],
+               ['back', '<%= (typeof reviewMode !== 'undefined' && reviewMode) ? ('/tickets/review/' + ticket.id) : ('/tickets/' + ticket.id) %>']]
+                .forEach(function(kv){ var i = document.createElement('input'); i.type='hidden'; i.name=kv[0]; i.value=kv[1]; f.appendChild(i); });
+              document.body.appendChild(f); f.submit();
+            });
+          })();
+          </script>
           <div id="aiBar" style="display:none;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
             <button type="button" class="btn ai-btn" id="aiMic" style="padding:3px 10px;font-size:12px;">🎤 Dictate</button>
             <div style="position:relative;display:inline-block;">

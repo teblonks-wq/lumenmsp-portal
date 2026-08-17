@@ -2634,3 +2634,44 @@ model MsSubscription {
   @@index([mexId])
   @@map("ms_subscription")
 }
+
+// ── The Diary — Lumen business scheduling ────────────────────────────────────────
+// ONE pool of entries; the "diaries" (Mine / Andy's / Support / Onsite / Company
+// Week) are views over it. An entry can name one or both staff — "Andy comes onsite
+// with me" is a single entry with two people, never a clash. Timed entries live on
+// start_at/end_at; day-lane items (tasks, promises) carry only day_key ('YYYY-MM-DD',
+// Europe/London) — promises are not appointments, so they are never given fake times.
+// Timestamps follow the estate rule: written via to_timestamp(epoch), read via
+// EXTRACT(EPOCH ...) — never raw timestamps across the BST boundary.
+model DiaryEntry {
+  id         Int       @id @default(autoincrement())
+  kind       String    // catchup | promise | task | remote | onsite | timeoff
+  title      String
+  notes      String?
+  customerId Int?      @map("customer_id")
+  ticketId   Int?      @map("ticket_id")
+  startAt    DateTime? @map("start_at")  // timed entries; null = day-lane item
+  endAt      DateTime? @map("end_at")
+  dayKey     String?   @map("day_key")   // 'YYYY-MM-DD' for day-lane items and all-day time off
+  bufferMins Int       @default(0) @map("buffer_mins") // onsite travel buffer, EACH side, counted by the clash check
+  status     String    @default("booked") // booked | done | cancelled
+  createdBy  Int?      @map("created_by")
+  graphSync  Json?     @map("graph_sync") // { "<userId>": "<graph event id>", ... } — pushed M365 events
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @default(now()) @map("updated_at")
+
+  @@index([startAt])
+  @@index([dayKey])
+  @@index([customerId])
+  @@map("diary_entries")
+}
+
+model DiaryEntryPerson {
+  id      Int @id @default(autoincrement())
+  entryId Int @map("entry_id")
+  userId  Int @map("user_id")
+
+  @@index([entryId])
+  @@index([userId])
+  @@map("diary_entry_people")
+}
