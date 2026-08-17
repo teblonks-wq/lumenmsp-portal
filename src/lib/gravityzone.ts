@@ -120,12 +120,18 @@ export async function testConnection(): Promise<{ ok: boolean; probes: ProbeResu
     }
   };
 
-  // Companies: present on partner/MSP accounts. A direct tenant has getCompanyDetails
-  // instead — either answer is fine, we just need to know which.
+  // Companies: getCompaniesList is PARTNER/MSP-only. Lumen's tenant answered "Method
+  // not found" with every API enabled on the key (Terry, 2026-08-17), which is how we
+  // know it is a single-company tenant — so grouping has to come from the network
+  // tree's folders instead. Both probes stay: the answer identifies the tenant type.
   await add('companies', 'getCompaniesList', { page: 1, perPage: 5 },
-    (r) => `${r?.total ?? (r?.items?.length || 0)} companies visible`);
+    (r) => `${r?.total ?? (r?.items?.length || 0)} companies visible (partner tenant)`);
   await add('companies', 'getCompanyDetails', {},
     (r) => `own company: ${r?.name || '(unnamed)'}`);
+  // The folders in Network. On a single-company tenant this is where per-customer
+  // separation actually lives, so it matters more than companies do.
+  await add('network', 'getContainers', {},
+    (r) => `${(Array.isArray(r) ? r.length : r?.items?.length) || 0} folder(s) in the network tree`);
   await add('network', 'getEndpointsList', { page: 1, perPage: 5 },
     (r) => `${r?.total ?? (r?.items?.length || 0)} endpoints on the first page`);
   await add('packages', 'getPackagesList', { page: 1, perPage: 5 },
@@ -186,18 +192,34 @@ export interface SyncResult {
 export async function syncGravityZone(userId: number | null = null): Promise<SyncResult> {
   const out: SyncResult = { companies: 0, mappedCompanies: 0, endpoints: 0, matchedDevices: 0, detections: 0, ticketsRaised: 0, warnings: [] };
 
-  // ── Companies ────────────────────────────────────────────────────────────────
+  // ── Groupings: companies on a partner tenant, network FOLDERS on a direct one ──
+  // Lumen's tenant is a single company (getCompaniesList is partner-only and returns
+  // "Method not found" there even with every API enabled), so the thing that separates
+  // one customer's machines from another's is the folder tree under Network. Both are
+  // handled the same way from here on: a grouping has an id, a name, and a customer
+  // mapping a human confirms.
   let companies: any[] = [];
+  let partnerTenant = false;
   try {
     companies = await pageThrough('companies', 'getCompaniesList', {});
-  } catch (e: any) {
-    // A direct (non-partner) tenant has no company list — it IS one company.
+    partnerTenant = companies.length > 1;
+  } catch {
     try {
       const own: any = await rpc('companies', 'getCompanyDetails', {});
       if (own?.id) companies = [own];
-      else out.warnings.push('No companies returned: ' + e.message);
-    } catch (e2: any) {
-      out.warnings.push('Companies unavailable (' + e.message + ')');
+    } catch { /* single-company tenant with no companies service at all — fine */ }
+  }
+
+  // Folders. On a single-company tenant these ARE the per-customer boundary, so they
+  // are synced as groupings too and can be mapped to customers exactly the same way.
+  if (!partnerTenant) {
+    try {
+      const containers: any = await rpc('network', 'getContainers', {});
+      const items = Array.isArray(containers) ? containers : (containers?.items || []);
+      for (const c of items) if (c?.id) companies.push({ id: c.id, name: c.name || '(unnamed folder)', __folder: true });
+      if (items.length) out.warnings.push(`Single-company tenant: using the ${items.length} network folder(s) as the customer boundary.`);
+    } catch (e: any) {
+      out.warnings.push('No network folders readable (' + e.message + ') — endpoints will be attributed by hostname only.');
     }
   }
 
@@ -227,10 +249,11 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
   }
 
   // ── Endpoints ────────────────────────────────────────────────────────────────
-  // Per company where we can (a partner tenant needs it), otherwise the flat list.
-  const companyIds = companies.map((c) => s(c.id)).filter(Boolean) as string[];
+  // A partner tenant needs one call per company. A single-company tenant gets the flat
+  // list and each endpoint tells us its own folder via groupId.
+  const companyIds = companies.filter((c) => !c.__folder).map((c) => s(c.id)).filter(Boolean) as string[];
   const batches: Array<{ gzCompanyId: string | null; items: any[] }> = [];
-  if (companyIds.length > 1) {
+  if (partnerTenant) {
     for (const cid of companyIds) {
       try { batches.push({ gzCompanyId: cid, items: await pageThrough('network', 'getEndpointsList', { companyId: cid }) }); }
       catch (e: any) { out.warnings.push(`Endpoints for company ${cid}: ${e.message}`); }
@@ -247,23 +270,35 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
   for (const batch of batches) {
     for (const e of batch.items) {
       const gzId = s(e.id); if (!gzId) continue;
-      const gzCompanyId = s(e.companyId) || batch.gzCompanyId;
-      const customerId = gzCompanyId ? (compMap.get(gzCompanyId) ?? null) : null;
+      // The grouping is the company on a partner tenant, the network FOLDER otherwise.
+      const gzCompanyId = s(e.companyId) || s(e.groupId) || batch.gzCompanyId;
+      let customerId = gzCompanyId ? (compMap.get(gzCompanyId) ?? null) : null;
       const name = s(e.name) || s(e.label) || s(e.fqdn) || gzId;
       const agent = e.agent || {};
       const malware = e.malwareStatus || {};
 
-      // Match to one of our devices: hostname first (that is what both sides agree
-      // on), narrowed to the customer when we know it.
+      // Match to one of our devices by hostname — the one thing both sides agree on.
+      //
+      // On a single-company tenant this is the PRIMARY way a machine gets attributed to
+      // a customer, which makes ambiguity dangerous: two customers can both own a
+      // "SERVER01", and attaching to the wrong one would show one client another
+      // client's machine. So an ambiguous hostname matches NOTHING and is reported.
       let assetId: number | null = null;
       try {
         const m = await pool.query(
-          `SELECT id FROM customer_assets
+          `SELECT id, customer_id FROM customer_assets
             WHERE merged_into_id IS NULL AND lower(hostname) = lower($1)
               AND ($2::int IS NULL OR customer_id = $2)
-            ORDER BY (agent_device_id IS NOT NULL) DESC, id LIMIT 1`,
+            ORDER BY (agent_device_id IS NOT NULL) DESC, id`,
           [String(name).split('.')[0], customerId]);
-        if (m.rows[0]) { assetId = Number(m.rows[0].id); out.matchedDevices++; }
+        if (m.rows.length === 1) {
+          assetId = Number(m.rows[0].id);
+          out.matchedDevices++;
+          // No grouping mapping? Then the device we matched tells us the customer.
+          if (customerId == null && m.rows[0].customer_id) customerId = Number(m.rows[0].customer_id);
+        } else if (m.rows.length > 1) {
+          out.warnings.push(`"${name}" exists at more than one customer — left unmatched rather than guessed.`);
+        }
       } catch { /* matching is a convenience, never a reason to drop the row */ }
 
       await pool.query(
