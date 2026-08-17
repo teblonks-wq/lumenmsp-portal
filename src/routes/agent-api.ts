@@ -342,6 +342,37 @@ router.get('/agent/linux/:rid/:file', (req: Request, res: Response) => {
   res.download(f, file);
 });
 
+// ── macOS agent ─────────────────────────────────────────────────────────────────
+// Identical shape to the Linux block — the installer is a shell script, the binary is
+// the self-contained Posix agent built for osx-*, and the secret stays the site key.
+//
+//   curl -fsSL https://portal/agent/macos/install.sh | sudo bash -s -- --site-key KEY
+const MACOS_DIR = path.join(AGENT_MSI_DIR, 'macos');
+const MACOS_RIDS = ['osx-x64', 'osx-arm64'];
+
+router.get('/agent/macos/install.sh', (_req: Request, res: Response) => {
+  const f = path.join(MACOS_DIR, 'install.sh');
+  if (!fs.existsSync(f)) { res.status(404).type('text/plain').send('# No macOS agent has been published yet.\n'); return; }
+  res.type('text/x-shellscript').sendFile(f);
+});
+
+router.get('/agent/macos/version.txt', (_req: Request, res: Response) => {
+  const f = path.join(MACOS_DIR, 'version.txt');
+  if (!fs.existsSync(f)) { res.status(404).type('text/plain').send(''); return; }
+  res.type('text/plain').sendFile(f);
+});
+
+router.get('/agent/macos/:rid/:file', (req: Request, res: Response) => {
+  const rid = String(req.params.rid);
+  const file = String(req.params.file);
+  if (!MACOS_RIDS.includes(rid) || !['lumenmsp-agent', 'sha256.txt'].includes(file)) {
+    res.status(404).send('Not found'); return;
+  }
+  const f = path.join(MACOS_DIR, rid, file);
+  if (!fs.existsSync(f)) { res.status(404).send('Not published yet'); return; }
+  res.download(f, file);
+});
+
 // GET /agent/download/LumenMSPAgent-<sitekey>.msi — public capability URL: the key in
 // the filename both authorises the download AND enrolls the install (the MSI records
 // its own launch path, and the service parses the key back out of the filename), so a
