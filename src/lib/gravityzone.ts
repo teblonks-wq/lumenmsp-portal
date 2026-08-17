@@ -137,6 +137,25 @@ export const EP_QUERY = {
 export interface ProbeResult { service: string; method: string; ok: boolean; note: string; sample?: any }
 
 /**
+ * Where in a payload does a key matching `re` live? Returns a dotted path, or null.
+ *
+ * Written because guessing field paths has been the single most expensive habit on this
+ * integration: we read `agent.productOutdated` off a list row that never contained it and
+ * the whole estate rendered as healthy. When the shape is unknown, find it and report the
+ * path rather than testing two guesses and concluding "not supported".
+ */
+export function findKeyPath(o: any, re: RegExp, path = '', depth = 0): string | null {
+  if (o == null || depth > 6 || typeof o !== 'object') return null;
+  for (const k of Object.keys(o)) {
+    const here = path ? `${path}.${k}` : k;
+    if (re.test(k)) return here;
+    const hit = findKeyPath(o[k], re, here, depth + 1);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
  * Probe the tenant. Deliberately harmless — nothing here changes anything — and it
  * returns the raw first item so we can see the REAL field names in this tenant
  * rather than assuming the documented ones.
@@ -186,8 +205,18 @@ export async function testConnection(): Promise<{ ok: boolean; probes: ProbeResu
   } catch { /* the companies probe above already reported why */ }
   await add('packages', 'getPackagesList', { page: 1, perPage: 5 },
     (r) => `${r?.total ?? (r?.items?.length || 0)} installation packages`);
+  // "? total" on Lumen's tenant (17 Aug) means totalSlots is NOT the field name here.
+  // Rather than shrug, report where the numbers actually are — seat counts feed both the
+  // cost of the giveaway and the quantity on a billed AV line, so a silent "?" is a
+  // number nobody notices is missing.
   await add('licensing', 'getLicenseInfo', {},
-    (r) => `licence seats: ${r?.totalSlots ?? '?'} total, ${r?.usedSlots ?? '?'} used`);
+    (r) => {
+      const total = seatCount(r, 'total');
+      const used = seatCount(r, 'used');
+      const tPath = total == null ? findKeyPath(r, /total|max|purchas|subscri/i) : null;
+      return `licence seats: ${total ?? '?'} total, ${used ?? 0} used` +
+        (total == null ? ` — total not in a known field${tPath ? `; closest candidate is "${tPath}"` : ''}` : '');
+    });
 
   // ── Capability probes for what Terry asked for on 17 Aug ─────────────────────────
   // "we wll need to be able to add exaptions from portal", "we always want to be able to
@@ -219,17 +248,59 @@ export async function testConnection(): Promise<{ ok: boolean; probes: ProbeResu
     const pl: any = await rpc('policies', 'getPoliciesList', { page: 1, perPage: 5 });
     const p0 = (Array.isArray(pl) ? pl : pl?.items || [])[0];
     if (p0?.id) {
+      // Where exclusions live in the payload is not documented consistently, and on
+      // Lumen's tenant neither guess matched — so hunt for the key anywhere in the tree
+      // and SAY WHERE it was found. That path is what an exclusions audit has to read.
       await add('policies', 'getPolicyDetails', { policyId: p0.id },
-        (r) => `read policy "${r?.name || p0.name || p0.id}" — exclusions ` +
-               (r?.antimalware?.settings?.exclusions || r?.exclusions ? 'ARE visible' : 'not visible in this shape'));
+        (r) => {
+          const at = findKeyPath(r, /exclusion/i);
+          return `read policy "${r?.name || p0.name || p0.id}" — ` +
+            (at ? `exclusions found at ${at}` : 'no exclusion field anywhere in the payload, so the API does not return them');
+        });
     }
   } catch { /* the list probe above already said why */ }
-  await add('quarantine', 'getQuarantineItemsList', { page: 1, perPage: 5, endpointId: null },
-    (r) => `${r?.total ?? (r?.items?.length || 0)} quarantined item(s) readable` +
-           ` — restore-a-file needs this to answer`);
-  await add('push', 'getPushEventSettings', {},
-    (r) => `event push is ${r?.status ? 'ENABLED' : 'available but off'}` +
-           `${r?.serviceType ? ' (' + r.serviceType + ')' : ''} — this is how events reach the Portal live`);
+  // Quarantine is SPLIT BY TARGET, not one service: a bare /jsonrpc/quarantine returned
+  // HTTP 404 with no JSON body on Lumen's tenant (17 Aug), which is the signature of a
+  // wrong URL rather than a missing scope — the server never got as far as JSON-RPC. The
+  // computers and Exchange quarantines are separate endpoints, so ask for the one we
+  // want. Same lesson as getCompaniesList: question the PATH before the tenant.
+  try {
+    const got = await rpcAny<any>([
+      ['quarantine/computers', 'getQuarantineItemsList'],
+      ['quarantine', 'getQuarantineItemsList'],
+    ], { page: 1, perPage: 5 });
+    probes.push({
+      service: got.service, method: got.method, ok: true,
+      note: `${got.result?.total ?? (got.result?.items?.length || 0)} quarantined item(s) readable` +
+            ` — so restoring a file is reachable`,
+      sample: got.result?.items?.[0] ?? got.result,
+    });
+  } catch (e: any) {
+    probes.push({ service: 'quarantine/computers', method: 'getQuarantineItemsList', ok: false, note: e.message });
+  }
+
+  // Event push. "Settings for event push service were not set" is NOT a failure — it is
+  // the correct answer before anything is configured, and it proves the service path and
+  // the key's scope are both fine. Reporting that as a red cross would send someone
+  // hunting a problem that does not exist, so it is called out as ready-to-enable.
+  try {
+    const r: any = await rpc('push', 'getPushEventSettings', {});
+    probes.push({
+      service: 'push', method: 'getPushEventSettings', ok: true,
+      note: `event push is ${r?.status ? 'ENABLED' : 'configured but off'}` +
+            `${r?.serviceType ? ' (' + r.serviceType + ')' : ''}`,
+      sample: r,
+    });
+  } catch (e: any) {
+    const notSet = /were not set|not configured|no settings/i.test(e.message || '');
+    probes.push({
+      service: 'push', method: 'getPushEventSettings', ok: notSet,
+      note: notSet
+        ? 'available and the key can reach it — nothing subscribed yet, which is exactly what we expect'
+          + ' before we point it at the Portal. This is how device and company events arrive live.'
+        : e.message,
+    });
+  }
   await add('incidents', 'getBlocklistItems', { page: 1, perPage: 5 },
     (r) => `${r?.total ?? (r?.items?.length || 0)} blocklist item(s) readable`);
 
@@ -544,6 +615,11 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
   }
 
   await setSetting('gravityzone', 'last_sync', new Date().toISOString());
+  // Keep the warnings. They used to travel back only in a query string, truncated to
+  // three — and the licence audit's findings (a company on a trial, a company on a tier
+  // costing four times the standard) are exactly the ones that would fall off the end.
+  // A warning nobody can read is not a warning.
+  await setSetting('gravityzone', 'last_sync_warnings', JSON.stringify(out.warnings.slice(0, 60)));
   await logActivity(userId, 'gz_sync', 'security_endpoints', null,
     `GravityZone sync: ${out.endpoints} endpoints, ${out.companies} companies, ${out.matchedDevices} matched to our devices` +
     (out.ticketsRaised ? `, ${out.ticketsRaised} detection case(s) raised` : ''));

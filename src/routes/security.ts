@@ -5,7 +5,7 @@ import { getSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
 import {
   gzConfigured, gzConfig, saveGzConfig, testConnection, syncGravityZone, mapCompany,
-  buildAssessment, inScopeCustomers, setCustomerScope, categoriseAv,
+  buildAssessment, inScopeCustomers, setCustomerScope, categoriseAv, licenceAudit,
 } from '../lib/gravityzone';
 
 const router = Router();
@@ -121,9 +121,15 @@ router.post('/security/sync', requireAuth, requireAdmin, async (req: Request, re
 });
 
 // ── Settings: the API key, the company mapping, and who is in scope ─────────────
-router.get('/security/settings', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+// Both the GET and the Test-connection POST render this page, so the model is built once.
+// It was duplicated before, and duplicated models are how the two copies drift until one
+// of them quietly stops showing something the other does.
+async function settingsModel(req: Request, extra: Record<string, any> = {}) {
   const cfg = await gzConfig();
-  res.render('security/settings', {
+  let syncWarnings: string[] = [];
+  try { syncWarnings = JSON.parse((await getSetting('gravityzone', 'last_sync_warnings')) || '[]'); }
+  catch { syncWarnings = []; }
+  return {
     user: req.session.user!,
     configured: !!cfg,
     baseUrl: cfg?.base || 'https://cloudgz.gravityzone.bitdefender.com/api',
@@ -139,8 +145,19 @@ router.get('/security/settings', requireAuth, requireAdmin, async (req: Request,
     customers: (await pool.query(
       `SELECT id, name FROM customers WHERE NOT is_placeholder AND status <> 'inactive' ORDER BY name`)).rows,
     scope: await inScopeCustomers(),
+    // What each company is ACTUALLY licensed as, and what it costs. Read back rather than
+    // assumed: the product chosen in Giacom decides the tier, and we do not.
+    licences: await licenceAudit(),
+    syncWarnings,
+    notice: null, error: null,
+    ...extra,
+  };
+}
+
+router.get('/security/settings', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  res.render('security/settings', await settingsModel(req, {
     notice: req.query.msg || null, error: req.query.err || null,
-  });
+  }));
 });
 
 router.post('/security/settings', requireAuth, requireAdmin, async (req: Request, res: Response) => {
@@ -155,26 +172,10 @@ router.post('/security/settings', requireAuth, requireAdmin, async (req: Request
 });
 
 router.post('/security/test', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const cfg = await gzConfig();
   let probes: any = null; let error: string | null = null;
   try { probes = (await testConnection()).probes; }
   catch (e: any) { error = e.message; }
-  res.render('security/settings', {
-    user: req.session.user!,
-    configured: !!cfg,
-    baseUrl: cfg?.base || 'https://cloudgz.gravityzone.bitdefender.com/api',
-    keyTail: cfg ? cfg.key.slice(-4) : null,
-    lastSync: await getSetting('gravityzone', 'last_sync'),
-    probes,
-    companies: (await pool.query(
-      `SELECT sc.*, c.name AS customer_name,
-              (SELECT COUNT(*) FROM security_endpoints se WHERE se.gz_company_id = sc.gz_id) AS endpoints
-         FROM security_companies sc LEFT JOIN customers c ON c.id = sc.customer_id ORDER BY sc.name`)).rows,
-    customers: (await pool.query(
-      `SELECT id, name FROM customers WHERE NOT is_placeholder AND status <> 'inactive' ORDER BY name`)).rows,
-    scope: await inScopeCustomers(),
-    notice: null, error,
-  });
+  res.render('security/settings', await settingsModel(req, { probes, error }));
 });
 
 router.post('/security/companies/:gzId/map', requireAuth, requireAdmin, async (req: Request, res: Response) => {

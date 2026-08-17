@@ -62,17 +62,54 @@
 </div>
 <% } %>
 
-<div class="card" style="margin-bottom:14px;">
+<%# ── What the last sync found ─────────────────────────────────────────────────────
+    These used to travel back in a query string, truncated to three. The findings that
+    cost money — a company on a trial, a company on a tier four times the standard — are
+    exactly the ones that fell off the end. %>
+<% if (typeof syncWarnings !== 'undefined' && syncWarnings && syncWarnings.length) { %>
+<div class="card" style="margin-bottom:14px;border-left:3px solid var(--warn-fg);">
   <div class="card-header" style="display:flex;align-items:baseline;gap:10px;">
-    <h2 style="margin:0;">GravityZone companies → Portal customers</h2>
-    <span class="muted" style="font-size:12px;">an exact name match is suggested; a human confirms it</span>
+    <h2 style="margin:0;">What the last sync found</h2>
+    <span class="muted" style="font-size:12px;"><%= syncWarnings.length %> thing<%= syncWarnings.length === 1 ? '' : 's' %> worth a look</span>
+  </div>
+  <ul style="margin:8px 0 0;padding-left:18px;font-size:13px;">
+    <% syncWarnings.forEach(function(w){ %><li style="margin-bottom:4px;"><%= w %></li><% }); %>
+  </ul>
+</div>
+<% } %>
+
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-header" style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+      <h2 style="margin:0;">GravityZone companies → Portal customers</h2>
+      <span class="muted" style="font-size:12px;">an exact name match is suggested; a human confirms it</span>
+    </div>
+    <%# The Sync button belongs HERE as well as on the estate page. This card is empty until
+        a sync has run, and sending someone to another page to make the page they are on
+        useful is exactly how "still can find how to map" happens. %>
+    <form method="post" action="/security/sync" style="margin:0;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <input type="hidden" name="back" value="/security/settings">
+      <button class="btn <%= companies.length ? '' : 'btn-primary' %>" type="submit" <%= configured ? '' : 'disabled' %>
+              title="Pull companies and endpoints from GravityZone">&#8635; Sync from GravityZone</button>
+    </form>
   </div>
   <p class="muted" style="font-size:12.5px;margin:0 0 10px;">
     Mapping is deliberately not a guess: getting it wrong would show one client another client's machines.
     Confirming a mapping moves that company's endpoints with it.
   </p>
   <% if (!companies.length) { %>
-    <div class="empty-state">Nothing synced yet — save a key, test it, then run a sync from the Endpoint Security page.</div>
+    <div class="empty-state" style="text-align:left;">
+      <strong>Nothing to map yet.</strong>
+      <p class="muted" style="font-size:12.5px;margin:6px 0 0;">
+        Testing the key only asks what it can reach &mdash; it does not pull anything down. Press
+        <strong>&#8635; Sync from GravityZone</strong> above and every company in the tenant appears here
+        with a customer picker beside it.
+      </p>
+      <% if (!configured) { %>
+        <p class="muted" style="font-size:12.5px;margin:6px 0 0;">Save the API key first.</p>
+      <% } %>
+    </div>
   <% } else { %>
   <div class="table-wrap"><table class="table table-lift">
     <thead><tr><th>GravityZone company</th><th style="text-align:right;">Endpoints</th><th>Portal customer</th><th></th></tr></thead>
@@ -99,6 +136,57 @@
   </table></div>
   <% } %>
 </div>
+
+<%# ── Licence audit ────────────────────────────────────────────────────────────────
+    The tier is chosen in Giacom, not here, so this is read back rather than assumed.
+    Endpoint Security is £0.99/endpoint/month; the dearer tiers run to £5.07. %>
+<% if (typeof licences !== 'undefined' && licences && licences.length) {
+     var costed = licences.filter(function(l){ return l.monthlyCost != null; });
+     var estate = costed.reduce(function(n,l){ return n + l.monthlyCost; }, 0);
+     var flagged = licences.filter(function(l){ return l.problems && l.problems.length; });
+%>
+<div class="card" style="margin-bottom:14px;">
+  <div class="card-header" style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;">
+      <h2 style="margin:0;">Licence audit</h2>
+      <span class="muted" style="font-size:12px;">what each company is actually licensed as &mdash; the tier is set in Giacom, so this is read back, never assumed</span>
+    </div>
+    <span class="muted" style="font-size:12.5px;">
+      <strong>£<%= estate.toFixed(2) %></strong>/month across <%= costed.length %> compan<%= costed.length === 1 ? 'y' : 'ies' %>
+      <% if (costed.length !== licences.length) { %><span style="color:var(--warn-fg);"> (<%= licences.length - costed.length %> not priced)</span><% } %>
+    </span>
+  </div>
+  <div class="table-wrap"><table class="table table-lift">
+    <thead><tr>
+      <th>Company</th><th>Portal customer</th><th>Subscription</th><th>Tier</th>
+      <th style="text-align:right;">Seats used</th><th style="text-align:right;">£/endpoint</th><th style="text-align:right;">£/month</th>
+    </tr></thead>
+    <tbody>
+      <% licences.forEach(function(l){ %>
+      <tr class="<%= l.problems && l.problems.length ? 're-warn' : 're-ok' %>">
+        <td><%= l.name %>
+          <% if (l.problems && l.problems.length) { %>
+            <% l.problems.forEach(function(p){ %><div class="muted" style="font-size:11.5px;color:var(--warn-fg);"><%= p %></div><% }); %>
+          <% } %>
+        </td>
+        <td class="muted"><% if (l.customerName) { %><%= l.customerName %><% } else { %><span style="color:var(--warn-fg);">not mapped</span><% } %></td>
+        <td class="muted" style="font-size:12.5px;"><%= l.subscriptionLabel %></td>
+        <td class="muted" style="font-size:12.5px;"><%= l.protectionModel || '—' %></td>
+        <td class="money"><%= l.usedSlots == null ? '—' : l.usedSlots %></td>
+        <td class="money"><%= l.costPerEndpoint == null ? '—' : '£' + l.costPerEndpoint.toFixed(2) %></td>
+        <td class="money"><%= l.monthlyCost == null ? '—' : '£' + l.monthlyCost.toFixed(2) %></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <p class="muted" style="font-size:12px;margin:10px 0 0;">
+    Endpoint Security is the standard tier at £0.99 per endpoint per month; the bundled tiers run to £5.07.
+    Sold to the public at £3.00, and included free inside some support packages &mdash; so where a company is
+    included, the figure above is what that contract absorbs.
+    <% if (flagged.length) { %><strong style="color:var(--warn-fg);"><%= flagged.length %> compan<%= flagged.length === 1 ? 'y needs' : 'ies need' %> a look.</strong><% } %>
+  </p>
+</div>
+<% } %>
 
 <div class="card">
   <div class="card-header" style="display:flex;align-items:baseline;gap:10px;">
