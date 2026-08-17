@@ -487,10 +487,9 @@
 
 </div>
 
-<link href="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css" rel="stylesheet">
 <%
-// Quill + grammar load inside the composer partial (included above), so the editor
-// exists before any script here touches window.ticketQuill.
+// Quill + grammar (and Quill's stylesheet) load inside the composer partial (included
+// above), so the editor exists before any script here touches window.ticketQuill.
 %>
 <script>
   // Edit case title + description in place.

@@ -1,104 +1,200 @@
 <%
-// Shared power menu — sign out / restart / shut down, used by the patching list, the
-// servers list and a server's own page. Include it once per page; every button that
-// carries class="pw-btn" plus data-id / data-host / data-user / data-live / data-pending
-// is wired up automatically. Add data-strict="1" on a server to require the hostname to
-// be typed before a restart or shutdown.
+// Shared power lightbox — sign out / restart / shut down, queued to a machine from the
+// Portal. Used by the patching list, the servers list, a server's own page and the
+// device page's Manage menu. Include it once per page; every button that carries
+// class="pw-btn" plus data-id / data-host / data-user / data-live / data-pending is
+// wired up automatically. Optional extras:
+//   data-strict="1"        server — the hostname must be typed before restart/shutdown
+//   data-pending-info="…"  human text about what is already queued ("Restart scheduled
+//                          for Tue 18 Aug, 08:00") shown inside the lightbox
+//
+// Restart and Shut down can run NOW (60s on-screen warning) or be SCHEDULED for a
+// one-time future date + time (Terry 2026-08-17, from the Atera restart dialog). The
+// schedule lives portal-side as agent_commands.run_after — the poll simply does not
+// hand the command over until the time passes, so an offline machine still behaves:
+// it acts the first time it checks in after the chosen moment.
+//
+// Other pages can open it directly with window.pwOpen(anyPwBtn).
 %>
 <style>
-  .pw-menu { display:none; position:absolute; right:0; top:100%; margin-top:3px; z-index:70; min-width:210px;
-             background:var(--card,#fff); border:1px solid var(--line-strong); border-radius:9px;
-             box-shadow:0 8px 22px rgba(0,0,0,.16); overflow:hidden; text-align:left; }
-  .pw-menu button { display:block; width:100%; text-align:left; border:0; background:none; padding:8px 12px;
-                    font:inherit; font-size:13px; cursor:pointer; color:var(--ink); }
-  .pw-menu button:hover { background:var(--tint-accent); }
-  .pw-menu .pw-danger:hover { background:var(--tint-warn); color:var(--warn-deep); }
-  .pw-menu .pw-head { padding:7px 12px; font-size:11px; color:var(--muted); border-bottom:1px solid var(--line); }
+  .pw-overlay { display:none; position:fixed; inset:0; z-index:920; background:rgba(15,23,42,.45);
+                align-items:flex-start; justify-content:center; padding:10vh 16px; }
+  .pw-overlay.on { display:flex; }
+  .pw-modal { background:var(--surface,#fff); border-radius:14px; width:min(520px,100%);
+              box-shadow:0 24px 60px rgba(15,23,42,.28); overflow:hidden; }
+  .pw-head { display:flex; align-items:center; justify-content:space-between; padding:16px 20px 10px; }
+  .pw-head h3 { margin:0; font-size:16px; }
+  .pw-x { border:0; background:none; font-size:20px; line-height:1; cursor:pointer; color:var(--muted); padding:4px; }
+  .pw-body { padding:0 20px 4px; }
+  .pw-note { font-size:12.5px; color:var(--muted); margin:0 0 12px; }
+  .pw-row { display:flex; align-items:center; gap:8px; padding:7px 0; font-size:13.5px; cursor:pointer; }
+  .pw-row input { accent-color:var(--accent); }
+  .pw-when { margin:2px 0 6px 26px; display:none; }
+  .pw-when.on { display:block; }
+  .pw-when .pw-dt { display:flex; gap:10px; margin-top:8px; }
+  .pw-when input[type=date], .pw-when input[type=time] {
+    font:inherit; font-size:13px; padding:7px 10px; border:1px solid var(--line-strong);
+    border-radius:8px; background:var(--card,#fff); color:var(--ink); }
+  .pw-pending { margin:0 0 12px; padding:9px 12px; border:1px solid var(--warn-line); background:var(--tint-warn);
+                border-radius:9px; font-size:12.5px; }
+  .pw-strict { margin:10px 0 2px; display:none; }
+  .pw-strict.on { display:block; }
+  .pw-strict input { width:100%; font:inherit; font-size:13px; padding:7px 10px; border:1px solid var(--line-strong);
+                     border-radius:8px; background:var(--card,#fff); color:var(--ink); }
+  .pw-warn { font-size:12px; color:var(--warn-deep,#92400e); margin:10px 0 0; display:none; }
+  .pw-warn.on { display:block; }
+  .pw-foot { display:flex; justify-content:flex-end; gap:8px; padding:14px 20px 18px; }
+  .pw-err { color:var(--bad-fg); font-size:12.5px; margin:8px 0 0; display:none; }
 </style>
+
+<div class="pw-overlay" id="pwOverlay">
+  <div class="pw-modal" role="dialog" aria-modal="true" aria-labelledby="pwTitle">
+    <div class="pw-head">
+      <h3 id="pwTitle">Power</h3>
+      <button type="button" class="pw-x" id="pwX" aria-label="Close">&times;</button>
+    </div>
+    <div class="pw-body">
+      <p class="pw-note" id="pwWho"></p>
+      <div class="pw-pending" id="pwPending" style="display:none;"></div>
+
+      <div id="pwActions">
+        <label class="pw-row"><input type="radio" name="pwAction" value="restart" checked> Restart</label>
+        <label class="pw-row"><input type="radio" name="pwAction" value="shutdown"> Shut down</label>
+        <label class="pw-row"><input type="radio" name="pwAction" value="logoff"> Sign the user out</label>
+        <label class="pw-row" id="pwCancelRow" style="display:none;"><input type="radio" name="pwAction" value="cancel"> Cancel what is queued</label>
+      </div>
+
+      <div class="pw-when" id="pwWhen">
+        <label class="pw-row"><input type="radio" name="pwWhenR" value="now" checked> <span id="pwNowLbl">Now — 60 seconds' on-screen warning</span></label>
+        <label class="pw-row"><input type="radio" name="pwWhenR" value="later"> Schedule a one-time future <span id="pwVerbLbl">restart</span></label>
+        <div class="pw-dt" id="pwDt" style="display:none;">
+          <input type="date" id="pwDate">
+          <input type="time" id="pwTime" value="08:00" step="300">
+        </div>
+      </div>
+
+      <div class="pw-strict" id="pwStrict">
+        <p class="pw-note" style="margin:0 0 6px;color:var(--warn-deep,#92400e);"><strong>This is a SERVER.</strong> Type its name to confirm:</p>
+        <input type="text" id="pwStrictIn" autocomplete="off" spellcheck="false">
+      </div>
+
+      <p class="pw-warn" id="pwWarn"></p>
+      <p class="pw-err" id="pwErr"></p>
+    </div>
+    <div class="pw-foot">
+      <button type="button" class="btn" id="pwCancelBtn">Cancel</button>
+      <button type="button" class="btn btn-primary" id="pwGo">Restart</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
-  // One menu element, moved to whichever row was clicked — 200 machines should not mean
-  // 200 hidden menus in the DOM.
-  var menu = document.createElement('div');
-  menu.className = 'pw-menu';
-  document.body.appendChild(menu);
-  var openFor = null;
+  var ov = document.getElementById('pwOverlay');
+  if (!ov) return;
+  var cur = null;   // the .pw-btn this lightbox is open for
 
+  function $(id){ return document.getElementById(id); }
   function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
-  function close(){ menu.style.display = 'none'; openFor = null; }
-  document.addEventListener('click', function (e) { if (!menu.contains(e.target) && !e.target.closest('.pw-btn')) close(); });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+  function action(){ var r = document.querySelector('input[name="pwAction"]:checked'); return r ? r.value : 'restart'; }
+  function later(){ var r = document.querySelector('input[name="pwWhenR"]:checked'); return r && r.value === 'later'; }
+  function close(){ ov.classList.remove('on'); cur = null; }
 
-  function post(id, action, delay) {
+  var VERB = { restart: 'Restart', shutdown: 'Shut down', logoff: 'Sign out', cancel: 'Cancel' };
+
+  function sync() {
+    if (!cur) return;
+    var a = action(), host = cur.getAttribute('data-host') || 'this machine';
+    var who = cur.getAttribute('data-user') || '';
+    var live = cur.getAttribute('data-live') === '1';
+    var strict = cur.getAttribute('data-strict') === '1';
+    var powerish = a === 'restart' || a === 'shutdown';
+
+    $('pwTitle').textContent = (a === 'cancel' ? 'Cancel what is queued' : VERB[a]) + ' — ' + host;
+    $('pwWhen').classList.toggle('on', powerish);
+    $('pwVerbLbl').textContent = a === 'shutdown' ? 'shutdown' : 'restart';
+    $('pwNowLbl').textContent = 'Now — ' + (strict && a === 'shutdown' ? '120' : '60') + ' seconds’ on-screen warning';
+    $('pwDt').style.display = powerish && later() ? 'flex' : 'none';
+    $('pwStrict').classList.toggle('on', strict && powerish);
+
+    var w = $('pwWarn'); w.classList.remove('on');
+    if (powerish || a === 'logoff') {
+      var bits = [];
+      if (who) bits.push(who.split('\\').pop() + ' is signed in — they are warned, not asked. Unsaved work will be lost.');
+      else if (powerish) bits.push('Nobody is signed in.');
+      if (!live) bits.push(host + ' is offline — this runs the first time it comes back online' + (powerish ? ' (or after the scheduled time if you schedule it)' : '') + '.');
+      if (bits.length) { w.textContent = bits.join(' '); w.classList.add('on'); }
+    }
+
+    $('pwGo').textContent = a === 'cancel' ? 'Cancel it' : (powerish && later() ? 'Schedule' : VERB[a] + ' now');
+    $('pwErr').style.display = 'none';
+  }
+
+  function open(btn) {
+    cur = btn;
+    var pending = btn.getAttribute('data-pending') === '1';
+    var info = btn.getAttribute('data-pending-info') || '';
+    $('pwCancelRow').style.display = pending ? '' : 'none';
+    var p = $('pwPending');
+    p.style.display = pending ? '' : 'none';
+    p.textContent = info || 'A restart or shutdown is already queued on this machine — cancel it below before queuing another.';
+    document.querySelector('input[name="pwAction"][value="restart"]').checked = true;
+    document.querySelector('input[name="pwWhenR"][value="now"]').checked = true;
+    var d = $('pwDate'), now = new Date(), pad = function(n){ return (n < 10 ? '0' : '') + n; };
+    d.min = d.value = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+    $('pwTime').value = '08:00';
+    $('pwStrictIn').value = '';
+    sync();
+    ov.classList.add('on');
+  }
+  window.pwOpen = open;
+
+  function fail(msg){ var e = $('pwErr'); e.textContent = msg; e.style.display = 'block'; }
+
+  function go() {
+    if (!cur) return;
+    var a = action(), host = cur.getAttribute('data-host') || 'this machine';
+    var strict = cur.getAttribute('data-strict') === '1';
+    var powerish = a === 'restart' || a === 'shutdown';
+
+    if (strict && powerish) {
+      var typed = $('pwStrictIn').value.trim().toLowerCase();
+      if (typed !== host.trim().toLowerCase()) { fail('That did not match "' + host + '" — nothing has been done.'); return; }
+    }
+
+    var fields = [
+      ['_csrf', csrf()], ['action', a],
+      ['delay_seconds', String(a === 'shutdown' && strict ? 120 : 60)],
+      ['back', location.pathname + location.search],
+    ];
+    if (powerish && later()) {
+      var dv = $('pwDate').value, tv = $('pwTime').value;
+      if (!dv || !tv) { fail('Pick the date and time first.'); return; }
+      var at = new Date(dv + 'T' + tv);   // the browser is in the user's own timezone
+      if (!(at.getTime() > Date.now() + 60000)) { fail('That time has already passed — pick a moment at least a minute from now.'); return; }
+      if (at.getTime() > Date.now() + 30 * 86400000) { fail('That is more than 30 days away — schedule it nearer the time.'); return; }
+      fields.push(['run_at_epoch', String(Math.floor(at.getTime() / 1000))]);
+    }
+
     var f = document.createElement('form');
-    f.method = 'post'; f.action = '/patching/device/' + id + '/power';
-    [['_csrf', csrf()], ['action', action], ['delay_seconds', String(delay)], ['back', location.pathname + location.search]]
-      .forEach(function (kv) {
-        var i = document.createElement('input'); i.type = 'hidden'; i.name = kv[0]; i.value = kv[1]; f.appendChild(i);
-      });
+    f.method = 'post'; f.action = '/patching/device/' + cur.getAttribute('data-id') + '/power';
+    fields.forEach(function (kv) {
+      var i = document.createElement('input'); i.type = 'hidden'; i.name = kv[0]; i.value = kv[1]; f.appendChild(i);
+    });
     document.body.appendChild(f); f.submit();
   }
 
+  ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+  $('pwX').addEventListener('click', close);
+  $('pwCancelBtn').addEventListener('click', close);
+  $('pwGo').addEventListener('click', go);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && ov.classList.contains('on')) close(); });
+  ov.addEventListener('change', function (e) {
+    if (e.target.name === 'pwAction' || e.target.name === 'pwWhenR') sync();
+  });
+
   document.querySelectorAll('.pw-btn').forEach(function (b) {
-    b.addEventListener('click', function (e) {
-      e.stopPropagation();
-      if (openFor === b) { close(); return; }
-      var id = b.getAttribute('data-id');
-      var host = b.getAttribute('data-host') || 'this machine';
-      var who = b.getAttribute('data-user') || '';
-      var live = b.getAttribute('data-live') === '1';
-      var pending = b.getAttribute('data-pending') === '1';
-      var strict = b.getAttribute('data-strict') === '1';
-
-      menu.innerHTML = '';
-      var head = document.createElement('div');
-      head.className = 'pw-head';
-      head.textContent = who ? (who.split('\\').pop() + ' is signed in — they are warned, not asked')
-                             : (live ? (strict ? 'Nobody signed in — but this is a server' : 'Nobody signed in')
-                                     : 'Offline — runs when it next comes online');
-      menu.appendChild(head);
-
-      [['logoff', 'Sign the user out', false],
-       ['restart', 'Restart', true],
-       ['shutdown', 'Shut down', true],
-       ['cancel', 'Cancel a pending restart', false]].forEach(function (row) {
-        if (row[0] === 'cancel' && !pending) return;
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        if (row[2]) btn.className = 'pw-danger';
-        btn.textContent = row[1];
-        btn.addEventListener('click', function () {
-          var msg;
-          if (row[0] === 'cancel') { msg = 'Cancel the pending restart or shutdown on ' + host + '?'; }
-          else {
-            msg = row[1] + ' ' + host + '?\n\n'
-                + (who ? who.split('\\').pop() + ' is signed in. They get a warning and cannot stop it. Unsaved work will be lost.\n\n' : '')
-                + (live ? 'They get 60 seconds\' notice.' : host + ' is offline — this runs the moment it next comes online.');
-          }
-          if (!window.confirm(msg)) return;
-          // Servers ask for more than a click. A workstation restart costs one person
-          // their unsaved work; a server restart can stop a whole site.
-          if (strict && (row[0] === 'restart' || row[0] === 'shutdown')) {
-            var typed = window.prompt('This is a SERVER.\n\nType its name to confirm you mean ' + host + ':');
-            if (typed === null) return;
-            if (typed.trim().toLowerCase() !== host.trim().toLowerCase()) {
-              window.alert('That did not match "' + host + '" — nothing has been done.');
-              return;
-            }
-          }
-          close();
-          post(id, row[0], row[0] === 'shutdown' && strict ? 120 : 60);
-        });
-        menu.appendChild(btn);
-      });
-
-      var r = b.getBoundingClientRect();
-      menu.style.display = 'block';
-      menu.style.position = 'absolute';
-      menu.style.left = (window.scrollX + r.right - menu.offsetWidth) + 'px';
-      menu.style.top = (window.scrollY + r.bottom + 3) + 'px';
-      openFor = b;
-    });
+    b.addEventListener('click', function (e) { e.stopPropagation(); open(b); });
   });
 })();
 </script>

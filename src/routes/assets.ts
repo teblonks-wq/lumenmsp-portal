@@ -11,6 +11,7 @@ import { syncAssetsFromAtera, lastAssetSyncAt, remoteUrlTemplate, saveRemoteUrlT
 import { backfillAssetsFromAgents, findDuplicateAssets, preferredSurvivor, mergeAsset, unmergeAsset, ONLINE_WINDOW_SECS } from '../lib/agent-asset';
 import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
 import { meshStatus } from './mesh';
+import { powerWhenText } from '../lib/device-power';
 
 const router = Router();
 
@@ -536,9 +537,26 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     meshState: mesh,
     onlineWindowSecs: ONLINE_WINDOW_SECS,
     serverFacts, serverAlerts, serverRoles,
-    powerPending: (await pool.query(
-      `SELECT 1 FROM agent_commands WHERE device_id=$1 AND kind LIKE 'power.%' AND status IN ('queued','running') LIMIT 1`,
-      [row.agent_device_id || 0])).rows.length > 0,
+    // What (if anything) is already queued or scheduled, worded for the power lightbox.
+    // EXTRACT(EPOCH...) not the raw timestamp: run_after is stored as UTC wall time in a
+    // timezone-less column, and epochs are the one representation that cannot be
+    // misread an hour out during BST.
+    ...await (async () => {
+      const pp = (await pool.query(
+        `SELECT kind, EXTRACT(EPOCH FROM run_after)::bigint AS run_epoch
+           FROM agent_commands
+          WHERE device_id=$1 AND kind LIKE 'power.%' AND status IN ('queued','running')
+          ORDER BY requested_at DESC LIMIT 1`,
+        [row.agent_device_id || 0])).rows[0];
+      if (!pp) return { powerPending: false, powerPendingText: '' };
+      const verb = pp.kind === 'power.shutdown' ? 'A shutdown' : pp.kind === 'power.logoff' ? 'A sign-out' : pp.kind === 'power.cancel' ? 'A cancellation' : 'A restart';
+      return {
+        powerPending: true,
+        powerPendingText: pp.run_epoch
+          ? `${verb} is scheduled for ${powerWhenText(Number(pp.run_epoch))}.`
+          : `${verb} is already queued and runs as soon as the machine collects it.`,
+      };
+    })(),
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });

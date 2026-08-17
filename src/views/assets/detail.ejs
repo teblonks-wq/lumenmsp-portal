@@ -62,6 +62,7 @@
               data-id="<%= asset.agent_device_id %>" data-host="<%= asset.hostname || '' %>"
               data-user="<%= (typeof agentInfo !== 'undefined' && agentInfo) ? (agentInfo.logged_in_user || '') : '' %>"
               data-live="<%= _live ? '1' : '' %>" data-pending="<%= (typeof powerPending !== 'undefined' && powerPending) ? '1' : '' %>"
+              data-pending-info="<%= (typeof powerPendingText !== 'undefined' && powerPendingText) ? powerPendingText : '' %>"
               data-strict="<%= (typeof serverFacts !== 'undefined' && serverFacts) ? '1' : '' %>"
               title="Sign out, restart or shut down">⏻ Power ▾</button>
     </div>

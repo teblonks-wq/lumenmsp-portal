@@ -91,7 +91,10 @@ export async function reapStaleCommands(force = false): Promise<ReapResult> {
           SET status='failed', exit_code=-1, finished_at=NOW(), payload=NULL,
               output = CASE WHEN COALESCE(output,'') = '' THEN $1 ELSE output || E'\\n\\n' || $1 END
         WHERE status='queued'
-          AND requested_at < NOW() - interval '${QUEUED_EXPIRY_DAYS} days'
+          -- Measured from run_after when a command is deliberately scheduled for the
+          -- future (a "restart Tuesday 8am") - its clock starts when it becomes due,
+          -- not when the engineer pressed the button.
+          AND GREATEST(requested_at, COALESCE(run_after, requested_at)) < NOW() - interval '${QUEUED_EXPIRY_DAYS} days'
         RETURNING id`, [EXPIRED_NOTE]);
     out.expired = expired.rows.length;
 

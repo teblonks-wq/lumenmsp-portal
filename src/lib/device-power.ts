@@ -41,7 +41,14 @@ export function isPowerAction(v: unknown): v is PowerAction {
 export interface PowerResult {
   ok: boolean;
   error?: string;
-  queued?: { commandId: number; action: PowerAction; hostname: string | null; delaySeconds: number; loggedInUser: string | null; online: boolean };
+  queued?: { commandId: number; action: PowerAction; hostname: string | null; delaySeconds: number; loggedInUser: string | null; online: boolean; runAtEpoch: number | null };
+}
+
+/** "Tue 18 Aug, 08:00" — one wording for every surface, always Europe/London. */
+export function powerWhenText(epochSecs: number): string {
+  return new Date(epochSecs * 1000).toLocaleString('en-GB', {
+    timeZone: 'Europe/London', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+  });
 }
 
 /**
@@ -51,9 +58,22 @@ export interface PowerResult {
  * outstanding — double-clicking "Restart" should not schedule two.
  */
 export async function queuePower(
-  deviceId: number, action: PowerAction, opts: { delaySeconds?: number; userId: number | null; userName?: string | null },
+  deviceId: number, action: PowerAction,
+  opts: { delaySeconds?: number; userId: number | null; userName?: string | null; runAtEpoch?: number | null },
 ): Promise<PowerResult> {
   const delay = Math.max(0, Math.min(3600, Math.round(Number(opts.delaySeconds ?? 60)) || 0));
+
+  // A one-time future restart/shutdown (the Atera-style "Schedule restart"). Held
+  // portal-side in agent_commands.run_after — the poll does not hand the command over
+  // until the time passes, so nothing agent-side had to change and an offline machine
+  // simply acts the first time it checks in after the chosen moment.
+  let runAt: number | null = null;
+  if (opts.runAtEpoch != null && (action === 'restart' || action === 'shutdown')) {
+    runAt = Math.round(Number(opts.runAtEpoch)) || 0;
+    const now = Math.floor(Date.now() / 1000);
+    if (runAt <= now) return { ok: false, error: 'That time has already passed — pick a moment in the future.' };
+    if (runAt > now + 30 * 86400) return { ok: false, error: 'That is more than 30 days away — schedule it nearer the time.' };
+  }
   try {
     const d = (await pool.query(
       `SELECT id, hostname, customer_id, logged_in_user, revoked,
@@ -76,14 +96,17 @@ export async function queuePower(
       : { delay_seconds: String(delay), requested_by: opts.userName || 'Lumen IT' };
 
     const ins = await pool.query(
-      `INSERT INTO agent_commands (device_id, kind, payload, requested_by) VALUES ($1,$2,$3,$4) RETURNING id`,
-      [deviceId, KINDS[action], JSON.stringify(payload), opts.userId]);
-    wakeAgent(deviceId);
+      `INSERT INTO agent_commands (device_id, kind, payload, requested_by, run_after)
+       VALUES ($1,$2,$3,$4, CASE WHEN $5::bigint IS NULL THEN NULL ELSE to_timestamp($5::bigint) END)
+       RETURNING id`,
+      [deviceId, KINDS[action], JSON.stringify(payload), opts.userId, runAt]);
+    // No point waking the agent for something it will not be given yet.
+    if (!runAt) wakeAgent(deviceId);
 
     // Audited before anything happens, and the log records who was signed in at the time —
     // which is the question anyone asks afterwards if work was lost.
     await logActivity(opts.userId, 'agent_power', 'agent_devices', deviceId,
-      `${VERB[action]} queued on ${d.hostname || deviceId}` +
+      `${VERB[action]} ${runAt ? `scheduled for ${powerWhenText(runAt)}` : 'queued'} on ${d.hostname || deviceId}` +
       (action === 'cancel' ? '' : ` (${delay}s warning)`) +
       (d.logged_in_user ? ` — ${d.logged_in_user} was signed in` : ' — nobody signed in'));
 
@@ -93,6 +116,7 @@ export async function queuePower(
         commandId: ins.rows[0].id, action, hostname: d.hostname || null, delaySeconds: delay,
         loggedInUser: d.logged_in_user || null,
         online: d.seen_secs !== null && Number(d.seen_secs) < 180,
+        runAtEpoch: runAt,
       },
     };
   } catch (e: any) {

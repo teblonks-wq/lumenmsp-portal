@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
-import { queuePower, isPowerAction, powerConfirmText } from '../lib/device-power';
+import { queuePower, isPowerAction, powerConfirmText, powerWhenText } from '../lib/device-power';
 import { ONLINE_WINDOW_SECS } from '../lib/agent-asset';
 import { logActivity } from '../lib/activity';
 import { resolvePolicy, nextWindowStart } from '../lib/patch-policy';
@@ -150,20 +150,29 @@ router.post('/patching/device/:id/power', requireAuth, requireAdmin, async (req:
     res.redirect(back + '?err=' + encodeURIComponent('Unknown action.')); return;
   }
 
+  // A one-time future restart/shutdown from the power lightbox. The browser converts
+  // the picked local date+time to an epoch, so no timezone maths happens server-side.
+  const runAtRaw = parseInt(String(req.body.run_at_epoch ?? ''), 10);
+  const runAtEpoch = Number.isFinite(runAtRaw) && runAtRaw > 0 ? runAtRaw : null;
+
   const r = await queuePower(id, action, {
     delaySeconds: parseInt(String(req.body.delay_seconds ?? '60'), 10),
     userId: req.session.user!.id,
     userName: req.session.user!.displayName || null,
+    runAtEpoch,
   });
 
   if (wantsJson) { res.json(r); return; }
   if (!r.ok) { res.redirect(back + '?err=' + encodeURIComponent(r.error || 'Could not queue that.')); return; }
   const qd = r.queued!;
   res.redirect(back + '?msg=' + encodeURIComponent(
-    `${action === 'cancel' ? 'Cancelled any pending restart on' : action.charAt(0).toUpperCase() + action.slice(1) + ' queued for'} ${qd.hostname || 'the machine'}` +
-    (action === 'cancel' ? '.' : qd.online
-      ? `. The user is being warned now and it runs in ${qd.delaySeconds} seconds.`
-      : `. It is offline, so this runs the moment it next comes online.`)));
+    qd.runAtEpoch
+      ? `${action.charAt(0).toUpperCase() + action.slice(1)} scheduled on ${qd.hostname || 'the machine'} for ${powerWhenText(qd.runAtEpoch)}.` +
+        (qd.online ? '' : ' It is offline right now — if it is still off at that time, this runs the moment it next comes online.')
+      : `${action === 'cancel' ? 'Cancelled any pending restart on' : action.charAt(0).toUpperCase() + action.slice(1) + ' queued for'} ${qd.hostname || 'the machine'}` +
+        (action === 'cancel' ? '.' : qd.online
+          ? `. The user is being warned now and it runs in ${qd.delaySeconds} seconds.`
+          : `. It is offline, so this runs the moment it next comes online.`)));
 });
 
 // ── Deploy, by hand ─────────────────────────────────────────────────────────────

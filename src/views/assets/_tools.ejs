@@ -1661,8 +1661,12 @@
         var k = b.getAttribute('data-mg');
         mgClose();
         if (k === 'power') {
+          // Open the shared power LIGHTBOX directly. (The old synthetic pw.click() died
+          // instantly: this same click bubbled on to the document and the dropdown's
+          // outside-click handler closed it in the same tick — "nothing happens".)
           var pw = document.querySelector('.pw-btn');
-          if (pw) pw.click(); else alert('No live agent on this machine, so there is nothing to shut down remotely.');
+          if (pw && window.pwOpen) window.pwOpen(pw);
+          else alert('No live agent on this machine, so there is nothing to restart or shut down remotely.');
           return;
         }
         if (k === 'software-install') { openTool('software'); swOpen(true); return; }
