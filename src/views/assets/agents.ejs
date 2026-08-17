@@ -44,9 +44,14 @@
         <% } }); %>
       </select>
     </label>
+    <div style="display:flex;gap:6px;" id="dlPlats">
+      <button type="button" class="btn dl-plat" data-pl="windows" style="font-weight:700;">&#10052; Windows</button>
+      <button type="button" class="btn dl-plat" data-pl="macos">&#63743; macOS</button>
+      <button type="button" class="btn dl-plat" data-pl="linux">&#128039; Linux</button>
+    </div>
     <a class="btn btn-primary" id="dlBtn" href="#" style="white-space:nowrap;">&#11015; Download MSI</a>
   </div>
-  <p class="muted" style="font-size:12px;margin:12px 0 6px;">The customer's key is built into the filename, so the installer just runs - no options, no key to type. Or paste this into an <strong>elevated</strong> PowerShell on the machine (also fine as an RMM script):</p>
+  <p class="muted" id="dlHint" style="font-size:12px;margin:12px 0 6px;"></p>
   <div style="display:flex;gap:8px;align-items:flex-start;">
     <textarea class="input" id="dlCmd" readonly rows="3" style="flex:1;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;line-height:1.5;" onclick="this.select();"></textarea>
     <button class="btn" type="button" id="dlCopy" style="white-space:nowrap;">Copy</button>
@@ -576,11 +581,39 @@
   var btn = document.getElementById('dlBtn');
   var cmd = document.getElementById('dlCmd');
   var cpy = document.getElementById('dlCopy');
+  var hint = document.getElementById('dlHint');
   if (!sel || !btn || !cmd) return;
   var BASE = '<%= baseUrl %>';
   var Q = String.fromCharCode(34), A = String.fromCharCode(39);
+  var plat = 'windows';
+
+  var HINTS = {
+    windows: 'The customer’s key is built into the filename, so the installer just runs - no options, no key to type. Or paste this into an <strong>elevated</strong> PowerShell on the machine (also fine as an RMM script):',
+    macos: 'Paste into Terminal on the Mac — the site key is already in the command. <strong>Until the Apple Developer ID lands the published build is UNSIGNED: Lumen’s own test Mac only</strong> (the second line clears Gatekeeper’s quarantine; it is harmless once builds are signed).',
+    linux: 'Paste into a root shell (or via your RMM) on the server — the site key is already in the command. Self-contained binary, no runtime to install; re-running upgrades in place.',
+  };
+
   function update(){
-    var name = 'LumenMSPAgent-' + sel.value + '.msi';
+    var key = sel.value;
+    var name = 'LumenMSPAgent-' + key + '.msi';
+    btn.style.display = plat === 'windows' ? '' : 'none';
+    document.querySelectorAll('.dl-plat').forEach(function(b){
+      var on = b.getAttribute('data-pl') === plat;
+      b.style.fontWeight = on ? '700' : '';
+      b.style.borderColor = on ? 'var(--accent)' : '';
+      b.style.color = on ? 'var(--accent)' : '';
+    });
+    if (hint) hint.innerHTML = HINTS[plat];
+
+    if (plat === 'macos') {
+      cmd.value = 'curl -fsSL ' + BASE + '/agent/macos/install.sh | sudo bash -s -- --site-key ' + key + '\n'
+                + 'sudo xattr -dr com.apple.quarantine /usr/local/lumenmsp && sudo launchctl kickstart -k system/uk.co.lumensolutions.lumenmsp-agent';
+      return;
+    }
+    if (plat === 'linux') {
+      cmd.value = 'curl -fsSL ' + BASE + '/agent/linux/install.sh | sudo bash -s -- --site-key ' + key;
+      return;
+    }
     var url = BASE + '/agent/download/' + name;
     btn.href = url;
     // No $ anywhere: an outer PowerShell would expand $f/$env:TEMP before the inner
@@ -593,6 +626,9 @@
       + 'Start-Process msiexec -ArgumentList ' + A + '/i' + A + ',' + A + tmp + A + ',' + A + '/qn' + A + ','
       + A + '/l*v' + A + ',' + A + 'C:' + B + 'Windows' + B + 'Temp' + B + 'LumenMSPAgent-install.log' + A + ' -Wait' + Q;
   }
+  document.querySelectorAll('.dl-plat').forEach(function(b){
+    b.addEventListener('click', function(){ plat = b.getAttribute('data-pl'); update(); });
+  });
   sel.addEventListener('change', update);
   update();
   if (cpy) cpy.addEventListener('click', function(){
