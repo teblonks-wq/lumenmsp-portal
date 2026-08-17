@@ -324,15 +324,47 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
 
   // Name-match to Portal customers, but only accept an EXACT case-insensitive match.
   // A fuzzy guess here could show one client another client's machines.
+  // ...and only when the name is UNIQUE on our side. Two Portal customers with the same
+  // name (a duplicate record, or a group and its trading entity) previously meant
+  // whichever row the query returned last silently won the mapping — and a mapping is
+  // what decides whose machines a customer sees. Same rule as the ambiguous hostname
+  // below: an ambiguous name maps to NOBODY and is reported.
   const custRows = (await pool.query(`SELECT id, name FROM customers WHERE NOT is_placeholder`)).rows;
   const byName = new Map<string, number>();
-  for (const c of custRows) byName.set(String(c.name).trim().toLowerCase(), Number(c.id));
+  const ambiguousNames = new Set<string>();
+  for (const c of custRows) {
+    const key = String(c.name).trim().toLowerCase();
+    if (byName.has(key)) { ambiguousNames.add(key); continue; }
+    byName.set(key, Number(c.id));
+  }
+  for (const key of ambiguousNames) {
+    byName.delete(key);
+    out.warnings.push(`More than one Portal customer is called "${key}" — left unmapped rather than guessed.`);
+  }
 
   for (const c of companies) {
     const gzId = s(c.id); if (!gzId) continue;
     const name = s(c.name) || '(unnamed)';
     const guess = byName.get(name.trim().toLowerCase()) ?? null;
-    const lic = c.licenseSubscription || c.license || {};
+
+    // getCompaniesList returns a BARE {id,name} — no licence at all. The licence facts
+    // that decide what a customer costs (subscription type, protection model, reserved
+    // seats) only come from getCompanyDetails, so fetch it per company and merge.
+    //
+    // This matters more than it looks. If a company is provisioned in Giacom Cloud
+    // Market rather than by us, the product chosen THERE sets the protection model, and
+    // nothing on our side gets a say — £0.99 or £5.07 is decided before we ever see it.
+    // Reading it back is the only way to know which arrived. Cheap: one call per
+    // customer, and there are tens of these, not thousands.
+    let det: any = null;
+    if (!c.__folder) {
+      try { det = await rpc<any>('companies', 'getCompanyDetails', { companyId: gzId }); }
+      catch (e: any) {
+        if (out.warnings.length < 30) out.warnings.push(`Could not read licence detail for "${name}": ${e.message}`);
+      }
+    }
+    const merged = det ? { ...c, ...det } : c;
+    const lic = merged.licenseSubscription || merged.license || {};
     const r = await pool.query(
       `INSERT INTO security_companies (gz_id, name, customer_id, license_total, license_used, raw, synced_at)
        VALUES ($1,$2,$3,$4,$5,$6,NOW())
@@ -342,9 +374,21 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
          -- never overwrite a mapping a human has confirmed
          customer_id=COALESCE(security_companies.customer_id, EXCLUDED.customer_id)
        RETURNING customer_id`,
-      [gzId, name, guess, lic.total ?? lic.totalSlots ?? null, lic.used ?? lic.usedSlots ?? null, JSON.stringify(c)]);
+      // Seat counts are looked up through several paths on purpose. getCompanyDetails
+      // may carry them at the top level or nested under licenseSubscription depending on
+      // the call, and reading the wrong one gives null — which renders as "—" and looks
+      // like a company with no seats rather than a lookup we got wrong.
+      [gzId, name, guess, seatCount(merged, 'total'), seatCount(merged, 'used'), JSON.stringify(merged)]);
     out.companies++;
     if (r.rows[0]?.customer_id) out.mappedCompanies++;
+  }
+
+  // Shout about anything not on the standard tier, once per sync, while the numbers are
+  // fresh. A company quietly sitting on a trial or on mspSecureExtra is a bill nobody
+  // reads until the invoice, so it belongs in the sync result rather than a screen
+  // somebody has to remember to open.
+  for (const a of await licenceAudit()) {
+    if (a.problems.length && out.warnings.length < 40) out.warnings.push(`${a.name}: ${a.problems.join('; ')}`);
   }
 
   // ── Endpoints ────────────────────────────────────────────────────────────────
@@ -504,6 +548,134 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
     `GravityZone sync: ${out.endpoints} endpoints, ${out.companies} companies, ${out.matchedDevices} matched to our devices` +
     (out.ticketsRaised ? `, ${out.ticketsRaised} detection case(s) raised` : ''));
   return out;
+}
+
+// ── Licence audit ───────────────────────────────────────────────────────────────
+// What each company is ACTUALLY licensed as, read back from GravityZone rather than
+// assumed from what we asked for. Two reasons this exists:
+//
+//  1. A company provisioned in Giacom Cloud Market gets its protection model from the
+//     product chosen there. Nothing on our side influences it, so reading it back is
+//     the only way to know whether a customer landed on £0.99 or £5.07.
+//  2. Bitdefender's createCompany silently makes a TRIAL if licenseSubscription is
+//     omitted. A trial expires, and the whole point of AV is that it does not stop.
+//
+// Every field is looked up through several candidate paths. This tenant has already
+// contradicted the documentation three times, and an audit that reads `undefined` and
+// says "fine" is worse than no audit at all — so an unreadable value is reported as
+// unknown, never as healthy.
+
+/** Cost per endpoint per month, from Terry's Giacom reseller list (17 Aug 2026). */
+export const MODEL_COST: Record<string, number> = {
+  aLaCarte: 0.99, mspSecure: 1.93, mspSecurePlus: 4.00, mspSecureExtra: 5.07,
+};
+/** What Lumen charges the public per endpoint per month. */
+export const AV_SELL_PRICE = 3.00;
+/** The tier Lumen standardises on — anything else is worth a second look. */
+export const STANDARD_MODEL = 'aLaCarte';
+
+const SUBSCRIPTION_LABEL: Record<number, string> = {
+  1: 'trial', 2: 'licence key', 3: 'monthly subscription',
+  4: 'monthly licence TRIAL', 5: 'monthly subscription TRIAL', 6: 'FRAT subscription',
+};
+
+export interface LicenceAudit {
+  gzId: string; name: string; customerId: number | null; customerName: string | null;
+  subscriptionType: number | null; subscriptionLabel: string;
+  protectionModel: string | null; productType: number | null;
+  reservedSlots: number | null; totalSlots: number | null; usedSlots: number | null;
+  costPerEndpoint: number | null; monthlyCost: number | null;
+  problems: string[];
+}
+
+function pick(o: any, paths: string[][]): any {
+  for (const p of paths) {
+    let v = o;
+    for (const k of p) { if (v == null) break; v = v[k]; }
+    if (v != null && v !== '') return v;
+  }
+  return null;
+}
+
+/**
+ * Total or used licence seats, wherever this tenant happens to put them.
+ * Used seats is the number that matters twice over: it is what Giacom bills on, and it
+ * is the quantity for the £3.00 AV line on customers who pay for it.
+ */
+export function seatCount(o: any, which: 'total' | 'used'): number | null {
+  const keys = which === 'total'
+    ? [['licenseSubscription', 'totalSlots'], ['licenseSubscription', 'total'], ['totalSlots'], ['total'],
+       ['license', 'totalSlots'], ['license', 'total']]
+    : [['licenseSubscription', 'usedSlots'], ['licenseSubscription', 'used'], ['usedSlots'], ['used'],
+       ['license', 'usedSlots'], ['license', 'used']];
+  const v = pick(o, keys);
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+export async function licenceAudit(): Promise<LicenceAudit[]> {
+  const rows = (await pool.query(
+    `SELECT sc.gz_id, sc.name, sc.customer_id, sc.license_total, sc.license_used, sc.raw,
+            c.name AS customer_name
+       FROM security_companies sc
+       LEFT JOIN customers c ON c.id = sc.customer_id
+      ORDER BY sc.name`)).rows;
+
+  return rows.map((r: any) => {
+    const raw = r.raw || {};
+    const lic = raw.licenseSubscription || raw.license || {};
+    const typeRaw = pick(raw, [['licenseSubscription', 'type'], ['license', 'type'], ['licenseType'], ['type']]);
+    const subscriptionType = typeRaw == null || typeRaw === '' ? null : Number(typeRaw);
+    const protectionModel = pick(raw, [
+      ['licenseSubscription', 'assignedProtectionModel'], ['license', 'assignedProtectionModel'],
+      ['assignedProtectionModel'], ['protectionModel'],
+    ]);
+    const productType = (() => {
+      const v = pick(raw, [['licenseSubscription', 'assignedProductType'], ['assignedProductType'], ['productType']]);
+      return v == null ? null : Number(v);
+    })();
+    const reservedSlots = (() => {
+      const v = pick(raw, [['licenseSubscription', 'reservedSlots'], ['reservedSlots']]);
+      return v == null ? null : Number(v);
+    })();
+    // Prefer the stored columns, but fall back to the raw record — so an audit run
+    // against data synced before this lookup existed still reads correctly.
+    const totalSlots = r.license_total == null ? seatCount(raw, 'total') : Number(r.license_total);
+    const usedSlots = r.license_used == null ? seatCount(raw, 'used') : Number(r.license_used);
+    const model = protectionModel ? String(protectionModel) : null;
+    const costPerEndpoint = model && MODEL_COST[model] != null ? MODEL_COST[model] : null;
+
+    const problems: string[] = [];
+    // A trial is the loud one: protection that stops on a date nobody has in a diary.
+    if (subscriptionType != null && [1, 4, 5].includes(subscriptionType)) {
+      problems.push(`on a ${SUBSCRIPTION_LABEL[subscriptionType]} — this expires, and then the AV stops`);
+    }
+    if (model && model !== STANDARD_MODEL) {
+      const extra = costPerEndpoint != null && MODEL_COST[STANDARD_MODEL] != null
+        ? ` (£${(costPerEndpoint - MODEL_COST[STANDARD_MODEL]).toFixed(2)}/endpoint/month more than standard)` : '';
+      problems.push(`on ${model}, not ${STANDARD_MODEL}${extra}`);
+    }
+    if (reservedSlots != null && reservedSlots > 0) {
+      problems.push(`${reservedSlots} seat(s) RESERVED — a rollout stops dead at that number even with the pool free`);
+    }
+    if (!r.customer_id) problems.push('not mapped to a Portal customer');
+    // Say nothing rather than something wrong: an unreadable licence is reported as
+    // unknown so it shows as a gap to chase, not as a pass.
+    if (subscriptionType == null && !model) problems.push('licence detail unreadable — treat as unverified');
+
+    return {
+      gzId: String(r.gz_id), name: String(r.name || ''),
+      customerId: r.customer_id ? Number(r.customer_id) : null,
+      customerName: r.customer_name || null,
+      subscriptionType,
+      subscriptionLabel: subscriptionType == null ? 'unknown' : (SUBSCRIPTION_LABEL[subscriptionType] || `type ${subscriptionType}`),
+      protectionModel: model, productType, reservedSlots, totalSlots, usedSlots,
+      costPerEndpoint,
+      monthlyCost: costPerEndpoint != null && usedSlots != null ? Number((costPerEndpoint * usedSlots).toFixed(2)) : null,
+      problems,
+    };
+  });
 }
 
 /** Confirm (or clear) which Portal customer a GravityZone company is. */
