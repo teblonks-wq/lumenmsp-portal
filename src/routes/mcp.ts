@@ -56,6 +56,33 @@ const clampLimit = (v: any, def = 20, max = 50): number => {
   const n = parseInt(String(v ?? ''), 10);
   return isNaN(n) ? def : Math.max(1, Math.min(max, n));
 };
+
+// Lumen's financial year ends 30 June and is named by the calendar year it ends in:
+// year_ending_june = 2026 means 1 Jul 2025 → 30 Jun 2026. An explicit issued_from /
+// issued_to always wins over the shorthand. Both bounds are inclusive dates; callers
+// apply the `to` bound as "< to + 1 day" so a timestamp on the closing day still counts.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const invoiceDateRange = (a: any): { from?: string; to?: string; error?: string } => {
+  let from: string | undefined;
+  let to: string | undefined;
+  if (a.year_ending_june !== undefined && String(a.year_ending_june).trim() !== '') {
+    const y = parseInt(String(a.year_ending_june), 10);
+    if (isNaN(y) || y < 2000 || y > 2100) {
+      return { error: `year_ending_june must be a four-digit year such as 2026 (got "${a.year_ending_june}").` };
+    }
+    from = `${y - 1}-07-01`;
+    to = `${y}-06-30`;
+  }
+  for (const [key, set] of [['issued_from', (v: string) => (from = v)], ['issued_to', (v: string) => (to = v)]] as const) {
+    const raw = a[key];
+    if (raw === undefined || String(raw).trim() === '') continue;
+    const s = String(raw).trim();
+    if (!ISO_DATE.test(s)) return { error: `${key} must be a date in YYYY-MM-DD form (got "${s}").` };
+    set(s);
+  }
+  if (from && to && from > to) return { error: `issued_from (${from}) is after issued_to (${to}).` };
+  return { from, to };
+};
 const trunc = (s: any, n = 1500): string | null => {
   if (s === null || s === undefined) return null;
   const t = String(s);
@@ -314,7 +341,7 @@ const TOOLS: Tool[] = [
   {
     name: 'list_invoices',
     description:
-      'List invoices, newest first (staged bureau drafts excluded). Filter by customer, status (draft/issued/paid/void), payment status (unpaid/pending/paid/failed), unpaid_only, or billing period (YYYY-MM).',
+      'List invoices, newest first (staged bureau drafts excluded). Filter by customer, status (draft/issued/paid/void), payment status (unpaid/pending/paid/failed), unpaid_only, billing period (YYYY-MM), an issue-date range, or a financial year ending 30 June. Pages with offset/next_offset — keep paging until next_offset is null to reach the very first invoice. Each row carries subtotal (net of VAT) as well as total (gross); use subtotal for turnover. For totals rather than rows, prefer turnover_summary — it aggregates in one call with no paging.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -323,7 +350,11 @@ const TOOLS: Tool[] = [
         payment_status: { type: 'string', description: 'unpaid | pending | paid | failed (optional)' },
         unpaid_only: { type: 'boolean', description: 'Only issued invoices with an outstanding balance' },
         billing_period: { type: 'string', description: 'Comms bill-run period YYYY-MM (optional)' },
-        limit: { type: 'number', description: 'Max rows, default 20, max 50' },
+        issued_from: { type: 'string', description: 'Earliest issue date, YYYY-MM-DD inclusive (optional)' },
+        issued_to: { type: 'string', description: 'Latest issue date, YYYY-MM-DD inclusive (optional)' },
+        year_ending_june: { type: 'number', description: "Lumen's financial year, named by the calendar year it ends in: 2026 means 1 Jul 2025 to 30 Jun 2026. Shorthand for issued_from/issued_to (optional)." },
+        limit: { type: 'number', description: 'Max rows per page, default 50, max 500' },
+        offset: { type: 'number', description: 'Rows to skip. Start at 0 and pass back the next_offset from the previous response.' },
       },
     },
     run: async (a) => {
@@ -338,15 +369,108 @@ const TOOLS: Tool[] = [
       if (a.payment_status) { params.push(String(a.payment_status).trim().toLowerCase()); where.push(`i.payment_status = $${params.length}`); }
       if (a.unpaid_only) where.push("i.status='issued' AND i.balance > 0");
       if (a.billing_period) { params.push(String(a.billing_period).trim()); where.push(`i.billing_period = $${params.length}`); }
-      params.push(clampLimit(a.limit));
+      const range = invoiceDateRange(a);
+      if (range.error) return { error: range.error };
+      if (range.from) { params.push(range.from); where.push(`i.issue_date >= $${params.length}::date`); }
+      if (range.to) { params.push(range.to); where.push(`i.issue_date < ($${params.length}::date + INTERVAL '1 day')`); }
+
+      // Count with the filter params only, then append paging params for the page query.
+      const filterParams = params.slice();
+      params.push(clampLimit(a.limit, 50, 500)); const pLimit = params.length;
+      params.push(Math.max(0, parseInt(String(a.offset ?? 0), 10) || 0)); const pOffset = params.length;
+      const offset = params[pOffset - 1] as number;
+
+      const [r, tot] = await Promise.all([
+        pool.query(
+          `SELECT i.invoice_number, i.title, i.status, i.payment_status, i.invoice_scheme,
+                  i.subtotal, i.tax_total, i.total, i.balance, i.issue_date, i.due_date, i.billing_period,
+                  i.is_recurring, c.name AS customer_name
+             FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id
+            WHERE ${where.join(' AND ')}
+            ORDER BY i.issue_date DESC NULLS LAST, i.id DESC
+            LIMIT $${pLimit} OFFSET $${pOffset}`, params),
+        pool.query(
+          `SELECT COUNT(*)::int AS n
+             FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id
+            WHERE ${where.join(' AND ')}`, filterParams),
+      ]);
+      const matched = tot.rows[0].n as number;
+      return {
+        count: r.rows.length,
+        total_matching: matched,
+        offset,
+        next_offset: offset + r.rows.length < matched ? offset + r.rows.length : null,
+        invoices: r.rows,
+      };
+    },
+  },
+
+  {
+    name: 'turnover_summary',
+    description:
+      'Aggregated sales turnover, net of VAT, computed in a single query with no paging. Group by financial_year (Lumen\'s year ends 30 June), month, customer or scheme, and optionally scope to one financial year, a date range, or one customer. Voids are always excluded; drafts are included by default (some real billed revenue sits in draft) and the internal Lumen MSP account is excluded by default. This is the right tool for "what was our turnover" — list_invoices is for the underlying rows.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        group_by: { type: 'string', description: 'financial_year (default) | month | customer | scheme' },
+        year_ending_june: { type: 'number', description: "Scope to one financial year, named by the calendar year it ends in: 2026 means 1 Jul 2025 to 30 Jun 2026 (optional)" },
+        issued_from: { type: 'string', description: 'Earliest issue date, YYYY-MM-DD inclusive (optional)' },
+        issued_to: { type: 'string', description: 'Latest issue date, YYYY-MM-DD inclusive (optional)' },
+        customer: { type: 'string', description: 'Scope to one customer id, account number or name (optional)' },
+        include_drafts: { type: 'boolean', description: 'Include invoices still in draft status. Default true.' },
+        include_internal: { type: 'boolean', description: 'Include the internal "Lumen MSP" account. Default false.' },
+      },
+    },
+    run: async (a) => {
+      const by = String(a.group_by ?? 'financial_year').trim().toLowerCase();
+      const dims: Record<string, { expr: string; label: string }> = {
+        financial_year: { expr: `EXTRACT(YEAR FROM (i.issue_date + INTERVAL '6 months'))::int`, label: 'financial_year_ending_30_june' },
+        month:          { expr: `to_char(i.issue_date, 'YYYY-MM')`, label: 'month' },
+        customer:       { expr: `COALESCE(c.name, '(no customer)')`, label: 'customer' },
+        scheme:         { expr: `COALESCE(i.invoice_scheme, '(none)')`, label: 'scheme' },
+      };
+      const dim = dims[by];
+      if (!dim) return { error: `Unknown group_by "${a.group_by}". Use financial_year, month, customer or scheme.` };
+
+      const where: string[] = [
+        'i.deleted_at IS NULL', 'i.staged = false', "i.status <> 'void'", 'i.issue_date IS NOT NULL',
+      ];
+      const params: any[] = [];
+      if (a.include_drafts === false) where.push("i.status <> 'draft'");
+      if (a.include_internal !== true) where.push(`COALESCE(c.name, '') NOT ILIKE 'Lumen MSP'`);
+      if (a.customer !== undefined && String(a.customer).trim() !== '') {
+        const ref = await resolveCustomer(a.customer);
+        if (!ref || 'ambiguous' in ref) return customerNotFound(ref, a.customer);
+        params.push(ref.id); where.push(`i.customer_id = $${params.length}`);
+      }
+      const range = invoiceDateRange(a);
+      if (range.error) return { error: range.error };
+      if (range.from) { params.push(range.from); where.push(`i.issue_date >= $${params.length}::date`); }
+      if (range.to) { params.push(range.to); where.push(`i.issue_date < ($${params.length}::date + INTERVAL '1 day')`); }
+
+      // subtotal is the VAT-exclusive figure; fall back to total - tax for any legacy row that lacks it.
+      const net = `COALESCE(i.subtotal, i.total - COALESCE(i.tax_total, 0))`;
       const r = await pool.query(
-        `SELECT i.invoice_number, i.title, i.status, i.payment_status, i.invoice_scheme,
-                i.total, i.balance, i.issue_date, i.due_date, i.billing_period,
-                i.is_recurring, c.name AS customer_name
+        `SELECT ${dim.expr} AS bucket,
+                COUNT(*)::int AS invoices,
+                SUM(${net})::numeric(14,2) AS net_ex_vat,
+                SUM(i.total)::numeric(14,2) AS gross_inc_vat,
+                MIN(i.issue_date) AS first_invoice,
+                MAX(i.issue_date) AS last_invoice
            FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id
           WHERE ${where.join(' AND ')}
-          ORDER BY i.issue_date DESC NULLS LAST, i.id DESC LIMIT $${params.length}`, params);
-      return { count: r.rows.length, invoices: r.rows };
+          GROUP BY 1
+          ORDER BY ${by === 'customer' || by === 'scheme' ? '3 DESC NULLS LAST' : '1'}`, params);
+
+      const totalNet = r.rows.reduce((s: number, x: any) => s + Number(x.net_ex_vat || 0), 0);
+      return {
+        grouped_by: dim.label,
+        basis: 'Sales invoices by issue date, net of VAT. Voids excluded' +
+               (a.include_drafts === false ? ', drafts excluded' : ', drafts included') +
+               (a.include_internal === true ? ', internal account included.' : ', internal Lumen MSP account excluded.'),
+        total_net_ex_vat: Number(totalNet.toFixed(2)),
+        rows: r.rows,
+      };
     },
   },
 
