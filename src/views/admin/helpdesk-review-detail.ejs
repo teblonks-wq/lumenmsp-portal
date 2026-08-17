@@ -1,0 +1,57 @@
+<%- include('../partials/header', { title: 'Helpdesk review — ' + new Date(review.started_at).toLocaleDateString('en-GB'), user }) %>
+<% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+   function tm(x){ return x ? new Date(x).toLocaleTimeString('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '—'; }
+   function dur(secs){ if (secs == null) return '—'; var m = Math.round(Number(secs)/60); if (m < 1) return '<1 minute'; if (m < 60) return m + ' minutes'; return Math.floor(m/60) + 'h ' + (m%60) + 'm'; }
+   var LABELS = { replied: 'Replied to customer', side_convo: 'Side conversation', noted: 'Internal note', status: 'Status change', skipped: 'Skipped' };
+   function abadge(a){ return a==='replied' ? 'badge-sent' : a==='status' ? 'badge-primary' : a==='skipped' ? 'badge-inactive' : a==='side_convo' ? 'badge-primary' : 'badge-primary'; } %>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--violet),var(--blue-bright));">
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin/helpdesk-reviews">← All reviews</a></p>
+    <p class="doc-kicker">Official helpdesk review · #<%= review.id %></p>
+    <h1><%= dt(review.started_at) %></h1>
+    <p class="doc-sub">Run by <strong><%= review.reviewer_name || 'unknown' %></strong>
+      <% if (review.ended_at) { %> · ended <%= dt(review.ended_at) %><% } else { %> · <span style="color:var(--accent);font-weight:600;">still in progress</span><% } %></p>
+  </div>
+</div>
+<%
+  var _byAction = {};
+  items.forEach(function(i){ _byAction[i.action] = (_byAction[i.action]||0) + 1; });
+  var _cases = {}; items.forEach(function(i){ _cases[i.ticket_id] = 1; });
+%>
+<div class="doc-stats">
+  <div class="ds"><div class="n"><%= dur(review.secs) %></div><div class="l">Duration</div></div>
+  <div class="ds"><div class="n info"><%= Object.keys(_cases).length %></div><div class="l">Cases touched</div></div>
+  <div class="ds"><div class="n good"><%= _byAction.replied || 0 %></div><div class="l">Replies sent</div></div>
+  <div class="ds"><div class="n"><%= (_byAction.noted || 0) + (_byAction.side_convo || 0) %></div><div class="l">Notes</div></div>
+  <div class="ds"><div class="n"><%= _byAction.status || 0 %></div><div class="l">Status changes</div></div>
+  <div class="ds"><div class="n" style="color:var(--muted);"><%= _byAction.skipped || 0 %></div><div class="l">Skipped</div></div>
+</div>
+</div>
+
+<div class="card" style="padding:0;border-top:3px solid var(--violet);">
+  <div class="card-header" style="padding:20px 24px 0;"><h2>Every action, in order</h2></div>
+  <div class="table-wrap">
+    <table class="table table-lift">
+      <thead><tr><th style="width:90px;">Time</th><th>Case</th><th>Customer</th><th>Action</th><th>Detail</th></tr></thead>
+      <tbody>
+        <% if (!items.length) { %><tr><td colspan="5"><div class="empty-state">Nothing logged on this review yet.</div></td></tr><% } %>
+        <% items.forEach(function(i){
+             var _re = i.action==='replied' ? 're-ok' : i.action==='status' ? 're-info' : i.action==='skipped' ? 're-dim' : ''; %>
+          <tr class="<%= _re %>">
+            <td class="muted" style="white-space:nowrap;"><%= tm(i.created_at) %></td>
+            <td><% if (i.ticket_number) { %><a class="row-link" href="/tickets/<%= i.ticket_id %>"><%= i.ticket_number %></a>
+                <div class="muted" style="font-size:11.5px;"><%= (i.subject || '').slice(0, 70) %></div>
+                <% } else { %><span class="muted">#<%= i.ticket_id %> (deleted)</span><% } %></td>
+            <td class="muted"><%= i.customer_name || '—' %></td>
+            <td><span class="badge <%= abadge(i.action) %>"><%= LABELS[i.action] || i.action %></span></td>
+            <td class="muted" style="font-size:12.5px;"><%= i.detail || '—' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

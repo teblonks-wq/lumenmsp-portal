@@ -1,5 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { sendMail, customerEmailHtml } from '../lib/mailer';
 import { sendTicketStatusEmail } from '../lib/emails';
@@ -392,10 +392,93 @@ async function reviewNextId(afterCreated: Date | null, afterId: number): Promise
   return r.rows.length ? r.rows[0].id : null;
 }
 
-router.get('/tickets/review', requireAuth, async (_req: Request, res: Response) => {
+// ── Official review sessions ────────────────────────────────────────────────────
+// Entering the review creates a dated, owned record; every case touched (reply, note,
+// status change, skip) is logged against it. Admin → Helpdesk reviews reads these.
+// The active session id rides in the login session, so parallel reviewers never mix.
+async function ensureReviewSession(req: Request): Promise<number> {
+  const sess = req.session as any;
+  const userId = req.session.user!.id;
+  if (sess.hdReviewId) {
+    const open = (await pool.query(
+      `SELECT id FROM helpdesk_reviews WHERE id=$1 AND user_id=$2 AND ended_at IS NULL
+          AND started_at > NOW() - interval '4 hours'`, [sess.hdReviewId, userId])).rows[0];
+    if (open) return open.id;
+  }
+  // Anything this user left open and stale is closed as abandoned, honestly labelled.
+  await pool.query(`UPDATE helpdesk_reviews SET ended_at=NOW(), outcome='abandoned'
+                     WHERE user_id=$1 AND ended_at IS NULL`, [userId]);
+  const ins = await pool.query(
+    'INSERT INTO helpdesk_reviews (user_id) VALUES ($1) RETURNING id', [userId]);
+  sess.hdReviewId = ins.rows[0].id;
+  await logActivity(userId, 'helpdesk_review', null, ins.rows[0].id, 'Started an official helpdesk review');
+  return ins.rows[0].id;
+}
+
+async function recordReviewItem(req: Request, ticketId: number, action: string, detail: string | null) {
+  try {
+    const reviewId = await ensureReviewSession(req);
+    await pool.query(
+      'INSERT INTO helpdesk_review_items (review_id, ticket_id, action, detail) VALUES ($1,$2,$3,$4)',
+      [reviewId, ticketId, action, detail ? detail.slice(0, 300) : null]);
+  } catch (e: any) {
+    // The review log is a record, not a gate — never let it block the work itself.
+    console.error('[review] item log failed:', e.message);
+  }
+}
+
+async function closeReviewSession(req: Request, outcome: string): Promise<string> {
+  const sess = req.session as any;
+  if (!sess.hdReviewId) return '';
+  const id = sess.hdReviewId;
+  sess.hdReviewId = null;
+  try {
+    await pool.query(
+      `UPDATE helpdesk_reviews SET ended_at=NOW(), outcome=$2 WHERE id=$1 AND ended_at IS NULL`,
+      [id, outcome]);
+    const n = (await pool.query(
+      'SELECT COUNT(DISTINCT ticket_id)::int AS cases, COUNT(*)::int AS actions FROM helpdesk_review_items WHERE review_id=$1',
+      [id])).rows[0];
+    await logActivity(req.session.user!.id, 'helpdesk_review', null, id,
+      `Helpdesk review ${outcome} — ${n.cases} case(s), ${n.actions} action(s)`);
+    return ` This review touched ${n.cases} case${n.cases === 1 ? '' : 's'} (${n.actions} action${n.actions === 1 ? '' : 's'}) — it is recorded under Admin → Helpdesk reviews.`;
+  } catch (e: any) {
+    console.error('[review] close failed:', e.message);
+    return '';
+  }
+}
+
+/// Everything the composer partial needs — the same lookups the case screen does,
+/// kept separate so the hot detail handler stays untouched.
+async function composerContext(ticket: any) {
+  const cid = ticket.customer_id;
+  const contacts = cid ? (await pool.query("SELECT full_name AS name, email FROM customer_contacts WHERE customer_id=$1 AND email IS NOT NULL AND email<>'' ORDER BY is_primary DESC, full_name", [cid]).catch(() => ({ rows: [] }))).rows : [];
+  const customerDomain = cid ? ((await pool.query("SELECT domain FROM customers WHERE id=$1", [cid]).catch(() => ({ rows: [] }))).rows[0]?.domain || '') : '';
+  const lastCh = (await pool.query("SELECT channel FROM inbox_messages WHERE ticket_id=$1 AND message_direction='inbound' ORDER BY COALESCE(received_at, created_at) DESC LIMIT 1", [ticket.id]).catch(() => ({ rows: [] }))).rows[0];
+  const lastChannel = (lastCh && lastCh.channel) || 'email';
+  const waInb = (await pool.query("SELECT from_email, EXTRACT(EPOCH FROM (NOW() - COALESCE(received_at, created_at))) AS age_secs FROM inbox_messages WHERE ticket_id=$1 AND channel='whatsapp' AND message_direction='inbound' ORDER BY COALESCE(received_at, created_at) DESC LIMIT 1", [ticket.id]).catch(() => ({ rows: [] }))).rows[0];
+  const waNum = waInb ? String(waInb.from_email || '').replace(/[^\d]/g, '') : '';
+  const waWindowOpen = !!(waInb && Number(waInb.age_secs) < 24 * 60 * 60);
+  const teamsSendOk = await teamsSendPossible(ticket.teams_conversation || null);
+  const agentSendOk = !!ticket.agent_device_id;
+  const aiCatOn = await aiTicketCategoryEnabled();
+  await ensureReplyTemplates().catch(() => {});
+  const replyTemplates = await listReplyTemplates().catch(() => [] as any[]);
+  return { contacts, customerDomain, lastChannel, waNum, waWindowOpen, teamsSendOk, agentSendOk, aiCatOn, replyTemplates };
+}
+
+router.get('/tickets/review', requireAuth, async (req: Request, res: Response) => {
   const first = await reviewNextId(null, 0);
   if (!first) { res.redirect('/tickets?msg=' + encodeURIComponent('Nothing to review — no open cases.')); return; }
+  // Clicking Helpdesk Review is the official start: the record exists before the first case opens.
+  await ensureReviewSession(req);
   res.redirect('/tickets/review/' + first);
+});
+
+// End the review deliberately — stamped with its end time, kept in the history.
+router.get('/tickets/review/exit', requireAuth, async (req: Request, res: Response) => {
+  const summary = await closeReviewSession(req, 'exited');
+  res.redirect('/tickets?msg=' + encodeURIComponent('Review ended.' + summary));
 });
 
 router.get('/tickets/review/:id', requireAuth, async (req: Request, res: Response) => {
@@ -431,20 +514,33 @@ router.get('/tickets/review/:id', requireAuth, async (req: Request, res: Respons
   // Chat id for "Open in Teams" deep links, same as the case screen.
   let teamsChatId = '';
   if (ticket.teams_conversation) { try { teamsChatId = JSON.parse(ticket.teams_conversation).chatId || ''; } catch { /* not JSON */ } }
+  // The official review record this walk belongs to, plus what the full composer needs.
+  const reviewId = await ensureReviewSession(req);
+  const [sessQ, actQ, ctx] = await Promise.all([
+    pool.query('SELECT hr.*, u.display_name AS reviewer_name FROM helpdesk_reviews hr LEFT JOIN users u ON u.id=hr.user_id WHERE hr.id=$1', [reviewId]),
+    pool.query('SELECT COUNT(*)::int AS n FROM helpdesk_review_items WHERE review_id=$1', [reviewId]),
+    composerContext(ticket),
+  ]);
   res.render('tickets/review', {
     user, ticket, timeline, teamsChatId,
     position: posQ.rows[0].n, total: totQ.rows[0].n,
-    statusList: STATUSES,
+    statusList: STATUSES, STATUSES,
+    reviewSession: sessQ.rows[0] || null, reviewActions: actQ.rows[0].n,
+    ...ctx,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
 
-// Skip — advance the cursor without saving anything.
+// Skip — advance the cursor without saving anything (logged: a skipped case is a decision too).
 router.get('/tickets/review/:id/next', requireAuth, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const cur = (await pool.query('SELECT created_at FROM inbox_tickets WHERE id=$1', [id])).rows[0];
+  if (id) await recordReviewItem(req, id, 'skipped', null);
   const next = await reviewNextId(cur ? cur.created_at : null, id || 0);
-  if (!next) { res.redirect('/tickets?msg=' + encodeURIComponent('Review complete — end of the open cases.')); return; }
+  if (!next) {
+    const summary = await closeReviewSession(req, 'completed');
+    res.redirect('/tickets?msg=' + encodeURIComponent('Review complete — end of the open cases.' + summary)); return;
+  }
   res.redirect('/tickets/review/' + next);
 });
 
@@ -479,9 +575,50 @@ router.post('/tickets/review/:id', requireAuth, async (req: Request, res: Respon
   } else if (noteText) {
     await pool.query('UPDATE inbox_tickets SET updated_at=NOW() WHERE id=$1', [id]);
   }
+  if (noteText) await recordReviewItem(req, id, 'noted', noteText.slice(0, 120));
+  if (setStatus) await recordReviewItem(req, id, 'status', `${cur.status} → ${setStatus}`);
   const next = await reviewNextId(cur.created_at, id);
-  if (!next) { res.redirect('/tickets?msg=' + encodeURIComponent('Review complete — end of the open cases.')); return; }
+  if (!next) {
+    const summary = await closeReviewSession(req, 'completed');
+    res.redirect('/tickets?msg=' + encodeURIComponent('Review complete — end of the open cases.' + summary)); return;
+  }
   res.redirect('/tickets/review/' + next + (noteText || setStatus ? '?msg=' + encodeURIComponent('Saved — private note' + (setStatus ? ' + status' : '') + ' added to the previous case.') : ''));
+});
+
+// ── Admin: the review history — every official review, newest first ─────────────
+router.get('/admin/helpdesk-reviews', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const reviews = (await pool.query(
+    `SELECT hr.id, hr.started_at, hr.ended_at, hr.outcome,
+            u.display_name AS reviewer_name,
+            EXTRACT(EPOCH FROM (COALESCE(hr.ended_at, NOW()) - hr.started_at))::int AS secs,
+            COUNT(DISTINCT i.ticket_id)::int AS cases,
+            COUNT(i.id) FILTER (WHERE i.action = 'replied')::int AS replies,
+            COUNT(i.id) FILTER (WHERE i.action IN ('noted','side_convo'))::int AS notes,
+            COUNT(i.id) FILTER (WHERE i.action = 'status')::int AS statuses,
+            COUNT(i.id) FILTER (WHERE i.action = 'skipped')::int AS skips
+       FROM helpdesk_reviews hr
+       LEFT JOIN users u ON u.id = hr.user_id
+       LEFT JOIN helpdesk_review_items i ON i.review_id = hr.id
+      GROUP BY hr.id, u.display_name
+      ORDER BY hr.started_at DESC
+      LIMIT 200`)).rows;
+  res.render('admin/helpdesk-reviews', { user: req.session.user!, reviews, notice: req.query.msg || null });
+});
+
+router.get('/admin/helpdesk-reviews/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const review = (await pool.query(
+    `SELECT hr.*, u.display_name AS reviewer_name,
+            EXTRACT(EPOCH FROM (COALESCE(hr.ended_at, NOW()) - hr.started_at))::int AS secs
+       FROM helpdesk_reviews hr LEFT JOIN users u ON u.id=hr.user_id WHERE hr.id=$1`, [id])).rows[0];
+  if (!review) { res.redirect('/admin/helpdesk-reviews'); return; }
+  const items = (await pool.query(
+    `SELECT i.*, t.ticket_number, t.subject, t.status AS ticket_status, c.name AS customer_name
+       FROM helpdesk_review_items i
+       LEFT JOIN inbox_tickets t ON t.id = i.ticket_id
+       LEFT JOIN customers c ON c.id = t.customer_id
+      WHERE i.review_id=$1 ORDER BY i.created_at ASC`, [id])).rows;
+  res.render('admin/helpdesk-review-detail', { user: req.session.user!, review, items });
 });
 
 // ── Detail ────────────────────────────────────────────────────────────────────
@@ -728,12 +865,15 @@ router.post('/tickets/:id/quick', requireAuth, async (req: Request, res: Respons
 router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachments', 5), async (req: Request, res: Response) => {
   const user = req.session.user!;
   const id = parseInt(String(req.params.id), 10);
+  // Posted from the helpdesk review? Errors return TO the review, and success advances it.
+  const isReview = String(req.body.review || '') === '1';
+  const back = isReview ? '/tickets/review/' + id : '/tickets/' + id;
   const noteType = ['public_reply', 'side_convo', 'private_note'].includes(req.body.note_type) ? req.body.note_type : 'private_note';
   // Can't reply to the customer until a support category is set (only while the AI-category feature
   // is switched on; Claude leaves the category blank when unsure).
   if (noteType === 'public_reply' && await aiTicketCategoryEnabled()) {
     const cat = (await pool.query('SELECT category FROM inbox_tickets WHERE id=$1', [id])).rows[0]?.category;
-    if (!cat) { res.redirect('/tickets/' + id + '?err=' + encodeURIComponent('Set a support category before replying to the customer.')); return; }
+    if (!cat) { res.redirect(back + '?err=' + encodeURIComponent('Set a support category before replying to the customer.')); return; }
   }
   const escHtml = (s: string) => String(s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as Record<string, string>)[c]);
   const { stored, graph } = processAttachments((req as any).files || []);
@@ -749,7 +889,7 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
   const setStatus = STATUSES.includes(req.body.set_status) ? req.body.set_status : null;
   const ppRaw = setStatus === 'postponed' && req.body.postponed_until ? new Date(req.body.postponed_until) : null;
   if (setStatus === 'postponed' && (!ppRaw || isNaN(ppRaw.getTime()))) {
-    res.redirect('/tickets/' + id + '?err=' + encodeURIComponent('Pick a date & time to postpone the case.')); return;
+    res.redirect(back + '?err=' + encodeURIComponent('Pick a date & time to postpone the case.')); return;
   }
   const ppVal = ppRaw && !isNaN(ppRaw.getTime()) ? ppRaw : null;
   const applyStatus = async (s: string | null) => {
@@ -776,7 +916,7 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
       }
     }
     if (!knownRequester) {
-      res.redirect('/tickets/' + id + '?err=' + encodeURIComponent('This case has no-one to reply to yet — link a contact, or open it from an inbound message.')); return;
+      res.redirect(back + '?err=' + encodeURIComponent('This case has no-one to reply to yet — link a contact, or open it from an inbound message.')); return;
     }
     // Take ownership on reply if the case is unassigned.
     if (asg && !asg.assigned_user_id) {
@@ -827,7 +967,7 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
         else { const cn = await pool.query('SELECT cc.mobile_phone, cc.phone FROM inbox_tickets t LEFT JOIN customer_contacts cc ON cc.id=t.contact_id WHERE t.id=$1', [id]); num = cn.rows[0]?.mobile_phone || cn.rows[0]?.phone || ''; }
       }
       if (!num) {
-        res.redirect('/tickets/' + id + '?err=' + encodeURIComponent('No WhatsApp number for this contact, so nothing was sent or added to the case. Add a mobile number to the contact, or reply another way.')); return;
+        res.redirect(back + '?err=' + encodeURIComponent('No WhatsApp number for this contact, so nothing was sent or added to the case. Add a mobile number to the contact, or reply another way.')); return;
       }
       const r = await sendWhatsAppText(num, plainForSend);
       if (!r.ok) {
@@ -835,7 +975,7 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
         const friendly = r.reEngagement
           ? 'WhatsApp message not sent — you are outside the 24-hour window, so an approved template is required and the customer needs to message us first. Nothing was added to the case.'
           : 'WhatsApp message could not be sent right now, so nothing was added to the case. Try again shortly, or reply by another channel.';
-        res.redirect('/tickets/' + id + '?err=' + encodeURIComponent(friendly)); return;
+        res.redirect(back + '?err=' + encodeURIComponent(friendly)); return;
       }
       waNumberSent = num; waIdSent = r.id || null;
     } else if (sendsExternally && channel === 'teams') {
@@ -844,7 +984,7 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
       if (!r.ok) {
         await logChannel({ channel: 'teams', direction: 'outbound', status: 'failed', ticketId: id, peer: row?.email || null, preview: plainForSend, error: r.error || 'send failed', userId: user.id });
         const friendly = 'Teams message could not be sent — there is no live Teams conversation with this customer to reply into (they need to message us on Teams first, or the chat has expired). Nothing was added to the case — reply by email if it is urgent.';
-        res.redirect('/tickets/' + id + '?err=' + encodeURIComponent(friendly)); return;
+        res.redirect(back + '?err=' + encodeURIComponent(friendly)); return;
       }
       teamsPeerSent = row?.email || null;
     } else if (sendsExternally && channel === 'agent') {
@@ -852,7 +992,7 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
       // there is no send-failure path — just make sure this case really has a device.
       const ag = (await pool.query('SELECT agent_device_id FROM inbox_tickets WHERE id=$1', [id])).rows[0];
       if (!ag || !ag.agent_device_id) {
-        res.redirect('/tickets/' + id + '?err=' + encodeURIComponent('This case is not linked to a LumenMSP Agent device, so an Agent reply cannot be delivered. Reply by another channel.')); return;
+        res.redirect(back + '?err=' + encodeURIComponent('This case is not linked to a LumenMSP Agent device, so an Agent reply cannot be delivered. Reply by another channel.')); return;
       }
     }
     // Side convo: stamp who it went to at the top so the (private) note shows the recipient.
@@ -910,11 +1050,11 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
           // To/CC/BCC from the composer; To falls back to the matched contact.
           const finalTo = toAddr || (rcpt ? rcpt.email : '');
           if (finalTo) { const subj = rcpt ? (rcpt.ticketNumber + (rcpt.subject ? ': ' + rcpt.subject : '')) : 'Update on your ticket'; await sendMail({ to: finalTo, cc, bcc, subject: subj, html: customerEmailHtml(body), signatureName: user.displayName, attachments: graph }); }
-          else { await sysNote(`No recipient address — reply saved but not emailed (by ${user.displayName})`); res.redirect('/tickets/' + id + '?err=' + encodeURIComponent('No recipient address on this case — the reply was saved but not emailed. Add a "To" address or link a contact.')); return; }
+          else { await sysNote(`No recipient address — reply saved but not emailed (by ${user.displayName})`); res.redirect(back + '?err=' + encodeURIComponent('No recipient address on this case — the reply was saved but not emailed. Add a "To" address or link a contact.')); return; }
         } catch (e) {
           console.error('Public reply email failed:', e);
           await sysNote(`Email send FAILED — reply saved but not delivered (by ${user.displayName})`);
-          res.redirect('/tickets/' + id + '?err=' + encodeURIComponent('The reply was saved but the email failed to send — check mail settings / Graph token.')); return;
+          res.redirect(back + '?err=' + encodeURIComponent('The reply was saved but the email failed to send — check mail settings / Graph token.')); return;
         }
       } else if (channel === 'whatsapp') {
         await recordWaSent();
@@ -933,6 +1073,23 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
       [id, user.id, `Status set to ${setStatus.replace(/_/g, ' ')}${setStatus === 'postponed' && ppVal ? ' until ' + ppVal.toLocaleString('en-GB') : ''} (by ${user.displayName})`]);
   }
   // Resolving from the composer returns you to the helpdesk overview.
+  if (isReview) {
+    // Log what happened to the official review, then walk on to the next oldest case.
+    if (hasContent) {
+      const what = noteType === 'public_reply' ? 'replied' : noteType === 'side_convo' ? 'side_convo' : 'noted';
+      await recordReviewItem(req, id, what, String(req.body.channel || 'email'));
+    }
+    if (setStatus) await recordReviewItem(req, id, 'status', '→ ' + setStatus);
+    const cur = (await pool.query('SELECT created_at FROM inbox_tickets WHERE id=$1', [id])).rows[0];
+    const next = await reviewNextId(cur ? cur.created_at : null, id);
+    if (!next) {
+      const summary = await closeReviewSession(req, 'completed');
+      res.redirect('/tickets?msg=' + encodeURIComponent('Review complete — end of the open cases.' + summary)); return;
+    }
+    res.redirect('/tickets/review/' + next + '?msg=' + encodeURIComponent(
+      (hasContent ? (noteType === 'private_note' ? 'Note saved' : 'Sent') : 'Saved') + ' — that\'s logged to the review. Next case.'));
+    return;
+  }
   res.redirect(setStatus === 'resolved' ? '/tickets' : '/tickets/' + id);
 });
 

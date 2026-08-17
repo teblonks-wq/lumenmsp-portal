@@ -1,0 +1,62 @@
+<%- include('../partials/header', { title: 'Helpdesk reviews', user }) %>
+<% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+   function dur(secs){ if (secs == null) return '—'; var m = Math.round(Number(secs)/60); if (m < 1) return '<1m'; if (m < 60) return m + 'm'; return Math.floor(m/60) + 'h ' + (m%60) + 'm'; }
+   function obadge(o){ return o==='completed' ? 'badge-sent' : o==='exited' ? 'badge-primary' : o==='abandoned' ? 'badge-inactive' : 'badge-primary'; }
+   function olabel(o, ended){ return !ended ? 'In progress' : o==='completed' ? 'Completed' : o==='exited' ? 'Ended early' : o==='abandoned' ? 'Abandoned' : 'Ended'; } %>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--violet),var(--blue-bright));">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+    <p class="doc-kicker">Official record</p>
+    <h1>Helpdesk reviews</h1>
+    <p class="doc-sub">Every review walk — when it started and ended, who ran it, and every case it touched. The record writes itself the moment someone presses Helpdesk Review.</p>
+  </div>
+  <a class="btn btn-primary" href="/tickets/review">Start a review now</a>
+</div>
+</div>
+
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
+
+<%
+  var _done = reviews.filter(function(r){ return r.outcome === 'completed'; }).length;
+  var _cases = reviews.reduce(function(a, r){ return a + Number(r.cases || 0); }, 0);
+  var _acts  = reviews.reduce(function(a, r){ return a + Number(r.replies||0) + Number(r.notes||0) + Number(r.statuses||0); }, 0);
+%>
+<div class="stat-band acc-quotes">
+  <span class="tile" style="display:block;"><span class="n violet" style="display:block;"><%= reviews.length %></span><span class="l" style="display:block;">reviews on record</span></span>
+  <span class="tile acc-invoices" style="display:block;"><span class="n good" style="display:block;"><%= _done %></span><span class="l" style="display:block;">ran to the end</span></span>
+  <span class="tile" style="display:block;"><span class="n info" style="display:block;"><%= _cases %></span><span class="l" style="display:block;">cases touched</span></span>
+  <span class="tile acc-plain" style="display:block;"><span class="n" style="display:block;"><%= _acts %></span><span class="l" style="display:block;">replies · notes · statuses</span></span>
+</div>
+
+<div class="card" style="padding:0;border-top:3px solid var(--violet);">
+  <div class="table-wrap">
+    <table class="table table-lift">
+      <thead><tr><th>Started</th><th>Reviewer</th><th>Outcome</th><th>Duration</th>
+        <th style="text-align:right;">Cases</th><th style="text-align:right;">Replies</th>
+        <th style="text-align:right;">Notes</th><th style="text-align:right;">Statuses</th>
+        <th style="text-align:right;">Skipped</th></tr></thead>
+      <tbody>
+        <% if (!reviews.length) { %><tr><td colspan="9"><div class="empty-state">No reviews yet — the first press of Helpdesk Review starts the record.</div></td></tr><% } %>
+        <% reviews.forEach(function(r){
+             var _re = !r.ended_at ? 're-info' : r.outcome==='completed' ? 're-ok' : r.outcome==='abandoned' ? 're-dim' : ''; %>
+          <tr class="<%= _re %>">
+            <td><a class="row-link" href="/admin/helpdesk-reviews/<%= r.id %>"><%= dt(r.started_at) %></a></td>
+            <td><%= r.reviewer_name || '—' %></td>
+            <td><span class="badge <%= obadge(r.outcome) %>"><%= olabel(r.outcome, r.ended_at) %></span></td>
+            <td class="muted"><%= dur(r.secs) %></td>
+            <td class="money"><%= r.cases %></td>
+            <td class="money"><%= r.replies %></td>
+            <td class="money"><%= r.notes %></td>
+            <td class="money"><%= r.statuses %></td>
+            <td class="money muted"><%= r.skips %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<p class="muted" style="font-size:12px;margin:12px 0 0;">A review left open with no activity for four hours closes itself as Abandoned — the record stays honest without anyone tidying it.</p>
+
+<%- include('../partials/footer') %>

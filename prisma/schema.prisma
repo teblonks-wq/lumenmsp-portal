@@ -533,6 +533,34 @@ model AgentScript {
   @@map("agent_scripts")
 }
 
+// Official helpdesk reviews. Entering the review walk creates a dated, owned record;
+// every case touched (reply, note, status change, skip) is logged against it with its
+// time. Admin -> Helpdesk reviews reads these. Nullable/defaulted throughout - safe for
+// prisma db push on a live database.
+model HelpdeskReview {
+  id        Int       @id @default(autoincrement())
+  userId    Int?      @map("user_id")
+  startedAt DateTime  @default(now()) @map("started_at")
+  endedAt   DateTime? @map("ended_at")
+  outcome   String?   // completed | exited | abandoned
+
+  @@index([startedAt])
+  @@map("helpdesk_reviews")
+}
+
+model HelpdeskReviewItem {
+  id        Int      @id @default(autoincrement())
+  reviewId  Int      @map("review_id")
+  ticketId  Int      @map("ticket_id")
+  action    String   // replied | side_convo | noted | status | skipped
+  detail    String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([reviewId])
+  @@index([ticketId])
+  @@map("helpdesk_review_items")
+}
+
 // An MSI uploaded to the Portal (or a plain URL) that can be pushed to a device.
 model AgentPackage {
   id          Int      @id @default(autoincrement())

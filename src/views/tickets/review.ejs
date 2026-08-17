@@ -18,24 +18,28 @@
   .email-body font[size] { font-size:14px !important; }
 </style>
 
-<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--violet),var(--blue-bright));margin-bottom:14px;">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div>
-    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/tickets">← Exit review</a></p>
-    <h1 style="margin:0;">Helpdesk review <span class="muted" style="font-weight:500;font-size:16px;">· case <%= position %> of <%= total %> (oldest first)</span></h1>
+    <p class="doc-kicker">Official helpdesk review<% if (typeof reviewSession !== 'undefined' && reviewSession) { %> · started <%= dt(reviewSession.started_at) %> by <%= reviewSession.reviewer_name || user.displayName %><% } %></p>
+    <h1>Helpdesk review <span class="muted" style="font-weight:500;font-size:16px;">· case <%= position %> of <%= total %> (oldest first)</span></h1>
+    <p class="doc-sub">Every case you touch is logged to this review — the record appears under Admin → Helpdesk reviews.</p>
   </div>
-  <div style="display:flex;gap:8px;align-items:center;">
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
     <a class="btn" href="/tickets/<%= ticket.id %>" target="_blank" title="Open the full case screen in a new tab">Open full case ↗</a>
     <a class="btn" href="/tickets/review/<%= ticket.id %>/next" title="Move on without saving anything">Skip →</a>
+    <a class="btn" href="/tickets/review/exit" style="color:var(--bad-fg);" title="Close this review — it is stamped with its end time and kept in the admin history">End review</a>
   </div>
+</div>
 </div>
 
 <% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="margin-bottom:14px;"><%= notice %></div><% } %>
-<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-danger" style="margin-bottom:14px;"><%= error %></div><% } %>
+<% if (typeof error !== 'undefined' && error) { %><div class="alert alert-error" style="margin-bottom:14px;"><%= error %></div><% } %>
 
-<div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:16px;align-items:start;">
+<div style="display:grid;grid-template-columns:minmax(0,3fr) minmax(0,1fr);gap:16px;align-items:start;">
 
-  <!-- Case at a glance + recent activity -->
   <div>
+    <!-- Case at a glance -->
     <div class="card" style="margin-bottom:14px;">
       <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start;">
         <div>
@@ -53,8 +57,23 @@
       </div>
     </div>
 
+    <!-- The FULL composer - reply, side convo, internal note, channels, templates,
+         Greeting/Claude/phrases, attachments, status - exactly as on the case screen.
+         Posting from review advances to the next case and logs to this review. -->
     <div class="card">
-      <div class="card-header" style="display:flex;align-items:baseline;gap:10px;"><h2 style="margin:0;">Conversation</h2><span class="muted" style="font-size:12px;">the full case, newest first - read-only</span></div>
+      <div class="card-header" style="display:flex;align-items:baseline;gap:10px;"><h2 style="margin:0;">Respond</h2><span class="muted" style="font-size:12px;">sending or saving here moves you to the next case</span></div>
+      <%- include('_composer', {
+        ticket: ticket, user: user, contacts: contacts, customerDomain: customerDomain,
+        replyTemplates: replyTemplates, STATUSES: STATUSES, cap: cap,
+        teamsSendOk: teamsSendOk, agentSendOk: agentSendOk, lastChannel: lastChannel,
+        waWindowOpen: waWindowOpen, waNum: waNum, aiCatOn: aiCatOn,
+        reviewMode: true, standalone: true
+      }) %>
+    </div>
+
+    <!-- Conversation -->
+    <div class="card">
+      <div class="card-header" style="display:flex;align-items:baseline;gap:10px;"><h2 style="margin:0;">Conversation</h2><span class="muted" style="font-size:12px;">the full case, newest first</span></div>
       <% if (timeline.length===0) { %><div class="empty-state">No messages or notes yet.</div><% } %>
       <% timeline.forEach(function(e){ %>
         <% if (e.kind==='note' && e.noteType==='system_log') { %>
@@ -91,51 +110,23 @@
     </div>
   </div>
 
-  <!-- Review actions -->
+  <!-- Review rail: where you are, what this review has logged so far -->
   <div class="card" style="position:sticky;top:14px;">
-    <h2 style="font-size:15px;margin:0 0 10px;">Review this case</h2>
-    <form method="post" action="/tickets/review/<%= ticket.id %>">
-      <div class="form-group">
-        <label>Private note <span class="muted" style="font-weight:400;">(internal only — never sent to the customer)</span></label>
-        <textarea class="input" name="body" id="revNote" rows="6" placeholder="e.g. Chased supplier this morning; awaiting RMA number. Check again Friday." style="width:100%;box-sizing:border-box;"></textarea>
-      </div>
-      <div class="form-group">
-        <label>Status</label>
-        <select class="input" name="set_status" id="revStatus" style="width:100%;">
-          <% statusList.forEach(function(s){ %>
-            <option value="<%= s %>" <%= ticket.status===s?'selected':'' %>><%= cap(s) %><%= ticket.status===s?' (current)':'' %></option>
-          <% }); %>
-        </select>
-      </div>
-      <div class="form-group" id="revPPWrap" style="display:none;">
-        <label>Return date &amp; time</label>
-        <input class="input" type="datetime-local" name="postponed_until" id="revPP" style="width:100%;box-sizing:border-box;">
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;margin-top:12px;">
-        <button class="btn btn-primary" type="submit" id="revSave" disabled title="Add the note, apply the status, and open the next oldest case">Save &amp; Next →</button>
-        <a class="btn" href="/tickets/review/<%= ticket.id %>/next">Skip →</a>
-      </div>
-      <p class="muted" style="font-size:11px;margin:10px 0 0;">Save &amp; Next unlocks once you've written a note or changed the status. Notes are always added as <strong>private notes</strong>.</p>
-    </form>
+    <h2 style="font-size:15px;margin:0 0 4px;">This review</h2>
+    <% if (typeof reviewSession !== 'undefined' && reviewSession) { %>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px;">Started <%= dt(reviewSession.started_at) %><br>by <%= reviewSession.reviewer_name || user.displayName %></p>
+    <div class="stat-band" style="grid-template-columns:1fr 1fr;gap:8px;margin:0 0 12px;">
+      <span class="tile acc-plain" style="padding:10px 12px 9px 14px;display:block;"><span class="n" style="font-size:20px;display:block;"><%= position %><small> / <%= total %></small></span><span class="l" style="display:block;">position</span></span>
+      <span class="tile" style="padding:10px 12px 9px 14px;display:block;"><span class="n info" style="font-size:20px;display:block;"><%= typeof reviewActions !== 'undefined' ? reviewActions : 0 %></span><span class="l" style="display:block;">actions logged</span></span>
+    </div>
+    <% } %>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <a class="btn" href="/tickets/review/<%= ticket.id %>/next">Skip this case →</a>
+      <a class="btn" href="/tickets/<%= ticket.id %>" target="_blank">Open full case ↗</a>
+      <a class="btn" href="/tickets/review/exit" style="color:var(--bad-fg);">End review</a>
+    </div>
+    <p class="muted" style="font-size:11px;margin:12px 0 0;">Replies, notes, status changes and skips are all logged against this review with their time — the full record lives in <a class="row-link" href="/admin/helpdesk-reviews">Admin → Helpdesk reviews</a>.</p>
   </div>
 </div>
-
-<script>
-  (function(){
-    var note = document.getElementById('revNote'), st = document.getElementById('revStatus'),
-        save = document.getElementById('revSave'), ppWrap = document.getElementById('revPPWrap');
-    var startStatus = <%- JSON.stringify(ticket.status || '') %>;
-    function refresh(){
-      var changed = note.value.trim().length > 0 || st.value !== startStatus;
-      save.disabled = !changed;
-      ppWrap.style.display = (st.value === 'postponed' || st.value === 'awaiting_installation') ? 'block' : 'none';
-    }
-    note.addEventListener('input', refresh);
-    st.addEventListener('change', refresh);
-    refresh();
-    // Ctrl+Enter = Save & Next
-    note.addEventListener('keydown', function(e){ if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !save.disabled) save.closest('form').submit(); });
-  })();
-</script>
 
 <%- include('../partials/footer') %>

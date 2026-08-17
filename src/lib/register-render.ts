@@ -70,8 +70,14 @@ async function renderCS(customerId: number, period: string | null): Promise<Rend
   const featurePack = derived.get('FEATURE_PACK') ?? 0;
 
   // Group comms-feed rows by CLI, same classification as commsAccount.
+  // Sale is accumulated PER BUCKET, alongside the cost it belongs to — not pooled per CLI.
+  // A single per-CLI sale total was fine while a CLI was only ever one thing, but it meant
+  // whichever bucket read it got every priced row on that line: a CLI carrying broadband AND
+  // another priced row billed the broadband line for both, then billed the other row again.
+  // null = nothing priced in that bucket, which still means "never bills".
   type C = { cli: string; total: number; hasSeat: boolean; recCost: number; bbCost: number; bbService: string;
              lrCost: number; mobileCost: number; componentCost: number; location: string | null;
+             bbSale: number | null; lrSale: number | null; mobileSale: number | null;
              others: { description: string; sale: number | null; cost: number }[] };
   const byCli = new Map<string, C>();
   const lumenComms: RenderedLine[] = [];
@@ -90,18 +96,21 @@ async function renderCS(customerId: number, period: string | null): Promise<Rend
     if (String(r.source_key || '').startsWith('derived:')) continue; // priced above, counted below
     const cli = String(r.cli || '(none)');
     const d = String(r.description || '');
-    const cost = (Number(r.unit_cost) || 0) * (Number(r.qty) || 1);
+    const qty = Number(r.qty) || 1;
+    const cost = (Number(r.unit_cost) || 0) * qty;
+    const sale = r.sale_price === null ? null : Number(r.sale_price) * qty;
     let c = byCli.get(cli);
-    if (!c) { c = { cli, total: 0, hasSeat: false, recCost: 0, bbCost: 0, bbService: '', lrCost: 0, mobileCost: 0, componentCost: 0, location: r.location || null, others: [] }; byCli.set(cli, c); }
+    if (!c) { c = { cli, total: 0, hasSeat: false, recCost: 0, bbCost: 0, bbService: '', lrCost: 0, mobileCost: 0, componentCost: 0, location: r.location || null, bbSale: null, lrSale: null, mobileSale: null, others: [] }; byCli.set(cli, c); }
+    const add = (a: number | null, b: number | null) => (b === null ? a : (a || 0) + b);
     c.total += cost;
     if (SEAT_RE.test(d)) c.hasSeat = true;
     if (REC_RE.test(d)) c.recCost += cost;
-    if (LR_RE.test(d)) c.lrCost += cost;
-    else if (BB_RE.test(d)) { c.bbCost += cost; if (!c.bbService && !/care/i.test(d)) c.bbService = d; }
-    else if (MOBILE_RE.test(d)) c.mobileCost += cost;
+    if (LR_RE.test(d)) { c.lrCost += cost; c.lrSale = add(c.lrSale, sale); }
+    else if (BB_RE.test(d)) { c.bbCost += cost; c.bbSale = add(c.bbSale, sale); if (!c.bbService && !/care/i.test(d)) c.bbService = d; }
+    else if (MOBILE_RE.test(d)) { c.mobileCost += cost; c.mobileSale = add(c.mobileSale, sale); }
     else if (COMPONENT_RE.test(d)) c.componentCost += cost;
     else if (!SEAT_RE.test(d) && !REC_RE.test(d)) {
-      c.others.push({ description: d, cost, sale: r.sale_price === null ? null : Number(r.sale_price) * (Number(r.qty) || 1) });
+      c.others.push({ description: d, cost, sale });
     }
     if (r.location) c.location = r.location;
   }
@@ -109,27 +118,20 @@ async function renderCS(customerId: number, period: string | null): Promise<Rend
   const cliPkgs = await resolveCliPackages(customerId,
     live.filter((r) => r.source === 'comms-feed' && r.cli).map((r) => ({ cli: r.cli, description: r.description })));
 
-  // Per-CLI register prices (the non-sentinel service_pricing equivalents now live ON the rows).
-  const rowSale = new Map<string, number>(); // cli → summed sale of priced rows on that cli
-  for (const r of live) {
-    if (r.source !== 'comms-feed' || !r.cli || r.sale_price === null) continue;
-    if (String(r.source_key || '').startsWith('derived:')) continue;
-    const k = String(r.cli);
-    rowSale.set(k, (rowSale.get(k) || 0) + Number(r.sale_price) * (Number(r.qty) || 1));
-  }
-
   let seatCount = 0, seatCost = 0, recCount = 0, recCost = 0, componentCost = 0;
   const lines: RenderedLine[] = [];
   const pkgAgg = new Map<string, { service: string; category: string; count: number; buy: number; saleEach: number | null }>();
   for (const c of byCli.values()) {
     if (c.recCost > 0) { recCount++; recCost += c.recCost; }
     if (c.hasSeat) { seatCount++; seatCost += c.total - c.recCost; continue; }
-    if (c.bbCost > 0) lines.push({ category: 'internet', label: c.bbService || 'Broadband', ref: c.cli, qty: 1, cost: c.bbCost, sale: rowSale.has(c.cli) ? rowSale.get(c.cli)! : null });
-    if (c.lrCost > 0) lines.push({ category: 'voice', label: 'Line Rental', ref: c.cli, qty: 1, cost: c.lrCost, sale: null });
+    if (c.bbCost > 0) lines.push({ category: 'internet', label: c.bbService || 'Broadband', ref: c.cli, qty: 1, cost: c.bbCost, sale: c.bbSale });
+    // Line Rental bills from its own sale price, like broadband. It used to be hard-coded to
+    // null, so the register never billed it at all while the live run charged it.
+    if (c.lrCost > 0) lines.push({ category: 'voice', label: 'Line Rental', ref: c.cli, qty: 1, cost: c.lrCost, sale: c.lrSale });
     if (c.mobileCost > 0) {
       const pk = cliPkgs.get(c.cli);
       if (pk) { const a = pkgAgg.get(pk.name) || { service: pk.name, category: pk.category || 'mobile', count: 0, buy: 0, saleEach: pk.sale }; a.count++; a.buy += c.mobileCost; pkgAgg.set(pk.name, a); }
-      else lines.push({ category: 'mobile', label: 'Mobile / data', ref: c.cli, qty: 1, cost: c.mobileCost, sale: rowSale.has(c.cli) ? rowSale.get(c.cli)! : null });
+      else lines.push({ category: 'mobile', label: 'Mobile / data', ref: c.cli, qty: 1, cost: c.mobileCost, sale: c.mobileSale });
     }
     if (c.componentCost > 0) componentCost += c.componentCost;
     for (const op of c.others) lines.push({ category: commsCategory(op.description), label: op.description || 'Other', ref: c.cli, qty: 1, cost: op.cost, sale: op.sale });

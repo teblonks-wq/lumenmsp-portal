@@ -277,25 +277,61 @@ export async function registerRecentChanges(customerId?: number | null, limit = 
 //   • bundle — a seat/recording/handset component on a seat CLI → set £0 (active), so it
 //              stops reading as "unpriced"; the seat/recording package already sells it
 // Anything else is left untouched and reported as "unmatched" for manual pricing.
-// Only ever touches 'unpriced' lines. apply=false = dry-run (rolls back).
+// Touches 'unpriced' lines by default. apply=false = dry-run (rolls back).
+//
+// With `reprice`, it ALSO re-touches lines this routine priced before (identified from the
+// change log, `new.from = 'last-invoice'`) — never a price a human set by hand. Without that,
+// a correction can never be applied twice: the first run flips the line to 'active' and every
+// later run silently skips it, which reads as "the fix did nothing".
 export interface PriceFromInvoicesResult {
   priced: number;
   bundled: number;
   unmatched: number;
   customers: number;
   applied: boolean;
-  samples: { customer: string; description: string; ref: string | null; via: string; unitPrice: number }[];
+  reprice: boolean;
+  samples: { customer: string; description: string; ref: string | null; via: string;
+             unitPrice: number; qty: number; lineTotal: number; was: number | null }[];
   misses: { customer: string; description: string; cli: string | null; source: string }[];
+  // Lines whose invoice total cannot be expressed as a per-unit price at the column's 4dp
+  // without drifting a penny once multiplied back up. Left UNPRICED and listed, because a
+  // register that is a penny out is worse than one that admits it does not know.
+  residual: { customer: string; description: string; qty: number; lineTotal: number;
+              perUnit: number; rendersAs: number }[];
+  // The render sums unrounded line values and rounds ONCE at the end, so per-line rounding
+  // that looks harmless can still add up to a penny on the bill. Any customer whose priced
+  // lines carry a combined residue of half a penny or more is listed here — that is the set
+  // that can miss penny-exact in the shadow even though every line looked fine on its own.
+  drift: { customer: string; residue: number }[];
 }
 
 const SCHEME_FOR: Record<string, string[]> = { 'comms-feed': ['CS'], 'cloud-feed': ['IC', 'IT'], 'lumen': ['IC', 'IT'] };
 const normDesc = (s: any) => String(s || '').toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/[—–-].*$/, ' ').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 const BUNDLED = (d: string) => SEAT_RE.test(d) || REC_RE.test(d) || COMPONENT_RE.test(d) || /busy lamp|\bblf\b|feature pack/i.test(d);
 
-export async function priceRegisterFromInvoices(actor = 'invoice-backfill', apply = false): Promise<PriceFromInvoicesResult> {
-  const res: PriceFromInvoicesResult = { priced: 0, bundled: 0, unmatched: 0, customers: 0, applied: apply, samples: [], misses: [] };
+export async function priceRegisterFromInvoices(
+  actor = 'invoice-backfill',
+  apply = false,
+  opts: { customerId?: number | null; reprice?: boolean } = {},
+): Promise<PriceFromInvoicesResult> {
+  const reprice = !!opts.reprice;
+  const onlyCustomer = Number(opts.customerId) || null;
+  const res: PriceFromInvoicesResult = {
+    priced: 0, bundled: 0, unmatched: 0, customers: 0, applied: apply, reprice,
+    samples: [], misses: [], residual: [], drift: [],
+  };
   const unpriced = (await pool.query(
-    "SELECT id, customer_id, source, cli, product_id, description FROM customer_register_lines WHERE status='unpriced' AND customer_id IS NOT NULL"
+    `SELECT l.id, l.customer_id, l.source, l.cli, l.product_id, l.description, l.qty, l.sale_price
+       FROM customer_register_lines l
+      WHERE l.customer_id IS NOT NULL
+        AND ($1::int IS NULL OR l.customer_id = $1)
+        AND ( l.status = 'unpriced'
+              OR ($2::boolean AND EXISTS (
+                    SELECT 1 FROM register_changes c
+                     WHERE c.register_line_id = l.id
+                       AND c.change_type = 'price'
+                       AND c.new->>'from' = 'last-invoice')) )`,
+    [onlyCustomer, reprice]
   )).rows;
   if (!unpriced.length) return res;
 
@@ -311,11 +347,15 @@ export async function priceRegisterFromInvoices(actor = 'invoice-backfill', appl
     for (const [cid, lines] of byCust) {
       res.customers++;
       const name = custName.get(cid) || String(cid);
+      let residue = 0;   // signed sum of (what the line will render as) - (what it should be)
 
 
       // Invoice price index from the latest invoice per needed scheme (recurring template preferred).
       const schemes = Array.from(new Set(lines.flatMap((l: any) => SCHEME_FOR[l.source] || ['IC', 'IT'])));
-      const items: { desc: string; nd: string; refs: string[]; price: number }[] = [];
+      // The invoice's LINE TOTAL is the number that has to be reproduced, not its unit price.
+      // A flat charge invoiced once (qty 1 x GBP 2.50) sits against a register line whose feed
+      // qty is 86 monitored users; pricing per-unit from 2.50 rendered 86 x 2.50 = GBP 215.
+      const items: { desc: string; nd: string; refs: string[]; price: number; qty: number; total: number }[] = [];
       for (const scheme of schemes) {
         const inv = (await client.query(
           `SELECT id FROM invoices WHERE customer_id=$1 AND invoice_scheme=$2 AND deleted_at IS NULL
@@ -323,18 +363,23 @@ export async function priceRegisterFromInvoices(actor = 'invoice-backfill', appl
         )).rows[0];
         if (!inv) continue;
         const rows = (await client.query(
-          "SELECT description, unit_price FROM invoice_items WHERE invoice_id=$1 AND COALESCE(is_one_off,false)=false", [inv.id]
+          `SELECT description, unit_price, quantity, line_total FROM invoice_items
+            WHERE invoice_id=$1 AND COALESCE(is_one_off,false)=false`, [inv.id]
         )).rows;
         for (const it of rows) {
           const price = Number(it.unit_price);
           if (!(price > 0)) continue;
+          const iQty = Number(it.quantity) || 1;
+          // line_total is authoritative, but fall back to unit x qty on older rows that
+          // predate it being populated rather than pricing them at zero.
+          const total = Number(it.line_total) > 0 ? Number(it.line_total) : price * iQty;
           const d = String(it.description || '');
           const refs = (d.match(/\(([^)]+)\)/g) || []).map((x) => x.replace(/[()]/g, '').trim().toLowerCase());
-          items.push({ desc: d, nd: normDesc(d), refs, price });
+          items.push({ desc: d, nd: normDesc(d), refs, price, qty: iQty, total });
         }
       }
 
-      const findPrice = (l: any): { price: number; via: string } | null => {
+      const findPrice = (l: any): { price: number; total: number; via: string } | null => {
         const cli = (l.cli || '').toString().trim().toLowerCase();
         if (cli) {
           const refHits = items.filter((it) => it.refs.some((r) => r === cli) || it.desc.toLowerCase().includes(cli));
@@ -342,13 +387,13 @@ export async function priceRegisterFromInvoices(actor = 'invoice-backfill', appl
             const nd = normDesc(l.description).split(' ').filter(Boolean);
             const overlap = (it: any) => nd.reduce((n: number, w: string) => n + (it.nd.includes(w) ? 1 : 0), 0);
             const best = refHits.slice().sort((a, b) => overlap(b) - overlap(a))[0];
-            return { price: best.price, via: 'ref' };
+            return { price: best.price, total: best.total, via: 'ref' };
           }
         }
         const nd = normDesc(l.description);
         if (nd) {
           const byDesc = items.find((it) => it.nd === nd || it.nd.startsWith(nd) || nd.startsWith(it.nd));
-          if (byDesc) return { price: byDesc.price, via: 'description' };
+          if (byDesc) return { price: byDesc.price, total: byDesc.total, via: 'description' };
         }
         return null;
       };
@@ -360,23 +405,55 @@ export async function priceRegisterFromInvoices(actor = 'invoice-backfill', appl
           res.bundled++;
           if (apply) {
             await client.query("UPDATE customer_register_lines SET sale_price=0, status='active', updated_at=NOW() WHERE id=$1", [l.id]);
-            await logChange(client, { lineId: l.id, customerId: cid, type: 'price', old: { salePrice: null }, next: { salePrice: 0, bundled: true }, actor });
+            await logChange(client, { lineId: l.id, customerId: cid, type: 'price',
+              old: { salePrice: l.sale_price === null ? null : Number(l.sale_price) },
+              next: { salePrice: 0, bundled: true }, actor });
           }
           continue;
         }
-        // 2) Standalone line → price from the matching invoice line.
+        // 2) Standalone line → price so the RENDERED total equals the invoice line total.
+        // The register renders qty x sale_price, so the per-unit price it needs is the
+        // invoice's line total divided by the REGISTER's qty — which is the invoice unit
+        // price only when the two quantities happen to agree.
         const hit = findPrice(l);
         if (hit) {
+          const regQty = Number(l.qty) > 0 ? Number(l.qty) : 1;
+          const perUnit = Math.round((hit.total / regQty) * 10000) / 10000;  // sale_price is Decimal(12,4)
+          const rendersAs = Math.round(perUnit * regQty * 100) / 100;
+          const wanted = Math.round(hit.total * 100) / 100;
+
+          // Round-trip or refuse. If 4dp cannot carry the division, pricing it anyway would
+          // put the bill a penny out and still show green-ish; better to leave it unpriced
+          // and name it.
+          if (rendersAs !== wanted) {
+            res.unmatched++;
+            if (res.residual.length < 80) {
+              res.residual.push({ customer: name, description: d, qty: regQty, lineTotal: wanted, perUnit, rendersAs });
+            }
+            continue;
+          }
+
           res.priced++;
-          if (res.samples.length < 60) res.samples.push({ customer: name, description: d, ref: l.cli || null, via: hit.via, unitPrice: hit.price });
+          residue += (perUnit * regQty) - hit.total;   // unrounded, the way the render sums it
+          const was = l.sale_price === null ? null : Number(l.sale_price);
+          if (res.samples.length < 60) {
+            res.samples.push({ customer: name, description: d, ref: l.cli || null, via: hit.via,
+                               unitPrice: perUnit, qty: regQty, lineTotal: wanted, was });
+          }
           if (apply) {
-            await client.query("UPDATE customer_register_lines SET sale_price=$1, status='active', updated_at=NOW() WHERE id=$2", [hit.price, l.id]);
-            await logChange(client, { lineId: l.id, customerId: cid, type: 'price', old: { salePrice: null }, next: { salePrice: hit.price, via: hit.via, from: 'last-invoice' }, actor });
+            await client.query("UPDATE customer_register_lines SET sale_price=$1, status='active', updated_at=NOW() WHERE id=$2", [perUnit, l.id]);
+            await logChange(client, { lineId: l.id, customerId: cid, type: 'price',
+              old: { salePrice: was },
+              next: { salePrice: perUnit, qty: regQty, lineTotal: wanted, invoiceUnitPrice: hit.price, via: hit.via, from: 'last-invoice' },
+              actor });
           }
           continue;
         }
         res.unmatched++;
         if (res.misses.length < 80) res.misses.push({ customer: name, description: d, cli: l.cli || null, source: l.source });
+      }
+      if (Math.abs(residue) >= 0.005) {
+        res.drift.push({ customer: name, residue: Math.round(residue * 10000) / 10000 });
       }
     }
     if (apply) await client.query('COMMIT'); else await client.query('ROLLBACK');

@@ -1686,19 +1686,32 @@ router.post('/bureau/register/backfill-contracts', async (req: Request, res: Res
 });
 
 // Price unpriced register lines from each customer's last invoice. Dry-run preview (JSON).
+// ?customer=<id> narrows it to one; ?reprice=1 also re-touches lines this routine priced
+// before (never a hand-set price), which is what makes a correction re-appliable.
 router.get('/bureau/register/price-preview.json', async (req: Request, res: Response) => {
   const { priceRegisterFromInvoices } = await import('../lib/register');
-  try { res.json(await priceRegisterFromInvoices('user:' + req.session.user!.id, false)); }
+  const customerId = parseInt(String(req.query.customer || ''), 10) || null;
+  const reprice = String(req.query.reprice || '') === '1';
+  try { res.json(await priceRegisterFromInvoices('user:' + req.session.user!.id, false, { customerId, reprice })); }
   catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
-// Apply the pricing pull (fills 'unpriced' lines only; never overwrites a set price).
+// Apply the pricing pull. Fills 'unpriced' lines; with reprice=1 it ALSO re-touches lines
+// this routine priced before (identified from the change log), so a correction to the pricing
+// rule can actually be re-applied instead of skipping every line the first run made 'active'.
 router.post('/bureau/register/price-from-invoices', async (req: Request, res: Response) => {
   const { priceRegisterFromInvoices } = await import('../lib/register');
+  const customerId = parseInt(String(req.body?.customer_id || ''), 10) || null;
+  const reprice = String(req.body?.reprice || '') === '1';
   try {
-    const r = await priceRegisterFromInvoices('user:' + req.session.user!.id, true);
+    const r = await priceRegisterFromInvoices('user:' + req.session.user!.id, true, { customerId, reprice });
+    const scope = customerId ? ' for 1 customer' : ` across ${r.customers} customer(s)`;
     res.redirect('/bureau/register?msg=' + encodeURIComponent(
-      `Priced from last invoices: ${r.priced} standalone line(s) priced, ${r.bundled} seat/recording component(s) marked bundled, ${r.unmatched} still unmatched — across ${r.customers} customer(s).`));
+      `Priced from last invoices: ${r.priced} line(s) priced${r.reprice ? ' (re-pricing included)' : ''}, `
+      + `${r.bundled} seat/recording component(s) marked bundled, ${r.unmatched} still unmatched`
+      + (r.residual.length ? `, ${r.residual.length} left unpriced because the invoice total will not divide cleanly by the register quantity` : '')
+      + (r.drift.length ? `, ${r.drift.length} customer(s) carry rounding drift worth watching in the shadow` : '')
+      + scope + '.'));
   } catch (e: any) { res.redirect('/bureau/register?err=' + encodeURIComponent(e.message)); }
 });
 
