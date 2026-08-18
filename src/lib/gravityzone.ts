@@ -839,28 +839,54 @@ export function categoriseAv(products: string[]): { category: AssessRow['categor
 
 /** Build (and store) a customer's migration plan from the agent's security data. */
 export async function buildAssessment(customerId: number, userId: number | null): Promise<number> {
+  // "No agent data" used to cover FOUR different situations behind one sentence, and the
+  // sentence it printed — "the LumenMSP agent goes on first" — is flatly wrong for three
+  // of them. Terry ran this against Lumen's own estate and got 24 of 24 "no agent yet" on
+  // machines that demonstrably have the agent. An instruction that confident and that
+  // wrong sends someone off installing software that is already there.
+  //
+  // So the four are told apart:
+  //   * no agent linked to the asset at all          → install the agent
+  //   * an agent EXISTS at this hostname, unlinked    → link it; installing again is wrong
+  //   * the linked agent is revoked                   → re-enrol
+  //   * agent live but no security report yet         → wait for the pass, or pull it now
   const rows = (await pool.query(
-    `SELECT a.id AS asset_id, a.hostname, d.security_json,
-            (SELECT gz_id FROM security_endpoints se WHERE se.asset_id = a.id LIMIT 1) AS gz_id
+    `SELECT a.id AS asset_id, a.hostname, a.agent_device_id,
+            d.id AS device_id, COALESCE(d.revoked, false) AS revoked, d.security_json,
+            (SELECT gz_id FROM security_endpoints se WHERE se.asset_id = a.id LIMIT 1) AS gz_id,
+            (SELECT ad.id FROM agent_devices ad
+              WHERE ad.customer_id = a.customer_id
+                AND lower(ad.hostname) = lower(a.hostname)
+                AND NOT COALESCE(ad.revoked, false)
+              LIMIT 1) AS same_name_device_id
        FROM customer_assets a
-       LEFT JOIN agent_devices d ON d.id = a.agent_device_id AND NOT COALESCE(d.revoked, false)
+       LEFT JOIN agent_devices d ON d.id = a.agent_device_id
       WHERE a.customer_id = $1 AND a.merged_into_id IS NULL
       ORDER BY a.hostname`,
     [customerId])).rows;
 
   const items: AssessRow[] = rows.map((r: any) => {
+    const base = { assetId: Number(r.asset_id), hostname: String(r.hostname || '?') };
     // Already on Bitdefender? Then there is nothing to plan for this machine.
     if (r.gz_id) {
-      return { assetId: Number(r.asset_id), hostname: String(r.hostname || '?'), currentAv: 'Bitdefender', category: 'clean' as const, plan: 'Already protected by Bitdefender — nothing to do.' };
+      return { ...base, currentAv: 'Bitdefender', category: 'clean' as const, plan: 'Already protected by Bitdefender — nothing to do.' };
     }
     let j: any = null;
     try { j = r.security_json ? JSON.parse(r.security_json) : null; } catch { j = null; }
     if (!j) {
-      return {
-        assetId: Number(r.asset_id), hostname: String(r.hostname || '?'), currentAv: null,
-        category: 'unknown' as const,
-        plan: 'No agent data — the LumenMSP agent goes on first, then this machine can be assessed properly.',
-      };
+      let plan: string;
+      if (r.device_id && r.revoked) {
+        plan = 'The agent on this machine has been revoked — re-enrol it, then this can be assessed.';
+      } else if (r.device_id) {
+        plan = 'Agent is on and enrolled, but it has not sent a security report yet. That arrives on the '
+             + 'daily pass; "Refresh from device" on the machine\'s Security tab pulls it now.';
+      } else if (r.same_name_device_id) {
+        plan = `An agent IS reporting from a machine of this name (device ${r.same_name_device_id}), it is just `
+             + 'not linked to this asset record. Link them rather than installing again.';
+      } else {
+        plan = 'No LumenMSP agent on this machine — that goes on first, then it can be assessed properly.';
+      }
+      return { ...base, currentAv: null, category: 'unknown' as const, plan };
     }
     const list = (v: any) => (Array.isArray(v) ? v : v ? [v] : []);
     const products = [...list(j.av), ...list(j.antispyware)]
