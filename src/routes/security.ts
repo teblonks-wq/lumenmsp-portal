@@ -7,6 +7,10 @@ import {
   gzConfigured, gzConfig, saveGzConfig, testConnection, syncGravityZone, mapCompany,
   buildAssessment, inScopeCustomers, setCustomerScope, categoriseAv, licenceAudit,
 } from '../lib/gravityzone';
+import {
+  ensurePackage, queueDeploy, deployCustomer, rolloutFor, setExcluded,
+  infectionsFor, policyExclusions, reconcile as deployReconcile,
+} from '../lib/gravityzone-deploy';
 
 const router = Router();
 
@@ -260,6 +264,106 @@ router.post('/security/assessment/:id/approve', requireAuth, requireAdmin, async
     `Endpoint Security rollout approved for customer ${a.customer_id}: ${n} machine(s) cleared to deploy`);
   res.redirect(`/security/assessment/${a.customer_id}?msg=` +
     encodeURIComponent(`Approved — ${n} machine(s) cleared for Bitdefender. New machines for this customer are picked up automatically from now on.`));
+});
+
+// ── One customer, one screen ────────────────────────────────────────────────────
+// Terry, 18 Aug: "we simple need to enable the customer for Endpoint Security - then
+// deploy to all devices - we need a screen where we can see the progress of install IE
+// device offline, installing, installed version number etc - definitions updated, a tab
+// for infections and exclusions and on the device the same."
+//
+// So: enable, deploy, watch. Everything else was scaffolding.
+router.get('/security/customer/:id', requireAuth, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.params.id), 10);
+  const cust = (await pool.query(`SELECT id, name, is_itsm FROM customers WHERE id=$1`, [customerId])).rows[0];
+  if (!cust) { res.redirect('/security?err=' + encodeURIComponent('No such customer.')); return; }
+
+  const tab = ['devices', 'infections', 'exclusions'].includes(String(req.query.tab)) ? String(req.query.tab) : 'devices';
+  const rows = await rolloutFor(customerId);
+
+  // Only fetch what the open tab needs. Exclusions cost one API call per policy, and
+  // paying that on every page view of the devices tab would make the common case slow.
+  let infections: any[] = [];
+  let exclusions: any = { policies: [], warnings: [] };
+  if (tab === 'infections') infections = await infectionsFor(customerId);
+  if (tab === 'exclusions') { try { exclusions = await policyExclusions(); } catch (e: any) { exclusions = { policies: [], warnings: [e.message] }; } }
+
+  const company = (await pool.query(
+    `SELECT gz_id, name FROM security_companies WHERE customer_id=$1 ORDER BY gz_id LIMIT 1`, [customerId])).rows[0] || null;
+  const pkg = (await pool.query(`SELECT * FROM security_packages WHERE customer_id=$1`, [customerId])).rows[0] || null;
+
+  res.render('security/customer', {
+    user: req.session.user!, customer: cust, tab, rows, infections, exclusions, company, pkg,
+    counts: rows.reduce((m: Record<string, number>, r) => { m[r.state] = (m[r.state] || 0) + 1; return m; }, {}),
+    notice: req.query.msg || null, error: req.query.err || null,
+  });
+});
+
+/** Enable (or disable) Endpoint Security for a customer. */
+router.post('/security/customer/:id/enable', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.params.id), 10);
+  const on = String(req.body.on) === '1';
+  await setCustomerScope(customerId, on ? true : false);
+  await logActivity(req.session.user!.id, 'security_scope', 'customers', customerId,
+    `Endpoint Security ${on ? 'enabled' : 'disabled'} for customer ${customerId}`);
+
+  // Enabling is the moment to build the package, so "Deploy to all" is never the click
+  // that discovers the package does not exist yet.
+  let extra = '';
+  if (on) {
+    try { const p = await ensurePackage(customerId, req.session.user!.id);
+          extra = p.readyWindows ? ' Installer ready.' : ' Bitdefender is still building the installer — give it a minute.'; }
+    catch (e: any) { extra = ' (installer not ready: ' + e.message + ')'; }
+  }
+  res.redirect(`/security/customer/${customerId}?msg=` +
+    encodeURIComponent(`Endpoint Security ${on ? 'enabled' : 'disabled'}.${extra}`));
+});
+
+/** Deploy to every eligible machine. */
+router.post('/security/customer/:id/deploy', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.params.id), 10);
+  try {
+    await ensurePackage(customerId, req.session.user!.id);   // and refresh the links first
+    const r = await deployCustomer(customerId, req.session.user!.id);
+    const skipped = r.skipped.length ? ` ${r.skipped.length} skipped: ` +
+      r.skipped.slice(0, 4).map((s) => `${s.hostname} (${s.why})`).join(', ') : '';
+    res.redirect(`/security/customer/${customerId}?msg=` +
+      encodeURIComponent(`Queued ${r.queued} install(s).${skipped}`));
+  } catch (e: any) {
+    res.redirect(`/security/customer/${customerId}?err=` + encodeURIComponent(e.message));
+  }
+});
+
+/** Deploy to one machine. */
+router.post('/security/device/:deviceId/deploy', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const deviceId = parseInt(String(req.params.deviceId), 10);
+  const back = String(req.body.back || '/security');
+  const dev = (await pool.query(`SELECT customer_id FROM agent_devices WHERE id=$1`, [deviceId])).rows[0];
+  try {
+    if (dev?.customer_id) await ensurePackage(Number(dev.customer_id), req.session.user!.id);
+    const r = await queueDeploy(deviceId, req.session.user!.id);
+    res.redirect(back + (r.ok ? '?msg=' + encodeURIComponent('Bitdefender install queued.')
+                              : '?err=' + encodeURIComponent(r.error || 'Could not queue it.')));
+  } catch (e: any) {
+    res.redirect(back + '?err=' + encodeURIComponent(e.message));
+  }
+});
+
+/** Hold one machine back, or release it. */
+router.post('/security/device/:deviceId/exclude', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const deviceId = parseInt(String(req.params.deviceId), 10);
+  const on = String(req.body.on) === '1';
+  await setExcluded(deviceId, on, req.session.user!.id);
+  res.redirect(String(req.body.back || '/security') + '?msg=' +
+    encodeURIComponent(on ? 'Held back from the rollout.' : 'Back in the rollout.'));
+});
+
+/** Re-check what actually happened on the machines we are watching. */
+router.post('/security/reconcile', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const back = String(req.body.back || '/security');
+  const r = await deployReconcile();
+  res.redirect(back + '?msg=' + encodeURIComponent(
+    `Checked ${r.checked}: ${r.protectedCount} protected, ${r.installed} installed, ${r.failed} failed, ${r.stillWaiting} still waiting.`));
 });
 
 export default router;

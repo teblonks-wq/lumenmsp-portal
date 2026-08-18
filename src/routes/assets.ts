@@ -841,6 +841,35 @@ router.post('/agents/:id/ring', requireAuth, requireAdmin, async (req: Request, 
   res.redirect('/agents?msg=' + encodeURIComponent('Update ring saved.'));
 });
 
+// The same, for a selection. 167 devices one dropdown at a time is not a rollout.
+//
+// The ids arrive from the browser, so they are parsed to integers and anything that is
+// not one is dropped — an id is never taken on trust or interpolated into SQL. Revoked
+// devices are excluded server side as well as in the UI: a revoked agent is not coming
+// back on its own, and quietly re-ringing it would make the ring counts lie.
+router.post('/agents/bulk/ring', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const ring = parseInt(String(req.body.ring), 10);
+  if (![0, 1, 2].includes(ring)) { res.redirect('/agents?err=' + encodeURIComponent('Unknown ring.')); return; }
+
+  const ids = String(req.body.ids || '')
+    .split(',')
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => Number.isInteger(n) && n > 0);
+  if (!ids.length) { res.redirect('/agents?err=' + encodeURIComponent('Nothing was selected.')); return; }
+
+  const r = await pool.query(
+    `UPDATE agent_devices SET update_ring=$1, updated_at=NOW()
+      WHERE id = ANY($2::int[]) AND NOT COALESCE(revoked, false)
+      RETURNING id`, [ring, ids]);
+  const n = r.rowCount || 0;
+  const label = ring === 0 ? 'Ring 0 - internal' : ring === 1 ? 'Ring 1 - pilot' : 'Ring 2 - everyone';
+  await logActivity(req.session.user!.id, 'agent_ring_bulk', 'agent_devices', null,
+    `${n} device(s) moved to ${label}`);
+  const skipped = ids.length - n;
+  res.redirect('/agents?msg=' + encodeURIComponent(
+    `${n} device(s) moved to ${label}.` + (skipped > 0 ? ` ${skipped} skipped (revoked or gone).` : '')));
+});
+
 // Revoke a device: its token dies instantly; a reinstall (with the site key) re-enrolls it.
 router.post('/agents/:id/revoke', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);

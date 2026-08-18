@@ -1,5 +1,5 @@
 import { pool } from '../db/pool';
-import { rpc, gzConfigured } from './gravityzone';
+import { rpc, gzConfigured, findKeyPath, atPath } from './gravityzone';
 import { logActivity } from './activity';
 
 // ─────────────────────────────────────────────────────────────────────────────────
@@ -319,6 +319,18 @@ export interface RolloutRow {
   deviceId: number | null; assetId: number | null; hostname: string;
   currentAv: string | null; state: string; detail: string;
   attempts: number; lastError: string | null; avBefore: string | null;
+  // Bitdefender's own state, straight from GravityZone. Deliberately sourced there
+  // rather than from our collector: BD's version, definition freshness and infection
+  // status are facts GravityZone owns, and reading them there means none of this waits
+  // on the LumenMSP agent rollout.
+  bdVersion: string | null;
+  definitions: 'current' | 'out-of-date' | null;
+  infected: boolean;
+  policyName: string | null;
+  modulesOn: string | null;
+  online: boolean | null;      // our agent's view — is the machine even reachable
+  agentSeen: number | null;    // epoch seconds
+  gzSeen: number | null;       // epoch seconds
 }
 
 /**
@@ -329,33 +341,156 @@ export interface RolloutRow {
 export async function rolloutFor(customerId: number): Promise<RolloutRow[]> {
   const rows = (await pool.query(
     `SELECT a.id AS asset_id, a.hostname, d.id AS device_id, d.security_json,
+            EXTRACT(EPOCH FROM d.last_seen_at)::bigint AS agent_seen,
             dep.state, dep.attempts, dep.last_error, dep.av_before,
-            (SELECT se.gz_id FROM security_endpoints se WHERE se.asset_id = a.id LIMIT 1) AS gz_id
+            se.gz_id, se.agent_version AS bd_version, se.outdated, se.infected,
+            se.policy_name, se.modules_on,
+            EXTRACT(EPOCH FROM se.last_seen_at)::bigint AS gz_seen
        FROM customer_assets a
        LEFT JOIN agent_devices d ON d.id = a.agent_device_id AND NOT COALESCE(d.revoked,false)
        LEFT JOIN security_deployments dep ON dep.device_id = d.id
+       LEFT JOIN LATERAL (
+         SELECT * FROM security_endpoints se2 WHERE se2.asset_id = a.id ORDER BY se2.gz_id LIMIT 1
+       ) se ON true
       WHERE a.customer_id=$1 AND a.merged_into_id IS NULL
       ORDER BY a.hostname`, [customerId])).rows;
 
+  const now = Math.floor(Date.now() / 1000);
   return rows.map((r: any) => {
     const names = avNames(r.security_json);
     const currentAv = names.join(', ') || null;
+    const agentSeen = r.agent_seen ? Number(r.agent_seen) : null;
     const base = {
       deviceId: r.device_id ? Number(r.device_id) : null,
       assetId: r.asset_id ? Number(r.asset_id) : null,
       hostname: String(r.hostname || '?'),
       currentAv, attempts: Number(r.attempts || 0),
       lastError: r.last_error || null, avBefore: r.av_before || null,
+      bdVersion: r.bd_version || null,
+      // Only claim a definitions state when GravityZone actually knows the endpoint.
+      // "current" on a machine BD has never seen would be an invention.
+      definitions: (r.gz_id ? (r.outdated ? 'out-of-date' : 'current') : null) as RolloutRow['definitions'],
+      infected: r.infected === true,
+      policyName: r.policy_name || null,
+      modulesOn: r.modules_on || null,
+      // Offline is worth its own state: an install that has not run because the machine
+      // has been off for a week is not a failure, and chasing it as one wastes a visit.
+      online: agentSeen == null ? null : (now - agentSeen) < 900,
+      agentSeen, gzSeen: r.gz_seen ? Number(r.gz_seen) : null,
     };
     if (!r.device_id) return { ...base, state: 'no-agent', detail: 'No LumenMSP agent — that has to go on first.' };
-    if (isBitdefender(names) && r.gz_id) return { ...base, state: 'protected', detail: 'Our agent sees Bitdefender and GravityZone has the endpoint.' };
+    if (r.gz_id && r.infected) return { ...base, state: 'infected', detail: 'Bitdefender is reporting an active infection on this machine.' };
+    if (isBitdefender(names) && r.gz_id) {
+      return { ...base, state: 'protected',
+        detail: `Installed and enrolled${r.bd_version ? ' — Bitdefender ' + r.bd_version : ''}` +
+                (r.outdated ? ', but its definitions are out of date.' : '.') };
+    }
+    if (r.gz_id) return { ...base, state: 'installed', detail: 'GravityZone has the endpoint; our agent has not confirmed it locally yet.' };
     if (isBitdefender(names)) return { ...base, state: 'installed', detail: 'Installed locally; waiting for GravityZone to show the endpoint.' };
     if (r.state === 'excluded') return { ...base, state: 'excluded', detail: 'Deliberately held back.' };
-    if (r.state === 'queued' || r.state === 'running') return { ...base, state: r.state, detail: 'Install queued — runs when the machine next checks in.' };
+    if (r.state === 'queued' || r.state === 'running') {
+      return { ...base, state: r.state,
+        detail: base.online === false
+          ? 'Install queued — the machine is offline, so it runs when it next checks in.'
+          : 'Install queued — it runs on the next check-in, usually within a minute.' };
+    }
     if (r.state === 'failed') return { ...base, state: 'failed', detail: r.last_error || 'The last attempt failed.' };
     if (!names.length) return { ...base, state: 'not-deployed', detail: 'Agent is on, but it has not reported its AV yet.' };
     return { ...base, state: 'not-deployed', detail: `Currently on ${currentAv}.` };
   });
+}
+
+export interface InfectionRow {
+  hostname: string | null; threat: string | null; detail: string | null;
+  ticketId: number | null; detectedAt: Date | null; assetId: number | null;
+}
+
+/** Infections for one customer — deduped detections, newest first, with their case. */
+export async function infectionsFor(customerId: number): Promise<InfectionRow[]> {
+  const r = await pool.query(
+    `SELECT sd.hostname, sd.threat_name, sd.detail, sd.ticket_id, sd.detected_at,
+            (SELECT se.asset_id FROM security_endpoints se WHERE se.gz_id = sd.endpoint_gz_id) AS asset_id
+       FROM security_detections sd
+      WHERE sd.customer_id = $1
+      ORDER BY sd.detected_at DESC
+      LIMIT 200`, [customerId]);
+  return r.rows.map((x: any) => ({
+    hostname: x.hostname || null, threat: x.threat_name || null, detail: x.detail || null,
+    ticketId: x.ticket_id ? Number(x.ticket_id) : null,
+    detectedAt: x.detected_at || null,
+    assetId: x.asset_id ? Number(x.asset_id) : null,
+  }));
+}
+
+// ── Exclusions ──────────────────────────────────────────────────────────────────
+// RULE ONE: our products never fight each other. Every Bitdefender policy Lumen manages
+// has to carry the LumenMSP agent exclusions — folder and process, On-Access AND ATC —
+// because a security product holding our unsigned service past Windows' 30-second start
+// window is exactly what produced Chropynska's fleet-wide error 1920.
+//
+// Whether the public API lets us WRITE exclusions is still unproven. Reading them is
+// enough to be useful straight away: the Portal can say which policies are missing the
+// agent exclusion, which is the difference between "we think it's fine" and knowing.
+
+/** Paths that must be excluded for our own agent to survive. */
+export const AGENT_EXCLUSION_HINTS = ['LumenMSP', 'LumenAgentService'];
+
+export interface PolicyExclusions {
+  policyId: string; policyName: string;
+  items: string[];
+  agentExcluded: boolean;
+  note: string;
+}
+
+export async function policyExclusions(): Promise<{ policies: PolicyExclusions[]; warnings: string[] }> {
+  const out: PolicyExclusions[] = []; const warnings: string[] = [];
+  if (!await gzConfigured()) return { policies: out, warnings: ['No GravityZone API key saved yet.'] };
+
+  let list: any;
+  try { list = await rpc<any>('policies', 'getPoliciesList', { page: 1, perPage: 100 }); }
+  catch (e: any) { return { policies: out, warnings: [`Could not read policies: ${e.message}`] }; }
+
+  for (const p of (Array.isArray(list) ? list : list?.items || [])) {
+    if (!p?.id) continue;
+    let d: any = null;
+    try { d = await rpc<any>('policies', 'getPolicyDetails', { policyId: p.id }); }
+    catch (e: any) { warnings.push(`Could not read policy "${p.name || p.id}": ${e.message}`); continue; }
+
+    // Find the exclusion LIST, not the on/off switch beside it. The switch is what a
+    // naive search hits first — Lumen's tenant returns activateExclusions before the
+    // list, and reporting the boolean as "the exclusions" would be worse than useless.
+    let items: string[] = [];
+    let path = findKeyPath(d, /exclusion/i);
+    const seen = new Set<string>();
+    while (path && !seen.has(path)) {
+      seen.add(path);
+      const v = atPath(d, path);
+      if (Array.isArray(v)) {
+        items = v.map((x: any) => typeof x === 'string' ? x
+          : String(x?.path || x?.value || x?.name || x?.hash || JSON.stringify(x)));
+        break;
+      }
+      // not the list — look for a sibling array before giving up
+      const parentPath = path.split('.').slice(0, -1).join('.');
+      const parent = parentPath ? atPath(d, parentPath) : d;
+      const sibling = parent && typeof parent === 'object'
+        ? Object.keys(parent).find((k) => Array.isArray((parent as any)[k]) && /exclu/i.test(k)) : null;
+      if (sibling) { path = parentPath ? `${parentPath}.${sibling}` : sibling; continue; }
+      break;
+    }
+
+    const agentExcluded = items.some((i) => AGENT_EXCLUSION_HINTS.some((h) => i.toLowerCase().includes(h.toLowerCase())));
+    out.push({
+      policyId: String(p.id), policyName: String(p.name || p.id),
+      items, agentExcluded,
+      note: items.length
+        ? (agentExcluded
+            ? 'The LumenMSP agent is excluded here.'
+            : 'No LumenMSP agent exclusion — add the agent folder and LumenAgentService.exe, On-Access and ATC.')
+        : 'No exclusions readable in this policy payload.',
+    });
+  }
+  return { policies: out, warnings };
 }
 
 /** Hold one machine back, or release it. */

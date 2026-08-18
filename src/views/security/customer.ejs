@@ -1,0 +1,211 @@
+<%- include('../partials/header', { title: customer.name + ' — Endpoint Security', user }) %>
+<%
+  function ago(ep){
+    if (!ep) return 'never';
+    var s = Math.floor(Date.now()/1000) - Number(ep);
+    if (s < 120) return 'just now';
+    if (s < 5400) return Math.round(s/60) + ' min ago';
+    if (s < 172800) return Math.round(s/3600) + ' h ago';
+    return Math.round(s/86400) + ' days ago';
+  }
+  function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—'; }
+  // One label and one colour per state, defined once. Every state a machine can be in is
+  // listed — including the ones that are nobody's fault, because "offline" and "failed"
+  // need very different reactions and lumping them together wastes a visit.
+  var ST = {
+    protected:      { label: 'Protected',     cls: 're-ok'   },
+    installed:      { label: 'Installing',    cls: 're-info' },
+    queued:         { label: 'Queued',        cls: 're-info' },
+    running:        { label: 'Installing',    cls: 're-info' },
+    infected:       { label: 'INFECTED',      cls: 're-bad'  },
+    failed:         { label: 'Failed',        cls: 're-bad'  },
+    'not-deployed': { label: 'Not deployed',  cls: 're-warn' },
+    'no-agent':     { label: 'No agent',      cls: 're-dim'  },
+    excluded:       { label: 'Held back',     cls: 're-dim'  },
+  };
+  var isAdmin = user.role === 'admin';
+  var enabled = customer.is_itsm;
+  var here = '/security/customer/' + customer.id;
+%>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--accent),var(--violet));margin-bottom:14px;">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/security">&larr; Endpoint Security</a></p>
+    <p class="doc-kicker">Bitdefender &middot; <%= customer.name %></p>
+    <h1>Rollout</h1>
+    <p class="doc-sub">Enable the customer, deploy to every machine, and watch it land. A machine only reads
+      <strong>Protected</strong> when Bitdefender is on it <em>and</em> GravityZone has the endpoint.</p>
+  </div>
+  <% if (isAdmin) { %>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <form method="post" action="<%= here %>/enable" style="margin:0;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <input type="hidden" name="on" value="<%= enabled ? '0' : '1' %>">
+      <button class="btn <%= enabled ? '' : 'btn-primary' %>" type="submit">
+        <%= enabled ? 'Disable Endpoint Security' : 'Enable Endpoint Security' %>
+      </button>
+    </form>
+    <% if (enabled) { %>
+    <form method="post" action="<%= here %>/deploy" style="margin:0;"
+          onsubmit="return confirm('Deploy Bitdefender to every eligible machine for <%= customer.name %>?\n\nExisting antivirus is removed as part of the install.');">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <button class="btn btn-primary" type="submit">Deploy to all devices</button>
+    </form>
+    <% } %>
+    <form method="post" action="/security/reconcile" style="margin:0;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <input type="hidden" name="back" value="<%= here %>">
+      <button class="btn" type="submit" title="Re-check what actually happened on each machine">&#8635; Refresh progress</button>
+    </form>
+  </div>
+  <% } %>
+</div>
+<p class="muted" style="font-size:12px;margin:10px 0 0;">
+  <% if (!company) { %>
+    <span style="color:var(--warn-fg);">Not linked to a GravityZone company yet.</span>
+    Add the Bitdefender service to this customer in Giacom, then map them on
+    <a class="row-link" href="/security/settings">the settings page</a>.
+  <% } else { %>
+    GravityZone company: <strong><%= company.name %></strong>.
+    <% if (pkg) { %>Installer: <%= pkg.ready_windows ? 'ready' : 'still building' %>,
+      refreshed <%= dt(pkg.refreshed_at) %>. Existing AV is removed on install.<% } %>
+  <% } %>
+</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div class="stat-band">
+  <div class="tile"><span class="n good" style="display:block;"><%= counts['protected'] || 0 %></span><span class="l" style="display:block;">protected</span></div>
+  <div class="tile"><span class="n info" style="display:block;"><%= (counts['queued']||0) + (counts['running']||0) + (counts['installed']||0) %></span><span class="l" style="display:block;">installing</span></div>
+  <div class="tile"><span class="n <%= counts['not-deployed'] ? 'warn' : '' %>" style="display:block;"><%= counts['not-deployed'] || 0 %></span><span class="l" style="display:block;">not deployed</span></div>
+  <div class="tile"><span class="n <%= counts['failed'] ? 'bad' : '' %>" style="display:block;"><%= counts['failed'] || 0 %></span><span class="l" style="display:block;">failed</span></div>
+  <div class="tile"><span class="n <%= counts['infected'] ? 'bad' : '' %>" style="display:block;"><%= counts['infected'] || 0 %></span><span class="l" style="display:block;">infected</span></div>
+  <div class="tile acc-plain"><span class="n" style="display:block;"><%= counts['no-agent'] || 0 %></span><span class="l" style="display:block;">no agent</span></div>
+</div>
+
+<div class="toolbar" style="display:flex;gap:6px;margin:14px 0;flex-wrap:wrap;">
+  <a class="btn <%= tab === 'devices' ? 'btn-primary' : '' %>" href="<%= here %>?tab=devices">Devices</a>
+  <a class="btn <%= tab === 'infections' ? 'btn-primary' : '' %>" href="<%= here %>?tab=infections">Infections</a>
+  <a class="btn <%= tab === 'exclusions' ? 'btn-primary' : '' %>" href="<%= here %>?tab=exclusions">Exclusions</a>
+</div>
+
+<% if (tab === 'devices') { %>
+<div class="card" style="padding:0;border-top:3px solid var(--accent);">
+  <div class="table-wrap"><table class="table table-lift">
+    <thead><tr>
+      <th>Device</th><th>Status</th><th>Bitdefender</th><th>Definitions</th><th>Last seen</th><th></th>
+    </tr></thead>
+    <tbody>
+      <% if (!rows.length) { %><tr><td colspan="6"><div class="empty-state">No machines on record for this customer.</div></td></tr><% } %>
+      <% rows.forEach(function(r){ var st = ST[r.state] || ST['not-deployed']; %>
+      <tr class="<%= st.cls %>">
+        <td>
+          <% if (r.assetId) { %><a class="row-link" href="/assets/<%= r.assetId %>"><%= r.hostname %></a>
+          <% } else { %><%= r.hostname %><% } %>
+          <% if (r.online === false) { %><div class="muted" style="font-size:11px;">offline</div><% } %>
+        </td>
+        <td>
+          <strong><%= st.label %></strong>
+          <div class="muted" style="font-size:11.5px;"><%= r.detail %></div>
+        </td>
+        <td class="muted" style="font-size:12.5px;">
+          <%= r.bdVersion || '—' %>
+          <% if (r.policyName) { %><div style="font-size:11px;">policy: <%= r.policyName %></div><% } %>
+        </td>
+        <td style="font-size:12.5px;">
+          <% if (r.definitions === 'current') { %><span style="color:var(--ok);">up to date</span>
+          <% } else if (r.definitions === 'out-of-date') { %><span style="color:var(--warn-fg);">out of date</span>
+          <% } else { %><span class="muted">—</span><% } %>
+        </td>
+        <td class="muted" style="font-size:12px;">
+          our agent <%= ago(r.agentSeen) %>
+          <% if (r.gzSeen) { %><div style="font-size:11px;">Bitdefender <%= ago(r.gzSeen) %></div><% } %>
+        </td>
+        <td style="text-align:right;">
+          <% if (isAdmin && r.deviceId) { %>
+          <div style="display:flex;gap:6px;justify-content:flex-end;">
+            <%# Deploy only where deploying is the right move. An infected or already
+                installed machine has Bitdefender on it; a queued one is already going.
+                Offering the button anyway invites a second install on top of a
+                half-finished one, which is how a machine ends up with two AV products. %>
+            <% if (r.state === 'not-deployed' || r.state === 'failed') { %>
+            <form method="post" action="/security/device/<%= r.deviceId %>/deploy" style="margin:0;">
+              <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+              <input type="hidden" name="back" value="<%= here %>">
+              <button class="btn" type="submit" style="padding:2px 10px;font-size:12px;">Deploy</button>
+            </form>
+            <% } %>
+            <form method="post" action="/security/device/<%= r.deviceId %>/exclude" style="margin:0;">
+              <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+              <input type="hidden" name="back" value="<%= here %>">
+              <input type="hidden" name="on" value="<%= r.state === 'excluded' ? '0' : '1' %>">
+              <button class="btn" type="submit" style="padding:2px 10px;font-size:12px;">
+                <%= r.state === 'excluded' ? 'Include' : 'Hold' %></button>
+            </form>
+          </div>
+          <% } %>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<% if (tab === 'infections') { %>
+<div class="card" style="padding:0;border-top:3px solid var(--bad-fg);">
+  <div class="table-wrap"><table class="table table-lift">
+    <thead><tr><th>Machine</th><th>Threat</th><th>Detail</th><th>Found</th><th>Case</th></tr></thead>
+    <tbody>
+      <% if (!infections.length) { %>
+        <tr><td colspan="5"><div class="empty-state">Nothing detected for this customer. Bitdefender raises a case here the moment it finds something.</div></td></tr>
+      <% } %>
+      <% infections.forEach(function(i){ %>
+      <tr class="re-bad">
+        <td><% if (i.assetId) { %><a class="row-link" href="/assets/<%= i.assetId %>"><%= i.hostname || '?' %></a><% } else { %><%= i.hostname || '?' %><% } %></td>
+        <td><strong><%= i.threat || 'unnamed' %></strong></td>
+        <td class="muted" style="font-size:12.5px;"><%= i.detail || '—' %></td>
+        <td class="muted" style="font-size:12px;"><%= dt(i.detectedAt) %></td>
+        <td><% if (i.ticketId) { %><a class="row-link" href="/tickets/<%= i.ticketId %>">open case</a><% } else { %><span class="muted">—</span><% } %></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<% if (tab === 'exclusions') { %>
+<div class="card" style="margin-bottom:14px;border-left:3px solid var(--warn-fg);">
+  <h3 style="margin-top:0;">Our own agent must be excluded</h3>
+  <p class="muted" style="font-size:13px;margin:0;">
+    A security product holding the LumenMSP agent past Windows' 30-second service-start window is exactly what
+    produced Chropynska's fleet-wide error 1920. Every policy we manage should exclude the agent's folder and
+    <strong>LumenAgentService.exe</strong>, On-Access <em>and</em> ATC.
+  </p>
+</div>
+<% (exclusions.warnings || []).forEach(function(w){ %>
+  <div class="alert alert-error" style="margin-bottom:10px;"><%= w %></div>
+<% }); %>
+<% (exclusions.policies || []).forEach(function(p){ %>
+<div class="card" style="margin-bottom:12px;border-left:3px solid <%= p.agentExcluded ? 'var(--ok)' : 'var(--warn-fg)' %>;">
+  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+    <h3 style="margin:0;"><%= p.policyName %></h3>
+    <span class="muted" style="font-size:12.5px;"><%= p.items.length %> exclusion<%= p.items.length === 1 ? '' : 's' %></span>
+  </div>
+  <p style="font-size:12.5px;margin:6px 0 0;color:<%= p.agentExcluded ? 'var(--ok)' : 'var(--warn-fg)' %>;"><%= p.note %></p>
+  <% if (p.items.length) { %>
+  <ul class="muted" style="font-size:12.5px;margin:8px 0 0;padding-left:18px;">
+    <% p.items.forEach(function(i){ %><li><%= i %></li><% }); %>
+  </ul>
+  <% } %>
+</div>
+<% }); %>
+<% if (!(exclusions.policies || []).length && !(exclusions.warnings || []).length) { %>
+  <div class="card"><div class="empty-state">No policies readable.</div></div>
+<% } %>
+<% } %>
+
+<%- include('../partials/footer') %>

@@ -266,9 +266,36 @@
     </div>
   </div>
 
+<% if (isAdmin) { %>
+<%# Bulk actions. 167 devices and a per-row dropdown is not a rollout, it is an afternoon.
+    Select-all deliberately takes only the rows CURRENTLY SHOWN, so a filter is a safety
+    rail rather than a trap: filter to a customer or to "Update due", tick the header box,
+    and what you act on is exactly what you can see. The bar only appears once something
+    is selected, and it always says how many. %>
+<div id="agBulk" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:9px 12px;
+     border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:9px;background:var(--surface-2,#f8fafc);">
+  <strong style="font-size:13px;"><span id="agSelN">0</span> selected</strong>
+  <span class="muted" style="font-size:12px;">of the <span id="agSelShown">0</span> shown</span>
+  <form method="post" action="/agents/bulk/ring" style="display:flex;gap:6px;align-items:center;margin:0;"
+        onsubmit="return agBulkGo(this);">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <input type="hidden" name="ids" value="">
+    <select class="input" name="ring" style="width:auto;padding:3px 8px;font-size:12.5px;">
+      <option value="0">Ring 0 &middot; internal</option>
+      <option value="1">Ring 1 &middot; pilot</option>
+      <option value="2" selected>Ring 2 &middot; everyone</option>
+    </select>
+    <button class="btn btn-primary" type="submit" style="padding:3px 12px;font-size:12.5px;">Set ring</button>
+  </form>
+  <button type="button" class="btn" id="agSelNone" style="padding:3px 12px;font-size:12.5px;">Clear selection</button>
+</div>
+<% } %>
+
   <div style="overflow-x:auto;" class="ag-tablewrap">
     <table class="table">
-      <thead><tr><th></th><th>Device</th><th>Customer</th><th>User</th><th>Local IPs</th><th>Public IP</th><th>Version</th><th>Last seen</th><% if (isAdmin) { %><th>Ring</th><th>AD agent</th><th></th><% } %></tr></thead>
+      <thead><tr>
+        <% if (isAdmin) { %><th style="width:26px;"><input type="checkbox" id="agAll" title="Select every device currently shown"></th><% } %>
+        <th></th><th>Device</th><th>Customer</th><th>User</th><th>Local IPs</th><th>Public IP</th><th>Version</th><th>Last seen</th><% if (isAdmin) { %><th>Ring</th><th>AD agent</th><th></th><% } %></tr></thead>
       <tbody>
         <% rows.forEach(function(d){ var on = !d.revoked && isOnline(d);
              var _f = [];
@@ -283,6 +310,7 @@
         %>
         <tr class="ag-row" data-f="<%= _f.join(' ') %>" data-cust="<%= d.customer_id || '' %>"
             data-hay="<%= _hay.replace(/"/g, '&quot;') %>" style="<%= d.revoked ? 'opacity:.5;' : '' %>">
+          <% if (isAdmin) { %><td><input type="checkbox" class="ag-pick" value="<%= d.id %>"<%= d.revoked ? ' disabled title="Revoked"' : '' %>></td><% } %>
           <td><span title="<%= d.revoked ? 'Revoked' : (on ? 'Online' : 'Offline') %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= d.revoked ? 'var(--bad-fg)' : (on ? 'var(--ok)' : 'var(--line-strong)') %>;"></span></td>
           <td>
             <% if (d.asset_id) { %>
@@ -400,7 +428,64 @@
       });
       shown.textContent = n;
       none.style.display = n ? 'none' : 'block';
+      // A row that has been filtered away must not stay silently selected — otherwise you
+      // narrow to one customer, press Set ring, and quietly change devices you cannot see.
+      rows.forEach(function (r) {
+        if (r.style.display === 'none') {
+          var cb = r.querySelector('.ag-pick');
+          if (cb) cb.checked = false;
+        }
+      });
+      syncBulk();
     }
+
+    // ── Bulk selection ────────────────────────────────────────────────────────────
+    var bulk = document.getElementById('agBulk');
+    var allBox = document.getElementById('agAll');
+
+    function visibleBoxes() {
+      return rows.filter(function (r) { return r.style.display !== 'none'; })
+                 .map(function (r) { return r.querySelector('.ag-pick'); })
+                 .filter(function (cb) { return cb && !cb.disabled; });
+    }
+    function pickedIds() {
+      return visibleBoxes().filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; });
+    }
+    function syncBulk() {
+      if (!bulk) return;
+      var vis = visibleBoxes();
+      var picked = vis.filter(function (cb) { return cb.checked; });
+      document.getElementById('agSelN').textContent = picked.length;
+      document.getElementById('agSelShown').textContent = vis.length;
+      bulk.style.display = picked.length ? 'flex' : 'none';
+      if (allBox) {
+        allBox.checked = vis.length > 0 && picked.length === vis.length;
+        allBox.indeterminate = picked.length > 0 && picked.length < vis.length;
+      }
+    }
+    if (allBox) allBox.addEventListener('change', function () {
+      visibleBoxes().forEach(function (cb) { cb.checked = allBox.checked; });
+      syncBulk();
+    });
+    document.addEventListener('change', function (e) {
+      if (e.target && e.target.classList && e.target.classList.contains('ag-pick')) syncBulk();
+    });
+    var clearSel = document.getElementById('agSelNone');
+    if (clearSel) clearSel.addEventListener('click', function () {
+      visibleBoxes().forEach(function (cb) { cb.checked = false; });
+      syncBulk();
+    });
+
+    // Hand the ids to the form at submit time, and say plainly what is about to happen.
+    window.agBulkGo = function (form) {
+      var ids = pickedIds();
+      if (!ids.length) return false;
+      var sel = form.querySelector('select[name="ring"]');
+      var label = sel.options[sel.selectedIndex].text.replace(/\s+/g, ' ');
+      if (!confirm('Move ' + ids.length + ' device(s) to ' + label + '?')) return false;
+      form.querySelector('input[name="ids"]').value = ids.join(',');
+      return true;
+    };
 
     search.addEventListener('input', apply);
     cust.addEventListener('change', apply);

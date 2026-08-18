@@ -2,12 +2,13 @@
 <% function money(v){ return '£' + (Number(v)||0).toLocaleString('en-GB',{minimumFractionDigits:0,maximumFractionDigits:0}); } %>
 <% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
 <% function lbadge(s){ return s==='won'?'badge-sent':(s==='lost'?'badge-inactive':(s==='proposed'?'badge-failed':'badge-primary')); } %>
+<% function whenFull(d){ return d ? new Date(d).toLocaleString('en-GB',{timeZone:'Europe/London',weekday:'short',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; } %>
 
 <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div>
     <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/leads">← Leads</a></p>
     <h1 style="margin:0;display:flex;align-items:center;gap:12px;flex-wrap:wrap;"><%= lead.customer_name %> <span class="badge <%= lbadge(lead.status) %>"><%= lead.status==='won'?'Converted':cap(lead.status) %></span></h1>
-    <p class="muted" style="margin:4px 0 0;"><% if (lead.source) { %>Source: <%= lead.source %> · <% } %><% if (lead.owner_name) { %>Owner: <%= lead.owner_name %> · <% } %><a class="row-link" href="/customers/<%= customerId %>">Full customer record →</a></p>
+    <p class="muted" style="margin:4px 0 0;">Received: <strong><%= whenFull(lead.created_at) %></strong> · <% if (lead.source) { %>Source: <%= lead.source %> · <% } %><% if (lead.owner_name) { %>Owner: <%= lead.owner_name %> · <% } %><a class="row-link" href="/customers/<%= customerId %>">Full customer record →</a></p>
     <% if (lead.follow_up_at) { var fu = new Date(lead.follow_up_at); var fuOverdue = fu < new Date(new Date().toDateString()); %>
       <p style="margin:8px 0 0;"><span class="badge <%= fuOverdue ? 'badge-failed' : 'badge-primary' %>">📅 Follow up<%= fuOverdue ? ' (overdue)' : '' %> · <%= fu.toLocaleDateString('en-GB') %></span><% if (lead.follow_up_note) { %> <span class="muted" style="font-size:13px;"><%= lead.follow_up_note %></span><% } %></p>
     <% } %>
