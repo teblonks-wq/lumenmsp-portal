@@ -168,7 +168,25 @@ export async function refreshLinks(
   // Bitdefender's CDN from the customer's machine at install time; the full kit is one
   // file we can hand the agent. Fewer moving parts on a machine we cannot see.
   const win = str(mine.fullKitWindowsX64) || str(mine.installLinkWindows);
-  const ready = Number(mine.status?.windows) === KIT_READY;
+
+  // Readiness, without treating "we could not find the field" as "not ready".
+  //
+  // This was `Number(mine.status?.windows) === KIT_READY`, which makes an ABSENT status
+  // indistinguishable from one that says "still building": Number(undefined) is NaN, and
+  // NaN is never 2. On 18 Aug that put all EIGHT mapped customers on "installer still
+  // building" at once — and eight kits do not start building simultaneously. The field
+  // was simply not where we looked. `status` is on the getPackagesList row; this is the
+  // getInstallationLinks response, which is a different shape.
+  //
+  // Same family as reading agent/modules/malwareStatus off the endpoint LIST row: a
+  // missing field rendered as a confident answer, and on a security screen a confident
+  // wrong answer is the worst kind. So an explicit status is believed in BOTH directions,
+  // and when there is no status at all we fall back to the only other evidence we have —
+  // whether Bitdefender handed us a servable URL. A kit with a download link is a kit.
+  const rawStatus = mine.status?.windows ?? mine.statusWindows ?? mine.windowsStatus ?? null;
+  const ready = rawStatus == null || rawStatus === ''
+    ? !!win
+    : Number(rawStatus) === KIT_READY;
 
   const saved = (await pool.query(
     `INSERT INTO security_packages

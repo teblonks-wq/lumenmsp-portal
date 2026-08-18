@@ -279,6 +279,84 @@ async function archiveAssets(ids: number[], userId: number, reason: string): Pro
   return { archived, skipped };
 }
 
+/**
+ * Ask this machine for a fresh security report, now.
+ *
+ * Terry, 18 Aug: "this still says opentext and it was removed hours ago - just did a
+ * refresh from device and still says the same thing."
+ *
+ * The button was broken in two independent ways, and neither made a sound.
+ *
+ * 1. It called `lmaSecurityRefresh()`, which used to be defined in the _tools.ejs partial
+ *    and was deleted at some point without grepping its callers. Both callers stayed.
+ *    They invoke it as `if (window.lmaSecurityRefresh) lmaSecurityRefresh(this)` — so a
+ *    guard written to be defensive turned a deleted function into a button that silently
+ *    absorbs the click and looks like it worked on stale data.
+ * 2. Even intact, it would have failed: the old hook ran the tool kind `security.status`
+ *    through /assets/:id/tools/run, and `security.status` is not in that route's KINDS
+ *    allow-list. It would have come back "Unknown tool."
+ *
+ * So this is a dedicated route rather than a restored JS hook, and a plain form POST
+ * rather than fetch — a control whose whole job is to prove data is fresh should not
+ * depend on a function defined in a different partial. A control that cannot act must say
+ * so; it must never just swallow the press.
+ *
+ * The agent side has existed all along: `security.status` is a real command kind with its
+ * own budget in agent-commands.ts, and agent-api posts the result back to the same
+ * endpoint the daily inventory pass uses. Only the Portal end was missing.
+ */
+router.post('/assets/:id/security-refresh', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const back = `/assets/${id}`;
+  try {
+    const a = (await pool.query(
+      `SELECT ca.agent_device_id, ca.hostname, EXTRACT(EPOCH FROM (NOW() - d.last_seen_at))::int AS seen_secs
+         FROM customer_assets ca
+         LEFT JOIN agent_devices d ON d.id = ca.agent_device_id AND NOT COALESCE(d.revoked,false)
+        WHERE ca.id=$1`, [id])).rows[0];
+
+    if (!a?.agent_device_id) {
+      res.redirect(back + '?err=' + encodeURIComponent(
+        'This machine has no LumenMSP agent, so there is nothing to ask.') + '#security');
+      return;
+    }
+
+    // Never stack these up. A second request cannot make the machine answer sooner, and a
+    // queue of identical commands is how an offline machine collects six of them at once.
+    const pending = (await pool.query(
+      `SELECT id FROM agent_commands
+        WHERE device_id=$1 AND kind='security.status' AND status IN ('queued','running')
+        ORDER BY id DESC LIMIT 1`, [a.agent_device_id])).rows[0];
+    if (pending) {
+      res.redirect(`${back}?cmd=${pending.id}&msg=` + encodeURIComponent(
+        'Already asked — it runs at the next check-in.') + '#security');
+      return;
+    }
+
+    const ins = await pool.query(
+      `INSERT INTO agent_commands (device_id, kind, payload, status)
+       VALUES ($1,'security.status','{}','queued') RETURNING id`, [a.agent_device_id]);
+    const cmdId = Number(ins.rows[0].id);
+    wakeAgent(a.agent_device_id);
+    await logActivity(req.session.user!.id, 'security_refresh', 'customer_assets', id,
+      `Asked ${a.hostname} for a fresh security report`);
+
+    // Say when to expect it rather than implying it has already happened — the old button
+    // was silent, and silence is what made this look like stale data rather than a dead
+    // control. An offline machine gets its own sentence, because "nothing changed" on a
+    // switched-off PC is the correct outcome, not a fault.
+    const offline = a.seen_secs == null || Number(a.seen_secs) > 900;
+    res.redirect(`${back}?cmd=${cmdId}&msg=` + encodeURIComponent(
+      offline
+        ? 'Asked for a fresh security report. This machine is offline, so it runs when it next checks in.'
+        : 'Asked for a fresh security report — it usually lands within a minute. The page tracks it below.')
+      + '#security');
+  } catch (e: any) {
+    console.error('[assets] security refresh failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not queue the security refresh.') + '#security');
+  }
+});
+
 router.post('/assets/:id/archive', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const reason = String((req.body || {}).reason || 'not managed');

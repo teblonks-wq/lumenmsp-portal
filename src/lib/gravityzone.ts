@@ -232,6 +232,37 @@ export async function testConnection(): Promise<{ ok: boolean; probes: ProbeResu
   } catch { /* the companies probe above already reported why */ }
   await add('packages', 'getPackagesList', { page: 1, perPage: 5 },
     (r) => `${r?.total ?? (r?.items?.length || 0)} installation packages`);
+
+  // Where does kit readiness actually live?
+  //
+  // refreshLinks read `status.windows` off the getInstallationLinks response and treated
+  // anything else as "still building". On 18 Aug that showed all eight mapped customers
+  // as "installer still building" at the same moment, which is not something that happens
+  // to eight kits at once. The field was not there.
+  //
+  // So stop inferring it. This prints the RAW first record from both calls, and says
+  // whether a status field exists and where — the same trick that exposed the endpoint
+  // list row missing agent/modules/malwareStatus. One look settles it permanently.
+  try {
+    const cl: any = await rpc('network', 'getCompaniesList', {});
+    const first = (Array.isArray(cl) ? cl : cl?.items || [])[0];
+    if (first?.id) {
+      const pl: any = await rpc('packages', 'getPackagesList', { companyId: first.id, page: 1, perPage: 5 });
+      const p0 = (Array.isArray(pl) ? pl : pl?.items || [])[0];
+      if (p0?.name || p0?.packageName) {
+        await add('packages', 'getInstallationLinks', { companyId: first.id, packageName: p0.name || p0.packageName },
+          (r) => {
+            const row = Array.isArray(r) ? r[0] : (r?.items?.[0] ?? r);
+            const at = findKeyPath(row, /^status/i);
+            const keys = row && typeof row === 'object' ? Object.keys(row).join(', ') : '(not an object)';
+            return `links for "${p0.name || p0.packageName}" under "${first.name}" — ` +
+              (at ? `status found at ${at} = ${JSON.stringify(atPath(row, at))}`
+                  : `NO status field anywhere in this payload, so kit readiness cannot come from here`) +
+              `. Fields: ${keys}`;
+          });
+      }
+    }
+  } catch { /* the packages probe above already reported why */ }
   // "? total" on Lumen's tenant (17 Aug) means totalSlots is NOT the field name here.
   // Rather than shrug, report where the numbers actually are — seat counts feed both the
   // cost of the giveaway and the quantity on a billed AV line, so a silent "?" is a
