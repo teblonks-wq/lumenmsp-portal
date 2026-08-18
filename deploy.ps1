@@ -4,8 +4,22 @@
 $server     = "lits-admin@51.11.176.101"
 $localPath  = "D:\LITS\LumenMSP Portal"
 $remotePath = "/srv/apps/lumenmsp-portal"
-$staging    = "C:\Temp\portal-deploy"
 $appName    = "lumenmsp-portal"
+
+# Staging and the tarball live under D:\LITS, which is excluded in Bitdefender.
+#
+# They used to sit on C: - staging in C:\Temp\portal-deploy, the tarball in %TEMP% - and
+# on 2026-08-18 a deploy failed with scp reporting "stat local ... No such file or
+# directory" three times over. tar had returned 0; the archive was simply not there when
+# scp looked. An 80 MB compressed archive written and immediately re-read is close to a
+# textbook on-access / ransomware-mitigation trigger, and the run before it was the one
+# where a new Bitdefender policy went live on this machine.
+#
+# NOT inside "D:\LITS\LumenMSP Portal": this script robocopies that whole folder and then
+# runs `git add -A` over it. An 80 MB tarball in there would be staged into its own
+# deploy and committed to the repo.
+$deployWork = "D:\LITS\_deploy"
+$staging    = Join-Path $deployWork "portal-staging"
 
 Write-Host "=== Lumen MSP Portal Deploy ===" -ForegroundColor Cyan
 
@@ -33,6 +47,7 @@ Write-Host "Journey builder OK." -ForegroundColor Green
 
 # Step 2: Stage files (include dist/, exclude node_modules, .env and workspace material)
 Write-Host "Staging..." -ForegroundColor Yellow
+if (-not (Test-Path $deployWork)) { New-Item -ItemType Directory -Path $deployWork | Out-Null }
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 New-Item -ItemType Directory -Path $staging | Out-Null
 
@@ -56,13 +71,31 @@ if ($old) { $old | Remove-Item -Force; Write-Host ("Pruned {0} old backup(s); ke
 # Step 3: Package into ONE tarball, then upload it (a single-file transfer is far more
 # resilient than scp -r over hundreds of files, which drops on a flaky link).
 Write-Host "Packaging..." -ForegroundColor Yellow
-$tar = Join-Path $env:TEMP "portal-deploy.tar.gz"
+$tar = Join-Path $deployWork "portal-deploy.tar.gz"
 if (Test-Path $tar) { Remove-Item $tar -Force }
 # Windows' `tar` is bsdtar (libarchive), which defaults to pax format and stamps every
 # file with a SCHILY.fflags header that GNU tar on the server warns about. Force GNU
 # format so no SCHILY headers are written → clean extraction, no warnings.
 tar --format=gnutar -czf $tar -C $staging .
 if ($LASTEXITCODE -ne 0) { Write-Host "Packaging failed!" -ForegroundColor Red; exit 1 }
+
+# Exit code 0 is not proof the file exists.
+#
+# That is the whole lesson of 2026-08-18: tar reported success, the archive was gone by
+# the time scp reached for it, and the deploy died three retries later with a message
+# about scp that had nothing to do with scp. Trusting an exit code over the artefact is
+# how a five-second diagnosis becomes a twenty-minute one.
+$tarInfo = Get-Item $tar -ErrorAction SilentlyContinue
+if (-not $tarInfo -or $tarInfo.Length -lt 1MB) {
+    Write-Host ""
+    Write-Host "Packaging reported success but the archive is missing or truncated:" -ForegroundColor Red
+    Write-Host ("  {0}" -f $tar) -ForegroundColor Red
+    if ($tarInfo) { Write-Host ("  size: {0} bytes - far too small for the Portal." -f $tarInfo.Length) -ForegroundColor Red }
+    Write-Host "  Something removed it AFTER tar wrote it. Check antivirus quarantine first" -ForegroundColor Yellow
+    Write-Host "  (GravityZone > Network > Quarantine), then free space on this drive." -ForegroundColor Yellow
+    exit 1
+}
+Write-Host ("Packaged {0:N0} MB." -f ($tarInfo.Length / 1MB)) -ForegroundColor Green
 
 # Keepalive + sane timeouts so a brief stall doesn't kill the connection.
 $sshOpts = @("-o","ServerAliveInterval=15","-o","ServerAliveCountMax=8","-o","ConnectTimeout=30")
