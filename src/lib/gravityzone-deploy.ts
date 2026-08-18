@@ -1,5 +1,5 @@
 import { pool } from '../db/pool';
-import { rpc, gzConfigured, findKeyPath, atPath } from './gravityzone';
+import { rpc, gzConfigured, findKeyPath, atPath, customerEnabled } from './gravityzone';
 import { logActivity } from './activity';
 
 // ─────────────────────────────────────────────────────────────────────────────────
@@ -165,6 +165,16 @@ export async function queueDeploy(deviceId: number, userId: number | null = null
   if (!dev) return { ok: false, deviceId, error: 'No such device.' };
   if (dev.revoked) return { ok: false, deviceId, error: 'That agent has been revoked.' };
   if (!dev.customer_id) return { ok: false, deviceId, error: 'Device is not attached to a customer.' };
+
+  // THE GATE. Enabling a customer is where someone takes responsibility for stripping the
+  // antivirus off their machines; deploying without it is doing that on a customer nobody
+  // signed off. Checked here rather than only in the bulk path, because the per-device
+  // Deploy button is precisely the route that would otherwise walk around it.
+  const gate = await customerEnabled(Number(dev.customer_id));
+  if (!gate.ok) {
+    return { ok: false, deviceId,
+      error: `Endpoint Security is not enabled for this customer (${gate.reason}). Enable them first.` };
+  }
 
   const pkg = (await pool.query(`SELECT * FROM security_packages WHERE customer_id=$1`, [dev.customer_id])).rows[0];
   if (!pkg) return { ok: false, deviceId, error: 'No Bitdefender package for this customer yet.' };
@@ -507,6 +517,15 @@ export interface BulkResult { queued: number; skipped: Array<{ deviceId: number 
 export async function deployCustomer(customerId: number, userId: number | null = null): Promise<BulkResult> {
   const out: BulkResult = { queued: 0, skipped: [] };
   if (!await gzConfigured()) { out.skipped.push({ deviceId: null, hostname: '—', why: 'No GravityZone API key saved.' }); return out; }
+
+  // The same gate, checked once up front so a disabled customer fails as one clear
+  // sentence rather than as N identical per-machine refusals.
+  const gate = await customerEnabled(customerId);
+  if (!gate.ok) {
+    out.skipped.push({ deviceId: null, hostname: '—',
+      why: `Endpoint Security is not enabled for this customer (${gate.reason}) — enable them first` });
+    return out;
+  }
 
   const rows = await rolloutFor(customerId);
   for (const r of rows) {

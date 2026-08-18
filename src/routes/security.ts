@@ -5,7 +5,7 @@ import { getSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
 import {
   gzConfigured, gzConfig, saveGzConfig, testConnection, syncGravityZone, mapCompany,
-  buildAssessment, inScopeCustomers, setCustomerScope, categoriseAv, licenceAudit,
+  buildAssessment, inScopeCustomers, setCustomerScope, categoriseAv, licenceAudit, customerEnabled,
 } from '../lib/gravityzone';
 import {
   ensurePackage, queueDeploy, deployCustomer, rolloutFor, setExcluded,
@@ -323,6 +323,15 @@ router.post('/security/customer/:id/enable', requireAuth, requireAdmin, async (r
 router.post('/security/customer/:id/deploy', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const customerId = parseInt(String(req.params.id), 10);
   try {
+    // Gate BEFORE building anything. deployCustomer refuses too, but checking here means a
+    // disabled customer never gets a package created in GravityZone as a side effect of a
+    // click that was always going to be turned down.
+    const gate = await customerEnabled(customerId);
+    if (!gate.ok) {
+      res.redirect(`/security/customer/${customerId}?err=` + encodeURIComponent(
+        `Enable Endpoint Security for this customer first (${gate.reason}).`));
+      return;
+    }
     await ensurePackage(customerId, req.session.user!.id);   // and refresh the links first
     const r = await deployCustomer(customerId, req.session.user!.id);
     const skipped = r.skipped.length ? ` ${r.skipped.length} skipped: ` +
@@ -340,7 +349,15 @@ router.post('/security/device/:deviceId/deploy', requireAuth, requireAdmin, asyn
   const back = String(req.body.back || '/security');
   const dev = (await pool.query(`SELECT customer_id FROM agent_devices WHERE id=$1`, [deviceId])).rows[0];
   try {
-    if (dev?.customer_id) await ensurePackage(Number(dev.customer_id), req.session.user!.id);
+    if (dev?.customer_id) {
+      const gate = await customerEnabled(Number(dev.customer_id));
+      if (!gate.ok) {
+        res.redirect(back + '?err=' + encodeURIComponent(
+          `Enable Endpoint Security for this customer first (${gate.reason}).`));
+        return;
+      }
+      await ensurePackage(Number(dev.customer_id), req.session.user!.id);
+    }
     const r = await queueDeploy(deviceId, req.session.user!.id);
     res.redirect(back + (r.ok ? '?msg=' + encodeURIComponent('Bitdefender install queued.')
                               : '?err=' + encodeURIComponent(r.error || 'Could not queue it.')));

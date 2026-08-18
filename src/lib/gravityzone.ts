@@ -960,6 +960,23 @@ export async function inScopeCustomers(): Promise<Array<{ id: number; name: stri
   });
 }
 
+/**
+ * Is THIS customer enabled for Endpoint Security?
+ *
+ * Terry, 18 Aug: "what about what i said we need to enable a customer before it fires."
+ * Quite right — nothing had been enforcing it. Enabling a customer is the moment someone
+ * takes responsibility for stripping the antivirus off their machines, so it has to be a
+ * gate the deploy cannot go round, not a label on a screen. Checked server side on every
+ * deploy path, single machine or whole estate, because a per-device Deploy button is
+ * exactly the route that would otherwise skip it.
+ */
+export async function customerEnabled(customerId: number): Promise<{ ok: boolean; reason: string }> {
+  const all = await inScopeCustomers();
+  const hit = all.find((c) => c.id === customerId);
+  if (!hit) return { ok: false, reason: 'that customer is inactive or does not exist' };
+  return { ok: hit.inScope, reason: hit.reason };
+}
+
 export async function setCustomerScope(customerId: number, inScope: boolean | null): Promise<void> {
   const read = async (k: string) => new Set(String((await getSetting('gravityzone', k)) || '').split(',').map((x) => x.trim()).filter(Boolean));
   const inc = await read('included_customers');
