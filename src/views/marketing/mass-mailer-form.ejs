@@ -73,7 +73,19 @@
         </select>
       </label>
     </div>
-    <p class="muted" style="font-size:12px;margin:8px 0 10px;">Untick anyone who shouldn't get this one. Contacts who unsubscribed are shown greyed and are never emailed. Customers with no default domain aren't listed — use <a class="row-link" href="/customers/data-missing">Data missing</a> to fill those in.</p>
+    <p class="muted" style="font-size:12px;margin:8px 0 10px;">Everyone starts ticked. Use <strong>None</strong> and then pick the clients or people you want, or untick the odd one. Contacts who unsubscribed are shown greyed and are never emailed. Customers with no default domain aren't listed — use <a class="row-link" href="/customers/data-missing">Data missing</a> to fill those in.</p>
+
+    <%# Select-all acts on what is VISIBLE, so searching first is how you pick a subset:
+        type "larkmead", press All, and you have selected that client and nobody else.
+        Same rule as the agents page — a filter is a safety rail, not a trap. %>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+      <input class="input" id="mmSearch" type="search" placeholder="Search name, email or client…"
+             oninput="filterAudience()" style="flex:1;min-width:220px;padding:4px 10px;font-size:13px;">
+      <button class="btn" type="button" onclick="selectVisible(true)" style="padding:3px 12px;font-size:12.5px;">All</button>
+      <button class="btn" type="button" onclick="selectVisible(false)" style="padding:3px 12px;font-size:12.5px;">None</button>
+      <button class="btn" type="button" onclick="invertVisible()" style="padding:3px 12px;font-size:12.5px;">Invert</button>
+      <span class="muted" id="mmShown" style="font-size:12px;"></span>
+    </div>
     <div id="mmAudience" style="max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:8px;">
       <div class="empty-state">Loading…</div>
     </div>
@@ -106,18 +118,27 @@
       .then(function(j){
         if (!j.ok) { box.innerHTML = '<div class="empty-state">' + esc(j.error) + '</div>'; return; }
         if (!j.recipients.length) { box.innerHTML = '<div class="empty-state">No matching contacts. Check customers have a default domain set.</div>'; updateCount(); return; }
-        var html = '', lastCustomer = null;
+        var html = '', lastCustomer = null, gi = -1;
         j.recipients.forEach(function(r){
           if (r.customer_name !== lastCustomer) {
-            lastCustomer = r.customer_name;
-            html += '<div style="background:var(--surface-2);padding:6px 12px;font-weight:600;font-size:13px;border-top:1px solid var(--line);">' + esc(r.customer_name) + '</div>';
+            lastCustomer = r.customer_name; gi++;
+            // The client header is itself a tick: one click takes or drops that whole client.
+            html += '<label class="mm-head" data-g="' + gi + '" data-hay="' + esc(String(r.customer_name).toLowerCase()) + '"'
+                 + ' style="display:flex;gap:8px;align-items:center;background:var(--surface-2);padding:6px 12px;'
+                 + 'font-weight:600;font-size:13px;border-top:1px solid var(--line);cursor:pointer;">'
+                 + '<input type="checkbox" class="mm-cust" data-g="' + gi + '" checked onchange="toggleCustomer(this)">'
+                 + '<span>' + esc(r.customer_name) + '</span>'
+                 + '<span class="muted mm-gcount" data-g="' + gi + '" style="margin-left:auto;font-weight:normal;font-size:12px;"></span></label>';
           }
+          var hay = String((r.full_name || '') + ' ' + (r.email || '') + ' ' + (r.job_title || '') + ' ' + (r.customer_name || '')).toLowerCase();
           if (r.opted_out) {
-            html += '<label style="display:flex;gap:8px;align-items:center;padding:5px 12px;font-size:13px;color:var(--faint);">'
+            html += '<label class="mm-row" data-g="' + gi + '" data-hay="' + esc(hay) + '"'
+                 + ' style="display:flex;gap:8px;align-items:center;padding:5px 12px;font-size:13px;color:var(--faint);">'
                  + '<input type="checkbox" disabled> <span style="text-decoration:line-through;">' + esc(r.full_name) + ' — ' + esc(r.email) + '</span> <span class="badge badge-inactive" style="margin-left:auto;">unsubscribed</span></label>';
           } else {
-            html += '<label style="display:flex;gap:8px;align-items:center;padding:5px 12px;font-size:13px;cursor:pointer;">'
-                 + '<input type="checkbox" class="mm-rec" checked value="' + esc(r.email) + '" onchange="updateCount()">'
+            html += '<label class="mm-row" data-g="' + gi + '" data-hay="' + esc(hay) + '"'
+                 + ' style="display:flex;gap:8px;align-items:center;padding:5px 12px;font-size:13px;cursor:pointer;">'
+                 + '<input type="checkbox" class="mm-rec" data-g="' + gi + '" checked value="' + esc(r.email) + '" onchange="updateCount()">'
                  + '<span>' + esc(r.full_name) + (r.is_primary ? ' ★' : '') + ' <span class="muted">— ' + esc(r.email) + (r.job_title ? ' · ' + esc(r.job_title) : '') + '</span></span></label>';
           }
         });
@@ -193,10 +214,64 @@
       .catch(function(){ btn.disabled = false; msg.textContent = 'Improve failed'; msg.style.color = 'var(--bad)'; });
   }
 
+  function visibleRecs() {
+    return Array.prototype.slice.call(document.querySelectorAll('.mm-rec'))
+      .filter(function(cb){ var row = cb.closest('.mm-row'); return row && row.style.display !== 'none'; });
+  }
+
+  function selectVisible(on) { visibleRecs().forEach(function(cb){ cb.checked = on; }); updateCount(); }
+  function invertVisible()   { visibleRecs().forEach(function(cb){ cb.checked = !cb.checked; }); updateCount(); }
+
+  // One client, one click. Only the rows currently shown, so a search narrows what this
+  // affects rather than quietly reaching past it.
+  function toggleCustomer(box) {
+    var g = box.getAttribute('data-g');
+    visibleRecs().filter(function(cb){ return cb.getAttribute('data-g') === g; })
+                 .forEach(function(cb){ cb.checked = box.checked; });
+    updateCount();
+  }
+
+  function filterAudience() {
+    var q = (document.getElementById('mmSearch').value || '').trim().toLowerCase();
+    var shown = 0;
+    document.querySelectorAll('.mm-row').forEach(function(row){
+      var on = !q || row.getAttribute('data-hay').indexOf(q) >= 0;
+      row.style.display = on ? '' : 'none';
+      if (on) shown++;
+    });
+    // A client header with nothing left under it is noise, so it goes too.
+    document.querySelectorAll('.mm-head').forEach(function(head){
+      var g = head.getAttribute('data-g');
+      var any = Array.prototype.slice.call(document.querySelectorAll('.mm-row[data-g="' + g + '"]'))
+        .some(function(r){ return r.style.display !== 'none'; });
+      head.style.display = any ? 'flex' : 'none';
+    });
+    document.getElementById('mmShown').textContent = q ? (shown + ' shown') : '';
+    updateCount();
+  }
+
   function updateCount() {
     var boxes = document.querySelectorAll('.mm-rec');
     var on = document.querySelectorAll('.mm-rec:checked').length;
     document.getElementById('mmCount').textContent = '(' + on + ' of ' + boxes.length + ' selected)';
+
+    // Per-client counts, and a header tick that reads half-full when it is.
+    document.querySelectorAll('.mm-cust').forEach(function(head){
+      var g = head.getAttribute('data-g');
+      var all = document.querySelectorAll('.mm-rec[data-g="' + g + '"]');
+      var sel = document.querySelectorAll('.mm-rec[data-g="' + g + '"]:checked');
+      head.checked = all.length > 0 && sel.length === all.length;
+      head.indeterminate = sel.length > 0 && sel.length < all.length;
+      var lbl = document.querySelector('.mm-gcount[data-g="' + g + '"]');
+      if (lbl) lbl.textContent = sel.length + ' of ' + all.length;
+    });
+
+    // Nothing selected is almost certainly a mistake, so say so where the button is.
+    var save = document.getElementById('mmSave');
+    if (save) save.disabled = (on === 0);
+    var msg = document.getElementById('mmMsg');
+    if (msg && on === 0) { msg.textContent = 'Nobody selected.'; }
+    else if (msg && msg.textContent === 'Nobody selected.') { msg.textContent = ''; }
   }
 
   function saveCampaign(review) {

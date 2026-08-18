@@ -262,7 +262,10 @@ router.get('/security/mapping', requireAuth, requireAdmin, async (req: Request, 
     `SELECT sc.gz_id, sc.name, sc.customer_id FROM security_companies sc ORDER BY sc.name`)).rows;
 
   const pkgByCompany = new Map<string, string[]>();
-  const warnings: string[] = [];
+  // A company whose packages cannot be read is a fact about THAT ROW, not about the page.
+  // A red banner at the top says something is wrong without saying where, and this table
+  // is long enough that "where" is most of the answer.
+  const pkgError = new Map<string, string>();
   for (const c of companies) {
     if (!c.customer_id) continue;
     if (pkgByCompany.has(String(c.gz_id))) continue;
@@ -271,17 +274,25 @@ router.get('/security/mapping', requireAuth, requireAdmin, async (req: Request, 
       pkgByCompany.set(String(c.gz_id), list.map((p) => p.name));
     } catch (e: any) {
       pkgByCompany.set(String(c.gz_id), []);
-      if (warnings.length < 8) warnings.push(`${c.name}: ${e.message}`);
+      pkgError.set(String(c.gz_id), String(e.message || e));
     }
   }
+
+  // Default to the customers this page is actually about: mapped already, or with machines
+  // to protect. Everything else is 85 rows of "0 machines, not mapped" — the same big list
+  // Terry just had removed from the estate view. `?all=1` shows the lot.
+  const showAll = String(req.query.all || '') === '1';
+  const relevant = summaries.filter((r) => r.gzCompanyId || r.devices > 0);
 
   res.render('security/mapping', {
     user: req.session.user!,
     configured: await gzConfigured(),
-    rows: summaries,
+    rows: showAll ? summaries : relevant,
+    hiddenCount: showAll ? 0 : summaries.length - relevant.length,
+    showAll,
     companies,
     packagesByCompany: Object.fromEntries(pkgByCompany),
-    warnings,
+    packageErrors: Object.fromEntries(pkgError),
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });

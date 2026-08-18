@@ -17,9 +17,6 @@
 
 <% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
 <% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
-<% (warnings || []).forEach(function(w){ %>
-  <div class="alert alert-error" style="margin-bottom:10px;">Could not read packages &mdash; <%= w %></div>
-<% }); %>
 
 <% if (!configured) { %>
 <div class="card" style="border-left:3px solid var(--warn-fg);margin-bottom:14px;">
@@ -76,7 +73,15 @@
                 <% }); %>
               </select>
             </form>
-            <% if (!pkgs.length) { %>
+            <% if (packageErrors[r.gzCompanyId]) { %>
+              <div style="font-size:11px;color:var(--bad-fg);">
+                Could not read this company's packages &mdash; <%= packageErrors[r.gzCompanyId] %>
+              </div>
+              <div class="muted" style="font-size:11px;">
+                "a managed company is expected" usually means this customer is mapped to the wrong
+                company &mdash; the partner root rather than one of the managed companies underneath it.
+              </div>
+            <% } else if (!pkgs.length) { %>
               <div class="muted" style="font-size:11px;">none in GravityZone for this company yet</div>
             <% } else if (r.packageName && !r.packageReady) { %>
               <div style="font-size:11px;color:var(--warn-fg);">installer still building</div>
@@ -99,6 +104,13 @@
 </div>
 
 <p class="muted" style="font-size:12px;margin:12px 0 0;">
+  <% if (hiddenCount) { %>
+    Showing the <%= rows.length %> customers that are mapped or have machines.
+    <a class="row-link" href="?all=1"><%= hiddenCount %> others hidden</a>.
+  <% } else if (showAll) { %>
+    Showing every customer. <a class="row-link" href="/security/mapping">Just the relevant ones</a>.
+  <% } %>
+  <br>
   Companies appear here once they exist in GravityZone &mdash; which happens when the Bitdefender service is added
   to that customer in Giacom Cloud Market. Packages are the ones you built under <em>Network &rarr; Packages</em>.
   A company already mapped to another customer is not offered twice.
