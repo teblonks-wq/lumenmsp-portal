@@ -1049,81 +1049,184 @@ function deriveSecurity(agentInfo: any): any {
   if (!j) return { awaiting: true };
 
   const rows: any[] = [];
+  const notices: any[] = [];
   const list = (v: any) => (Array.isArray(v) ? v : v ? [v] : []);
   const def = j.defender || null;
-  const sigNote = (days: any) => (days == null ? null : Number(days) <= 0 ? 'definitions from today' : `definitions ${Number(days)} day${Number(days) === 1 ? '' : 's'} old`);
+  // Defender reports 65535 (0xFFFF) for "never updated / not known", not sixty-five thousand
+  // days. Printing the sentinel back as a number is how a panel loses the reader's trust.
+  const sigNote = (days: any) => {
+    if (days == null) return null;
+    const d = Number(days);
+    if (!Number.isFinite(d) || d >= 65535 || d > 3650) return 'definitions age not reported';
+    return d <= 0 ? 'definitions from today' : `definitions ${d} day${d === 1 ? '' : 's'} old`;
+  };
 
-  // Antivirus - Security Center's registered products first (third-party aware), the
-  // Defender facts as the fallback (servers have no SecurityCenter2).
-  const av = list(j.av);
-  if (av.length) {
-    for (const p of av) {
-      const ok = !!p.enabled && p.updated !== false;
-      rows.push({
-        area: 'Antivirus', product: p.name || 'Antivirus',
-        ok, detail: !p.enabled ? 'Not active' : (p.updated === false ? 'Active, definitions out of date' : 'Active and updated'),
-        extra: /defender/i.test(String(p.name || '')) && def ? sigNote(def.av_sig_age_days) : null,
+  // Security Center lists REGISTRATIONS, not installations. An uninstall that never
+  // deregistered leaves a ghost entry still claiming enabled and up to date, so the agent
+  // now corroborates each one against its signed exe: present === false means it looked
+  // and the product was gone. present == null means it could not tell - unknown must never
+  // read as protection, but it must not read as a ghost either, so only false is a ghost.
+  // "Bitdefender" contains "defender" - a bare /defender/i here classes our own product as
+  // Microsoft's, which is what kept every healthy Bitdefender machine flagged. Match the
+  // actual Microsoft naming: Windows Defender, Microsoft Defender Antivirus, Microsoft <x>.
+  const isMs = (n: any) => {
+    const t = String(n || '').trim();
+    return /(^|\s)(windows|microsoft)\s+defender/i.test(t) || /^microsoft\b/i.test(t);
+  };
+  const ghost = (p: any) => p.present === false;
+  // Only agents from 1.0.25 corroborate at all. On older payloads every entry is silent on
+  // presence, and flagging all of them as unverified would bury the panel in caveats until
+  // the estate catches up - so only say it when this agent actually checked and could not tell.
+  const agentChecksPresence = list(j.av).some((p: any) => p.present !== undefined);
+  const unverified = (p: any) => agentChecksPresence && p.present == null;
+  // level is the judgement: bad = this machine is not protected. warn = it is protected but
+  // wrongly (debris, or two engines fighting). Only bad turns the estate tile red.
+  const push = (r: any) => { rows.push({ ...r, ok: r.level === 'ok' }); return rows.length - 1; };
+  const ghostRow = (area: string, p: any) => push({
+    area, product: p.name || area, level: 'warn',
+    detail: 'Registered, not installed',
+    extra: `Windows Security Center still lists this product but its files are gone - a registration left behind by an uninstall${p.last_update ? `; last definition update ${p.last_update}` : ''}. It protects nothing. Clear it with the vendor's removal tool.`,
+  });
+
+  // Security Center will hold several registrations for the SAME product - a reinstall or an
+  // in-place upgrade that did not clean up leaves the old ones behind. Seen in the wild: four
+  // Webroot entries on one machine, which reads as four antivirus products. Collapse to one
+  // row per product, keep the healthiest entry, and carry the count: the duplication is itself
+  // debris, and it is the fingerprint of an uninstall that never completed.
+  const score = (p: any) => (p.present === false ? 0 : 2) + (p.enabled ? 1 : 0);
+  const dedupe = (items: any[]) => {
+    const byName = new Map<string, any>();
+    for (const p of items) {
+      const key = String(p.name || '?').trim().toLowerCase();
+      const seen = byName.get(key);
+      if (!seen) { byName.set(key, { ...p, dupes: 1 }); continue; }
+      const dupes = seen.dupes + 1;
+      byName.set(key, score(p) > score(seen) ? { ...p, dupes } : { ...seen, dupes });
+    }
+    return Array.from(byName.values());
+  };
+  const dupeNote = (p: any) => (p.dupes > 1 ? `registered ${p.dupes} times in Security Center` : null);
+
+  // Antivirus
+  const av = dedupe(list(j.av));
+  const ghosts = av.filter(ghost);
+  const realAv = av.filter((p: any) => !ghost(p));
+  // The engines actually doing the work - installed, enabled, and not Microsoft's passive stub.
+  const liveThirdParty = realAv.filter((p: any) => !isMs(p.name) && !!p.enabled);
+  let msRowIdx = -1;
+
+  if (realAv.length) {
+    for (const p of realAv) {
+      const name = p.name || 'Antivirus';
+      const notes: string[] = [];
+      if (isMs(name) && def) { const s = sigNote(def.av_sig_age_days); if (s) notes.push(s); }
+      if (unverified(p)) notes.push('install not verified - Security Center reported no product path');
+      const dn = dupeNote(p); if (dn) notes.push(dn);
+      // Defender goes passive by design when a third-party engine registers. That is correct
+      // behaviour, not a finding, and calling it red made every Bitdefender machine look broken.
+      if (isMs(name) && !p.enabled && liveThirdParty.length) {
+        msRowIdx = push({ area: 'Antivirus', product: name, level: 'ok',
+          detail: `Passive - ${liveThirdParty[0].name || 'a third-party engine'} is the active engine`,
+          extra: notes.length ? notes.join(' · ') : null });
+        continue;
+      }
+      const idx = push({
+        area: 'Antivirus', product: name,
+        level: !p.enabled || p.updated === false ? 'bad' : 'ok',
+        detail: !p.enabled ? 'Not active' : (p.updated === false ? 'Active, definitions out of date' : 'Active and updated'),
+        extra: notes.length ? notes.join(' · ') : null,
       });
+      if (isMs(name)) msRowIdx = idx;
     }
   } else if (def) {
     const fresh = def.av_sig_age_days == null || Number(def.av_sig_age_days) <= 3;
-    const ok = def.av_enabled !== false && def.rtp_enabled !== false && fresh;
-    rows.push({
+    msRowIdx = push({
       area: 'Antivirus', product: 'Microsoft Defender Antivirus',
-      ok, detail: def.av_enabled === false ? 'Not active'
+      level: def.av_enabled !== false && def.rtp_enabled !== false && fresh ? 'ok' : 'bad',
+      detail: def.av_enabled === false ? 'Not active'
         : def.rtp_enabled === false ? 'Real-time protection off'
         : !fresh ? 'Active, definitions out of date' : 'Active and updated',
       extra: sigNote(def.av_sig_age_days),
     });
   } else {
-    rows.push({ area: 'Antivirus', product: 'Unknown', ok: false, detail: 'Nothing reported', extra: null });
+    push({ area: 'Antivirus', product: 'Unknown', level: 'bad', detail: 'Nothing reported', extra: null });
   }
+  for (const p of ghosts) ghostRow('Antivirus', p);
 
-  // Anti-spyware - same shape.
-  const asw = list(j.antispyware);
-  if (asw.length) {
-    for (const p of asw) {
-      const ok = !!p.enabled && p.updated !== false;
-      rows.push({
-        area: 'Anti-spyware', product: p.name || 'Anti-spyware',
-        ok, detail: !p.enabled ? 'Not active' : (p.updated === false ? 'Active, definitions out of date' : 'Active and updated'),
-        extra: /defender/i.test(String(p.name || '')) && def ? sigNote(def.as_sig_age_days) : null,
-      });
+  // Anti-spyware
+  const asw = dedupe(list(j.antispyware));
+  for (const p of asw) {
+    if (ghost(p)) { ghostRow('Anti-spyware', p); continue; }
+    // Defender's anti-spyware provider stays registered and active while its AV side is
+    // passive. That is one more fact about Defender, not a second product, and listing it
+    // as its own row is what makes a healthy machine read as two Microsoft engines. Fold it
+    // into the Defender row - but only when it has nothing to report. A real anti-spyware
+    // failure always gets its own line.
+    // ...and when a third-party engine is live, Defender's anti-spyware side being off is
+    // equally by design. Either way it is one more fact about Defender, not a second product.
+    const quiet = !!p.enabled && p.updated !== false;
+    if (isMs(p.name) && (quiet || liveThirdParty.length > 0) && msRowIdx >= 0) {
+      const r = rows[msRowIdx];
+      r.extra = [r.extra, p.enabled ? 'anti-spyware active' : 'anti-spyware passive'].filter(Boolean).join(' · ');
+      continue;
     }
-  } else if (def) {
+    push({
+      area: 'Anti-spyware', product: p.name || 'Anti-spyware',
+      level: !p.enabled || p.updated === false ? 'bad' : 'ok',
+      detail: !p.enabled ? 'Not active' : (p.updated === false ? 'Active, definitions out of date' : 'Active and updated'),
+      extra: isMs(p.name) && def ? sigNote(def.as_sig_age_days) : null,
+    });
+  }
+  if (!asw.length && def && msRowIdx < 0) {
     const fresh = def.as_sig_age_days == null || Number(def.as_sig_age_days) <= 3;
-    const ok = def.antispyware_enabled !== false && fresh;
-    rows.push({
+    push({
       area: 'Anti-spyware', product: 'Microsoft Defender Antivirus',
-      ok, detail: def.antispyware_enabled === false ? 'Not active' : !fresh ? 'Active, definitions out of date' : 'Active and updated',
+      level: def.antispyware_enabled !== false && fresh ? 'ok' : 'bad',
+      detail: def.antispyware_enabled === false ? 'Not active' : !fresh ? 'Active, definitions out of date' : 'Active and updated',
       extra: sigNote(def.as_sig_age_days),
     });
   }
 
   // Firewall - the per-profile truth beats the Security Center registration.
   const profiles = list(j.firewall_profiles);
-  const fwProducts = list(j.firewall_products);
-  const fwName = fwProducts.length ? fwProducts.map((p: any) => p.name).filter(Boolean).join(', ') : 'Windows Firewall';
+  const fwProducts = dedupe(list(j.firewall_products));
+  const fwReal = fwProducts.filter((p: any) => !ghost(p));
+  const fwName = fwReal.length ? fwReal.map((p: any) => p.name).filter(Boolean).join(', ') : 'Windows Firewall';
   if (profiles.length) {
     const off = profiles.filter((p: any) => p.enabled === false).map((p: any) => p.profile);
-    rows.push({
+    push({
       area: 'Firewall', product: fwName,
-      ok: off.length === 0,
+      level: off.length === 0 ? 'ok' : 'bad',
       detail: off.length === 0 ? 'Active on every profile' : `OFF on the ${off.join(' and ')} profile${off.length === 1 ? '' : 's'}`,
       extra: profiles.map((p: any) => `${p.profile}: ${p.enabled === false ? 'off' : 'on'}`).join(' · '),
     });
-  } else if (fwProducts.length) {
-    for (const p of fwProducts) {
-      rows.push({ area: 'Firewall', product: p.name || 'Firewall', ok: !!p.enabled, detail: p.enabled ? 'Active' : 'Not active', extra: null });
+  } else if (fwReal.length) {
+    for (const p of fwReal) {
+      push({ area: 'Firewall', product: p.name || 'Firewall', level: p.enabled ? 'ok' : 'bad', detail: p.enabled ? 'Active' : 'Not active', extra: null });
     }
   } else {
-    rows.push({ area: 'Firewall', product: 'Unknown', ok: false, detail: 'Nothing reported', extra: null });
+    push({ area: 'Firewall', product: 'Unknown', level: 'bad', detail: 'Nothing reported', extra: null });
+  }
+  for (const p of fwProducts.filter(ghost)) ghostRow('Firewall', p);
+
+  // Notices - the things a single row cannot say.
+  if (liveThirdParty.length >= 2) {
+    notices.push({ level: 'warn', text: `Two antivirus engines are live on this machine - ${liveThirdParty.map((p: any) => p.name).join(' and ')}. They compete for the same files, and when something fires it is not clear which one caught it. One of them should come off.` });
+  }
+  const dupes = av.filter((p: any) => p.dupes > 1);
+  if (dupes.length) {
+    notices.push({ level: 'warn', text: `${dupes.map((p: any) => `${p.name} is registered ${p.dupes} times`).join(', ')} in Windows Security Center. A product can only be installed once - the extras are leftovers from repeated installs or upgrades that never cleaned up, and they make the machine look like it is running more antivirus than it is.` });
+  }
+  if (ghosts.length) {
+    notices.push({ level: 'warn', text: `${ghosts.length === 1 ? `${ghosts[0].name || 'A product'} is` : `${ghosts.length} products are`} registered with Windows Security Center but not installed on this machine. Windows still counts ${ghosts.length === 1 ? 'it' : 'them'} when it decides whether to keep Defender switched off, so the debris is worth clearing.` });
   }
 
   const ageSecs = agentInfo.security_age_secs != null ? Number(agentInfo.security_age_secs) : null;
   return {
     rows,
-    bad: rows.some((r) => !r.ok),
+    notices,
+    bad: rows.some((r) => r.level === 'bad'),
+    warn: notices.length > 0 || rows.some((r) => r.level === 'warn'),
     collectedAt: agentInfo.security_at,
     ageSecs,
     stale: ageSecs != null && ageSecs > 2 * 86400,

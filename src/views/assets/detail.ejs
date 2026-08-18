@@ -262,7 +262,7 @@ function _ago(d) {
 <% var _isServer = (typeof serverFacts !== 'undefined' && serverFacts); %>
 <% if (_isServer) { %><button type="button" data-tab="server">Server<% var _sb = (serverAlerts||[]).filter(function(a){ return a.level==='bad'; }).length; %><% if (_sb) { %> <span style="color:var(--bad-fg);">●</span><% } %></button><% } %>
 <% if (typeof gpo !== 'undefined' && gpo) { %><button type="button" data-tab="gpo">Group Policy<% if (gpo.bad) { %> <span style="color:var(--bad-fg);">&#9679;</span><% } %></button><% } %>
-    <button type="button" data-tab="security">Security<% if (typeof security !== 'undefined' && security && security.bad) { %> <span style="color:var(--bad-fg);">&#9679;</span><% } %></button>
+    <button type="button" data-tab="security">Security<% if (typeof security !== 'undefined' && security && security.bad) { %> <span style="color:var(--bad-fg);">&#9679;</span><% } else if (typeof security !== 'undefined' && security && security.warn) { %> <span style="color:var(--warn-fg);">&#9679;</span><% } %></button>
     <button type="button" data-tab="backup">Backup<% if (backupPlans.length && backupPlans.some(function(p){ return p.cls==='failed'; })) { %> <span style="color:var(--bad-fg);">●</span><% } %></button>
   </nav>
 
@@ -430,6 +430,11 @@ function _ago(d) {
         <% } %>
       </p>
     <% } else { %>
+      <% (_sec.notices || []).forEach(function (n) { %>
+        <div style="margin:0 0 10px;padding:9px 12px;border-left:3px solid var(--warn-fg);background:rgba(190,130,20,.08);font-size:12.5px;line-height:1.5;">
+          <strong style="color:var(--warn-fg);">Worth a look</strong> &mdash; <%= n.text %>
+        </div>
+      <% }); %>
       <div class="table-wrap"><table class="table">
         <thead><tr><th style="width:160px;">Protection</th><th>Product</th><th>Status</th></tr></thead>
         <tbody>
@@ -438,8 +443,9 @@ function _ago(d) {
             <td style="font-weight:600;"><%= r.area %></td>
             <td><%= r.product %><% if (r.extra) { %><div class="muted" style="font-size:11.5px;"><%= r.extra %></div><% } %></td>
             <td>
-              <span style="display:inline-flex;align-items:center;gap:6px;font-weight:600;color:<%= r.ok ? 'var(--ok)' : 'var(--bad-fg)' %>;">
-                <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= r.ok ? 'var(--ok)' : 'var(--bad-fg)' %>;"></span>
+              <% var _c = (r.level === 'warn') ? 'var(--warn-fg)' : (r.level === 'bad' || r.ok === false) ? 'var(--bad-fg)' : 'var(--ok)'; %>
+              <span style="display:inline-flex;align-items:center;gap:6px;font-weight:600;color:<%= _c %>;">
+                <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= _c %>;"></span>
                 <%= r.detail %>
               </span>
             </td>
