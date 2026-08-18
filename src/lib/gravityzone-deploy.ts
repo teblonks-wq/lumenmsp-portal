@@ -215,13 +215,30 @@ export interface QueueResult { ok: boolean; deviceId: number; commandId?: number
  * a bulk rollout will hit — one machine with no agent must not abort the other forty.
  */
 export async function queueDeploy(deviceId: number, userId: number | null = null): Promise<QueueResult> {
+  // d.os, NOT d.os_name. agent_devices has `os`; os_name is a security_endpoints column.
+  // That typo made this query throw for EVERY device, so "Deploy to all" failed with
+  // `column d.os_name does not exist` before it queued a single install — and the test
+  // suite was green throughout, because the scratch database had been hand-built with an
+  // os_name column the real schema has never had. See the schema-parity check in
+  // gz-fixture.js, which now fails the run rather than letting that happen again.
   const dev = (await pool.query(
-    `SELECT d.id, d.hostname, d.customer_id, d.security_json, d.os_name,
+    `SELECT d.id, d.hostname, d.customer_id, d.security_json, d.os,
             COALESCE(d.revoked,false) AS revoked
        FROM agent_devices d WHERE d.id=$1`, [deviceId])).rows[0];
   if (!dev) return { ok: false, deviceId, error: 'No such device.' };
   if (dev.revoked) return { ok: false, deviceId, error: 'That agent has been revoked.' };
   if (!dev.customer_id) return { ok: false, deviceId, error: 'Device is not attached to a customer.' };
+
+  // The kit we are about to send is the WINDOWS one, installed with Windows silent
+  // switches. Pushing it at a Mac would download an .exe onto macOS and fail in a way
+  // that reads as "the install failed" rather than "we sent the wrong thing" — and we
+  // now ship a macOS agent, so those machines are really in the estate. An OS we have
+  // not identified is allowed through: the estate predates the agent, plenty of rows
+  // have no OS recorded, and refusing those would block real Windows machines.
+  if (dev.os && !/windows/i.test(String(dev.os))) {
+    return { ok: false, deviceId,
+      error: `Only the Windows kit exists so far, and this machine reports ${dev.os}.` };
+  }
 
   // THE GATE. Enabling a customer is where someone takes responsibility for stripping the
   // antivirus off their machines; deploying without it is doing that on a customer nobody
