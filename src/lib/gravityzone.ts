@@ -811,6 +811,12 @@ const AUTO_REMOVE = [
   'avast', 'avg', 'avira', 'bullguard', 'comodo', 'eset', 'nod32', 'f-secure', 'g data',
   'kaspersky', 'mcafee', 'malwarebytes', 'norton', 'symantec', 'panda', 'sophos',
   'trend micro', 'webroot', 'vipre', 'total defense', 'zonealarm', 'k7', 'quick heal',
+  // Webroot was bought by OpenText and REBRANDED. CUK-B003 reports itself as
+  // "OpenTextT Core Endpoint Protection" (their spelling, with the stray T) while still
+  // running the WRSVC service underneath. Matching only on "webroot" would have filed
+  // every Chropynska machine as an unknown product needing a manual visit - on the one
+  // customer whose whole rollout hinges on Webroot being removed automatically.
+  'opentext', 'carbonite',
 ];
 /** Products that want taking off by hand — EDR/managed stacks with tamper protection. */
 const MANUAL = ['crowdstrike', 'sentinelone', 'carbon black', 'cylance', 'cortex', 'huntress', 'trellix', 'elastic', 'defender for endpoint'];
