@@ -8,7 +8,8 @@ import {
   buildAssessment, inScopeCustomers, setCustomerScope, categoriseAv, licenceAudit, customerEnabled,
 } from '../lib/gravityzone';
 import {
-  ensurePackage, queueDeploy, deployCustomer, rolloutFor, setExcluded,
+  resolvePackage, createPackage, listPackages, mapPackage,
+  queueDeploy, deployCustomer, rolloutFor, setExcluded,
   infectionsFor, policyExclusions, reconcile as deployReconcile,
 } from '../lib/gravityzone-deploy';
 
@@ -291,9 +292,13 @@ router.get('/security/customer/:id', requireAuth, async (req: Request, res: Resp
   const company = (await pool.query(
     `SELECT gz_id, name FROM security_companies WHERE customer_id=$1 ORDER BY gz_id LIMIT 1`, [customerId])).rows[0] || null;
   const pkg = (await pool.query(`SELECT * FROM security_packages WHERE customer_id=$1`, [customerId])).rows[0] || null;
+  // Offered so the choice is Terry's. One API call, and only when a company is mapped —
+  // there is nothing to list otherwise.
+  let packages: any[] = [];
+  if (company) { try { packages = await listPackages(customerId); } catch { packages = []; } }
 
   res.render('security/customer', {
-    user: req.session.user!, customer: cust, tab, rows, infections, exclusions, company, pkg,
+    user: req.session.user!, customer: cust, tab, rows, infections, exclusions, company, pkg, packages,
     counts: rows.reduce((m: Record<string, number>, r) => { m[r.state] = (m[r.state] || 0) + 1; return m; }, {}),
     notice: req.query.msg || null, error: req.query.err || null,
   });
@@ -309,11 +314,15 @@ router.post('/security/customer/:id/enable', requireAuth, requireAdmin, async (r
 
   // Enabling is the moment to build the package, so "Deploy to all" is never the click
   // that discovers the package does not exist yet.
+  // Enabling no longer CREATES a package — Terry builds those in GravityZone. It tries to
+  // resolve one, and if it cannot, says so plainly rather than inventing one.
   let extra = '';
   if (on) {
-    try { const p = await ensurePackage(customerId, req.session.user!.id);
-          extra = p.readyWindows ? ' Installer ready.' : ' Bitdefender is still building the installer — give it a minute.'; }
-    catch (e: any) { extra = ' (installer not ready: ' + e.message + ')'; }
+    try { const p = await resolvePackage(customerId, req.session.user!.id);
+          extra = p.readyWindows
+            ? ` Using the "${p.packageName}" package.`
+            : ` Using "${p.packageName}" — Bitdefender is still building the installer, give it a minute.`; }
+    catch (e: any) { extra = ' ' + e.message; }
   }
   res.redirect(`/security/customer/${customerId}?msg=` +
     encodeURIComponent(`Endpoint Security ${on ? 'enabled' : 'disabled'}.${extra}`));
@@ -332,12 +341,31 @@ router.post('/security/customer/:id/deploy', requireAuth, requireAdmin, async (r
         `Enable Endpoint Security for this customer first (${gate.reason}).`));
       return;
     }
-    await ensurePackage(customerId, req.session.user!.id);   // and refresh the links first
+    await resolvePackage(customerId, req.session.user!.id);   // and refresh the links first
     const r = await deployCustomer(customerId, req.session.user!.id);
     const skipped = r.skipped.length ? ` ${r.skipped.length} skipped: ` +
       r.skipped.slice(0, 4).map((s) => `${s.hostname} (${s.why})`).join(', ') : '';
     res.redirect(`/security/customer/${customerId}?msg=` +
       encodeURIComponent(`Queued ${r.queued} install(s).${skipped}`));
+  } catch (e: any) {
+    res.redirect(`/security/customer/${customerId}?err=` + encodeURIComponent(e.message));
+  }
+});
+
+/** Which GravityZone package this customer deploys from. */
+router.post('/security/customer/:id/package', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.params.id), 10);
+  const name = String(req.body.package_name || '').trim();
+  try {
+    if (name === '__create__') {
+      const p = await createPackage(customerId, req.session.user!.id);
+      res.redirect(`/security/customer/${customerId}?msg=` + encodeURIComponent(
+        `Created and mapped "${p.packageName}".` + (p.readyWindows ? '' : ' Bitdefender is still building it.')));
+      return;
+    }
+    const p = await mapPackage(customerId, name, req.session.user!.id);
+    res.redirect(`/security/customer/${customerId}?msg=` + encodeURIComponent(
+      `Deploying from "${p.packageName}".` + (p.readyWindows ? ' Installer ready.' : ' Bitdefender is still building it.')));
   } catch (e: any) {
     res.redirect(`/security/customer/${customerId}?err=` + encodeURIComponent(e.message));
   }
@@ -356,7 +384,7 @@ router.post('/security/device/:deviceId/deploy', requireAuth, requireAdmin, asyn
           `Enable Endpoint Security for this customer first (${gate.reason}).`));
         return;
       }
-      await ensurePackage(Number(dev.customer_id), req.session.user!.id);
+      await resolvePackage(Number(dev.customer_id), req.session.user!.id);
     }
     const r = await queueDeploy(deviceId, req.session.user!.id);
     res.redirect(back + (r.ok ? '?msg=' + encodeURIComponent('Bitdefender install queued.')

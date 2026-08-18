@@ -43,48 +43,104 @@ export interface PackageState {
   refreshedAt: Date | null;
 }
 
-/**
- * Make sure the customer has a package with competitive removal ON, and cache its
- * download links. Idempotent — an existing package of the same name is reused, because
- * creating a second package per rollout would litter the console and split reporting.
- */
-export async function ensurePackage(customerId: number, userId: number | null = null): Promise<PackageState> {
+/** The GravityZone company a customer is mapped to, or a clear reason why not. */
+async function companyFor(customerId: number): Promise<{ gzCompanyId: string; customerName: string }> {
   const cust = (await pool.query(`SELECT id, name FROM customers WHERE id=$1`, [customerId])).rows[0];
   if (!cust) throw new Error('No such customer.');
   const comp = (await pool.query(
     `SELECT gz_id FROM security_companies WHERE customer_id=$1 ORDER BY gz_id LIMIT 1`, [customerId])).rows[0];
-  if (!comp) throw new Error(`${cust.name} is not mapped to a GravityZone company yet — onboard them first.`);
+  if (!comp) throw new Error(`${cust.name} is not mapped to a GravityZone company yet — map them on the settings page first.`);
+  return { gzCompanyId: String(comp.gz_id), customerName: String(cust.name) };
+}
 
-  const gzCompanyId = String(comp.gz_id);
-  const name = packageNameFor(cust.name);
+export interface GzPackage { name: string; id: string | null; description: string | null }
 
-  // Is it already there? getPackagesList is scoped by companyId on this service.
-  let found: any = null;
-  try {
-    const list = await rpc<any>('packages', 'getPackagesList', { companyId: gzCompanyId, page: 1, perPage: 100 });
-    const items = Array.isArray(list) ? list : (list?.items || []);
-    found = items.find((p: any) => String(p?.name || '').trim().toLowerCase() === name.toLowerCase()) || null;
-  } catch { /* an unreadable list is not proof it is absent — the create below will tell us */ }
+/**
+ * Every installation package in this customer's GravityZone company.
+ *
+ * Terry, 18 Aug: "i think we need to map the installation packages - so I will create them
+ * in g zone now." Same shape as the companies: he builds them in GravityZone, the Portal
+ * maps them. That is the better split — a package carries real decisions (which modules,
+ * which scan mode, whether existing AV is removed) and those belong where he can see them,
+ * not guessed by us.
+ */
+export async function listPackages(customerId: number): Promise<GzPackage[]> {
+  const { gzCompanyId } = await companyFor(customerId);
+  const list = await rpc<any>('packages', 'getPackagesList', { companyId: gzCompanyId, page: 1, perPage: 100 });
+  const items = Array.isArray(list) ? list : (list?.items || []);
+  return items
+    .filter((p: any) => p && (p.name || p.packageName))
+    .map((p: any) => ({
+      name: String(p.name || p.packageName),
+      id: p.id != null ? String(p.id) : null,
+      description: p.description ? String(p.description) : null,
+    }));
+}
 
-  if (!found) {
-    try {
-      await rpc('packages', 'createPackage', {
-        companyId: gzCompanyId,
-        packageName: name,
-        description: 'Created by the LumenMSP Portal. Removes existing third-party AV on install.',
-        // modules left at Bitdefender's defaults: antimalware + ATC. Nothing chargeable.
-        settings: {
-          removeCompetitors: 1,      // THE point of the package — strip Webroot et al
-          scanBeforeInstall: false,  // a pre-install scan can take an hour; not on a rollout
-        },
-      });
-    } catch (e: any) {
-      // "already exists" is a success for our purposes — we only want one.
-      if (!/exist/i.test(e.message || '')) throw e;
-    }
+/** Tie a customer to one named package, and cache its download links. */
+export async function mapPackage(customerId: number, packageName: string, userId: number | null = null): Promise<PackageState> {
+  const { gzCompanyId } = await companyFor(customerId);
+  const name = String(packageName || '').trim();
+  if (!name) throw new Error('Pick a package.');
+
+  // Confirm it really is in this company before recording it. A package name typed or
+  // posted from somewhere else could otherwise point one customer's machines at another
+  // customer's installer — which would enrol them into the wrong company entirely.
+  const available = await listPackages(customerId);
+  const hit = available.find((p) => p.name.toLowerCase() === name.toLowerCase());
+  if (!hit) {
+    throw new Error(`"${name}" is not one of that company's packages in GravityZone` +
+      (available.length ? ` (found: ${available.map((p) => p.name).join(', ')})` : ' — no packages exist there yet'));
   }
 
-  return refreshLinks(customerId, gzCompanyId, name, userId);
+  const state = await refreshLinks(customerId, gzCompanyId, hit.name, userId);
+  if (userId) await logActivity(userId, 'gz_package_map', 'customers', customerId,
+    `Bitdefender installation package "${hit.name}" mapped to this customer`);
+  return state;
+}
+
+/**
+ * The package to deploy from, resolved without guessing.
+ *
+ * Mapped already → use it. Not mapped but the company has exactly ONE package → adopt it,
+ * because there is nothing to choose between. Anything else refuses and says what to do:
+ * with several packages the choice is Terry's, and picking one for him could deploy the
+ * wrong modules or, worse, a package that does not remove the existing antivirus.
+ */
+export async function resolvePackage(customerId: number, userId: number | null = null): Promise<PackageState> {
+  const saved = (await pool.query(`SELECT * FROM security_packages WHERE customer_id=$1`, [customerId])).rows[0];
+  if (saved?.package_name) return refreshLinks(customerId, String(saved.gz_company_id), String(saved.package_name), userId);
+
+  const available = await listPackages(customerId);
+  if (available.length === 1) return mapPackage(customerId, available[0].name, userId);
+  if (!available.length) {
+    throw new Error('No installation packages exist in that company in GravityZone yet — create one there, then map it here.');
+  }
+  throw new Error(`That company has ${available.length} packages in GravityZone — choose which one this customer deploys.`);
+}
+
+/**
+ * Create a package ourselves. Kept for the case where Terry would rather the Portal did
+ * it, but NOT called automatically any more: he creates them in GravityZone.
+ */
+export async function createPackage(customerId: number, userId: number | null = null): Promise<PackageState> {
+  const { gzCompanyId, customerName } = await companyFor(customerId);
+  const name = packageNameFor(customerName);
+  try {
+    await rpc('packages', 'createPackage', {
+      companyId: gzCompanyId,
+      packageName: name,
+      description: 'Created by the LumenMSP Portal. Removes existing third-party AV on install.',
+      // modules left at Bitdefender's defaults: antimalware + ATC. Nothing chargeable.
+      settings: {
+        removeCompetitors: 1,      // THE point of the package — strip Webroot et al
+        scanBeforeInstall: false,  // a pre-install scan can take an hour; not on a rollout
+      },
+    });
+  } catch (e: any) {
+    if (!/exist/i.test(e.message || '')) throw e;   // already there is fine; we want one
+  }
+  return mapPackage(customerId, name, userId);
 }
 
 /**
