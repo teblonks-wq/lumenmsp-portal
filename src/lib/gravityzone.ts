@@ -155,6 +155,33 @@ export function findKeyPath(o: any, re: RegExp, path = '', depth = 0): string | 
   return null;
 }
 
+/** Read a dotted path out of an object. */
+export function atPath(o: any, path: string): any {
+  let v = o;
+  for (const k of path.split('.')) { if (v == null) return undefined; v = v[k]; }
+  return v;
+}
+
+/**
+ * The sibling keys around a found path, with a hint of each one's type.
+ *
+ * Lumen's tenant found "exclusions" at settings.antimalware.settings.activateExclusions —
+ * which is almost certainly a BOOLEAN switch ("are exclusions on?"), not the LIST of
+ * exclusions we need to audit. The list will be a sibling. Reporting the neighbours turns
+ * one more guessing round into a single answer.
+ */
+export function siblingsOf(root: any, path: string): string {
+  const parentPath = path.split('.').slice(0, -1).join('.');
+  const parent = parentPath ? atPath(root, parentPath) : root;
+  if (!parent || typeof parent !== 'object') return '';
+  return Object.keys(parent).map((k) => {
+    const v = (parent as any)[k];
+    const kind = Array.isArray(v) ? `array[${v.length}]`
+      : v === null ? 'null' : typeof v === 'object' ? 'object' : typeof v;
+    return `${k}:${kind}`;
+  }).join(', ');
+}
+
 /**
  * Probe the tenant. Deliberately harmless — nothing here changes anything — and it
  * returns the raw first item so we can see the REAL field names in this tenant
@@ -211,11 +238,18 @@ export async function testConnection(): Promise<{ ok: boolean; probes: ProbeResu
   // number nobody notices is missing.
   await add('licensing', 'getLicenseInfo', {},
     (r) => {
+      const used = seatCount(r, 'used') ?? 0;
       const total = seatCount(r, 'total');
-      const used = seatCount(r, 'used');
-      const tPath = total == null ? findKeyPath(r, /total|max|purchas|subscri/i) : null;
-      return `licence seats: ${total ?? '?'} total, ${used ?? 0} used` +
-        (total == null ? ` — total not in a known field${tPath ? `; closest candidate is "${tPath}"` : ''}` : '');
+      if (total != null) return `licence seats: ${total} total, ${used} used`;
+      // The field can EXIST and be empty. On Lumen's tenant totalSlots is present but
+      // holds nothing — which on a monthly MSP subscription is the expected shape: you
+      // are billed on use, so there is no ceiling to report. That is good news (a rollout
+      // cannot hit a seat wall) and worth saying plainly rather than printing "?".
+      const raw = (r as any)?.totalSlots ?? atPath(r, findKeyPath(r, /^totalSlots$/i) || '');
+      const present = raw !== undefined;
+      return `licence seats: ${used} used` + (present
+        ? ` — no total, which is normal on a monthly subscription: seats are billed on use, so a rollout cannot run out`
+        : ` — no seat total in this payload at all`);
     });
 
   // ── Capability probes for what Terry asked for on 17 Aug ─────────────────────────
@@ -254,8 +288,16 @@ export async function testConnection(): Promise<{ ok: boolean; probes: ProbeResu
       await add('policies', 'getPolicyDetails', { policyId: p0.id },
         (r) => {
           const at = findKeyPath(r, /exclusion/i);
+          if (!at) return `read policy "${r?.name || p0.name || p0.id}" — no exclusion field anywhere in the payload, so the API does not return them`;
+          const val = atPath(r, at);
+          // A boolean here is the "exclusions are on" switch, not the list of them. RULE
+          // ONE needs the LIST — is our agent's folder actually excluded — so say which
+          // one we found and what sits beside it.
+          const isList = Array.isArray(val);
           return `read policy "${r?.name || p0.name || p0.id}" — ` +
-            (at ? `exclusions found at ${at}` : 'no exclusion field anywhere in the payload, so the API does not return them');
+            (isList
+              ? `exclusion LIST at ${at} (${val.length} entr${val.length === 1 ? 'y' : 'ies'}) — the agent exclusions can be audited`
+              : `${at} is ${val === null ? 'null' : typeof val}, which is the on/off switch rather than the list. Beside it: ${siblingsOf(r, at) || '(nothing)'}`);
         });
     }
   } catch { /* the list probe above already said why */ }
