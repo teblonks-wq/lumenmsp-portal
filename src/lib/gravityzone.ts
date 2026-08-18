@@ -963,18 +963,32 @@ export async function inScopeCustomers(): Promise<Array<{ id: number; name: stri
 /**
  * Is THIS customer enabled for Endpoint Security?
  *
- * Terry, 18 Aug: "what about what i said we need to enable a customer before it fires."
- * Quite right — nothing had been enforcing it. Enabling a customer is the moment someone
- * takes responsibility for stripping the antivirus off their machines, so it has to be a
- * gate the deploy cannot go round, not a label on a screen. Checked server side on every
- * deploy path, single machine or whole estate, because a per-device Deploy button is
- * exactly the route that would otherwise skip it.
+ * THE MAPPING IS THE ENABLEMENT. Terry, 18 Aug: "as long as we map every time then we're
+ * golden — this way you don't need a magic button to enable a customer."
+ *
+ * He is right, and it is the better design. A customer cannot be deployed to without a
+ * GravityZone company and an installation package; mapping both is already two deliberate
+ * choices a human makes, naming exactly which company and which installer. A separate
+ * enable switch adds nothing except a third thing to forget, and a state where a customer
+ * looks enabled but cannot actually deploy.
+ *
+ * The safety property the old switch provided is preserved, on one condition: the package
+ * mapping must never happen automatically. That is why resolvePackage() no longer adopts
+ * a company's only package on its own — if it did, a sync could quietly enable a customer
+ * nobody had chosen, which is the exact thing the gate exists to prevent.
  */
 export async function customerEnabled(customerId: number): Promise<{ ok: boolean; reason: string }> {
-  const all = await inScopeCustomers();
-  const hit = all.find((c) => c.id === customerId);
-  if (!hit) return { ok: false, reason: 'that customer is inactive or does not exist' };
-  return { ok: hit.inScope, reason: hit.reason };
+  const r = (await pool.query(
+    `SELECT c.name,
+            (SELECT gz_id FROM security_companies WHERE customer_id=c.id ORDER BY gz_id LIMIT 1) AS gz_id,
+            (SELECT package_name FROM security_packages WHERE customer_id=c.id) AS package_name
+       FROM customers c WHERE c.id=$1 AND NOT c.is_placeholder AND c.status <> 'inactive'`,
+    [customerId])).rows[0];
+
+  if (!r) return { ok: false, reason: 'that customer is inactive or does not exist' };
+  if (!r.gz_id) return { ok: false, reason: 'not mapped to a GravityZone company' };
+  if (!r.package_name) return { ok: false, reason: 'no installation package mapped' };
+  return { ok: true, reason: `mapped to a company and the "${r.package_name}" package` };
 }
 
 export async function setCustomerScope(customerId: number, inScope: boolean | null): Promise<void> {

@@ -8,7 +8,7 @@ import {
   buildAssessment, inScopeCustomers, setCustomerScope, categoriseAv, licenceAudit, customerEnabled,
 } from '../lib/gravityzone';
 import {
-  resolvePackage, createPackage, listPackages, mapPackage,
+  resolvePackage, createPackage, listPackages, mapPackage, customerSummaries,
   queueDeploy, deployCustomer, rolloutFor, setExcluded,
   infectionsFor, policyExclusions, reconcile as deployReconcile,
 } from '../lib/gravityzone-deploy';
@@ -24,90 +24,34 @@ const router = Router();
 // says is protecting each machine today, and what GravityZone says about it. That
 // join is what turns "we should roll out AV" into a worklist.
 
-const STATES = ['protected', 'infected', 'outdated', 'todo', 'unknown'] as const;
-
+// The landing page is a list of CUSTOMERS, not devices.
+//
+// Terry, 18 Aug: "we do not need an esytateview with big list of devices". He is right —
+// 236 device rows spanning every customer is a list nobody reads. What you need to know
+// here is which customers are done, which are mid-rollout, and which are blocked and on
+// what. The devices live one click away, on that customer's own screen.
 router.get('/security', requireAuth, async (req: Request, res: Response) => {
-  const user = req.session.user!;
-  const customerId = parseInt(String(req.query.customer || ''), 10) || null;
-  const state = STATES.includes(String(req.query.state) as any) ? String(req.query.state) : null;
+  const rows = await customerSummaries();
+  const show = String(req.query.show || '');
+  const shown = show === 'enabled' ? rows.filter((r) => r.enabled)
+    : show === 'blocked' ? rows.filter((r) => r.enabled && r.blocker)
+    : show === 'todo' ? rows.filter((r) => r.enabled && r.notDeployed > 0)
+    : rows.filter((r) => r.enabled || r.devices > 0);
 
-  const rows = (await pool.query(
-    `SELECT a.id AS asset_id, a.hostname, a.device_type, a.customer_id, c.name AS customer_name, c.is_itsm,
-            d.security_json, d.id AS agent_device_id,
-            EXTRACT(EPOCH FROM d.last_seen_at)::bigint AS agent_seen,
-            se.gz_id, se.is_managed, se.infected, se.outdated, se.policy_name, se.modules_on,
-            EXTRACT(EPOCH FROM se.last_seen_at)::bigint AS gz_seen
-       FROM customer_assets a
-       LEFT JOIN customers c ON c.id = a.customer_id
-       LEFT JOIN agent_devices d ON d.id = a.agent_device_id AND NOT COALESCE(d.revoked, false)
-       LEFT JOIN security_endpoints se ON se.asset_id = a.id
-      WHERE a.merged_into_id IS NULL
-        AND ($1::int IS NULL OR a.customer_id = $1)
-      ORDER BY c.name NULLS LAST, a.hostname`,
-    [customerId])).rows;
-
-  const scope = await inScopeCustomers();
-  const scopeById = new Map(scope.map((x) => [x.id, x]));
-
-  const list = (v: any) => (Array.isArray(v) ? v : v ? [v] : []);
-  const devices = rows.map((r: any) => {
-    let j: any = null;
-    try { j = r.security_json ? JSON.parse(r.security_json) : null; } catch { j = null; }
-    const products = j
-      ? Array.from(new Set([...list(j.av), ...list(j.antispyware)].map((p: any) => String(p?.name || '').trim()).filter(Boolean)))
-      : [];
-    const cat = j ? categoriseAv(products as string[]).category : 'unknown';
-    const st = r.gz_id
-      ? (r.infected ? 'infected' : r.outdated ? 'outdated' : 'protected')
-      : (j ? 'todo' : 'unknown');
-    return {
-      assetId: Number(r.asset_id), hostname: r.hostname || '?', deviceType: r.device_type,
-      customerId: r.customer_id ? Number(r.customer_id) : null, customerName: r.customer_name,
-      inScope: r.customer_id ? !!scopeById.get(Number(r.customer_id))?.inScope : false,
-      currentAv: (products as string[]).join(', ') || null,
-      migrationCategory: cat,
-      gzId: r.gz_id || null, policyName: r.policy_name, modulesOn: r.modules_on,
-      infected: !!r.infected, outdated: !!r.outdated,
-      agentSeen: r.agent_seen ? Number(r.agent_seen) : null,
-      gzSeen: r.gz_seen ? Number(r.gz_seen) : null,
-      state: st,
-    };
-  });
-
-  const shown = state ? devices.filter((d) => d.state === state) : devices;
-
-  // Endpoints GravityZone knows about that we could not match to a device of ours.
-  // A real gap worth showing: either the hostname differs or the machine is not in
-  // our asset register at all.
-  const unmatched = (await pool.query(
-    `SELECT se.gz_id, se.name, se.os_name, se.policy_name, sc.name AS company_name,
-            EXTRACT(EPOCH FROM se.last_seen_at)::bigint AS gz_seen
-       FROM security_endpoints se
-       LEFT JOIN security_companies sc ON sc.gz_id = se.gz_company_id
-      WHERE se.asset_id IS NULL ORDER BY sc.name NULLS LAST, se.name LIMIT 200`)).rows;
-
-  const seats = (await pool.query(
-    `SELECT sc.name, sc.license_total, sc.license_used, c.name AS customer_name,
-            (SELECT COUNT(*) FROM security_endpoints se WHERE se.gz_company_id = sc.gz_id) AS endpoints
-       FROM security_companies sc LEFT JOIN customers c ON c.id = sc.customer_id
-      ORDER BY sc.name`)).rows;
-
-  res.render('security/estate', {
-    user,
+  res.render('security/index', {
+    user: req.session.user!,
     configured: await gzConfigured(),
     lastSync: await getSetting('gravityzone', 'last_sync'),
-    devices: shown, allCount: devices.length,
-    stats: {
-      protected: devices.filter((d) => d.state === 'protected').length,
-      infected: devices.filter((d) => d.state === 'infected').length,
-      outdated: devices.filter((d) => d.state === 'outdated').length,
-      todo: devices.filter((d) => d.state === 'todo' && d.inScope).length,
-      unknown: devices.filter((d) => d.state === 'unknown').length,
+    rows: shown, allRows: rows, show,
+    totals: {
+      enabled: rows.filter((r) => r.enabled).length,
+      protectedCount: rows.reduce((n, r) => n + r.protectedCount, 0),
+      installing: rows.reduce((n, r) => n + r.installing, 0),
+      notDeployed: rows.filter((r) => r.enabled).reduce((n, r) => n + r.notDeployed, 0),
+      failed: rows.reduce((n, r) => n + r.failed, 0),
+      infected: rows.reduce((n, r) => n + r.infected, 0),
+      blocked: rows.filter((r) => r.enabled && r.blocker).length,
     },
-    unmatched, seats, scope,
-    customers: (await pool.query(
-      `SELECT id, name FROM customers WHERE NOT is_placeholder AND status <> 'inactive' ORDER BY name`)).rows,
-    customerId, state,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
@@ -181,6 +125,41 @@ router.post('/security/test', requireAuth, requireAdmin, async (req: Request, re
   try { probes = (await testConnection()).probes; }
   catch (e: any) { error = e.message; }
   res.render('security/settings', await settingsModel(req, { probes, error }));
+});
+
+/**
+ * Map from the CUSTOMER's side: pick which company is theirs.
+ *
+ * The older route is keyed by company; this one is keyed by customer, because that is the
+ * direction the mapping table works in. It also clears any company previously mapped to
+ * this customer - one customer, one company. Without that, changing a mapping would leave
+ * the old company still pointing at them and their endpoints split across two.
+ */
+router.post('/security/companies/map', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const customerId = parseInt(String(req.body.customer_id || ''), 10);
+  const gzId = String(req.body.gz_id || '').trim();
+  const back = String(req.body.back || '/security/mapping');
+  if (!customerId) { res.redirect(back + '?err=' + encodeURIComponent('No customer given.')); return; }
+
+  await pool.query(`UPDATE security_companies SET customer_id=NULL WHERE customer_id=$1`, [customerId]);
+  if (gzId) {
+    // Refuse to hand one company to two customers. Endpoints are attributed by company,
+    // so a shared mapping would show one customer another customer's machines.
+    const taken = (await pool.query(
+      `SELECT customer_id FROM security_companies WHERE gz_id=$1`, [gzId])).rows[0];
+    if (taken?.customer_id && Number(taken.customer_id) !== customerId) {
+      res.redirect(back + '?err=' + encodeURIComponent('That company is already mapped to another customer.'));
+      return;
+    }
+    await mapCompany(gzId, customerId);
+  }
+  // The package belonged to the OLD company; it cannot survive a company change.
+  await pool.query(`DELETE FROM security_packages WHERE customer_id=$1 AND ($2 = '' OR gz_company_id <> $2)`,
+    [customerId, gzId]);
+
+  await logActivity(req.session.user!.id, 'gz_map', 'customers', customerId,
+    gzId ? `Mapped to GravityZone company ${gzId}` : 'GravityZone company mapping cleared');
+  res.redirect(back + '?msg=' + encodeURIComponent(gzId ? 'Company mapped.' : 'Company mapping cleared.'));
 });
 
 router.post('/security/companies/:gzId/map', requireAuth, requireAdmin, async (req: Request, res: Response) => {
@@ -267,6 +246,46 @@ router.post('/security/assessment/:id/approve', requireAuth, requireAdmin, async
     encodeURIComponent(`Approved — ${n} machine(s) cleared for Bitdefender. New machines for this customer are picked up automatically from now on.`));
 });
 
+
+// ── Customers & packages: the ONE mapping surface ───────────────────────────────
+// Terry, 18 Aug: "in admins intergrations we map packages and customers". So this is
+// reached from Integrations and holds the whole of the configuration: which GravityZone
+// company each customer is, which installation package they deploy, and whether Endpoint
+// Security is on for them. Nothing else about this integration needs configuring.
+router.get('/security/mapping', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const summaries = await customerSummaries();
+
+  // Companies are read once; packages are read per COMPANY (not per customer) so two
+  // customers in the same company cost one call, and a company that cannot be read does
+  // not take the page down with it.
+  const companies = (await pool.query(
+    `SELECT sc.gz_id, sc.name, sc.customer_id FROM security_companies sc ORDER BY sc.name`)).rows;
+
+  const pkgByCompany = new Map<string, string[]>();
+  const warnings: string[] = [];
+  for (const c of companies) {
+    if (!c.customer_id) continue;
+    if (pkgByCompany.has(String(c.gz_id))) continue;
+    try {
+      const list = await listPackages(Number(c.customer_id));
+      pkgByCompany.set(String(c.gz_id), list.map((p) => p.name));
+    } catch (e: any) {
+      pkgByCompany.set(String(c.gz_id), []);
+      if (warnings.length < 8) warnings.push(`${c.name}: ${e.message}`);
+    }
+  }
+
+  res.render('security/mapping', {
+    user: req.session.user!,
+    configured: await gzConfigured(),
+    rows: summaries,
+    companies,
+    packagesByCompany: Object.fromEntries(pkgByCompany),
+    warnings,
+    notice: req.query.msg || null, error: req.query.err || null,
+  });
+});
+
 // ── One customer, one screen ────────────────────────────────────────────────────
 // Terry, 18 Aug: "we simple need to enable the customer for Endpoint Security - then
 // deploy to all devices - we need a screen where we can see the progress of install IE
@@ -304,30 +323,6 @@ router.get('/security/customer/:id', requireAuth, async (req: Request, res: Resp
   });
 });
 
-/** Enable (or disable) Endpoint Security for a customer. */
-router.post('/security/customer/:id/enable', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const customerId = parseInt(String(req.params.id), 10);
-  const on = String(req.body.on) === '1';
-  await setCustomerScope(customerId, on ? true : false);
-  await logActivity(req.session.user!.id, 'security_scope', 'customers', customerId,
-    `Endpoint Security ${on ? 'enabled' : 'disabled'} for customer ${customerId}`);
-
-  // Enabling is the moment to build the package, so "Deploy to all" is never the click
-  // that discovers the package does not exist yet.
-  // Enabling no longer CREATES a package — Terry builds those in GravityZone. It tries to
-  // resolve one, and if it cannot, says so plainly rather than inventing one.
-  let extra = '';
-  if (on) {
-    try { const p = await resolvePackage(customerId, req.session.user!.id);
-          extra = p.readyWindows
-            ? ` Using the "${p.packageName}" package.`
-            : ` Using "${p.packageName}" — Bitdefender is still building the installer, give it a minute.`; }
-    catch (e: any) { extra = ' ' + e.message; }
-  }
-  res.redirect(`/security/customer/${customerId}?msg=` +
-    encodeURIComponent(`Endpoint Security ${on ? 'enabled' : 'disabled'}.${extra}`));
-});
-
 /** Deploy to every eligible machine. */
 router.post('/security/customer/:id/deploy', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const customerId = parseInt(String(req.params.id), 10);
@@ -356,18 +351,24 @@ router.post('/security/customer/:id/deploy', requireAuth, requireAdmin, async (r
 router.post('/security/customer/:id/package', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const customerId = parseInt(String(req.params.id), 10);
   const name = String(req.body.package_name || '').trim();
+  const back = String(req.body.back || ('/security/customer/' + customerId));
   try {
+    if (!name) {
+      await pool.query(`DELETE FROM security_packages WHERE customer_id=$1`, [customerId]);
+      res.redirect(back + '?msg=' + encodeURIComponent('Package mapping cleared.'));
+      return;
+    }
     if (name === '__create__') {
       const p = await createPackage(customerId, req.session.user!.id);
-      res.redirect(`/security/customer/${customerId}?msg=` + encodeURIComponent(
+      res.redirect(back + '?msg=' + encodeURIComponent(
         `Created and mapped "${p.packageName}".` + (p.readyWindows ? '' : ' Bitdefender is still building it.')));
       return;
     }
     const p = await mapPackage(customerId, name, req.session.user!.id);
-    res.redirect(`/security/customer/${customerId}?msg=` + encodeURIComponent(
+    res.redirect(back + '?msg=' + encodeURIComponent(
       `Deploying from "${p.packageName}".` + (p.readyWindows ? ' Installer ready.' : ' Bitdefender is still building it.')));
   } catch (e: any) {
-    res.redirect(`/security/customer/${customerId}?err=` + encodeURIComponent(e.message));
+    res.redirect(back + '?err=' + encodeURIComponent(e.message));
   }
 });
 

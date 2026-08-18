@@ -1,0 +1,108 @@
+<%- include('../partials/header', { title: 'Bitdefender — customers & packages', user }) %>
+<%
+  // Which GravityZone company is already claimed by which customer, so the pickers can
+  // say so rather than letting two customers be pointed at the same company by accident.
+  var claimed = {};
+  companies.forEach(function(c){ if (c.customer_id) claimed[c.gz_id] = Number(c.customer_id); });
+%>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--accent),var(--violet));margin-bottom:14px;">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">&larr; Integrations</a></p>
+  <p class="doc-kicker">Bitdefender GravityZone</p>
+  <h1>Customers &amp; packages</h1>
+  <p class="doc-sub">Map each customer to their GravityZone company and the installation package they deploy.
+    <strong>Mapping both is what enables a customer</strong> &mdash; there is no separate switch, because the
+    mapping already says which company and which installer, which is the whole of the decision.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+<% (warnings || []).forEach(function(w){ %>
+  <div class="alert alert-error" style="margin-bottom:10px;">Could not read packages &mdash; <%= w %></div>
+<% }); %>
+
+<% if (!configured) { %>
+<div class="card" style="border-left:3px solid var(--warn-fg);margin-bottom:14px;">
+  <h3 style="margin-top:0;">No API key yet</h3>
+  <p class="muted" style="font-size:13px;margin:0 0 10px;">Nothing can be mapped until the Portal can read your tenant.</p>
+  <a class="btn btn-primary" href="/security/settings">Add the API key</a>
+</div>
+<% } %>
+
+<div class="card" style="padding:0;border-top:3px solid var(--accent);">
+  <div class="table-wrap">
+    <table class="table table-lift">
+      <thead><tr>
+        <th>Customer</th><th>GravityZone company</th><th>Installation package</th><th>Status</th>
+      </tr></thead>
+      <tbody>
+        <% rows.forEach(function(r){
+             var pkgs = (packagesByCompany[r.gzCompanyId] || []);
+        %>
+        <tr class="<%= r.enabled ? 're-ok' : (r.gzCompanyId ? 're-warn' : '') %>">
+          <td>
+            <a class="row-link" href="/security/customer/<%= r.customerId %>" style="font-weight:650;"><%= r.customerName %></a>
+            <div class="muted" style="font-size:11.5px;"><%= r.devices %> machine<%= r.devices === 1 ? '' : 's' %></div>
+          </td>
+
+          <td>
+            <form method="post" action="/security/companies/map" style="display:flex;gap:6px;align-items:center;margin:0;">
+              <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+              <input type="hidden" name="customer_id" value="<%= r.customerId %>">
+              <select class="input" name="gz_id" style="width:auto;font-size:12.5px;" onchange="this.form.submit();">
+                <option value="">&mdash; not mapped &mdash;</option>
+                <% companies.forEach(function(c){
+                     var takenBy = claimed[c.gz_id];
+                     var mine = takenBy === r.customerId;
+                     if (takenBy && !mine) return;   // already another customer's company
+                %>
+                <option value="<%= c.gz_id %>" <%= mine ? 'selected' : '' %>><%= c.name %></option>
+                <% }); %>
+              </select>
+            </form>
+          </td>
+
+          <td>
+            <% if (!r.gzCompanyId) { %>
+              <span class="muted" style="font-size:12.5px;">map a company first</span>
+            <% } else { %>
+            <form method="post" action="/security/customer/<%= r.customerId %>/package" style="display:flex;gap:6px;align-items:center;margin:0;">
+              <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+              <input type="hidden" name="back" value="/security/mapping">
+              <select class="input" name="package_name" style="width:auto;font-size:12.5px;" onchange="this.form.submit();">
+                <option value="">&mdash; not mapped &mdash;</option>
+                <% pkgs.forEach(function(n){ %>
+                <option value="<%= n %>" <%= r.packageName === n ? 'selected' : '' %>><%= n %></option>
+                <% }); %>
+              </select>
+            </form>
+            <% if (!pkgs.length) { %>
+              <div class="muted" style="font-size:11px;">none in GravityZone for this company yet</div>
+            <% } else if (r.packageName && !r.packageReady) { %>
+              <div style="font-size:11px;color:var(--warn-fg);">installer still building</div>
+            <% } %>
+            <% } %>
+          </td>
+
+          <td style="font-size:12.5px;">
+            <% if (r.enabled) { %>
+              <span style="color:var(--ok);font-weight:600;">Ready to deploy</span>
+            <% } else { %>
+              <span class="muted"><%= r.blocker || 'not mapped' %></span>
+            <% } %>
+          </td>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<p class="muted" style="font-size:12px;margin:12px 0 0;">
+  Companies appear here once they exist in GravityZone &mdash; which happens when the Bitdefender service is added
+  to that customer in Giacom Cloud Market. Packages are the ones you built under <em>Network &rarr; Packages</em>.
+  A company already mapped to another customer is not offered twice.
+  <strong>Check each package removes existing antivirus</strong>, or the old product stays put alongside Bitdefender.
+</p>
+
+<%- include('../partials/footer') %>

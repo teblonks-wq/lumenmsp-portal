@@ -100,23 +100,24 @@ export async function mapPackage(customerId: number, packageName: string, userId
 }
 
 /**
- * The package to deploy from, resolved without guessing.
- *
- * Mapped already → use it. Not mapped but the company has exactly ONE package → adopt it,
- * because there is nothing to choose between. Anything else refuses and says what to do:
- * with several packages the choice is Terry's, and picking one for him could deploy the
- * wrong modules or, worse, a package that does not remove the existing antivirus.
+ * The package to deploy from. Mapped already → use it. Otherwise REFUSE and say what to
+ * pick, because since the mapping is what enables a customer, choosing one for them would
+ * be enabling them.
  */
 export async function resolvePackage(customerId: number, userId: number | null = null): Promise<PackageState> {
   const saved = (await pool.query(`SELECT * FROM security_packages WHERE customer_id=$1`, [customerId])).rows[0];
   if (saved?.package_name) return refreshLinks(customerId, String(saved.gz_company_id), String(saved.package_name), userId);
 
+  // NOT adopted automatically, even when the company has exactly one package. Since the
+  // mapping is now what enables a customer, auto-adopting would let a sync quietly enable
+  // a customer nobody had chosen — which is precisely what the old enable switch existed
+  // to prevent. Mapping stays a deliberate human act; it is one click on the mapping page.
   const available = await listPackages(customerId);
-  if (available.length === 1) return mapPackage(customerId, available[0].name, userId);
   if (!available.length) {
     throw new Error('No installation packages exist in that company in GravityZone yet — create one there, then map it here.');
   }
-  throw new Error(`That company has ${available.length} packages in GravityZone — choose which one this customer deploys.`);
+  throw new Error(`No package mapped for this customer. That company has ${available.length} ` +
+    `in GravityZone (${available.map((p) => p.name).join(', ')}) — pick one under Integrations.`);
 }
 
 /**
@@ -463,6 +464,82 @@ export async function rolloutFor(customerId: number): Promise<RolloutRow[]> {
     if (r.state === 'failed') return { ...base, state: 'failed', detail: r.last_error || 'The last attempt failed.' };
     if (!names.length) return { ...base, state: 'not-deployed', detail: 'Agent is on, but it has not reported its AV yet.' };
     return { ...base, state: 'not-deployed', detail: `Currently on ${currentAv}.` };
+  });
+}
+
+export interface CustomerSummary {
+  customerId: number; customerName: string;
+  enabled: boolean; enabledReason: string;
+  gzCompanyId: string | null; gzCompanyName: string | null;
+  packageName: string | null; packageReady: boolean;
+  devices: number; protectedCount: number; installing: number; notDeployed: number;
+  failed: number; infected: number; noAgent: number;
+  ready: boolean;          // everything wired up and able to deploy
+  blocker: string | null;  // the ONE thing stopping this customer, if any
+}
+
+/**
+ * One row per customer, which is the level people actually work at.
+ *
+ * Terry, 18 Aug: "we do not need an estate view with big list of devices." He is right —
+ * 236 device rows across every customer is a list nobody reads. What you want to know is
+ * which customers are done, which are mid-rollout, and which are blocked and on what. The
+ * device detail lives one click away on that customer's own screen.
+ *
+ * Counting is done in SQL rather than by walking rolloutFor() per customer: this is the
+ * landing page, and it must not fire an API call or a query storm to draw itself.
+ */
+export async function customerSummaries(): Promise<CustomerSummary[]> {
+  const rows = (await pool.query(
+    `SELECT c.id, c.name,
+            sc.gz_id, sc.name AS company_name,
+            sp.package_name, COALESCE(sp.ready_windows, false) AS package_ready,
+            COUNT(a.id)::int                                                  AS devices,
+            COUNT(*) FILTER (WHERE se.gz_id IS NOT NULL AND NOT se.infected)::int AS protected_count,
+            COUNT(*) FILTER (WHERE se.infected)::int                          AS infected,
+            COUNT(*) FILTER (WHERE se.gz_id IS NULL AND dep.state IN ('queued','running'))::int AS installing,
+            COUNT(*) FILTER (WHERE se.gz_id IS NULL AND dep.state = 'failed')::int AS failed,
+            COUNT(*) FILTER (WHERE a.agent_device_id IS NULL)::int             AS no_agent
+       FROM customers c
+       LEFT JOIN security_companies sc ON sc.customer_id = c.id
+       LEFT JOIN security_packages  sp ON sp.customer_id = c.id
+       LEFT JOIN customer_assets a ON a.customer_id = c.id AND a.merged_into_id IS NULL
+       LEFT JOIN agent_devices d ON d.id = a.agent_device_id AND NOT COALESCE(d.revoked,false)
+       LEFT JOIN security_deployments dep ON dep.device_id = d.id
+       LEFT JOIN security_endpoints se ON se.asset_id = a.id
+      WHERE NOT c.is_placeholder AND c.status <> 'inactive'
+      GROUP BY c.id, c.name, sc.gz_id, sc.name, sp.package_name, sp.ready_windows
+      ORDER BY c.name`)).rows;
+
+  return rows.map((r: any) => {
+    // Enabled == mapped. Company AND package, both chosen by a human. See customerEnabled().
+    const enabled = !!r.gz_id && !!r.package_name;
+    const devices = Number(r.devices || 0);
+    const prot = Number(r.protected_count || 0);
+    const infected = Number(r.infected || 0);
+    const installing = Number(r.installing || 0);
+    const failed = Number(r.failed || 0);
+    const noAgent = Number(r.no_agent || 0);
+    const notDeployed = Math.max(0, devices - prot - infected - installing - failed - noAgent);
+
+    // ONE blocker, in the order you would actually hit them. A list of six things wrong
+    // is a list nobody acts on; the next thing to do is what belongs on the screen.
+    let blocker: string | null = null;
+    if (!r.gz_id) blocker = 'no GravityZone company mapped';
+    else if (!r.package_name) blocker = 'no installation package mapped';
+    else if (!r.package_ready) blocker = 'installer still building';
+    else if (!devices) blocker = 'no machines on record';
+
+    return {
+      customerId: Number(r.id), customerName: String(r.name),
+      enabled,
+      enabledReason: enabled ? 'company and package mapped'
+        : (!r.gz_id ? 'no company mapped' : 'no package mapped'),
+      gzCompanyId: r.gz_id || null, gzCompanyName: r.company_name || null,
+      packageName: r.package_name || null, packageReady: !!r.package_ready,
+      devices, protectedCount: prot, installing, notDeployed, failed, infected, noAgent,
+      ready: !blocker, blocker,
+    };
   });
 }
 

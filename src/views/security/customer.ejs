@@ -24,7 +24,9 @@
     excluded:       { label: 'Held back',     cls: 're-dim'  },
   };
   var isAdmin = user.role === 'admin';
-  var enabled = customer.is_itsm;
+  // Enabled == mapped. A company AND a package, both chosen by a human on the mapping
+  // page. There is no separate switch, because the mapping already IS the decision.
+  var enabled = !!(company && pkg && pkg.package_name);
   var here = '/security/customer/' + customer.id;
 %>
 
@@ -34,18 +36,11 @@
     <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/security">&larr; Endpoint Security</a></p>
     <p class="doc-kicker">Bitdefender &middot; <%= customer.name %></p>
     <h1>Rollout</h1>
-    <p class="doc-sub">Enable the customer, deploy to every machine, and watch it land. A machine only reads
+    <p class="doc-sub">Map the company and the package, deploy, and watch it land. A machine only reads
       <strong>Protected</strong> when Bitdefender is on it <em>and</em> GravityZone has the endpoint.</p>
   </div>
   <% if (isAdmin) { %>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-    <form method="post" action="<%= here %>/enable" style="margin:0;">
-      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
-      <input type="hidden" name="on" value="<%= enabled ? '0' : '1' %>">
-      <button class="btn <%= enabled ? '' : 'btn-primary' %>" type="submit">
-        <%= enabled ? 'Disable Endpoint Security' : 'Enable Endpoint Security' %>
-      </button>
-    </form>
     <% if (enabled) { %>
     <form method="post" action="<%= here %>/deploy" style="margin:0;"
           onsubmit="return confirm('Deploy Bitdefender to every eligible machine for <%= customer.name %>?\n\nExisting antivirus is removed as part of the install.');">
@@ -64,8 +59,8 @@
 <p class="muted" style="font-size:12px;margin:10px 0 0;">
   <% if (!company) { %>
     <span style="color:var(--warn-fg);">Not linked to a GravityZone company yet.</span>
-    Add the Bitdefender service to this customer in Giacom, then map them on
-    <a class="row-link" href="/security/settings">the settings page</a>.
+    Add the Bitdefender service to this customer in Giacom, then map them under
+    <a class="row-link" href="/settings/integrations#bitdefender">Integrations</a>.
   <% } else { %>
     GravityZone company: <strong><%= company.name %></strong>.
     <% if (pkg) { %>Installer: <strong><%= pkg.package_name %></strong>,
@@ -74,10 +69,10 @@
 </p>
 </div>
 
-<%# The installation package is CHOSEN, not guessed. Terry builds packages in GravityZone —
-    a package carries real decisions (which modules, which scan mode, whether existing AV is
-    removed) and those belong where he can see them. The Portal will adopt one automatically
-    only when the company has exactly one, because then there is nothing to choose between. %>
+<%# The installation package is CHOSEN, never guessed - and choosing it is what ENABLES this
+    customer, so it is never done automatically. A package carries real decisions (which
+    modules, which scan mode, whether existing AV is removed) and those belong with the person
+    who made them. %>
 <% if (isAdmin && company) { %>
 <div class="card" style="margin-bottom:14px;<%= pkg ? '' : 'border-left:3px solid var(--warn-fg);' %>">
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
