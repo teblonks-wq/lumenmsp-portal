@@ -815,6 +815,27 @@ const AUTO_REMOVE = [
 /** Products that want taking off by hand — EDR/managed stacks with tamper protection. */
 const MANUAL = ['crowdstrike', 'sentinelone', 'carbon black', 'cylance', 'cortex', 'huntress', 'trellix', 'elastic', 'defender for endpoint'];
 
+/**
+ * The agent version the security collector first shipped in. Below this, a machine can be
+ * online, enrolled and perfectly healthy and still know nothing about its own AV — which
+ * is not "no agent", and is not something a refresh can fix.
+ */
+export const SECURITY_COLLECTOR_MIN = '1.0.24';
+
+/** Compare dotted versions numerically: '1.0.9' is older than '1.0.24', not newer. */
+export function versionLt(a: string | null | undefined, b: string): boolean {
+  if (!a) return false;                       // unknown version is not evidence of old
+  const pa = String(a).replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x < y;
+  }
+  return false;
+}
+
+export const agentTooOld = (v: string | null | undefined) => versionLt(v, SECURITY_COLLECTOR_MIN);
+
 export interface AssessRow {
   assetId: number | null; hostname: string; currentAv: string | null;
   category: 'clean' | 'auto_remove' | 'manual' | 'unknown'; plan: string;
@@ -852,7 +873,7 @@ export async function buildAssessment(customerId: number, userId: number | null)
   //   * agent live but no security report yet         → wait for the pass, or pull it now
   const rows = (await pool.query(
     `SELECT a.id AS asset_id, a.hostname, a.agent_device_id,
-            d.id AS device_id, COALESCE(d.revoked, false) AS revoked, d.security_json,
+            d.id AS device_id, COALESCE(d.revoked, false) AS revoked, d.security_json, d.agent_version,
             (SELECT gz_id FROM security_endpoints se WHERE se.asset_id = a.id LIMIT 1) AS gz_id,
             (SELECT ad.id FROM agent_devices ad
               WHERE ad.customer_id = a.customer_id
@@ -877,6 +898,14 @@ export async function buildAssessment(customerId: number, userId: number | null)
       let plan: string;
       if (r.device_id && r.revoked) {
         plan = 'The agent on this machine has been revoked — re-enrol it, then this can be assessed.';
+      } else if (r.device_id && agentTooOld(r.agent_version)) {
+        // The case that actually bit. LITS-010 is online and checking in, but on v1.0.23
+        // — and the security collector only arrived in v1.0.24. Telling someone to press
+        // "Refresh from device" here would be a second wrong instruction: the agent has
+        // nothing to refresh WITH. The fix is the agent update, not the machine.
+        plan = `The agent here is ${r.agent_version} — the security collector arrived in `
+             + `v${SECURITY_COLLECTOR_MIN}. This machine reports nothing about AV until it updates, `
+             + 'so the agent rollout has to land before the assessment means anything.';
       } else if (r.device_id) {
         plan = 'Agent is on and enrolled, but it has not sent a security report yet. That arrives on the '
              + 'daily pass; "Refresh from device" on the machine\'s Security tab pulls it now.';
