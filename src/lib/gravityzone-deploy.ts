@@ -1,5 +1,5 @@
 import { pool } from '../db/pool';
-import { rpc, gzConfigured, findKeyPath, atPath, customerEnabled } from './gravityzone';
+import { rpc, gzConfigured, findKeyPath, atPath, customerEnabled, isOwnToolDetection } from './gravityzone';
 import { logActivity } from './activity';
 
 // ─────────────────────────────────────────────────────────────────────────────────
@@ -546,6 +546,8 @@ export async function customerSummaries(): Promise<CustomerSummary[]> {
 export interface InfectionRow {
   hostname: string | null; threat: string | null; detail: string | null;
   ticketId: number | null; detectedAt: Date | null; assetId: number | null;
+  /** One of OUR tools flagged, not a threat — an exclusion to add, not a case to work. */
+  ownTool: boolean;
 }
 
 /** Infections for one customer — deduped detections, newest first, with their case. */
@@ -562,7 +564,60 @@ export async function infectionsFor(customerId: number): Promise<InfectionRow[]>
     ticketId: x.ticket_id ? Number(x.ticket_id) : null,
     detectedAt: x.detected_at || null,
     assetId: x.asset_id ? Number(x.asset_id) : null,
+    ownTool: isOwnToolDetection(x.threat_name, x.detail),
   }));
+}
+
+export interface InfectedDevice {
+  customerId: number | null; customerName: string | null;
+  assetId: number | null; deviceId: number | null;
+  hostname: string; gzId: string;
+  policyName: string | null; lastSeenAt: Date | null;
+  threat: string | null; detail: string | null; detectedAt: Date | null; ticketId: number | null;
+  ownTool: boolean;
+}
+
+/**
+ * Every infected machine across the estate, with the threat and the case.
+ *
+ * Terry, 18 Aug: "it does say one is infected. Love to know which one that is because
+ * that's not clickable." A count you cannot open is a count you cannot act on, so the
+ * tile now leads here. Sorted real threats first — the one that matters must not be
+ * pushed off the top by a shelf of our own tooling.
+ */
+export async function infectedDevices(): Promise<InfectedDevice[]> {
+  const rows = (await pool.query(
+    `SELECT se.gz_id, se.name, se.policy_name, se.last_seen_at, se.asset_id,
+            se.customer_id, c.name AS customer_name,
+            a.agent_device_id AS device_id,
+            d.threat_name, d.detail, d.detected_at, d.ticket_id
+       FROM security_endpoints se
+       LEFT JOIN customers c ON c.id = se.customer_id
+       LEFT JOIN customer_assets a ON a.id = se.asset_id
+       LEFT JOIN LATERAL (
+         SELECT sd.threat_name, sd.detail, sd.detected_at, sd.ticket_id
+           FROM security_detections sd
+          WHERE sd.endpoint_gz_id = se.gz_id
+          ORDER BY sd.detected_at DESC LIMIT 1
+       ) d ON true
+      WHERE se.infected
+      ORDER BY c.name NULLS LAST, se.name`)).rows;
+
+  return rows.map((r: any) => ({
+    customerId: r.customer_id ? Number(r.customer_id) : null,
+    customerName: r.customer_name || null,
+    assetId: r.asset_id ? Number(r.asset_id) : null,
+    deviceId: r.device_id ? Number(r.device_id) : null,
+    hostname: String(r.name || '(unnamed)'),
+    gzId: String(r.gz_id),
+    policyName: r.policy_name || null,
+    lastSeenAt: r.last_seen_at || null,
+    threat: r.threat_name || null,
+    detail: r.detail || null,
+    detectedAt: r.detected_at || null,
+    ticketId: r.ticket_id ? Number(r.ticket_id) : null,
+    ownTool: isOwnToolDetection(r.threat_name, r.detail),
+  })).sort((a, b) => Number(a.ownTool) - Number(b.ownTool));
 }
 
 // ── Exclusions ──────────────────────────────────────────────────────────────────
@@ -575,13 +630,37 @@ export async function infectionsFor(customerId: number): Promise<InfectionRow[]>
 // enough to be useful straight away: the Portal can say which policies are missing the
 // agent exclusion, which is the difference between "we think it's fine" and knowing.
 
-/** Paths that must be excluded for our own agent to survive. */
-export const AGENT_EXCLUSION_HINTS = ['LumenMSP', 'LumenAgentService'];
+/**
+ * Paths that must be excluded in every policy Lumen manages.
+ *
+ * Two products, not one. The LumenMSP agent is here because a security product holding
+ * our unsigned service past Windows' 30-second start window is what produced
+ * Chropynska's fleet-wide error 1920. The Mesh agent is here because Bitdefender's
+ * Hyper Detect files MeshCentral as Gen:Illusion.PUP.MeshCentral — Terry, 18 Aug:
+ * "this is my machine - not good if our chosen remote control is showing up as threat".
+ * The detection is not wrong, exactly: MeshCentral IS a remote-access tool, and PUP
+ * heuristics exist to catch remote-access tools. It is OURS, which is the whole of the
+ * difference, and the policy is the only place that difference can be written down.
+ */
+export const AGENT_EXCLUSION_HINTS = ['LumenMSP', 'LumenAgentService', 'Mesh Agent', 'MeshAgent'];
+
+/** The exact exclusions to add, in the words the GravityZone policy screen uses. */
+export const REQUIRED_EXCLUSIONS: Array<{ kind: string; value: string; why: string }> = [
+  { kind: 'Folder',  value: 'C:\\Program Files\\LumenMSP Agent', why: 'our RMM agent — service start timeout, error 1920' },
+  { kind: 'Process', value: 'C:\\Program Files\\LumenMSP Agent\\LumenAgentService.exe', why: 'our RMM agent service' },
+  { kind: 'Folder',  value: 'C:\\Program Files\\Mesh Agent', why: 'our remote control' },
+  { kind: 'Process', value: 'C:\\Program Files\\Mesh Agent\\MeshAgent.exe', why: 'filed as Gen:Illusion.PUP.MeshCentral by Hyper Detect' },
+];
+
+// isOwnToolDetection lives in gravityzone.ts because the SYNC needs it too — it is what
+// stops a detection on our own remote control from raising a support case.
 
 export interface PolicyExclusions {
   policyId: string; policyName: string;
   items: string[];
   agentExcluded: boolean;
+  /** Which of our own tools this policy does NOT exclude, in words. */
+  missing: string[];
   note: string;
 }
 
@@ -622,14 +701,24 @@ export async function policyExclusions(): Promise<{ policies: PolicyExclusions[]
       break;
     }
 
-    const agentExcluded = items.some((i) => AGENT_EXCLUSION_HINTS.some((h) => i.toLowerCase().includes(h.toLowerCase())));
+    // Which of OUR tools this policy protects, named individually. "agentExcluded: false"
+    // used to mean "one of the two hints is missing" without saying which — and with the
+    // Mesh agent added, a policy that covers the RMM agent but not the remote control is
+    // the likely state, so the missing one is the only part worth printing.
+    const has = (h: string) => items.some((i) => i.toLowerCase().includes(h.toLowerCase()));
+    const missing = [
+      has('LumenMSP') || has('LumenAgentService') ? null : 'the LumenMSP agent',
+      has('Mesh Agent') || has('MeshAgent') ? null : 'the Mesh remote control',
+    ].filter(Boolean) as string[];
+    const agentExcluded = missing.length === 0;
+
     out.push({
       policyId: String(p.id), policyName: String(p.name || p.id),
-      items, agentExcluded,
+      items, agentExcluded, missing,
       note: items.length
         ? (agentExcluded
-            ? 'The LumenMSP agent is excluded here.'
-            : 'No LumenMSP agent exclusion — add the agent folder and LumenAgentService.exe, On-Access and ATC.')
+            ? 'Both LumenMSP tools are excluded here.'
+            : `No exclusion for ${missing.join(' or ')} — add the folder and the .exe, On-Access and ATC.`)
         : 'No exclusions readable in this policy payload.',
     });
   }

@@ -10,7 +10,8 @@ import {
 import {
   resolvePackage, createPackage, listPackages, mapPackage, customerSummaries,
   queueDeploy, deployCustomer, rolloutFor, setExcluded,
-  infectionsFor, policyExclusions, reconcile as deployReconcile,
+  infectionsFor, infectedDevices, policyExclusions, reconcile as deployReconcile,
+  REQUIRED_EXCLUSIONS,
 } from '../lib/gravityzone-deploy';
 
 const router = Router();
@@ -30,28 +31,90 @@ const router = Router();
 // 236 device rows spanning every customer is a list nobody reads. What you need to know
 // here is which customers are done, which are mid-rollout, and which are blocked and on
 // what. The devices live one click away, on that customer's own screen.
+// Only ENROLLED customers. Terry, 18 Aug: "It almost needs to be that you only see the
+// customers that are enrolled, and then there's add customer... I don't wanna see a list
+// of customers that are not enabled, not mapped."
+//
+// He is right, and the old page proved it: Choose Leads sat in the list with a Deploy
+// button that could never work, because Choose Leads has no Bitdefender. A screen that
+// offers an action it will refuse is worse than a screen that does not mention it. So
+// the list is the customers who ARE on Bitdefender, and everything else is behind
+// "Add customer" — which is the mapping, which is the enablement.
 router.get('/security', requireAuth, async (req: Request, res: Response) => {
-  const rows = await customerSummaries();
+  const all = await customerSummaries();
+  const enrolled = all.filter((r) => r.enabled);
+
   const show = String(req.query.show || '');
-  const shown = show === 'enabled' ? rows.filter((r) => r.enabled)
-    : show === 'blocked' ? rows.filter((r) => r.enabled && r.blocker)
-    : show === 'todo' ? rows.filter((r) => r.enabled && r.notDeployed > 0)
-    : rows.filter((r) => r.enabled || r.devices > 0);
+  const rows = show === 'blocked' ? enrolled.filter((r) => r.blocker)
+    : show === 'todo' ? enrolled.filter((r) => r.notDeployed > 0)
+    : enrolled;
+
+  // Totals count the ENROLLED estate only. They used to count everybody, which meant
+  // "machines protected" quietly included customers who were not on the product.
+  const t = (f: (r: typeof enrolled[number]) => number) => enrolled.reduce((n, r) => n + f(r), 0);
 
   res.render('security/index', {
     user: req.session.user!,
     configured: await gzConfigured(),
     lastSync: await getSetting('gravityzone', 'last_sync'),
-    rows: shown, allRows: rows, show,
+    rows, enrolledCount: enrolled.length, show,
+    add: await addModel(),
     totals: {
-      enabled: rows.filter((r) => r.enabled).length,
-      protectedCount: rows.reduce((n, r) => n + r.protectedCount, 0),
-      installing: rows.reduce((n, r) => n + r.installing, 0),
-      notDeployed: rows.filter((r) => r.enabled).reduce((n, r) => n + r.notDeployed, 0),
-      failed: rows.reduce((n, r) => n + r.failed, 0),
-      infected: rows.reduce((n, r) => n + r.infected, 0),
-      blocked: rows.filter((r) => r.enabled && r.blocker).length,
+      enabled: enrolled.length,
+      protectedCount: t((r) => r.protectedCount),
+      installing: t((r) => r.installing),
+      notDeployed: t((r) => r.notDeployed),
+      failed: t((r) => r.failed),
+      infected: t((r) => r.infected),
+      blocked: enrolled.filter((r) => r.blocker).length,
     },
+    notice: req.query.msg || null, error: req.query.err || null,
+  });
+});
+
+/**
+ * What "Add customer" needs: the GravityZone companies, and our customers.
+ *
+ * Terry, 18 Aug: "that looks up the customers in Bet Defender. You select it, maps it to
+ * ours, and then adds it to the list."
+ *
+ * Companies already claimed are still returned, marked with who has them. They used to be
+ * filtered out entirely, and that is why "Lumen MSP is not even selectable from the list"
+ * — it was already mapped, so it vanished, which reads as missing rather than as done.
+ * The partner root is marked too: it is a real company, it is us, and packages cannot be
+ * read from it, so saying that up front is cheaper than the error afterwards.
+ */
+async function addModel() {
+  const companies = (await pool.query(
+    `SELECT sc.gz_id, sc.name, sc.customer_id, c.name AS customer_name,
+            COALESCE((sc.raw ->> '__ownCompany')::boolean, false) AS own_company
+       FROM security_companies sc
+       LEFT JOIN customers c ON c.id = sc.customer_id
+      ORDER BY sc.name`)).rows.map((r: any) => ({
+    gzId: String(r.gz_id), name: String(r.name),
+    customerId: r.customer_id ? Number(r.customer_id) : null,
+    customerName: r.customer_name || null,
+    ownCompany: !!r.own_company,
+  }));
+
+  const customers = (await pool.query(
+    `SELECT id, name FROM customers WHERE NOT is_placeholder AND status <> 'inactive' ORDER BY name`)).rows
+    .map((r: any) => ({ id: Number(r.id), name: String(r.name) }));
+
+  return { companies, customers, free: companies.filter((c) => !c.customerId).length };
+}
+
+// ── Which machine is infected ───────────────────────────────────────────────────
+// Terry, 18 Aug: "it does say one is infected. Love to know which one that is because
+// that's not clickable." Now it is, and it lands here.
+router.get('/security/infections', requireAuth, async (req: Request, res: Response) => {
+  const rows = await infectedDevices();
+  res.render('security/infections', {
+    user: req.session.user!,
+    rows,
+    real: rows.filter((r) => !r.ownTool).length,
+    ours: rows.filter((r) => r.ownTool).length,
+    requiredExclusions: REQUIRED_EXCLUSIONS,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
@@ -278,19 +341,24 @@ router.get('/security/mapping', requireAuth, requireAdmin, async (req: Request, 
     }
   }
 
-  // Default to the customers this page is actually about: mapped already, or with machines
-  // to protect. Everything else is 85 rows of "0 machines, not mapped" — the same big list
-  // Terry just had removed from the estate view. `?all=1` shows the lot.
-  const showAll = String(req.query.all || '') === '1';
-  const relevant = summaries.filter((r) => r.gzCompanyId || r.devices > 0);
+  // MAPPED customers only. Terry, 18 Aug: "I only wanna see companies in the list,
+  // customers and packages, now, that have a package. And then there needs to be an
+  // add company."
+  //
+  // The old page listed every customer with machines too, which put 85 rows of "not
+  // mapped, no package" in front of the handful that are actually configured — the same
+  // big list he had removed from the estate view, wearing a different hat. What belongs
+  // here is what IS configured, so a wrong mapping stands out. Adding is a deliberate act
+  // with its own control, not a side effect of scrolling far enough.
+  const rows = summaries.filter((r) => r.gzCompanyId);
 
   res.render('security/mapping', {
     user: req.session.user!,
     configured: await gzConfigured(),
-    rows: showAll ? summaries : relevant,
-    hiddenCount: showAll ? 0 : summaries.length - relevant.length,
-    showAll,
+    rows,
+    unmappedCount: summaries.length - rows.length,
     companies,
+    add: await addModel(),
     packagesByCompany: Object.fromEntries(pkgByCompany),
     packageErrors: Object.fromEntries(pkgError),
     notice: req.query.msg || null, error: req.query.err || null,
@@ -329,6 +397,7 @@ router.get('/security/customer/:id', requireAuth, async (req: Request, res: Resp
 
   res.render('security/customer', {
     user: req.session.user!, customer: cust, tab, rows, infections, exclusions, company, pkg, packages,
+    requiredExclusions: REQUIRED_EXCLUSIONS,
     counts: rows.reduce((m: Record<string, number>, r) => { m[r.state] = (m[r.state] || 0) + 1; return m; }, {}),
     notice: req.query.msg || null, error: req.query.err || null,
   });

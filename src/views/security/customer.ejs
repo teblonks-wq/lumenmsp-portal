@@ -206,12 +206,26 @@
 
 <% if (tab === 'exclusions') { %>
 <div class="card" style="margin-bottom:14px;border-left:3px solid var(--warn-fg);">
-  <h3 style="margin-top:0;">Our own agent must be excluded</h3>
-  <p class="muted" style="font-size:13px;margin:0;">
-    A security product holding the LumenMSP agent past Windows' 30-second service-start window is exactly what
-    produced Chropynska's fleet-wide error 1920. Every policy we manage should exclude the agent's folder and
-    <strong>LumenAgentService.exe</strong>, On-Access <em>and</em> ATC.
+  <h3 style="margin-top:0;">Our own tools must be excluded</h3>
+  <p class="muted" style="font-size:13px;margin:0 0 10px;">
+    Two products, for two different reasons. A security product holding the <strong>LumenMSP agent</strong> past
+    Windows' 30-second service-start window is exactly what produced Chropynska's fleet-wide error 1920. And
+    Hyper Detect files our <strong>Mesh remote control</strong> as <code>Gen:Illusion.PUP.MeshCentral</code> &mdash;
+    a fair heuristic against a remote-access tool, and the wrong answer for the one we chose.
+    Tick On-Access <em>and</em> ATC for each: ATC is what produces the Hyper Detect hit.
   </p>
+  <div class="table-wrap">
+    <table class="table table-lift">
+      <thead><tr><th>Type</th><th>Path</th><th>Why</th></tr></thead>
+      <tbody>
+        <% (typeof requiredExclusions !== 'undefined' ? requiredExclusions : []).forEach(function(x){ %>
+        <tr><td style="font-size:12.5px;"><%= x.kind %></td>
+            <td><code style="font-size:12px;"><%= x.value %></code></td>
+            <td class="muted" style="font-size:12px;"><%= x.why %></td></tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
 </div>
 <% (exclusions.warnings || []).forEach(function(w){ %>
   <div class="alert alert-error" style="margin-bottom:10px;"><%= w %></div>

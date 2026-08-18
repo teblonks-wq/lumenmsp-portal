@@ -1,0 +1,110 @@
+<%- include('../partials/header', { title: 'Endpoint Security — flagged machines', user }) %>
+<%
+  function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—'; }
+  var real = rows.filter(function(r){ return !r.ownTool; });
+  var ourTools = rows.filter(function(r){ return r.ownTool; });
+%>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--bad-fg),var(--violet));margin-bottom:14px;">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/security">&larr; Endpoint Security</a></p>
+  <p class="doc-kicker">Bitdefender detections</p>
+  <h1>Flagged machines</h1>
+  <p class="doc-sub">Every machine GravityZone currently reports as infected, and what it found.
+    Our own tools are separated out &mdash; a detection on software we chose is an exclusion to add,
+    not an incident to work.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div class="stat-band">
+  <div class="tile"><span class="n <%= real.length ? 'bad' : 'good' %>" style="display:block;"><%= real.length %></span><span class="l" style="display:block;">real detections</span></div>
+  <div class="tile"><span class="n <%= ourTools.length ? 'warn' : '' %>" style="display:block;"><%= ourTools.length %></span><span class="l" style="display:block;">our own tools flagged</span></div>
+</div>
+
+<% if (!rows.length) { %>
+  <div class="card" style="margin-top:14px;"><div class="empty-state">Nothing flagged. GravityZone reports every machine clean.</div></div>
+<% } %>
+
+<% if (real.length) { %>
+<h3 style="margin:18px 0 8px;">Detections</h3>
+<div class="card" style="padding:0;border-top:3px solid var(--bad-fg);">
+  <div class="table-wrap">
+    <table class="table table-lift">
+      <thead><tr><th>Machine</th><th>Customer</th><th>Threat</th><th>Policy</th><th>Seen</th><th>Case</th></tr></thead>
+      <tbody>
+        <% real.forEach(function(r){ %>
+        <tr class="re-bad">
+          <td>
+            <% if (r.assetId) { %><a class="row-link" href="/assets/<%= r.assetId %>" style="font-weight:650;"><%= r.hostname %></a>
+            <% } else { %><strong><%= r.hostname %></strong><% } %>
+          </td>
+          <td><% if (r.customerId) { %><a class="row-link" href="/security/customer/<%= r.customerId %>?tab=infections"><%= r.customerName %></a><% } else { %><span class="muted">unattributed</span><% } %></td>
+          <td style="font-size:12.5px;"><%= r.threat || 'reported infected, threat not named' %></td>
+          <td class="muted" style="font-size:12px;"><%= r.policyName || '—' %></td>
+          <td class="muted" style="font-size:12px;"><%= dt(r.detectedAt || r.lastSeenAt) %></td>
+          <td><% if (r.ticketId) { %><a class="row-link" href="/inbox/<%= r.ticketId %>">open case</a><% } else { %><span class="muted">—</span><% } %></td>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+<% } %>
+
+<% if (ourTools.length) { %>
+<h3 style="margin:22px 0 8px;">Our own tools &mdash; needs a policy exclusion</h3>
+<div class="card" style="border-top:3px solid var(--warn-fg);">
+  <p style="font-size:13px;margin:0 0 10px;">
+    Bitdefender's Hyper Detect files our own remote control as a potentially unwanted program.
+    It is not a wrong call in general &mdash; MeshCentral <em>is</em> a remote-access tool, and that is exactly what
+    PUP detection is for &mdash; but it is <strong>ours</strong>, and the policy is the only place that difference can
+    be written down. These raise no support case, deliberately: a case every sync for software we chose teaches
+    everyone to close Bitdefender cases unread, and the real one would go out with them.
+  </p>
+
+  <div class="table-wrap" style="margin-bottom:14px;">
+    <table class="table table-lift">
+      <thead><tr><th>Machine</th><th>Customer</th><th>Flagged as</th><th>Policy</th><th>Seen</th></tr></thead>
+      <tbody>
+        <% ourTools.forEach(function(r){ %>
+        <tr class="re-warn">
+          <td><% if (r.assetId) { %><a class="row-link" href="/assets/<%= r.assetId %>" style="font-weight:650;"><%= r.hostname %></a><% } else { %><strong><%= r.hostname %></strong><% } %></td>
+          <td><% if (r.customerId) { %><a class="row-link" href="/security/customer/<%= r.customerId %>"><%= r.customerName %></a><% } else { %><span class="muted">unattributed</span><% } %></td>
+          <td style="font-size:12.5px;"><%= r.threat || '—' %></td>
+          <td class="muted" style="font-size:12px;"><%= r.policyName || '—' %></td>
+          <td class="muted" style="font-size:12px;"><%= dt(r.detectedAt || r.lastSeenAt) %></td>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+
+  <h4 style="margin:0 0 6px;">Add these to every policy Lumen manages</h4>
+  <p class="muted" style="font-size:12px;margin:0 0 8px;">
+    GravityZone &rarr; Policies &rarr; <em>your policy</em> &rarr; Antimalware &rarr; Settings &rarr; Exclusions.
+    Tick <strong>both</strong> On-Access and Advanced Threat Control for each &mdash; ATC is what produces the
+    Hyper Detect hit, so an On-Access-only exclusion does not stop it.
+  </p>
+  <div class="table-wrap">
+    <table class="table table-lift">
+      <thead><tr><th>Type</th><th>Path</th><th>Why</th></tr></thead>
+      <tbody>
+        <% requiredExclusions.forEach(function(x){ %>
+        <tr><td style="font-size:12.5px;"><%= x.kind %></td>
+            <td><code style="font-size:12px;"><%= x.value %></code></td>
+            <td class="muted" style="font-size:12px;"><%= x.why %></td></tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+  <p class="muted" style="font-size:12px;margin:10px 0 0;">
+    The Portal audits this: any policy missing one of them is named on a customer's
+    <strong>Exclusions</strong> tab. The LumenMSP agent entries are not optional either &mdash; a security
+    product holding our unsigned service past Windows' 30-second start window is what produced
+    Chropynska's fleet-wide error 1920.
+  </p>
+</div>
+<% } %>
+
+<%- include('../partials/footer') %>

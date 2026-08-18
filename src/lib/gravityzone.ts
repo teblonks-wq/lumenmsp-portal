@@ -422,6 +422,26 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
     } catch { /* no companies service at all — folders below carry the boundary */ }
   }
 
+  // ── Us ────────────────────────────────────────────────────────────────────────
+  // getCompaniesList returns the companies we MANAGE. It does not return us. So Lumen
+  // IT Solutions never appeared in the picker and our own estate had nowhere to be
+  // mapped — Terry, 18 Aug: "why is LITS not available? Actually it's not in that list.
+  // Well, do I have to add myself then?" No: getCompanyDetails with no companyId is the
+  // caller's own company, and that is the partner root our own machines sit in.
+  //
+  // It is flagged, because the root is not a managed company: packages/getPackagesList
+  // answers "Id of a managed company is expected" for it. The picker says so on the row
+  // rather than letting that error be discovered after mapping.
+  try {
+    const own = await rpcAny<any>([['companies', 'getCompanyDetails'], ['network', 'getCompanyDetails']], {});
+    const ownId = s(own.result?.id);
+    if (ownId) {
+      const at = companies.findIndex((c) => s(c.id) === ownId);
+      if (at >= 0) companies[at] = { ...companies[at], ...own.result, __ownCompany: true };
+      else companies.push({ ...own.result, __ownCompany: true });
+    }
+  } catch { /* not fatal — the managed list is still the useful part */ }
+
   // Groups. On a single-company tenant these ARE the per-customer boundary, so they
   // are synced as groupings too and can be mapped to customers exactly the same way.
   if (!partnerTenant) {
@@ -630,7 +650,18 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
         if (!existing.rows.length) {
           out.detections++;
           let ticketId: number | null = null;
-          try {
+          // Our own tools are not an incident. Bitdefender's Hyper Detect files our
+          // remote control as Gen:Illusion.PUP.MeshCentral, which is a fair heuristic
+          // and the wrong answer: it is ours. Raising a support case for it every sync
+          // would train everyone to close Bitdefender cases unread, and the one that
+          // mattered would go with them. Recorded, shown, and given the fix — but no
+          // case, because there is nothing for support to do that a policy exclusion
+          // does not do better.
+          const ownTool = isOwnToolDetection(threat, s(malware.detectionPath), s(e.policy?.name));
+          if (ownTool) {
+            out.warnings.push(`${name}: "${threat}" is one of our own tools — add the exclusion to policy "${s(e.policy?.name) || 'unknown'}" rather than treating it as an infection.`);
+          }
+          if (!ownTool) try {
             const tn = await nextTicketNumber();
             const subject = `[Bitdefender] ${threat} on ${name}`.slice(0, 160);
             const esc = (x: string) => x.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' } as any)[c]);
@@ -964,6 +995,27 @@ export async function inScopeCustomers(): Promise<Array<{ id: number; name: stri
     if (on.has(String(id))) return { id, name: c.name, inScope: true, reason: 'included by hand' };
     return { id, name: c.name, inScope: !!c.is_itsm, reason: c.is_itsm ? 'Managed IT customer' : 'not a Managed IT customer' };
   });
+}
+
+// ── Our own tools are not malware ───────────────────────────────────────────────
+// Bitdefender's Hyper Detect files MeshCentral as Gen:Illusion.PUP.MeshCentral. It is
+// not a bad heuristic — MeshCentral IS a remote-access tool, and PUP detection exists to
+// find remote-access tools nobody authorised. It is OURS, which is the whole of the
+// difference, and a policy exclusion is the only place that difference can be recorded.
+//
+// Terry, 18 Aug, on his own machine: "not good if our chosen remote control is showing
+// up as threat."
+//
+// So these detections are recorded and shown, but they do not raise a support case. A
+// case raised every sync for a tool we chose teaches everyone to close Bitdefender cases
+// unread — and the real one would go out with them. Deliberately matched BY NAME rather
+// than by the PUP category, so an unauthorised remote-access tool on a customer's machine
+// still raises a case exactly as it does today.
+const OWN_TOOL_PATTERNS = [/meshcentral/i, /mesh\s*agent/i, /lumenmsp/i, /lumenagentservice/i];
+
+export function isOwnToolDetection(...parts: Array<string | null | undefined>): boolean {
+  const hay = parts.filter(Boolean).join(' ');
+  return OWN_TOOL_PATTERNS.some((re) => re.test(hay));
 }
 
 /**

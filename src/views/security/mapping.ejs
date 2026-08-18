@@ -1,18 +1,35 @@
 <%- include('../partials/header', { title: 'Bitdefender — customers & packages', user }) %>
 <%
-  // Which GravityZone company is already claimed by which customer, so the pickers can
-  // say so rather than letting two customers be pointed at the same company by accident.
-  var claimed = {};
-  companies.forEach(function(c){ if (c.customer_id) claimed[c.gz_id] = Number(c.customer_id); });
+  // Which GravityZone company is already claimed by which customer. The pickers SHOW
+  // these rather than dropping them: a company that vanishes from the list looks like a
+  // company that does not exist, which is exactly how "Lumen MSP is not even selectable
+  // from the list" happened. Greyed out and labelled with who has it is the honest answer.
+  var claimed = {}, claimedBy = {}, ownCompany = {};
+  add.companies.forEach(function(c){
+    if (c.customerId) { claimed[c.gzId] = c.customerId; claimedBy[c.gzId] = c.customerName || ('customer #' + c.customerId); }
+    if (c.ownCompany) ownCompany[c.gzId] = true;
+  });
 %>
 
 <div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--accent),var(--violet));margin-bottom:14px;">
-  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">&larr; Integrations</a></p>
-  <p class="doc-kicker">Bitdefender GravityZone</p>
-  <h1>Customers &amp; packages</h1>
-  <p class="doc-sub">Map each customer to their GravityZone company and the installation package they deploy.
-    <strong>Mapping both is what enables a customer</strong> &mdash; there is no separate switch, because the
-    mapping already says which company and which installer, which is the whole of the decision.</p>
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/security">&larr; Endpoint Security</a></p>
+    <p class="doc-kicker">Bitdefender GravityZone</p>
+    <h1>Customers &amp; packages</h1>
+    <p class="doc-sub">The customers who are <strong>on</strong> Bitdefender, and what each one deploys.
+      Mapping a company and a package is what enables a customer &mdash; there is no separate switch,
+      because the mapping already names the company and the installer, which is the whole of the decision.</p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <form method="post" action="/security/sync" style="margin:0;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <input type="hidden" name="back" value="/security/mapping">
+      <button class="btn" type="submit" <%= configured ? '' : 'disabled' %>>&#8635; Sync from GravityZone</button>
+    </form>
+    <button class="btn btn-primary" type="button" onclick="secAdd(true)">+ Add company</button>
+  </div>
+</div>
 </div>
 
 <% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
@@ -26,17 +43,25 @@
 </div>
 <% } %>
 
+<%- include('_add-customer', { add: add, back: '/security/mapping', open: !rows.length }) %>
+
 <div class="card" style="padding:0;border-top:3px solid var(--accent);">
   <div class="table-wrap">
     <table class="table table-lift">
       <thead><tr>
-        <th>Customer</th><th>GravityZone company</th><th>Installation package</th><th>Status</th>
+        <th>Customer</th><th>GravityZone company</th><th>Installation package</th><th>Status</th><th></th>
       </tr></thead>
       <tbody>
+        <% if (!rows.length) { %>
+          <tr><td colspan="5"><div class="empty-state">
+            Nothing mapped yet. Use <strong>Add company</strong> above &mdash; it lists what is in your
+            GravityZone tenant, and you say which Lumen customer each one is.
+          </div></td></tr>
+        <% } %>
         <% rows.forEach(function(r){
              var pkgs = (packagesByCompany[r.gzCompanyId] || []);
         %>
-        <tr class="<%= r.enabled ? 're-ok' : (r.gzCompanyId ? 're-warn' : '') %>">
+        <tr class="<%= r.enabled ? 're-ok' : 're-warn' %>">
           <td>
             <a class="row-link" href="/security/customer/<%= r.customerId %>" style="font-weight:650;"><%= r.customerName %></a>
             <div class="muted" style="font-size:11.5px;"><%= r.devices %> machine<%= r.devices === 1 ? '' : 's' %></div>
@@ -46,23 +71,23 @@
             <form method="post" action="/security/companies/map" style="display:flex;gap:6px;align-items:center;margin:0;">
               <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
               <input type="hidden" name="customer_id" value="<%= r.customerId %>">
+              <input type="hidden" name="back" value="/security/mapping">
               <select class="input" name="gz_id" style="width:auto;font-size:12.5px;" onchange="this.form.submit();">
-                <option value="">&mdash; not mapped &mdash;</option>
-                <% companies.forEach(function(c){
-                     var takenBy = claimed[c.gz_id];
+                <option value="">&mdash; remove from Endpoint Security &mdash;</option>
+                <% add.companies.forEach(function(c){
+                     var takenBy = claimed[c.gzId];
                      var mine = takenBy === r.customerId;
-                     if (takenBy && !mine) return;   // already another customer's company
                 %>
-                <option value="<%= c.gz_id %>" <%= mine ? 'selected' : '' %>><%= c.name %></option>
+                <option value="<%= c.gzId %>" <%= mine ? 'selected' : '' %> <%= (takenBy && !mine) ? 'disabled' : '' %>><%= c.name %><%= c.ownCompany ? ' (partner root)' : '' %><%= (takenBy && !mine) ? ' — ' + claimedBy[c.gzId] : '' %></option>
                 <% }); %>
               </select>
             </form>
+            <div class="muted" style="font-size:11px;">
+              <% if (ownCompany[r.gzCompanyId]) { %>your own tenant &mdash; the partner root<% } else { %>a managed company in your tenant<% } %>
+            </div>
           </td>
 
           <td>
-            <% if (!r.gzCompanyId) { %>
-              <span class="muted" style="font-size:12.5px;">map a company first</span>
-            <% } else { %>
             <form method="post" action="/security/customer/<%= r.customerId %>/package" style="display:flex;gap:6px;align-items:center;margin:0;">
               <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
               <input type="hidden" name="back" value="/security/mapping">
@@ -78,14 +103,13 @@
                 Could not read this company's packages &mdash; <%= packageErrors[r.gzCompanyId] %>
               </div>
               <div class="muted" style="font-size:11px;">
-                "a managed company is expected" usually means this customer is mapped to the wrong
-                company &mdash; the partner root rather than one of the managed companies underneath it.
+                "a managed company is expected" means this customer is mapped to the partner root rather
+                than to a managed company underneath it. Bitdefender will not serve a package list from the root.
               </div>
             <% } else if (!pkgs.length) { %>
-              <div class="muted" style="font-size:11px;">none in GravityZone for this company yet</div>
+              <div class="muted" style="font-size:11px;">none in GravityZone yet &mdash; build one under <em>Network &rarr; Packages</em></div>
             <% } else if (r.packageName && !r.packageReady) { %>
               <div style="font-size:11px;color:var(--warn-fg);">installer still building</div>
-            <% } %>
             <% } %>
           </td>
 
@@ -93,8 +117,12 @@
             <% if (r.enabled) { %>
               <span style="color:var(--ok);font-weight:600;">Ready to deploy</span>
             <% } else { %>
-              <span class="muted"><%= r.blocker || 'not mapped' %></span>
+              <span style="color:var(--warn-fg);"><%= r.blocker || 'no package mapped' %></span>
             <% } %>
+          </td>
+
+          <td style="text-align:right;">
+            <a class="btn" href="/security/customer/<%= r.customerId %>" style="padding:2px 12px;font-size:12px;">Open</a>
           </td>
         </tr>
         <% }); %>
@@ -104,16 +132,12 @@
 </div>
 
 <p class="muted" style="font-size:12px;margin:12px 0 0;">
-  <% if (hiddenCount) { %>
-    Showing the <%= rows.length %> customers that are mapped or have machines.
-    <a class="row-link" href="?all=1"><%= hiddenCount %> others hidden</a>.
-  <% } else if (showAll) { %>
-    Showing every customer. <a class="row-link" href="/security/mapping">Just the relevant ones</a>.
-  <% } %>
+  Showing the <%= rows.length %> customer<%= rows.length === 1 ? '' : 's' %> mapped to a GravityZone company.
+  The other <%= unmappedCount %> are not on Bitdefender, so there is nothing to configure for them &mdash;
+  put one on with <a class="row-link" href="#" onclick="secAdd(true);return false;">Add company</a>.
   <br>
-  Companies appear here once they exist in GravityZone &mdash; which happens when the Bitdefender service is added
-  to that customer in Giacom Cloud Market. Packages are the ones you built under <em>Network &rarr; Packages</em>.
-  A company already mapped to another customer is not offered twice.
+  Companies appear once the Bitdefender service is added to that customer in Giacom Cloud Market and you have synced.
+  Packages are the ones you built under <em>Network &rarr; Packages</em>.
   <strong>Check each package removes existing antivirus</strong>, or the old product stays put alongside Bitdefender.
 </p>
 

@@ -9,8 +9,8 @@
   <div>
     <p class="doc-kicker">Managed antivirus &middot; Bitdefender</p>
     <h1>Endpoint Security</h1>
-    <p class="doc-sub">One row per customer. Enable a customer, deploy to their machines, and watch it land &mdash;
-      the machines themselves are one click in.</p>
+    <p class="doc-sub">The customers who are <strong>on</strong> Bitdefender &mdash; one row each, machines one click in.
+      A customer joins this list when you map them to their GravityZone company and an installation package.</p>
   </div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
     <% if (isAdmin) { %>
@@ -19,7 +19,8 @@
         <input type="hidden" name="back" value="/security">
         <button class="btn" type="submit" <%= configured ? '' : 'disabled' %>>&#8635; Sync from GravityZone</button>
       </form>
-      <a class="btn" href="/settings/integrations#bitdefender">Customers &amp; packages</a>
+      <a class="btn" href="/security/mapping">Customers &amp; packages</a>
+      <button class="btn btn-primary" type="button" onclick="secAdd(true)">+ Add customer</button>
     <% } %>
   </div>
 </div>
@@ -32,57 +33,63 @@
 <% if (!configured) { %>
 <div class="card" style="border-left:3px solid var(--warn-fg);margin-bottom:14px;">
   <h3 style="margin-top:0;">Not connected to GravityZone yet</h3>
-  <p class="muted" style="font-size:13px;margin:0 0 10px;">Add the API key and map customers to their GravityZone companies.</p>
+  <p class="muted" style="font-size:13px;margin:0 0 10px;">Add the API key, then map customers to their GravityZone companies.</p>
   <% if (isAdmin) { %><a class="btn btn-primary" href="/security/settings">Connect it</a><% } %>
 </div>
 <% } %>
 
+<%- include('_add-customer', { add: add, back: '/security', open: false }) %>
+
 <div class="stat-band">
-  <a class="tile <%= show === 'enabled' ? 'on' : '' %>" href="?show=enabled" style="text-decoration:none;">
-    <span class="n" style="display:block;"><%= totals.enabled %></span><span class="l" style="display:block;">customers enabled</span></a>
+  <div class="tile"><span class="n" style="display:block;"><%= totals.enabled %></span><span class="l" style="display:block;">customers on Bitdefender</span></div>
   <div class="tile"><span class="n good" style="display:block;"><%= totals.protectedCount %></span><span class="l" style="display:block;">machines protected</span></div>
   <div class="tile"><span class="n info" style="display:block;"><%= totals.installing %></span><span class="l" style="display:block;">installing</span></div>
   <a class="tile <%= show === 'todo' ? 'on' : '' %>" href="?show=todo" style="text-decoration:none;">
     <span class="n <%= totals.notDeployed ? 'warn' : '' %>" style="display:block;"><%= totals.notDeployed %></span><span class="l" style="display:block;">still to deploy</span></a>
   <div class="tile"><span class="n <%= totals.failed ? 'bad' : '' %>" style="display:block;"><%= totals.failed %></span><span class="l" style="display:block;">failed</span></div>
-  <div class="tile"><span class="n <%= totals.infected ? 'bad' : '' %>" style="display:block;"><%= totals.infected %></span><span class="l" style="display:block;">infected</span></div>
+  <a class="tile" href="/security/infections" style="text-decoration:none;">
+    <span class="n <%= totals.infected ? 'bad' : '' %>" style="display:block;"><%= totals.infected %></span><span class="l" style="display:block;">infected &rsaquo;</span></a>
   <a class="tile <%= show === 'blocked' ? 'on' : '' %>" href="?show=blocked" style="text-decoration:none;">
     <span class="n <%= totals.blocked ? 'warn' : '' %>" style="display:block;"><%= totals.blocked %></span><span class="l" style="display:block;">blocked</span></a>
 </div>
 
+<% if (show) { %>
 <div class="toolbar" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0;">
-  <% if (show) { %><a class="btn" href="/security">Show all</a><% } %>
-  <span class="muted" style="font-size:12px;">Showing <%= rows.length %> of <%= allRows.length %> customers.</span>
+  <a class="btn" href="/security">Show all <%= enrolledCount %></a>
+  <span class="muted" style="font-size:12px;">Showing <%= rows.length %> of <%= enrolledCount %>.</span>
 </div>
+<% } %>
 
-<div class="card" style="padding:0;border-top:3px solid var(--accent);">
+<div class="card" style="padding:0;border-top:3px solid var(--accent);margin-top:14px;">
   <div class="table-wrap">
     <table class="table table-lift">
       <thead><tr>
-        <th>Customer</th><th>Endpoint Security</th><th>Progress</th><th>Package</th><th></th>
+        <th>Customer</th><th>GravityZone</th><th>Progress</th><th>Package</th><th></th>
       </tr></thead>
       <tbody>
         <% if (!rows.length) { %>
-          <tr><td colspan="5"><div class="empty-state">No customers to show. Map them to their GravityZone companies under
-            <a class="row-link" href="/settings/integrations#bitdefender">Integrations</a>.</div></td></tr>
+          <tr><td colspan="5"><div class="empty-state">
+            <% if (show) { %>
+              Nothing in that state. <a class="row-link" href="/security">Show all <%= enrolledCount %></a>.
+            <% } else { %>
+              No customers on Bitdefender yet. Use <strong>Add customer</strong> above &mdash; it lists the
+              companies in your GravityZone tenant so you can point one at a Portal customer.
+            <% } %>
+          </div></td></tr>
         <% } %>
         <% rows.forEach(function(r){
              var done = r.protectedCount;
              var total = Math.max(0, r.devices - r.noAgent);
              var pct = total ? Math.round((done / total) * 100) : 0;
         %>
-        <tr class="<%= r.infected ? 're-bad' : (r.blocker ? 're-warn' : (r.enabled && total && done === total ? 're-ok' : '')) %>">
+        <tr class="<%= r.infected ? 're-bad' : (r.blocker ? 're-warn' : (total && done === total ? 're-ok' : '')) %>">
           <td>
             <a class="row-link" href="/security/customer/<%= r.customerId %>" style="font-weight:650;"><%= r.customerName %></a>
             <div class="muted" style="font-size:11.5px;">
               <%= r.devices %> machine<%= r.devices === 1 ? '' : 's' %><% if (r.noAgent) { %>, <%= r.noAgent %> with no agent<% } %>
             </div>
           </td>
-          <td>
-            <% if (r.enabled) { %><span style="color:var(--ok);font-weight:600;">Enabled</span>
-            <% } else { %><span class="muted">Not enabled</span><% } %>
-            <div class="muted" style="font-size:11px;"><%= r.enabledReason %></div>
-          </td>
+          <td class="muted" style="font-size:12.5px;"><%= r.gzCompanyName || r.gzCompanyId %></td>
           <td style="min-width:200px;">
             <% if (r.blocker) { %>
               <span style="color:var(--warn-fg);font-weight:600;"><%= r.blocker %></span>
@@ -98,7 +105,7 @@
               <div class="muted" style="font-size:11px;">
                 <% if (r.installing) { %><%= r.installing %> installing<% } %>
                 <% if (r.failed) { %><span style="color:var(--bad-fg);"> <%= r.failed %> failed</span><% } %>
-                <% if (r.infected) { %><span style="color:var(--bad-fg);"> <%= r.infected %> INFECTED</span><% } %>
+                <% if (r.infected) { %><a class="row-link" style="color:var(--bad-fg);" href="/security/customer/<%= r.customerId %>?tab=infections"> <%= r.infected %> flagged</a><% } %>
               </div>
             <% } %>
           </td>
@@ -115,5 +122,11 @@
     </table>
   </div>
 </div>
+
+<p class="muted" style="font-size:12px;margin:12px 0 0;">
+  Customers who are not on Bitdefender are deliberately not listed &mdash; there is nothing to do to them here.
+  <% if (isAdmin) { %>To put one on, use <a class="row-link" href="#" onclick="secAdd(true);return false;">Add customer</a>,
+  or see the whole configuration under <a class="row-link" href="/security/mapping">Customers &amp; packages</a>.<% } %>
+</p>
 
 <%- include('../partials/footer') %>

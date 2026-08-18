@@ -1,0 +1,96 @@
+<%
+  // "Add customer" — the ONE way a customer joins Endpoint Security.
+  //
+  // Terry, 18 Aug: "there's add customer. And then what that does is that looks up the
+  // customers in Bet Defender. You select it, maps it to ours, and then adds it to the
+  // list."
+  //
+  // So the GravityZone company is chosen FIRST — that is the list that is authoritative,
+  // because Terry creates the company in Giacom and the Portal only mirrors it. Our
+  // customer is chosen second, and the mapping is the enablement; there is no third step.
+  //
+  // Companies already mapped are SHOWN, greyed, with the customer that has them. Hiding
+  // them is what made "Lumen MSP is not even selectable from the list" — it was already
+  // mapped, so it disappeared, which reads as missing rather than as done.
+  var free = add.companies.filter(function(c){ return !c.customerId; });
+  var taken = add.companies.filter(function(c){ return c.customerId; });
+  var openNow = (typeof open !== 'undefined' && open) || !add.companies.length;
+%>
+<div class="card" id="secAddCard" style="border-top:3px solid var(--violet);margin-bottom:14px;<%= openNow ? '' : 'display:none;' %>">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <div>
+      <h3 style="margin:0 0 4px;">Add a customer to Endpoint Security</h3>
+      <p class="muted" style="font-size:12.5px;margin:0;">
+        Pick the company from <strong>your GravityZone tenant</strong>, then say which Lumen customer it is.
+        That mapping is what puts them on the product &mdash; there is no separate switch.
+      </p>
+    </div>
+    <button class="btn" type="button" onclick="secAdd(false)">Close</button>
+  </div>
+
+  <% if (!add.companies.length) { %>
+    <p class="muted" style="font-size:12.5px;margin:12px 0 0;">
+      No GravityZone companies have been read yet. Press <strong>Sync from GravityZone</strong> &mdash;
+      <em>Test connection</em> only proves the key works, it does not pull anything down.
+    </p>
+  <% } else { %>
+  <form method="post" action="/security/companies/map"
+        style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin:14px 0 0;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <input type="hidden" name="back" value="<%= back %>">
+
+    <label style="display:block;">
+      <span class="muted" style="display:block;font-size:11.5px;margin-bottom:3px;">Company in GravityZone</span>
+      <select class="input" name="gz_id" required style="min-width:280px;">
+        <option value="">&mdash; choose a Bitdefender company &mdash;</option>
+        <% if (free.length) { %>
+        <optgroup label="Not yet mapped">
+          <% free.forEach(function(c){ %>
+          <option value="<%= c.gzId %>"><%= c.name %><%= c.ownCompany ? '  (your own tenant — partner root)' : '' %></option>
+          <% }); %>
+        </optgroup>
+        <% } %>
+        <% if (taken.length) { %>
+        <optgroup label="Already mapped">
+          <% taken.forEach(function(c){ %>
+          <option value="<%= c.gzId %>" disabled><%= c.name %> &rarr; <%= c.customerName || 'customer #' + c.customerId %></option>
+          <% }); %>
+        </optgroup>
+        <% } %>
+      </select>
+    </label>
+
+    <label style="display:block;">
+      <span class="muted" style="display:block;font-size:11.5px;margin-bottom:3px;">Is our customer</span>
+      <select class="input" name="customer_id" required style="min-width:260px;">
+        <option value="">&mdash; choose a Lumen customer &mdash;</option>
+        <% add.customers.forEach(function(c){ %>
+        <option value="<%= c.id %>"><%= c.name %></option>
+        <% }); %>
+      </select>
+    </label>
+
+    <button class="btn btn-primary" type="submit">Add</button>
+  </form>
+
+  <p class="muted" style="font-size:11.5px;margin:10px 0 0;">
+    <%= free.length %> compan<%= free.length === 1 ? 'y' : 'ies' %> still to map, <%= taken.length %> already done.
+    A company appears here once Bitdefender has been added to that customer in Giacom Cloud Market.
+    Next step after mapping is choosing their installation package, on
+    <a class="row-link" href="/security/mapping">Customers &amp; packages</a>.
+    <br>
+    <strong>The partner root is your own tenant, not a managed company.</strong> Map Lumen to it if that is where
+    your machines live &mdash; but Bitdefender will not serve a package list from the root, so if the package
+    column comes back with <em>"a managed company is expected"</em>, that is what happened.
+  </p>
+  <% } %>
+</div>
+
+<script>
+function secAdd(on){
+  var el = document.getElementById('secAddCard');
+  if (!el) return;
+  el.style.display = on ? '' : 'none';
+  if (on) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+</script>
