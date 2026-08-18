@@ -8,6 +8,13 @@
       var active = href === '/' ? path === '/' : path.indexOf(href) === 0;
       if (active) a.classList.add('active');
     });
+    // A shut section still has to show where you are: flag the heading whose group holds
+    // the active item (the group itself keeps that one row on screen - see app.css).
+    // This runs here, not in the header, because 'active' is only applied above.
+    document.querySelectorAll('.nav-section-btn').forEach(function (b) {
+      var g = document.getElementById('nav-group-' + b.getAttribute('data-nav-group'));
+      if (g && g.querySelector('.nav-item.active')) b.classList.add('has-active');
+    });
     var btn = document.getElementById('sidebarToggle');
     if (btn) btn.addEventListener('click', function () {
       var collapsed = document.documentElement.classList.toggle('nav-collapsed');

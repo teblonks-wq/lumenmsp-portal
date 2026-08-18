@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { pool } from '../db/pool';
 import { getSetting } from '../lib/settings';
+import { alertGroup } from '../lib/notifications';
 
 // Public server-to-server lead intake for the marketing website.
 //   POST /api/leads   Authorization: Bearer <token>
@@ -80,7 +81,20 @@ router.post('/api/leads', async (req: Request, res: Response) => {
       [customerId, source, reference, product, monthly, oneoff, summary, detailsText, monthly]
     );
     await client.query('COMMIT');
-    res.status(201).json({ ok: true, id: String(lead.rows[0].id) });
+
+    // A website lead is the most time-sensitive thing the Portal receives, and until now
+    // it landed silently - one arrived at 20:53 on 17 Aug 2026 and nobody knew until the
+    // next morning. Tell the sales group in-app AND on Teams, the same way an accepted
+    // quote or a contract renewal does. alertGroup never throws, so a Teams outage cannot
+    // fail the intake: the website still gets its 201 and the lead is already committed.
+    const leadId = lead.rows[0].id;
+    await alertGroup(
+      'sales',
+      'New lead - ' + company,
+      [contactName, email, phone, summary].filter(Boolean).join(' | ').slice(0, 400) || 'New enquiry from the website',
+      '/leads/' + leadId
+    );
+    res.status(201).json({ ok: true, id: String(leadId) });
   } catch (e: any) {
     await client.query('ROLLBACK');
     // Lost a race on the unique reference -> return the row that won.

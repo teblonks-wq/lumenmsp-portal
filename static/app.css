@@ -674,9 +674,18 @@ html.theme-carbon .ql-container { border-color: var(--line) !important; color: v
 .nav-chev { font-size: 13px; transition: transform .15s ease; opacity: .85; }
 .nav-section-btn.shut .nav-chev { transform: rotate(-90deg); }
 .nav-group { overflow: hidden; }
-.nav-group.shut { display: none; }
+/* A nav group must never be squeezed by the flex column. The `overflow: hidden` above
+   cancels the automatic flex minimum size, so without this the LAST item of a group is
+   silently clipped the moment the nav is taller than the window - which is how Contracts
+   went missing. Pin every child at its natural height and let the nav pane scroll. */
+.sidebar-nav > * { flex-shrink: 0; }
+/* Shutting a section hides its items - except the one you are on. Collapsing a group
+   should never cost you the highlight that tells you where you are. */
+.nav-group.shut > .nav-item:not(.active) { display: none; }
+.nav-section-btn.has-active { color: #fff; }
+.nav-section-btn.has-active .nav-chev { color: var(--sb-active-icon); opacity: 1; }
 .nav-collapsed .nav-section-btn { display: none; }
-.nav-collapsed .nav-group.shut { display: block; }   /* icon rail: never hide the icons */
+.nav-collapsed .nav-group.shut > .nav-item { display: flex; }   /* icon rail: never hide the icons */
 
 /* ─────────────────────────────────────────────────────────────────────────────
    V4.1 — estate polish (2026-08-06). One shared layer so the boldness of the home
