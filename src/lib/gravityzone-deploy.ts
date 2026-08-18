@@ -215,14 +215,45 @@ export async function refreshLinks(
 const str = (v: any) => (v == null || v === '' ? null : String(v));
 
 /** What our own agent currently believes is protecting a machine. */
-function avNames(securityJson: any): string[] {
+/**
+ * What a Bitdefender migration on this machine actually has to deal with.
+ *
+ * Two things are deliberately left out of the third-party list.
+ *
+ * Microsoft Defender is not a competitor - it steps aside by itself the moment another
+ * engine registers. Listing it under "AV before" invites someone to plan a removal that
+ * is not needed, and it made every machine look like it was running one more product
+ * than it was.
+ *
+ * Entries the agent could not find on disk (present === false) are Security Center
+ * ghosts - registrations left behind by an uninstall that never deregistered. A product
+ * that is gone cannot be the thing we are migrating off. More to the point, a ghost
+ * BITDEFENDER registration would otherwise satisfy isBitdefender() and the machine would
+ * be skipped as already protected - the exact "complete but not installed" failure this
+ * module exists to prevent.
+ *
+ * reportedAny keeps "the agent has told us nothing yet" distinguishable from "it told us,
+ * and the answer is Defender only" - which is the easiest deployment there is, not a gap.
+ */
+function avSummary(securityJson: any): { thirdParty: string[]; ghosts: string[]; reportedAny: boolean } {
+  const empty = { thirdParty: [], ghosts: [], reportedAny: false };
   let j: any = null;
-  try { j = typeof securityJson === 'string' ? JSON.parse(securityJson) : securityJson; } catch { return []; }
-  if (!j) return [];
+  try { j = typeof securityJson === 'string' ? JSON.parse(securityJson) : securityJson; } catch { return empty; }
+  if (!j) return empty;
   const list = (v: any) => (Array.isArray(v) ? v : v ? [v] : []);
-  return Array.from(new Set([...list(j.av), ...list(j.antispyware)]
-    .map((p: any) => String(p?.name || '').trim()).filter(Boolean)));
+  // "Bitdefender" contains "defender" - match Microsoft's naming, not the word.
+  const isMs = (n: string) => /(^|\s)(windows|microsoft)\s+defender/i.test(n) || /^microsoft\b/i.test(n);
+  const all = [...list(j.av), ...list(j.antispyware)]
+    .map((p: any) => ({ name: String(p?.name || '').trim(), present: p?.present }))
+    .filter((p) => p.name);
+  return {
+    thirdParty: Array.from(new Set(all.filter((p) => !isMs(p.name) && p.present !== false).map((p) => p.name))),
+    ghosts: Array.from(new Set(all.filter((p) => p.present === false).map((p) => p.name))),
+    reportedAny: all.filter((p) => p.present !== false).length > 0,
+  };
 }
+
+function avNames(securityJson: any): string[] { return avSummary(securityJson).thirdParty; }
 
 const isBitdefender = (names: string[]) => names.some((n) => /bitdefender|gravityzone|endpoint security tools/i.test(n));
 
@@ -484,7 +515,8 @@ export async function deviceSecurity(assetId: number): Promise<RolloutRow | null
 function mapRolloutRow(rows: any): RolloutRow {
   const now = Math.floor(Date.now() / 1000);
   return ((r: any) => {
-    const names = avNames(r.security_json);
+    const sec = avSummary(r.security_json);
+    const names = sec.thirdParty;
     const currentAv = names.join(', ') || null;
     const agentSeen = r.agent_seen ? Number(r.agent_seen) : null;
     const base = {
@@ -523,8 +555,15 @@ function mapRolloutRow(rows: any): RolloutRow {
           : 'Install queued — it runs on the next check-in, usually within a minute.' };
     }
     if (r.state === 'failed') return { ...base, state: 'failed', detail: r.last_error || 'The last attempt failed.' };
-    if (!names.length) return { ...base, state: 'not-deployed', detail: 'Agent is on, but it has not reported its AV yet.' };
-    return { ...base, state: 'not-deployed', detail: `Currently on ${currentAv}.` };
+    if (!names.length) {
+      const leftovers = sec.ghosts.length ? ` ${sec.ghosts.join(', ')} is still registered but not installed — clear the leftover first.` : '';
+      if (sec.reportedAny) return { ...base, state: 'not-deployed', detail: 'On Windows Defender only — nothing to remove first.' + leftovers };
+      if (sec.ghosts.length) return { ...base, state: 'not-deployed', detail: `Nothing is actually installed here — only a leftover registration for ${sec.ghosts.join(', ')}. Clear it, then deploy.` };
+      return { ...base, state: 'not-deployed', detail: 'Agent is on, but it has not reported its AV yet.' };
+    }
+    return { ...base, state: 'not-deployed',
+      detail: `Currently on ${currentAv}.` +
+        (sec.ghosts.length ? ` (${sec.ghosts.join(', ')} is still registered but not installed — clear the leftovers before deploying.)` : '') };
   })(rows);
 }
 
