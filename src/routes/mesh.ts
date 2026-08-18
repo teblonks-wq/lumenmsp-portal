@@ -735,25 +735,51 @@ router.get('/assets/:id/remote-state.json', requireAuth, requireAdmin, async (re
 router.post('/assets/:id/mesh-install', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const back = `/assets/${id}`;
+  // A deliberate REINSTALL over a machine MeshCentral still believes is fine.
+  //
+  // Terry, 18 Aug: "we need a reinstall remote contol on the asset." The gap was real:
+  // every control on this page sat behind "MeshCentral has no node for this machine", so
+  // the moment it had one there was no way to put the agent back. And we have just watched
+  // Bitdefender file MeshAgent.exe as Gen:Illusion.PUP.MeshCentral — a quarantined agent
+  // leaves the node record standing while remote control is dead on the machine. "Already
+  // working" was the Portal reading a RECORD rather than the machine.
+  //
+  // Not the default, because a reinstall tears the Mesh Agent down and puts it back, which
+  // drops any live session. It has to be asked for by name.
+  const force = String(req.body.force || '') === '1';
   try {
     const st = await meshStatus(id);
     if (!st) { res.redirect(back + '?err=' + encodeURIComponent('This machine is not running the LumenMSP agent, so there is nothing to install onto yet.')); return; }
     if (!st.enabled) { res.redirect(back + '?err=' + encodeURIComponent(`Remote access is switched off for ${st.customer || 'this customer'}.`)); return; }
     if (!st.hasPackage) { res.redirect(back + '?err=' + encodeURIComponent(`${st.customer || 'This customer'} has no remote-access agent built yet — create it on the Agents page and it will install everywhere automatically.`)); return; }
-    if (st.hasNode) { res.redirect(back + '?msg=' + encodeURIComponent('Remote access is already working on this machine.')); return; }
+    if (st.hasNode && !force) { res.redirect(back + '?msg=' + encodeURIComponent('Remote access is already working on this machine.')); return; }
+    // A queued install is a queued install, forced or not. Two copies of the same command
+    // would just run the installer twice on the same check-in.
     if (st.pendingSince) { res.redirect(back + '?msg=' + encodeURIComponent('Already queued — it runs at the next check-in.')); return; }
 
     // mesh_installed is set when the install command succeeds, so a machine that was
     // installed but never appeared in MeshCentral needs the flag cleared to be retried.
-    if (st.installed) {
+    // A forced reinstall clears it for the same reason: queueMeshInstall skips anything
+    // already flagged installed, which is precisely the machine we are trying to repair.
+    if (st.installed || force) {
       await pool.query('UPDATE agent_devices SET mesh_installed=false WHERE id=$1', [st.deviceId]);
     }
 
     const r = await queueMeshInstall(st.deviceId!, `${req.protocol}://${req.get('host')}`, true);
+    const reinstall = force && st.hasNode;
     await logActivity(req.session.user!.id, 'mesh_install', 'customer_assets', id,
-      `Queued remote-access install on ${st.hostname}`);
-    // No success notice on the way back: the page's own remote-access banner already
-    // says exactly this, and two boxes saying the same thing is how a page gets noisy.
+      (reinstall ? 'Forced a remote-access REINSTALL on ' : 'Queued remote-access install on ') + st.hostname);
+    // A forced reinstall DOES get a notice. The page's own banner only speaks when
+    // MeshCentral has no node — which is not this case — so without one the button would
+    // look like it did nothing.
+    if (reinstall) {
+      res.redirect(r === 'queued'
+        ? back + '?msg=' + encodeURIComponent('Reinstall queued — it runs at the next check-in and will drop any live session on this machine.')
+        : back + '?err=' + encodeURIComponent('Could not queue the reinstall. Check the customer has a remote-access agent on the Agents page.'));
+      return;
+    }
+    // No success notice otherwise: the page's own remote-access banner already says
+    // exactly this, and two boxes saying the same thing is how a page gets noisy.
     res.redirect(r === 'queued' ? back
       : back + '?err=' + encodeURIComponent('Could not queue it. Check the customer has a remote-access agent on the Agents page.'));
   } catch (e: any) {
