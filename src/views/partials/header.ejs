@@ -49,6 +49,12 @@
         <span class="brand-logo">Portal</span>
       </span>
     </a>
+    <% if (typeof user !== 'undefined' && (user.role === 'admin' || user.role === 'staff')) { %>
+    <button type="button" class="tools-launch" id="toolsLaunch" aria-label="Tools"
+            title="Tools - Insights, Learn, Back Office and more" aria-expanded="false" aria-controls="toolsLauncher">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/></svg>
+    </button>
+    <% } %>
     <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle navigation" title="Toggle navigation">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
@@ -94,13 +100,19 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
       <span class="nav-label">Contacts</span>
     </a>
-    <a href="/security" class="nav-item" title="Endpoint Security — managed antivirus across the estate">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-      <span class="nav-label">Security</span>
-    </a>
+    </div>
+
+    <button type="button" class="nav-section nav-section-btn" data-nav-group="endpoints" aria-expanded="true">
+      <span>Endpoints</span><span class="nav-chev" aria-hidden="true">▾</span>
+    </button>
+    <div class="nav-group" id="nav-group-endpoints">
     <a href="/assets" class="nav-item" title="Assets — customer device inventory">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
       <span class="nav-label">Assets</span>
+    </a>
+    <a href="/security" class="nav-item" title="Endpoint Security — managed antivirus across the estate">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+      <span class="nav-label">Security</span>
     </a>
     </div>
 
@@ -134,34 +146,6 @@
 
     </div>
 
-    <% if (typeof user !== 'undefined' && (user.role === 'admin' || user.role === 'staff')) { %>
-    <button type="button" class="nav-section nav-section-btn" data-nav-group="tools" aria-expanded="true">
-      <span>Tools</span><span class="nav-chev" aria-hidden="true">▾</span>
-    </button>
-    <div class="nav-group" id="nav-group-tools">
-    <a href="/insights" class="nav-item" title="Insights — reporting &amp; call analytics" style="padding-top:10px;padding-bottom:10px;">
-      <span class="nav-label tool-word w-insights">Insights</span>
-    </a>
-    <a href="https://learn.lumenmsp.co.uk" target="_blank" rel="noopener" class="nav-item" title="Learn — staff training &amp; onboarding (opens in a new tab — Microsoft sign-in can't be embedded)" style="padding-top:10px;padding-bottom:10px;">
-      <span class="nav-label tool-word w-learn">Learn</span>
-    </a>
-    <% if (user.role === 'admin') { %>
-    <a href="/bureau" class="nav-item" title="Back Office — allocate imported services &amp; billing" style="padding-top:10px;padding-bottom:10px;">
-      <span class="nav-label tool-word w-bo">Back Office</span>
-      <% if (typeof bureauCount !== 'undefined' && bureauCount > 0) { %><span class="nav-badge"><%= bureauCount %></span><% } %>
-    </a>
-    <a href="/purchases" class="nav-item" title="Purchase Ledger — expense reconciliation" style="padding-top:10px;padding-bottom:10px;">
-      <span class="nav-label tool-word w-purch">Purchases</span>
-    </a>
-    <a href="/marketing" class="nav-item" title="Marketing — socials, website stats &amp; chatbot" style="padding-top:10px;padding-bottom:10px;">
-      <span class="nav-label tool-word w-mkt">Marketing</span>
-    </a>
-    <a href="https://apps.lumenmsp.co.uk" target="_blank" rel="noopener" class="nav-item" title="Luminate — customer app platform (opens in a new tab)" style="padding-top:10px;padding-bottom:10px;">
-      <span class="nav-label tool-word w-lum">Luminate</span>
-    </a>
-    <% } %>
-    </div>
-    <% } %>
     <% if (typeof user !== 'undefined' && user.role === 'admin') { %>
     <button type="button" class="nav-section nav-section-btn" data-nav-group="admin" aria-expanded="true">
       <span>Admin</span><span class="nav-chev" aria-hidden="true">▾</span>
@@ -192,15 +176,83 @@
     <% } %>
   </div>
 </div></aside>
+
+<%# ── Tools launcher ─────────────────────────────────────────────────────────────
+    The other apps - Insights, Learn, Back Office, Purchases, Marketing, Luminate -
+    used to sit in a Tools section in the sidebar, where they competed with the pages
+    you actually work out of all day. They now live behind the square next to the
+    Portal wordmark: a wider nav that opens when you want it and is out of the way
+    when you don't. It MUST live outside <aside class="sidebar"> - that element is
+    overflow:hidden and would clip the panel. -%>
+<% if (typeof user !== 'undefined' && (user.role === 'admin' || user.role === 'staff')) { %>
+<div class="tl-backdrop" id="toolsBackdrop" hidden></div>
+<div class="tools-launcher" id="toolsLauncher" role="dialog" aria-label="Tools" aria-modal="false" hidden>
+  <div class="tl-head">
+    <h2>Tools</h2>
+    <button type="button" class="tl-close" id="toolsClose" aria-label="Close tools">&times;</button>
+  </div>
+  <div class="tl-grid">
+    <a href="/insights" class="tl-tile">
+      <span class="tool-word w-insights">Insights</span>
+      <span class="tl-desc">Reporting &amp; call analytics</span>
+    </a>
+    <a href="https://learn.lumenmsp.co.uk" target="_blank" rel="noopener" class="tl-tile">
+      <span class="tool-word w-learn">Learn</span>
+      <span class="tl-desc">Staff training &amp; onboarding <span class="tl-ext">&#8599;</span></span>
+    </a>
+    <% if (user.role === 'admin') { %>
+    <a href="/bureau" class="tl-tile">
+      <span class="tool-word w-bo">Back Office</span>
+      <span class="tl-desc">Allocate imported services &amp; billing</span>
+      <% if (typeof bureauCount !== 'undefined' && bureauCount > 0) { %><span class="nav-badge tl-badge"><%= bureauCount %></span><% } %>
+    </a>
+    <a href="/purchases" class="tl-tile">
+      <span class="tool-word w-purch">Purchases</span>
+      <span class="tl-desc">Purchase ledger &amp; expense reconciliation</span>
+    </a>
+    <a href="/marketing" class="tl-tile">
+      <span class="tool-word w-mkt">Marketing</span>
+      <span class="tl-desc">Socials, website stats &amp; chatbot</span>
+    </a>
+    <a href="https://apps.lumenmsp.co.uk" target="_blank" rel="noopener" class="tl-tile">
+      <span class="tool-word w-lum">Luminate</span>
+      <span class="tl-desc">Customer app platform <span class="tl-ext">&#8599;</span></span>
+    </a>
+    <% } %>
+  </div>
+</div>
+<script>
+(function () {
+  var btn = document.getElementById('toolsLaunch');
+  var panel = document.getElementById('toolsLauncher');
+  var back = document.getElementById('toolsBackdrop');
+  if (!btn || !panel) return;
+  function setOpen(on) {
+    panel.hidden = !on;
+    back.hidden = !on;
+    btn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    btn.classList.toggle('on', on);
+    if (on) { var f = panel.querySelector('.tl-tile'); if (f) f.focus(); }
+  }
+  btn.addEventListener('click', function (e) { e.stopPropagation(); setOpen(panel.hidden); });
+  document.getElementById('toolsClose').addEventListener('click', function () { setOpen(false); btn.focus(); });
+  back.addEventListener('click', function () { setOpen(false); });
+  // Esc shuts it wherever focus happens to be.
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !panel.hidden) { setOpen(false); btn.focus(); }
+  });
+})();
+</script>
+<% } %>
 <script>
 (function () {
   // Collapsible nav groups. The state is per browser, not per session — you set the
   // sidebar up how you like it once and it stays that way.
   var KEY = 'lumen.nav.collapsed';
-  // Tools is always shut when the page loads, whatever you did with it last time — it is
-  // the section you dip into, not one you work out of. Every other group remembers your
-  // choice, which is why they are stored and Tools is not.
-  var ALWAYS_SHUT = { tools: true };
+  // Every group remembers whether you left it open. (Tools used to be forced shut on every
+  // load because it was the section you dip into rather than work out of - it now lives in
+  // the launcher panel off the Portal wordmark instead, so there is nothing to force.)
+  var ALWAYS_SHUT = {};
   var shut = {};
   try { shut = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { shut = {}; }
   document.querySelectorAll('.nav-section-btn').forEach(function (btn) {

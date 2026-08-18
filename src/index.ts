@@ -175,11 +175,26 @@ app.get('/static/js/chat-widget.js', (_req, res, next) => {
 // left one person with new markup and old CSS, another with both new, and a third with
 // neither, and the three of them disagreeing about what the Portal looks like. The stamp
 // is the mtime of app.css, so it changes exactly when the stylesheet does.
-let ASSET_V = 'dev';
-try {
-  ASSET_V = String(Math.floor(fs.statSync(path.join(__dirname, '../static/app.css')).mtimeMs)).slice(-9);
-} catch { /* falls back to 'dev' — worst case we are where we were before */ }
-app.use((_req, res, next) => { res.locals.assetV = ASSET_V; next(); });
+// It has to be re-read, not computed once at boot: deploy-views.ps1 ships a new app.css
+// WITHOUT restarting PM2 (that is the whole point of the hot deploy - no logouts), so a
+// boot-time stamp stays frozen at the last full deploy and every browser goes on serving
+// the stylesheet it already had. Caught 2026-08-18: a views deploy put the new CSS on the
+// server, the markup went live instantly, and the CSS silently did not - the nav looked
+// half-fixed. Stat is cheap and cached for 10s, so this costs nothing per request.
+const ASSET_CSS = path.join(__dirname, '../static/app.css');
+let assetVCache = 'dev';
+let assetVCheckedAt = 0;
+function assetV(): string {
+  const now = Date.now();
+  if (now - assetVCheckedAt > 10_000) {
+    assetVCheckedAt = now;
+    try {
+      assetVCache = String(Math.floor(fs.statSync(ASSET_CSS).mtimeMs)).slice(-9);
+    } catch { /* keep the last good stamp - worst case we are where we were before */ }
+  }
+  return assetVCache;
+}
+app.use((_req, res, next) => { res.locals.assetV = assetV(); next(); });
 
 // Now that the URL changes when the file does, it is safe to let browsers keep it.
 app.use('/static', express.static(path.join(__dirname, '../static'), { maxAge: '30d', etag: true }));

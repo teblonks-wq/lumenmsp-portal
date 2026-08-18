@@ -687,6 +687,54 @@ html.theme-carbon .ql-container { border-color: var(--line) !important; color: v
 .nav-collapsed .nav-section-btn { display: none; }
 .nav-collapsed .nav-group.shut > .nav-item { display: flex; }   /* icon rail: never hide the icons */
 
+/* ── Tools launcher ─────────────────────────────────────────────────────────────
+   The square after the Portal wordmark, and the wider nav it opens. The other apps
+   (Insights, Learn, Back Office, Purchases, Marketing, Luminate) live here instead of
+   in a sidebar section, so they stop competing with the pages worked out of all day.
+   The panel is a sibling of .sidebar, not a child - .sidebar is overflow:hidden and
+   would clip it - so it is positioned off --sidebar-w, which already carries the
+   nav-zoom factor and so tracks both the full sidebar and the collapsed rail. */
+.tools-launch { background: none; border: 0; color: var(--sb-sec); cursor: pointer;
+  padding: 6px; margin-right: auto; border-radius: 8px; display: flex; flex-shrink: 0;
+  opacity: .55; transition: opacity .12s ease, background .12s ease, color .12s ease; }
+.tools-launch svg { width: 17px; height: 17px; }
+.tools-launch:hover, .tools-launch:focus-visible, .tools-launch.on {
+  opacity: 1; background: var(--sb-hover-bg); color: var(--sb-hover-text); }
+.tools-launch.on { color: var(--sb-active-icon); }
+.nav-collapsed .tools-launch { margin-right: 0; }
+
+/* Below the sidebar (z-index 100), not above it: with the panel open the nav must stay
+   live, so you can go straight from a tool tile to Customers in one click instead of
+   spending the first click dismissing the panel. Everything else click-closes. */
+.tl-backdrop { position: fixed; inset: 0; z-index: 99; background: transparent; }
+.tools-launcher { position: fixed; top: 0; bottom: 0; left: var(--sidebar-w); width: 420px; z-index: 120;
+  background: var(--sb-bg); color: var(--sb-text); border-left: 1px solid var(--sb-border);
+  box-shadow: 24px 0 60px -24px rgba(2,6,23,.55); overflow-y: auto;
+  padding: 18px 18px 24px; }
+.nav-collapsed .tools-launcher { left: var(--sidebar-w-collapsed); }
+.tools-launcher[hidden] { display: none; }
+.tl-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 14px; }
+.tl-head h2 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--sb-sec); }
+.tl-close { background: none; border: 0; color: var(--sb-sec); font-size: 26px; line-height: 1; cursor: pointer;
+  padding: 0 6px; border-radius: 8px; }
+.tl-close:hover { color: var(--sb-hover-text); background: var(--sb-hover-bg); }
+.tl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tl-tile { position: relative; display: flex; flex-direction: column; gap: 5px; justify-content: center;
+  min-height: 92px; padding: 14px 15px; border-radius: 13px; text-decoration: none;
+  background: var(--sb-hover-bg); border: 1px solid transparent;
+  transition: border-color .12s ease, transform .12s ease, box-shadow .12s ease; }
+.tl-tile:hover, .tl-tile:focus-visible { transform: translateY(-2px); border-color: var(--sb-active-icon);
+  box-shadow: 0 12px 26px -14px rgba(2,6,23,.7); outline: none; }
+.tl-tile .tool-word { font-size: 21px; }
+.tl-desc { font-size: 12px; line-height: 1.35; color: var(--sb-sec); }
+.tl-ext { opacity: .7; }
+.tl-badge { position: absolute; top: 10px; right: 10px; margin: 0; }
+
+@media (max-width: 760px) {
+  .tools-launcher { width: calc(100vw - var(--sidebar-w-collapsed)); }
+  .tl-grid { grid-template-columns: 1fr; }
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    V4.1 — estate polish (2026-08-06). One shared layer so the boldness of the home
    and Admin pages carries through to EVERY route, not just the headline screens.
