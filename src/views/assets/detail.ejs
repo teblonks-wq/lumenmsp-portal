@@ -99,6 +99,24 @@
     <div class="l">security</div>
     <% } %>
   </div>
+  <%
+    // Bitdefender gets its own vital, and it is a LINK. Terry looked for the deploy
+    // button repeatedly without finding it, and a state buried three tabs down might as
+    // well not exist. This is the shortest route from "open a machine" to "install AV
+    // on it".
+    var _bd = (typeof bd !== 'undefined') ? bd : null;
+    var _bdWord = { 'protected':'Protected', 'infected':'INFECTED', 'installed':'Installed',
+                    'queued':'Queued', 'running':'Installing', 'failed':'Failed',
+                    'excluded':'Held back', 'no-agent':'No agent', 'not-deployed':'Not deployed' };
+    var _bdCls = { 'protected':'good', 'infected':'bad', 'failed':'bad',
+                   'installed':'', 'queued':'', 'running':'' };
+  %>
+  <% if (_bd) { %>
+  <a class="ds" href="#security" style="text-decoration:none;color:inherit;" onclick="if(window.lmaShowTab)lmaShowTab('security');">
+    <div class="n <%= _bdCls[_bd.state] === undefined ? 'warn' : _bdCls[_bd.state] %>" style="font-size:15px;line-height:1.5;"><%= _bdWord[_bd.state] || _bd.state %></div>
+    <div class="l">Bitdefender &rsaquo;</div>
+  </a>
+  <% } %>
   <div class="ds">
     <% if (_bp.length) { %>
     <div class="n <%= _bpFailed ? 'bad' : 'good' %>"><%= _bpFailed ? 'Attention' : 'Protected' %></div>
@@ -370,6 +388,15 @@ function _ago(d) {
   </section>
 
   <section class="dev-tab-panel" data-key="security">
+    <%- include('_bitdefender', {
+          bd: (typeof bd !== 'undefined') ? bd : null,
+          bdGate: (typeof bdGate !== 'undefined') ? bdGate : null,
+          requiredExclusions: (typeof requiredExclusions !== 'undefined') ? requiredExclusions : [],
+          asset: asset, user: user,
+          csrfToken: (typeof csrfToken !== 'undefined' ? csrfToken : '')
+        }) %>
+
+    <h4 style="margin:18px 0 8px;">What the machine reports</h4>
     <% var _sec = (typeof security !== 'undefined') ? security : null; %>
     <% if (!agentInfo) { %>
       <p class="muted" style="font-size:13px;">Security status needs the LumenMSP Agent on this machine &mdash; there is no live link to read it from.</p>
@@ -437,6 +464,16 @@ function _ago(d) {
       panels.forEach(function (p) { p.classList.toggle('active', p.getAttribute('data-key') === k); });
     }
     tabs.forEach(function (b) { b.addEventListener('click', function () { show(b.getAttribute('data-tab')); }); });
+    // Exposed so anything higher up the page can jump straight to a tab — the vitals
+    // strip's Bitdefender tile uses it. Without this, clicking it only set the hash and
+    // the panel stayed where it was, which is exactly the kind of dead control that had
+    // Terry hunting for the deploy button in the first place.
+    window.lmaShowTab = function (k) {
+      if (!document.querySelector('.dev-tab-panel[data-key="' + k + '"]')) return;
+      show(k);
+      var el = document.querySelector('.dev-tabs');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    };
     // Always open on the first tab. A deep link (#gpo, #security, #backup) still jumps
     // straight to its tab - what we no longer do is restore whichever tab happened to be
     // open on the last visit, which made "go to a device" land somewhere different every time.

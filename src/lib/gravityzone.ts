@@ -301,6 +301,39 @@ export async function testConnection(): Promise<{ ok: boolean; probes: ProbeResu
         });
     }
   } catch { /* the list probe above already said why */ }
+
+  // ── CAN we write a policy, or only read one? ─────────────────────────────────────
+  // This decides whether "add the exclusion from the Portal" is buildable at all, and it
+  // is the kind of question the documentation has already answered wrongly three times on
+  // this integration. So ask the tenant.
+  //
+  // SAFELY. Every candidate below is called with NO parameters. A method that does not
+  // exist answers -32601 "Method not found"; a method that DOES exist rejects the empty
+  // call for missing required parameters. That difference tells us the door exists
+  // without ever pushing it — nothing here can modify a policy, because none of these
+  // calls names one.
+  for (const method of ['createPolicy', 'updatePolicy', 'setPolicyDetails', 'editPolicy', 'assignPolicy']) {
+    try {
+      await rpc('policies', method, {});
+      // It answered a bare call. Surprising, but it means the method is there.
+      probes.push({ service: 'policies', method, ok: true,
+        note: 'EXISTS and accepted an empty call — exclusions could be written from the Portal' });
+    } catch (e: any) {
+      const msg = String(e.message || '');
+      const missing = /method not found|not supported|unknown method/i.test(msg);
+      probes.push({
+        service: 'policies', method,
+        // Not-found is the EXPECTED answer, so it is not a failure of the connection —
+        // it is the answer to the question. Marked ok so a red row never implies the key
+        // is wrong when the truth is "this API is read-only".
+        ok: !missing,
+        note: missing
+          ? 'not available — the Policies API is read-only here, so exclusions stay a human edit in the console and the Portal audits them'
+          : `EXISTS (rejected the empty call: ${msg}) — writing exclusions from the Portal is worth building`,
+      });
+    }
+  }
+
   // Quarantine is SPLIT BY TARGET, not one service: a bare /jsonrpc/quarantine returned
   // HTTP 404 with no JSON body on Lumen's tenant (17 Aug), which is the signature of a
   // wrong URL rather than a missing scope — the server never got as far as JSON-RPC. The

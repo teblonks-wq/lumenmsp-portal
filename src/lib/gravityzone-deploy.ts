@@ -383,7 +383,7 @@ export async function reconcile(): Promise<ReconcileResult> {
 const firstLine = (s: any) => (s ? String(s).split('\n').map((x) => x.trim()).filter(Boolean)[0] || null : null);
 
 export interface RolloutRow {
-  deviceId: number | null; assetId: number | null; hostname: string;
+  deviceId: number | null; assetId: number | null; customerId: number | null; hostname: string;
   currentAv: string | null; state: string; detail: string;
   attempts: number; lastError: string | null; avBefore: string | null;
   // Bitdefender's own state, straight from GravityZone. Deliberately sourced there
@@ -405,31 +405,57 @@ export interface RolloutRow {
  * Machines with no agent are INCLUDED and called out — they are the gap that matters,
  * and leaving them off the list is how an estate looks 100% covered while it isn't.
  */
+// ONE query, two entry points. The customer screen wants every machine; the asset page
+// wants exactly one, and it must reach the identical verdict — a device that reads
+// "protected" on the rollout screen and "not deployed" on its own page is worse than
+// either answer alone, because now nobody knows which to believe.
+const ROLLOUT_SELECT = `
+  SELECT a.id AS asset_id, a.hostname, a.customer_id, d.id AS device_id, d.security_json,
+         EXTRACT(EPOCH FROM d.last_seen_at)::bigint AS agent_seen,
+         dep.state, dep.attempts, dep.last_error, dep.av_before,
+         se.gz_id, se.agent_version AS bd_version, se.outdated, se.infected,
+         se.policy_name, se.modules_on,
+         EXTRACT(EPOCH FROM se.last_seen_at)::bigint AS gz_seen
+    FROM customer_assets a
+    LEFT JOIN agent_devices d ON d.id = a.agent_device_id AND NOT COALESCE(d.revoked,false)
+    LEFT JOIN security_deployments dep ON dep.device_id = d.id
+    LEFT JOIN LATERAL (
+      SELECT * FROM security_endpoints se2 WHERE se2.asset_id = a.id ORDER BY se2.gz_id LIMIT 1
+    ) se ON true`;
+
 export async function rolloutFor(customerId: number): Promise<RolloutRow[]> {
   const rows = (await pool.query(
-    `SELECT a.id AS asset_id, a.hostname, d.id AS device_id, d.security_json,
-            EXTRACT(EPOCH FROM d.last_seen_at)::bigint AS agent_seen,
-            dep.state, dep.attempts, dep.last_error, dep.av_before,
-            se.gz_id, se.agent_version AS bd_version, se.outdated, se.infected,
-            se.policy_name, se.modules_on,
-            EXTRACT(EPOCH FROM se.last_seen_at)::bigint AS gz_seen
-       FROM customer_assets a
-       LEFT JOIN agent_devices d ON d.id = a.agent_device_id AND NOT COALESCE(d.revoked,false)
-       LEFT JOIN security_deployments dep ON dep.device_id = d.id
-       LEFT JOIN LATERAL (
-         SELECT * FROM security_endpoints se2 WHERE se2.asset_id = a.id ORDER BY se2.gz_id LIMIT 1
-       ) se ON true
+    `${ROLLOUT_SELECT}
       WHERE a.customer_id=$1 AND a.merged_into_id IS NULL
       ORDER BY a.hostname`, [customerId])).rows;
+  return rows.map(mapRolloutRow);
+}
 
+/**
+ * The same verdict for ONE machine, for its own page.
+ *
+ * Terry, 18 Aug: "i need to be able to deploy via the asset - still after asking cannot
+ * find it." Fair — the deploy button only ever existed on the customer rollout screen, so
+ * working a single machine meant knowing which customer it belonged to and finding it in
+ * a list. The route exists (POST /security/device/:id/deploy); what was missing was
+ * anywhere to press it from.
+ */
+export async function deviceSecurity(assetId: number): Promise<RolloutRow | null> {
+  const r = (await pool.query(
+    `${ROLLOUT_SELECT} WHERE a.id=$1 AND a.merged_into_id IS NULL LIMIT 1`, [assetId])).rows[0];
+  return r ? mapRolloutRow(r) : null;
+}
+
+function mapRolloutRow(rows: any): RolloutRow {
   const now = Math.floor(Date.now() / 1000);
-  return rows.map((r: any) => {
+  return ((r: any) => {
     const names = avNames(r.security_json);
     const currentAv = names.join(', ') || null;
     const agentSeen = r.agent_seen ? Number(r.agent_seen) : null;
     const base = {
       deviceId: r.device_id ? Number(r.device_id) : null,
       assetId: r.asset_id ? Number(r.asset_id) : null,
+      customerId: r.customer_id ? Number(r.customer_id) : null,
       hostname: String(r.hostname || '?'),
       currentAv, attempts: Number(r.attempts || 0),
       lastError: r.last_error || null, avBefore: r.av_before || null,
@@ -464,7 +490,7 @@ export async function rolloutFor(customerId: number): Promise<RolloutRow[]> {
     if (r.state === 'failed') return { ...base, state: 'failed', detail: r.last_error || 'The last attempt failed.' };
     if (!names.length) return { ...base, state: 'not-deployed', detail: 'Agent is on, but it has not reported its AV yet.' };
     return { ...base, state: 'not-deployed', detail: `Currently on ${currentAv}.` };
-  });
+  })(rows);
 }
 
 export interface CustomerSummary {

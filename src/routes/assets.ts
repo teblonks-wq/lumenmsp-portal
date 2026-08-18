@@ -12,6 +12,8 @@ import { backfillAssetsFromAgents, findDuplicateAssets, preferredSurvivor, merge
 import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
 import { meshStatus } from './mesh';
 import { powerWhenText } from '../lib/device-power';
+import { deviceSecurity, REQUIRED_EXCLUSIONS } from '../lib/gravityzone-deploy';
+import { customerEnabled } from '../lib/gravityzone';
 
 const router = Router();
 
@@ -495,6 +497,24 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   // ── Security tab: what the agent reported about AV / anti-spyware / firewall ──
   const security = agentInfo ? deriveSecurity(agentInfo) : null;
 
+  // ── Bitdefender, on the machine's OWN page ───────────────────────────────────
+  // Terry, 18 Aug: "i need to be able to deploy via the asset - still after asking
+  // cannot find it." The deploy route has existed for days; there was simply nowhere to
+  // press it except the customer rollout screen. Same verdict function as that screen —
+  // one machine reading two different states in two places is worse than either.
+  //
+  // Wrapped: this panel is a convenience on a page people open all day, and a
+  // GravityZone table being unavailable must never be what stops an engineer seeing a
+  // device's serial number.
+  let bd: any = null;
+  let bdGate: { ok: boolean; reason: string } | null = null;
+  try {
+    bd = await deviceSecurity(id);
+    if (bd?.customerId) bdGate = await customerEnabled(bd.customerId);
+  } catch (e: any) {
+    console.error('[assets] endpoint security panel failed:', e.message);
+  }
+
   // ── Manage lightboxes (admin): pending patches + the shared script library ────
   let patches: any[] = [];
   let patchMeta: any = null;
@@ -523,6 +543,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
 
   res.render('assets/detail', {
     user: req.session.user!, asset: row, agentInfo, gpo, security, patches, patchMeta, agentScripts,
+    bd, bdGate, requiredExclusions: REQUIRED_EXCLUSIONS,
     trackCommandId: parseInt(String(req.query.cmd || ''), 10) || null,
     latestAgentVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
     backupPlans, backupHistory,

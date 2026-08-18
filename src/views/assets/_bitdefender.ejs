@@ -1,0 +1,146 @@
+<%
+  // Endpoint Security for ONE machine, on the machine's own page.
+  //
+  // Terry, 18 Aug: "i need to be able to deploy via the asset - still after asking cannot
+  // find it." The deploy route already existed; the button only lived on the customer
+  // rollout screen, so acting on a single machine meant knowing its customer and hunting
+  // it out of a list. It belongs here, on the page you are already looking at.
+  //
+  // The state comes from deviceSecurity(), the SAME function the rollout screen uses. A
+  // machine that reads "protected" in one place and "not deployed" in the other is worse
+  // than either answer on its own, because then nobody knows which to believe.
+  var isAdmin = user.role === 'admin';
+  var here = '/assets/' + asset.id + '#security';
+
+  var STATE = {
+    'protected':    { label: 'Protected',        colour: 'var(--ok)',      edge: 're-ok'   },
+    'infected':     { label: 'INFECTED',         colour: 'var(--bad-fg)',  edge: 're-bad'  },
+    'installed':    { label: 'Installed',        colour: 'var(--accent)',  edge: 're-info' },
+    'queued':       { label: 'Install queued',   colour: 'var(--accent)',  edge: 're-info' },
+    'running':      { label: 'Installing',       colour: 'var(--accent)',  edge: 're-info' },
+    'failed':       { label: 'Install failed',   colour: 'var(--bad-fg)',  edge: 're-bad'  },
+    'excluded':     { label: 'Held back',        colour: 'var(--warn-fg)', edge: 're-warn' },
+    'no-agent':     { label: 'No agent',         colour: 'var(--warn-fg)', edge: 're-warn' },
+    'not-deployed': { label: 'Not deployed',     colour: 'var(--warn-fg)', edge: 're-warn' },
+  };
+  var st = bd ? (STATE[bd.state] || { label: bd.state, colour: 'var(--muted)', edge: '' }) : null;
+
+  // Can we actually act? Three separate reasons not to, and each gets its own sentence —
+  // one greyed button with no explanation is what sent Terry looking for this in the
+  // first place.
+  var canDeploy = !!(bd && isAdmin && bd.deviceId && bdGate && bdGate.ok
+                     && bd.state !== 'protected' && bd.state !== 'installed');
+%>
+
+<div class="card" style="margin:0 0 4px;border-left:3px solid <%= st ? st.colour : 'var(--line)' %>;">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+    <div>
+      <h4 style="margin:0 0 4px;">Bitdefender &mdash; Endpoint Security</h4>
+      <% if (!bd) { %>
+        <p class="muted" style="font-size:12.5px;margin:0;">This device is not on the asset register, so there is nothing to deploy to.</p>
+      <% } else { %>
+        <p style="margin:0;font-size:13px;">
+          <span style="display:inline-flex;align-items:center;gap:6px;font-weight:650;color:<%= st.colour %>;">
+            <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= st.colour %>;"></span>
+            <%= st.label %>
+          </span>
+          <span class="muted"> &mdash; <%= bd.detail %></span>
+        </p>
+      <% } %>
+    </div>
+
+    <% if (bd) { %>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <% if (canDeploy) { %>
+        <form method="post" action="/security/device/<%= bd.deviceId %>/deploy" style="margin:0;">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="back" value="<%= here %>">
+          <button class="btn btn-primary" type="submit" style="padding:3px 14px;font-size:12.5px;">
+            <%= bd.state === 'failed' ? 'Try the install again' : 'Deploy Bitdefender' %>
+          </button>
+        </form>
+      <% } %>
+
+      <% if (isAdmin && bd.deviceId && bd.state !== 'protected') { %>
+        <form method="post" action="/security/device/<%= bd.deviceId %>/exclude" style="margin:0;">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <input type="hidden" name="back" value="<%= here %>">
+          <input type="hidden" name="on" value="<%= bd.state === 'excluded' ? '0' : '1' %>">
+          <button class="btn" type="submit" style="padding:3px 12px;font-size:12.5px;">
+            <%= bd.state === 'excluded' ? 'Put back in the rollout' : 'Hold back' %>
+          </button>
+        </form>
+      <% } %>
+
+      <% if (bd.customerId) { %>
+        <a class="btn" href="/security/customer/<%= bd.customerId %>" style="padding:3px 12px;font-size:12.5px;">The whole customer</a>
+      <% } %>
+    </div>
+    <% } %>
+  </div>
+
+  <% if (bd) { %>
+    <%
+      // WHY the button is not there. Each of these is a different job, and saying which
+      // one saves the trip to the mapping screen to find out.
+      var blocker = null;
+      if (!bd.deviceId) blocker = 'This machine has no LumenMSP agent, and the agent is what runs the installer. Put the agent on first.';
+      else if (!bd.customerId) blocker = 'This device is not attached to a customer, so there is no GravityZone company to install from.';
+      else if (bdGate && !bdGate.ok) blocker = 'This customer is not on Endpoint Security — ' + bdGate.reason + '.';
+    %>
+    <% if (blocker) { %>
+      <p style="font-size:12.5px;margin:10px 0 0;color:var(--warn-fg);">
+        <%= blocker %>
+        <% if (bd.customerId && bdGate && !bdGate.ok && isAdmin) { %>
+          <a class="row-link" href="/security/mapping">Map them &rarr;</a>
+        <% } %>
+      </p>
+    <% } %>
+
+    <div class="dev-info-cols" style="margin-top:12px;">
+      <div>
+        <div class="dev-field-row"><div class="k">Bitdefender version</div><div class="v"><%= bd.bdVersion || '—' %></div></div>
+        <div class="dev-field-row"><div class="k">Definitions</div><div class="v">
+          <% if (!bd.definitions) { %>—<% } else { %>
+            <span style="color:<%= bd.definitions === 'current' ? 'var(--ok)' : 'var(--warn-fg)' %>;font-weight:600;"><%= bd.definitions %></span>
+          <% } %>
+        </div></div>
+        <div class="dev-field-row"><div class="k">Policy</div><div class="v"><%= bd.policyName || '—' %></div></div>
+      </div>
+      <div>
+        <div class="dev-field-row"><div class="k">Modules on</div><div class="v"><%= bd.modulesOn || '—' %></div></div>
+        <div class="dev-field-row"><div class="k">Machine online</div><div class="v">
+          <% if (bd.online === null) { %>—
+          <% } else if (bd.online) { %><span style="color:var(--ok);font-weight:600;">yes</span>
+          <% } else { %><span class="muted">no &mdash; the install runs when it next checks in</span><% } %>
+        </div></div>
+        <div class="dev-field-row"><div class="k">AV before</div><div class="v"><%= bd.avBefore || bd.currentAv || '—' %></div></div>
+      </div>
+    </div>
+
+    <% if (bd.state === 'failed' && bd.lastError) { %>
+      <p style="font-size:12px;margin:10px 0 0;color:var(--bad-fg);">
+        Last error: <%= bd.lastError %><% if (bd.attempts) { %> (attempt <%= bd.attempts %>)<% } %>
+      </p>
+      <p class="muted" style="font-size:11.5px;margin:4px 0 0;">
+        An installer that exits 0 with nothing installed is recorded as a failure, not a success &mdash;
+        that is the Chropynska rollback signature, and it is why this reads two sources before saying
+        <em>protected</em>.
+      </p>
+    <% } %>
+
+    <% if (bd.infected) { %>
+      <p style="font-size:12.5px;margin:10px 0 0;color:var(--bad-fg);">
+        Bitdefender is reporting a detection on this machine.
+        <a class="row-link" href="/security/infections">See what it found &rarr;</a>
+      </p>
+      <p class="muted" style="font-size:11.5px;margin:4px 0 0;">
+        If it names <code>MeshAgent.exe</code> or the LumenMSP agent, that is our own tooling and the fix is a
+        policy exclusion, not a clean-up
+        <% if (requiredExclusions && requiredExclusions.length) { %>
+          (<%= requiredExclusions.map(function(x){ return x.value; }).join(', ') %> &mdash; On-Access <em>and</em> ATC)
+        <% } %>.
+      </p>
+    <% } %>
+  <% } %>
+</div>
