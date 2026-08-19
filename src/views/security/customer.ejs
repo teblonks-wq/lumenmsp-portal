@@ -67,6 +67,23 @@
       <%= pkg.ready_windows ? 'ready' : 'still building' %>, refreshed <%= dt(pkg.refreshed_at) %>.<% } %>
   <% } %>
 </p>
+<% if (pkg && pkg.url_windows) { %>
+<%# The manual override, asked for by name (Terry, 19 Aug: "perhaps it should have it
+    somewhere for manual override"). This is the SAME url the agent is handed in every
+    deploy command - shown so a human can run the installer by hand on a machine and
+    compare against what the automation does, or install where no agent exists yet.
+    It is a plain package path with no credential in it, so showing it discloses nothing;
+    anyone with this page open is an admin who could read it out of the deploy log anyway. %>
+<p class="muted" style="font-size:11.5px;margin:6px 0 0;word-break:break-all;">
+  Manual install (the exact URL the agent is given):
+  <code id="pkg-url-win" style="font-size:10.5px;"><%= pkg.url_windows %></code>
+  <button type="button" class="btn" style="padding:1px 10px;font-size:11px;"
+          onclick="navigator.clipboard.writeText(document.getElementById('pkg-url-win').textContent).then(()=>{this.textContent='Copied';setTimeout(()=>{this.textContent='Copy';},1500);})">Copy</button>
+  &mdash; download it KEEPING its filename (the [bracketed] part is the package config), then run
+  <code>setupdownloader_[...].exe /bdparams /silent silent</code>, or use
+  <code>bd-manual-install-test.ps1</code> in the Toolbox.
+</p>
+<% } %>
 </div>
 
 <%# The installation package is CHOSEN, never guessed - and choosing it is what ENABLES this
