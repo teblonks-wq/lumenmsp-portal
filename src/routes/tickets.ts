@@ -1049,12 +1049,42 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
           const rcpt = await ticketRecipient(id);
           // To/CC/BCC from the composer; To falls back to the matched contact.
           const finalTo = toAddr || (rcpt ? rcpt.email : '');
-          if (finalTo) { const subj = rcpt ? (rcpt.ticketNumber + (rcpt.subject ? ': ' + rcpt.subject : '')) : 'Update on your ticket'; await sendMail({ to: finalTo, cc, bcc, subject: subj, html: customerEmailHtml(body), signatureName: user.displayName, attachments: graph }); }
-          else { await sysNote(`No recipient address — reply saved but not emailed (by ${user.displayName})`); res.redirect(back + '?err=' + encodeURIComponent('No recipient address on this case — the reply was saved but not emailed. Add a "To" address or link a contact.')); return; }
-        } catch (e) {
+          if (!finalTo) { await sysNote(`No recipient address — reply saved but not emailed (by ${user.displayName})`); res.redirect(back + '?err=' + encodeURIComponent('No recipient address on this case — the reply was saved but not emailed. Add a "To" address or link a contact.')); return; }
+
+          // A case that arrived by WhatsApp has a PHONE NUMBER where an email address would
+          // be, and the composer defaults to Email. Sent as-is, Graph rejects the whole
+          // message with ErrorInvalidRecipients and the reply silently never reaches anyone
+          // (LITS-102570, 19 Aug: recipient '+447954827303' is not resolved). Caught here,
+          // before the send, because the person needs to be told which BUTTON to press —
+          // not that mail is broken, which it is not.
+          const looksLikeEmail = /^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$/.test(finalTo.split(',')[0].trim());
+          if (!looksLikeEmail) {
+            const isPhone = /^\+?[\d][\d\s()-]{6,}$/.test(finalTo.trim());
+            await sysNote(`Reply saved but NOT emailed — "${finalTo}" is not an email address (by ${user.displayName})`);
+            res.redirect(back + '?err=' + encodeURIComponent(isPhone
+              ? `Not sent: this case's contact is a phone number (${finalTo}), not an email address. Reply on the WhatsApp channel instead, or add an email address to the contact. Your reply has been saved.`
+              : `Not sent: "${finalTo}" is not a valid email address. Your reply has been saved — correct the To address and send again.`));
+            return;
+          }
+
+          const subj = rcpt ? (rcpt.ticketNumber + (rcpt.subject ? ': ' + rcpt.subject : '')) : 'Update on your ticket';
+          await sendMail({ to: finalTo, cc, bcc, subject: subj, html: customerEmailHtml(body), signatureName: user.displayName, attachments: graph });
+        } catch (e: any) {
           console.error('Public reply email failed:', e);
-          await sysNote(`Email send FAILED — reply saved but not delivered (by ${user.displayName})`);
-          res.redirect(back + '?err=' + encodeURIComponent('The reply was saved but the email failed to send — check mail settings / Graph token.')); return;
+          // SAY WHAT ACTUALLY HAPPENED. This used to read "check mail settings / Graph
+          // token" whatever the cause, which on 19 Aug sent everyone hunting a token that
+          // was fine — 213 messages had gone out that week, one more three minutes later.
+          // Graph puts the useful sentence inside a JSON body on the end of the message;
+          // that sentence is the whole of the answer, so surface it.
+          const raw = String(e?.message || e || '');
+          let detail = raw;
+          const brace = raw.indexOf('{');
+          if (brace >= 0) {
+            try { detail = JSON.parse(raw.slice(brace))?.error?.message || raw; } catch { /* keep raw */ }
+          }
+          detail = detail.replace(/\s+/g, ' ').trim().slice(0, 300);
+          await sysNote(`Email send FAILED — reply saved but not delivered: ${detail} (by ${user.displayName})`);
+          res.redirect(back + '?err=' + encodeURIComponent('The reply was saved but the email failed to send — ' + detail)); return;
         }
       } else if (channel === 'whatsapp') {
         await recordWaSent();

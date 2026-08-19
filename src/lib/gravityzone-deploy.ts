@@ -164,10 +164,30 @@ export async function refreshLinks(
   const rows = Array.isArray(res) ? res : (res?.items || (res ? [res] : []));
   const mine = rows.find((r: any) => String(r?.packageName || '').trim().toLowerCase() === packageName!.toLowerCase()) || rows[0] || {};
 
-  // Prefer the FULL KIT over the tiny downloader. The downloader has to reach
-  // Bitdefender's CDN from the customer's machine at install time; the full kit is one
-  // file we can hand the agent. Fewer moving parts on a machine we cannot see.
-  const win = str(mine.fullKitWindowsX64) || str(mine.installLinkWindows);
+  // USE THE DOWNLOADER, NOT THE FULL KIT — and this is not a preference, it is the only
+  // one of the two that can work.
+  //
+  // The full-kit URL is an API endpoint:
+  //   https://cloudgz.gravityzone.bitdefender.com/api/v1.0/http/downloadFullKit?packageId=...
+  // and /api/ requires `Authorization: Basic <apiKey>` like every other GravityZone call.
+  // The agent's DownloadAsync deliberately sends NO credentials, because it fetches vendor
+  // URLs and our device token has no business being posted to a third-party host. So the
+  // agent asks for the kit unauthenticated and Bitdefender answers 401 — which is exactly
+  // what LUMEN-008 reported on 19 Aug ("Install failed: ... 401 (Unauthorized)").
+  //
+  // installLinkWindows is a plain package path with no auth on it at all:
+  //   https://cloudgz.gravityzone.bitdefender.com/Packages/<hash>/setupdownloader_[...].exe
+  //
+  // The old comment argued for the full kit — "fewer moving parts on a machine we cannot
+  // see" — which is a fair instinct and wrong twice over here: the kit needs a credential
+  // we must not ship, and it is about a GIGABYTE, which the agent was buffering entirely
+  // in memory before writing a byte. The ~10 MB downloader fetches what it needs at
+  // install time from the same host the kit lives on, so the network dependency it adds
+  // is one we already have.
+  //
+  // Sending the full kit anyway "as a fallback" would be worse than sending nothing: every
+  // machine would fail with an authentication error that reads like a broken API key.
+  const win = str(mine.installLinkWindows);
 
   // Readiness, without treating "we could not find the field" as "not ready".
   //
@@ -199,8 +219,10 @@ export async function refreshLinks(
        url_mac_arm=EXCLUDED.url_mac_arm, url_linux=EXCLUDED.url_linux,
        ready_windows=EXCLUDED.ready_windows, raw=EXCLUDED.raw, refreshed_at=NOW()
      RETURNING *`,
+    // Same rule for the other platforms: the installLink* paths are servable, the
+    // fullKit* ones are /api/ URLs that need the key.
     [customerId, gzCompanyId, packageName, win, str(mine.installLinkMac), str(mine.installLinkMacArm),
-     str(mine.installLinkLinux) || str(mine.fullKitLinuxX64), ready, JSON.stringify(mine)])).rows[0];
+     str(mine.installLinkLinux), ready, JSON.stringify(mine)])).rows[0];
 
   if (userId) await logActivity(userId, 'gz_package_links', 'customers', customerId,
     `Refreshed the Bitdefender package links ("${packageName}")`);

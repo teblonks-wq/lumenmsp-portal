@@ -7,11 +7,18 @@
   // email_log / channel_log timestamps are stored as UTC wall-clock in a timezone-naive column,
   // so a raw toLocaleString shows them an hour behind during BST. Re-read the components as UTC,
   // then render in Europe/London — correct in summer and winter, whatever TZ the process runs in.
+  // Just format it. This used to rebuild the Date by taking its LOCAL clock components and
+  // re-stamping them as UTC — a hand-rolled correction for node-pg reading our zone-less
+  // `timestamp` columns as Europe/London instead of the UTC they hold. That parse is fixed
+  // properly now (src/db/pg-utc.ts), so the old correction had become a second one applied
+  // on top of the first, and this table read an HOUR AHEAD: a reply logged at 16:06 showed
+  // as 17:06. Two fixes for one bug is worse than none, because whichever you find first
+  // looks right.
   function lts(v, dateOnly){
     if (!v) return '—';
     var d = new Date(v);
-    var u = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()));
-    return dateOnly ? u.toLocaleDateString('en-GB', { timeZone: 'Europe/London' }) : u.toLocaleString('en-GB', { timeZone: 'Europe/London' });
+    return dateOnly ? d.toLocaleDateString('en-GB', { timeZone: 'Europe/London' })
+                    : d.toLocaleString('en-GB', { timeZone: 'Europe/London' });
   }
   // Keep the current search when switching status/channel filters, and vice versa.
   function link(over){
