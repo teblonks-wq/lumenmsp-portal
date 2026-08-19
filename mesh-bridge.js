@@ -215,22 +215,71 @@ function findGroupFor(groups, customer) {
     || (customer.meshGroupId ? groups.find((g) => g._id === customer.meshGroupId) : undefined);
 }
 
+/** MeshCentral's "full rights" mask — what --fullrights sets. */
+const FULL_RIGHTS = 4294967295; // 0xFFFFFFFF
+
 /**
- * Give the named human account full rights on a group. Idempotent — MeshCentral
- * complains if the link already exists, which is fine and expected on every run after
- * the first, so that particular complaint is swallowed rather than logged.
+ * Does this group already give the user full rights?
+ *   true  — yes, nothing to do
+ *   false — no, grant it
+ *   null  — the group carries no links map, so we cannot tell from here
+ */
+function hasFullRights(group, user) {
+  const links = group && group.links;
+  if (!links || typeof links !== 'object') return null;
+  const link = links[user];
+  return !!(link && link.rights === FULL_RIGHTS);
+}
+
+let linksWarned = false;
+let grantsMade = 0;
+let grantsSkipped = 0;
+
+/**
+ * Give the named human account full rights on a group, ONLY IF IT DOES NOT ALREADY
+ * HAVE THEM.
+ *
+ * This used to call addusertodevicegroup unconditionally on every run, on the belief
+ * that MeshCentral rejects a repeat grant and that the rejection was harmless. It does
+ * not reject it. It accepts it, rewrites the link, and writes an audit event — and each
+ * of those events embeds the whole account object including its complete links map, so
+ * every event grows as customers are added.
+ *
+ * Every 5 minutes, for every customer, for every engineer, that was roughly 22,000
+ * events a day. By 2026-08-19 meshcentral-events.db had reached 985 MB / 307,733
+ * records — past what NeDB can JSON.stringify inside Node's heap. MeshCentral then
+ * crash-looped every ~95 seconds and took remote access to every customer device with
+ * it. Check first. Write nothing when nothing has changed.
  */
 async function grantAdmin(group) {
   for (const user of CFG.adminUsers) {
+    const already = hasFullRights(group, user);
+
+    if (already === true) { grantsSkipped++; continue; }
+
+    if (already === null && !linksWarned) {
+      linksWarned = true;
+      console.error(
+        'listdevicegroups returned groups with no links map, so this run cannot tell who '
+        + 'already has rights and will re-grant every time. That is exactly what bloated '
+        + 'the event log — fix this rather than leaving it running.',
+      );
+    }
+
     try {
       await meshctrl('addusertodevicegroup', [
         '--id', bareId(group._id),
         '--userid', user,
         '--fullrights',
       ]);
+      grantsMade++;
       log(`granted ${user} rights on "${group.name}"`);
+      // Keep the in-memory copy honest so nothing later in the same run repeats it.
+      if (group.links && typeof group.links === 'object') {
+        group.links[user] = { rights: FULL_RIGHTS };
+      }
     } catch (err) {
-      // Already-a-member is the normal case on every run after the first.
+      // Already-a-member should no longer happen, but stays tolerated rather than noisy.
       if (!/already|exist/i.test(err.message)) {
         console.error(`could not grant ${user} on "${group.name}": ${redact(err.message)}`);
       }
@@ -440,6 +489,11 @@ async function main() {
       console.error(`customer ${customer.id} (${customer.name}): ${redact(err.message)}`);
     }
   }
+
+  // Rights are meant to be a no-op on a settled estate. If grantsMade is not ~0 on a
+  // steady run, either someone is revoking rights in the console or the links check
+  // above is not seeing them — and every grant writes an event that never goes away.
+  log(`rights: ${grantsMade} granted, ${grantsSkipped} already correct`);
 
   // Node id mapping. Hostname is the join key, which is why every group is
   // created with Hostname Sync on.
