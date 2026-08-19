@@ -410,6 +410,7 @@ function _ago(d) {
     <%- include('_bitdefender', {
           bd: (typeof bd !== 'undefined') ? bd : null,
           bdGate: (typeof bdGate !== 'undefined') ? bdGate : null,
+          bdLog: (typeof bdLog !== 'undefined') ? bdLog : [],
           requiredExclusions: (typeof requiredExclusions !== 'undefined') ? requiredExclusions : [],
           asset: asset, user: user,
           csrfToken: (typeof csrfToken !== 'undefined' ? csrfToken : '')

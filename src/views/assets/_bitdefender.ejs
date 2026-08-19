@@ -142,5 +142,70 @@
         <% } %>.
       </p>
     <% } %>
+
+    <%
+      // ── The install log ────────────────────────────────────────────────────────────
+      // Terry, 19 Aug: "when BD is queued what is it actually doing - i think we need to
+      // see a log." The state above is a SUMMARY, and it only moves when somebody presses
+      // Refresh progress — so a machine reads "Queued" from the moment it is asked, right
+      // through the download, the removal of the old antivirus, the install and the
+      // failure. Everything below comes from agent_commands: the machine's own account,
+      // including the installer's output streamed line by line while it is still running.
+      var log = (typeof bdLog !== 'undefined' && bdLog) ? bdLog : [];
+      function ts(v){ return v ? new Date(v).toLocaleString('en-GB', { timeZone:'Europe/London', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : null; }
+      function secs(a, b){ if (!a || !b) return null; var n = Math.round((new Date(b) - new Date(a)) / 1000); return n < 0 ? null : (n < 90 ? n + 's' : Math.round(n/60) + ' min'); }
+      var statusWord = { queued:'waiting for the machine to check in', running:'running on the machine now',
+                         done:'finished', failed:'failed', expired:'expired before the machine came back' };
+    %>
+    <% if (log.length) { %>
+      <details style="margin-top:14px;" <%= (log[0].status === 'running' || log[0].status === 'queued') ? 'open' : '' %>>
+        <summary style="cursor:pointer;font-size:12.5px;font-weight:600;">
+          Install log &mdash; <%= log.length %> attempt<%= log.length === 1 ? '' : 's' %>
+        </summary>
+        <% log.forEach(function (e, i) { %>
+          <div style="border-left:3px solid var(--line);padding:8px 0 8px 12px;margin-top:10px;">
+            <div style="font-size:12px;">
+              <strong>Attempt <%= log.length - i %></strong>
+              &middot; <%= statusWord[e.status] || e.status %>
+              <% if (e.exitCode !== null && e.exitCode !== undefined) { %>
+                &middot; exit code <strong><%= e.exitCode %></strong>
+              <% } %>
+              <% if (e.requestedBy) { %><span class="muted"> &middot; asked by <%= e.requestedBy %></span><% } %>
+            </div>
+            <div class="muted" style="font-size:11.5px;margin-top:3px;">
+              queued <%= ts(e.queuedAt) || '—' %>
+              <% if (e.startedAt) { %> &middot; picked up <%= ts(e.startedAt) %><% var w = secs(e.queuedAt, e.startedAt); if (w) { %> (waited <%= w %>)<% } %><% } %>
+              <% if (e.finishedAt) { %> &middot; finished <%= ts(e.finishedAt) %><% var d = secs(e.startedAt, e.finishedAt); if (d) { %> (took <%= d %>)<% } %><% } %>
+            </div>
+            <% if (e.url) { %>
+            <div class="muted" style="font-size:11px;margin-top:3px;word-break:break-all;">
+              ran <code><%= e.url.length > 110 ? e.url.slice(0, 110) + '…' : e.url %></code>
+              <% if (e.args) { %> <code><%= e.args %></code><% } %>
+            </div>
+            <% } %>
+            <%
+              // While it runs, the streamed tail is the freshest thing we have; once it is
+              // over, the full output supersedes it. Showing both would just show the same
+              // lines twice.
+              var text = (e.status === 'running' && e.progress) ? e.progress : (e.output || e.progress);
+            %>
+            <% if (text) { %>
+              <pre style="font-size:11px;line-height:1.45;background:var(--surface-2, #f8fafc);border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0 0;max-height:220px;overflow:auto;white-space:pre-wrap;"><%= text %></pre>
+              <% if (e.status === 'running' && e.progressAt) { %>
+                <p class="muted" style="font-size:11px;margin:4px 0 0;">Still going &mdash; last line <%= ts(e.progressAt) %>. This page does not refresh itself.</p>
+              <% } %>
+            <% } else if (e.status === 'running') { %>
+              <p class="muted" style="font-size:11.5px;margin:6px 0 0;">Running, but the installer has printed nothing yet. Bitdefender's downloader fetches about a gigabyte and removes any existing antivirus before it installs, so several quiet minutes are normal.</p>
+            <% } else if (e.status === 'queued') { %>
+              <p class="muted" style="font-size:11.5px;margin:6px 0 0;">Waiting for the machine to check in &mdash; usually under a minute if it is online.</p>
+            <% } else { %>
+              <p class="muted" style="font-size:11.5px;margin:6px 0 0;">The installer printed nothing.</p>
+            <% } %>
+          </div>
+        <% }); %>
+      </details>
+    <% } else if (bd.deviceId) { %>
+      <p class="muted" style="font-size:11.5px;margin-top:12px;">No Bitdefender install has been asked for on this machine yet.</p>
+    <% } %>
   <% } %>
 </div>

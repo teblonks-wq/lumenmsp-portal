@@ -600,6 +600,70 @@ function mapRolloutRow(rows: any): RolloutRow {
   })(rows);
 }
 
+export interface DeployLogEntry {
+  commandId: number;
+  /** queued | running | done | failed | expired — the AGENT's view, not the rollout state. */
+  status: string;
+  queuedAt: Date | null;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  exitCode: number | null;
+  /** The tail the agent streams while the installer is still talking. */
+  progress: string | null;
+  progressAt: Date | null;
+  /** Everything the installer printed, once it has stopped. */
+  output: string | null;
+  requestedBy: string | null;
+  /** What we actually told the machine to fetch and run — the two facts that decide the outcome. */
+  url: string | null;
+  args: string | null;
+}
+
+/**
+ * What is ACTUALLY happening to this machine, as opposed to what the rollout state says.
+ *
+ * Terry, 19 Aug: "when BD is queued what is it actually doing - i think we need to see a log."
+ * He is right, and the awkward part is that the Portal already had every fact and showed none
+ * of them. `security_deployments.state` is a summary that only moves when somebody presses
+ * Refresh progress, so a machine reads "Queued" from the moment it is asked until a human
+ * intervenes — through the download, the competitive removal, the install and the failure.
+ *
+ * Meanwhile `agent_commands` has been recording the truth all along: when it was claimed,
+ * when it started, the tail of the installer's own output STREAMED AS IT APPEARS (the agent
+ * posts every line, throttled), the exit code, and the full output at the end. This just
+ * reads it back, newest first, so the panel can show the attempt rather than a summary of it.
+ *
+ * Scoped to Bitdefender installs on this device: the same command kind carries every other
+ * software push, and a log that mixes them is a log nobody trusts.
+ */
+export async function deployLog(deviceId: number, limit = 5): Promise<DeployLogEntry[]> {
+  const rows = (await pool.query(
+    `SELECT c.id, c.status, c.requested_at, c.started_at, c.finished_at, c.exit_code,
+            c.progress, c.progress_at, c.output, c.payload,
+            u.display_name AS requested_by
+       FROM agent_commands c
+       LEFT JOIN users u ON u.id = c.requested_by
+      WHERE c.device_id=$1 AND c.kind='software.install'
+        AND c.payload->>'name' LIKE 'Bitdefender%'
+      ORDER BY c.id DESC
+      LIMIT $2`, [deviceId, limit])).rows;
+
+  return rows.map((r: any) => ({
+    commandId: Number(r.id),
+    status: String(r.status || 'queued'),
+    queuedAt: r.requested_at || null,
+    startedAt: r.started_at || null,
+    finishedAt: r.finished_at || null,
+    exitCode: r.exit_code == null ? null : Number(r.exit_code),
+    progress: r.progress || null,
+    progressAt: r.progress_at || null,
+    output: r.output || null,
+    requestedBy: r.requested_by || null,
+    url: r.payload?.url ? String(r.payload.url) : null,
+    args: r.payload?.args ? String(r.payload.args) : null,
+  }));
+}
+
 export interface CustomerSummary {
   customerId: number; customerName: string;
   enabled: boolean; enabledReason: string;

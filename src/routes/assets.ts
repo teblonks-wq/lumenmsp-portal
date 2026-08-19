@@ -12,7 +12,7 @@ import { backfillAssetsFromAgents, findDuplicateAssets, preferredSurvivor, merge
 import { getBackupForComputer, getBackupHistoryForComputer, backupStateByComputer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes } from '../lib/msp360';
 import { meshStatus } from './mesh';
 import { powerWhenText } from '../lib/device-power';
-import { deviceSecurity, REQUIRED_EXCLUSIONS } from '../lib/gravityzone-deploy';
+import { deviceSecurity, deployLog, REQUIRED_EXCLUSIONS } from '../lib/gravityzone-deploy';
 import { customerEnabled } from '../lib/gravityzone';
 
 const router = Router();
@@ -586,9 +586,14 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   // device's serial number.
   let bd: any = null;
   let bdGate: { ok: boolean; reason: string } | null = null;
+  let bdLog: any[] = [];
   try {
     bd = await deviceSecurity(id);
     if (bd?.customerId) bdGate = await customerEnabled(bd.customerId);
+    // The install attempts themselves. Read straight from agent_commands, so it is the
+    // machine's account of what happened rather than the rollout summary, which does not
+    // move until somebody presses Refresh progress.
+    if (bd?.deviceId) bdLog = await deployLog(Number(bd.deviceId));
   } catch (e: any) {
     console.error('[assets] endpoint security panel failed:', e.message);
   }
@@ -621,7 +626,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
 
   res.render('assets/detail', {
     user: req.session.user!, asset: row, agentInfo, gpo, security, patches, patchMeta, agentScripts,
-    bd, bdGate, requiredExclusions: REQUIRED_EXCLUSIONS,
+    bd, bdGate, bdLog, requiredExclusions: REQUIRED_EXCLUSIONS,
     trackCommandId: parseInt(String(req.query.cmd || ''), 10) || null,
     latestAgentVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
     backupPlans, backupHistory,
