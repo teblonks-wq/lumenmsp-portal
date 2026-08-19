@@ -1125,8 +1125,20 @@ function deriveSecurity(agentInfo: any): any {
       // Defender goes passive by design when a third-party engine registers. That is correct
       // behaviour, not a finding, and calling it red made every Bitdefender machine look broken.
       if (isMs(name) && !p.enabled && liveThirdParty.length) {
+        // WHICH engine took over? With one, name it. With more than one registered, naming
+        // the FIRST is a coin toss - and on LITS-010 it lost: a stale OpenText registration
+        // was named as the active engine while Bitdefender, the product actually running,
+        // sat in the row underneath. Prefer an engine we have corroborated on disk (1.0.25+),
+        // and when several survive that, list them instead of picking one. Two registered
+        // engines is a fact worth showing, not a detail to resolve by array order.
+        const corroborated = liveThirdParty.filter((q: any) => q.present === true);
+        const candidates = corroborated.length ? corroborated : liveThirdParty;
+        const engineNote = candidates.length === 1
+          ? `Passive - ${candidates[0].name || 'a third-party engine'} is the active engine`
+          : `Passive - Windows has handed over to a third-party engine. More than one is registered: `
+            + candidates.map((q: any) => q.name || 'unnamed').join(', ');
         msRowIdx = push({ area: 'Antivirus', product: name, level: 'ok',
-          detail: `Passive - ${liveThirdParty[0].name || 'a third-party engine'} is the active engine`,
+          detail: engineNote,
           extra: notes.length ? notes.join(' · ') : null });
         continue;
       }
