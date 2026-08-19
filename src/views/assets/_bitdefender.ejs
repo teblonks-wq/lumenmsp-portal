@@ -154,7 +154,7 @@
       var log = (typeof bdLog !== 'undefined' && bdLog) ? bdLog : [];
       function ts(v){ return v ? new Date(v).toLocaleString('en-GB', { timeZone:'Europe/London', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : null; }
       function secs(a, b){ if (!a || !b) return null; var n = Math.round((new Date(b) - new Date(a)) / 1000); return n < 0 ? null : (n < 90 ? n + 's' : Math.round(n/60) + ' min'); }
-      var statusWord = { queued:'waiting for the machine to check in', running:'running on the machine now',
+      var statusWord = { queued:'sent to the machine, not picked up yet', running:'running on the machine now',
                          done:'finished', failed:'failed', expired:'expired before the machine came back' };
     %>
     <% if (log.length) { %>
@@ -166,6 +166,9 @@
           <div style="border-left:3px solid var(--line);padding:8px 0 8px 12px;margin-top:10px;">
             <div style="font-size:12px;">
               <strong>Attempt <%= log.length - i %></strong>
+              <% if (e.name && e.name.indexOf('Bitdefender') !== 0) { %>
+                <span style="color:var(--warn-fg);">(labelled "<%= e.name %>", not Bitdefender)</span>
+              <% } %>
               &middot; <%= statusWord[e.status] || e.status %>
               <% if (e.exitCode !== null && e.exitCode !== undefined) { %>
                 &middot; exit code <strong><%= e.exitCode %></strong>
@@ -197,13 +200,26 @@
             <% } else if (e.status === 'running') { %>
               <p class="muted" style="font-size:11.5px;margin:6px 0 0;">Running, but the installer has printed nothing yet. Bitdefender's downloader fetches about a gigabyte and removes any existing antivirus before it installs, so several quiet minutes are normal.</p>
             <% } else if (e.status === 'queued') { %>
-              <p class="muted" style="font-size:11.5px;margin:6px 0 0;">Waiting for the machine to check in &mdash; usually under a minute if it is online.</p>
+              <p class="muted" style="font-size:11.5px;margin:6px 0 0;">Handed to the machine the moment it was queued &mdash; if it is online this is a blink; if it is off, it runs when it comes back.</p>
             <% } else { %>
               <p class="muted" style="font-size:11.5px;margin:6px 0 0;">The installer printed nothing.</p>
             <% } %>
           </div>
         <% }); %>
       </details>
+    <% } else if (typeof bdLogError !== 'undefined' && bdLogError) { %>
+      <p style="font-size:11.5px;margin-top:12px;color:var(--bad-fg);">
+        The install log could not be read &mdash; <%= bdLogError %>
+      </p>
+    <% } else if (bd.deviceId && bd.attempts) { %>
+      <%# The rollout counted attempts but no install commands are on record. Those two come
+          from different tables and they should never disagree; saying "nothing was asked for"
+          here would be a confident wrong answer, so say what we actually see instead. %>
+      <p style="font-size:11.5px;margin-top:12px;color:var(--warn-fg);">
+        This machine has been deployed to <strong><%= bd.attempts %></strong> time<%= bd.attempts === 1 ? '' : 's' %>,
+        but no install commands are on record for it. The rollout state and the command queue disagree &mdash;
+        worth a look before trusting either.
+      </p>
     <% } else if (bd.deviceId) { %>
       <p class="muted" style="font-size:11.5px;margin-top:12px;">No Bitdefender install has been asked for on this machine yet.</p>
     <% } %>

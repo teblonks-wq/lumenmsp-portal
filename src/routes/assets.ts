@@ -587,15 +587,26 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   let bd: any = null;
   let bdGate: { ok: boolean; reason: string } | null = null;
   let bdLog: any[] = [];
+  let bdLogError: string | null = null;
   try {
     bd = await deviceSecurity(id);
     if (bd?.customerId) bdGate = await customerEnabled(bd.customerId);
-    // The install attempts themselves. Read straight from agent_commands, so it is the
-    // machine's account of what happened rather than the rollout summary, which does not
-    // move until somebody presses Refresh progress.
-    if (bd?.deviceId) bdLog = await deployLog(Number(bd.deviceId));
   } catch (e: any) {
     console.error('[assets] endpoint security panel failed:', e.message);
+  }
+  // The install attempts themselves, read straight from agent_commands - the machine's own
+  // account rather than the rollout summary, which does not move until somebody presses
+  // Refresh progress.
+  //
+  // ITS OWN try/catch, deliberately. Sharing the block above meant that anything throwing
+  // earlier skipped this assignment silently, and an empty list renders as "no install has
+  // ever been asked for" - a confident wrong answer about a machine we have deployed to
+  // five times. An error here now SAYS it is an error.
+  try {
+    if (bd?.deviceId) bdLog = await deployLog(Number(bd.deviceId));
+  } catch (e: any) {
+    bdLogError = e.message || String(e);
+    console.error('[assets] endpoint security install log failed:', bdLogError);
   }
 
   // ── Manage lightboxes (admin): pending patches + the shared script library ────
@@ -626,7 +637,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
 
   res.render('assets/detail', {
     user: req.session.user!, asset: row, agentInfo, gpo, security, patches, patchMeta, agentScripts,
-    bd, bdGate, bdLog, requiredExclusions: REQUIRED_EXCLUSIONS,
+    bd, bdGate, bdLog, bdLogError, requiredExclusions: REQUIRED_EXCLUSIONS,
     trackCommandId: parseInt(String(req.query.cmd || ''), 10) || null,
     latestAgentVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
     backupPlans, backupHistory,

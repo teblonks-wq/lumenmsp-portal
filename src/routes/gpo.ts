@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { wakeAgent } from './agent-api';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
@@ -112,6 +113,7 @@ router.post('/gpo/refresh', requireAuth, requireAdmin, async (req: Request, res:
       `INSERT INTO agent_commands (device_id, kind, status, requested_by)
        VALUES ($1,'gpo.inventory','queued',$2) RETURNING id`,
       [agent.id, req.session.user!.id])).rows[0];
+    wakeAgent(agent.id);   // run now, not on the next check-in
     await logActivity(req.session.user!.id, 'gpo_collect', 'customers', customerId,
       `Queued a Group Policy collection on ${agent.hostname}`);
     res.redirect(back + (back.indexOf('?') >= 0 ? '&' : '?') + 'cmd=' + cmd.id + '#gpo');
@@ -249,6 +251,7 @@ router.post('/gpo/unlink', requireAuth, requireAdmin, async (req: Request, res: 
       `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
        VALUES ($1,'gpo.unlink',$2,'queued',$3) RETURNING id`,
       [dev.id, JSON.stringify({ ids: ids.join(',') }), req.session.user!.id])).rows[0];
+    wakeAgent(dev.id);
 
     await logActivity(req.session.user!.id, 'gpo_unlink', 'agent_devices', dev.id,
       `Unlinking ${ids.length} Group Policy object${ids.length === 1 ? '' : 's'} on ${dev.hostname}` +
@@ -308,6 +311,7 @@ router.post('/gpo/delete', requireAuth, requireAdmin, async (req: Request, res: 
       `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
        VALUES ($1,'gpo.delete',$2,'queued',$3) RETURNING id`,
       [dev.id, JSON.stringify({ ids: ids.join(','), force: force ? 'true' : 'false' }), req.session.user!.id])).rows[0];
+    wakeAgent(dev.id);
 
     await logActivity(req.session.user!.id, 'gpo_delete', 'agent_devices', dev.id,
       `DELETING ${ids.length} Group Policy object${ids.length === 1 ? '' : 's'} on ${dev.hostname}` +
@@ -377,6 +381,7 @@ router.post('/gpo/restore', requireAuth, requireAdmin, async (req: Request, res:
       [dev.id, JSON.stringify({
         backupId: d.backup_id, backupPath: d.backup_path, deletionId: d.id,
       }), req.session.user!.id])).rows[0];
+    wakeAgent(dev.id);
 
     await logActivity(req.session.user!.id, 'gpo_restore', 'agent_devices', dev.id,
       `Restoring Group Policy object "${d.name}" on ${dev.hostname} from backup ${d.backup_id}`);
@@ -513,6 +518,7 @@ async function queueDeploy(req: Request, res: Response, dryRun: boolean): Promis
       [ctx.adAgent.id, JSON.stringify({
         gpoName: ctx.gpoName, msiUrl: ctx.msiUrl, target, dryRun: dryRun ? 'true' : 'false',
       }), req.session.user!.id]);
+    wakeAgent(ctx.adAgent.id);
 
     await logActivity(req.session.user!.id, dryRun ? 'gpo_deploy_plan' : 'gpo_deploy', 'customers', customerId,
       dryRun

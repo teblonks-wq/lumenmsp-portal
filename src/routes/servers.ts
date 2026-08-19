@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { wakeAgent } from './agent-api';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
@@ -185,6 +186,7 @@ router.post('/servers/:id/fix/:key', requireAuth, requireAdmin, async (req: Requ
     await pool.query(
       `INSERT INTO agent_commands (device_id, kind, status, requested_by)
        VALUES ($1,'server.facts','queued',$2)`, [id, req.session.user!.id]);
+    wakeAgent(id);   // fix + re-collect start now, not on the next check-in
 
     await logActivity(req.session.user!.id, 'server_fix', 'agent_devices', id,
       `${fix.activity} (${key}) on device ${id}`);
@@ -205,6 +207,7 @@ router.post('/servers/:id/refresh', requireAuth, requireAdmin, async (req: Reque
       await pool.query(
         `INSERT INTO agent_commands (device_id, kind, status, requested_by)
          VALUES ($1,'server.facts','queued',$2)`, [id, req.session.user!.id]);
+      wakeAgent(id);
       await logActivity(req.session.user!.id, 'server_facts', 'agent_devices', id, 'Requested a server scan');
     }
     res.redirect(`/servers/${id}?msg=` + encodeURIComponent(

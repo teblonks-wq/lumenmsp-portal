@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { wakeAgent } from './agent-api';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { queuePower, isPowerAction, powerConfirmText, powerWhenText } from '../lib/device-power';
@@ -226,11 +227,16 @@ router.post('/patching/device/:id/install', requireAuth, requireAdmin, async (re
       queued++;
     }
 
+    // Immediate installs start NOW. A maintenance-window install is deliberately not
+    // woken - the poll refuses run_after rows until the time passes, so the wake would
+    // hand the agent nothing.
+    if (queued && !at) wakeAgent(id);
+
     await logActivity(user.id, 'patch_install', 'agent_devices', id,
       `Queued ${windows.length} Windows update(s) and ${apps.length} application update(s)`);
 
     go(`Queued ${windows.length} Windows update${windows.length === 1 ? '' : 's'} and ${apps.length} application update${apps.length === 1 ? '' : 's'}. `
-      + (at ? `Held until ${at.toLocaleString('en-GB')}.` : 'Going out at the next check-in — within a minute for a machine that is on.')
+      + (at ? `Held until ${at.toLocaleString('en-GB')}.` : 'Started immediately on a machine that is on; an offline one runs it when it comes back.')
       + ' Nothing will be restarted.');
   } catch (e: any) {
     console.error('[patching] install failed:', e.message);

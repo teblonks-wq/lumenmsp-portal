@@ -1,6 +1,7 @@
 import { pool } from '../db/pool';
 import { rpc, gzConfigured, findKeyPath, atPath, customerEnabled, isOwnToolDetection } from './gravityzone';
 import { logActivity } from './activity';
+import { wakeAgent } from '../routes/agent-api';
 
 // ─────────────────────────────────────────────────────────────────────────────────
 // Deploying Bitdefender — through OUR OWN agent, no Atera anywhere.
@@ -367,6 +368,14 @@ export async function queueDeploy(deviceId: number, userId: number | null = null
     [deviceId, JSON.stringify(payload), userId]);
   const commandId = Number(ins.rows[0].id);
 
+  // RING THE BELL. Agents hold a long-poll open at /agent/api/commands; wakeAgent releases
+  // that waiter the instant something is queued, so an online machine picks the job up in
+  // milliseconds instead of waiting out the remainder of its current poll. Every other
+  // command path in the Portal does this - remote tools, power, mesh, agent updates - and
+  // the Bitdefender deploy was the one that did not, which is why it sat there looking
+  // like it was waiting for a check-in that was already in progress.
+  wakeAgent(deviceId);
+
   await upsertDeployment(deviceId, dev.customer_id, {
     state: 'queued', commandId, avBefore: before.join(', ') || null,
     requestedBy: userId, bumpAttempts: true,
@@ -617,6 +626,8 @@ export interface DeployLogEntry {
   /** What we actually told the machine to fetch and run — the two facts that decide the outcome. */
   url: string | null;
   args: string | null;
+  /** The payload's own label. Normally "Bitdefender…"; shown when it is something else. */
+  name: string | null;
 }
 
 /**
@@ -637,6 +648,14 @@ export interface DeployLogEntry {
  * software push, and a log that mixes them is a log nobody trusts.
  */
 export async function deployLog(deviceId: number, limit = 5): Promise<DeployLogEntry[]> {
+  // Fetch by device and kind only, and do the Bitdefender match HERE, in code we can see.
+  // The first version matched in SQL (`payload->>'name' LIKE 'Bitdefender%'`) and on
+  // 19 Aug returned nothing for a machine that had provably been deployed to five times -
+  // reconcile() was reading those very commands through dep.command_id at the same moment.
+  // When a WHERE clause and a join disagree about the same rows, take the filter out of
+  // the database and into daylight: match on the parsed payload, and if nothing matches,
+  // show what IS there rather than an empty list. An empty list renders as "nothing ever
+  // happened", and that is a confident wrong answer about a machine mid-rollout.
   const rows = (await pool.query(
     `SELECT c.id, c.status, c.requested_at, c.started_at, c.finished_at, c.exit_code,
             c.progress, c.progress_at, c.output, c.payload,
@@ -644,11 +663,22 @@ export async function deployLog(deviceId: number, limit = 5): Promise<DeployLogE
        FROM agent_commands c
        LEFT JOIN users u ON u.id = c.requested_by
       WHERE c.device_id=$1 AND c.kind='software.install'
-        AND c.payload->>'name' LIKE 'Bitdefender%'
       ORDER BY c.id DESC
-      LIMIT $2`, [deviceId, limit])).rows;
+      LIMIT 50`, [deviceId])).rows;
 
-  return rows.map((r: any) => ({
+  // payload normally comes back as an object; if it ever arrives as a still-encoded string
+  // (double stringify somewhere upstream), parse it rather than silently matching nothing -
+  // and that would also explain why the SQL ->> filter saw NULLs.
+  for (const r of rows) {
+    if (typeof r.payload === 'string') { try { r.payload = JSON.parse(r.payload); } catch { /* leave it */ } }
+  }
+  const bdRows = rows.filter((r: any) => String(r.payload?.name || '').startsWith('Bitdefender'));
+  // Nothing labelled Bitdefender, but installs exist? Show them - each entry carries its
+  // url so the reader can see what it really was. Hiding them is how the panel ended up
+  // claiming "no install has been asked for" over an attempt counter reading five.
+  const chosen = (bdRows.length ? bdRows : rows).slice(0, limit);
+
+  return chosen.map((r: any) => ({
     commandId: Number(r.id),
     status: String(r.status || 'queued'),
     queuedAt: r.requested_at || null,
@@ -661,6 +691,7 @@ export async function deployLog(deviceId: number, limit = 5): Promise<DeployLogE
     requestedBy: r.requested_by || null,
     url: r.payload?.url ? String(r.payload.url) : null,
     args: r.payload?.args ? String(r.payload.args) : null,
+    name: r.payload?.name ? String(r.payload.name) : null,
   }));
 }
 

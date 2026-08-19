@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { wakeAgent } from './agent-api';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { logActivity } from '../lib/activity';
@@ -209,6 +210,7 @@ router.post('/ce/run', requireAuth, requireAdmin, async (req: Request, res: Resp
       const cmd = (await pool.query(
         `INSERT INTO agent_commands (device_id, kind, status, requested_by)
          VALUES ($1,'ce.assess','queued',$2) RETURNING id`, [t.id, req.session.user!.id])).rows[0];
+      wakeAgent(t.id);   // run now, not on the next check-in
       await pool.query(
         `INSERT INTO ce_device_results (assessment_id, device_id, command_id, status)
          VALUES ($1,$2,$3,'queued')
@@ -278,6 +280,7 @@ router.post('/ce/run/:id/retry', requireAuth, requireAdmin, async (req: Request,
       const cmd = (await pool.query(
         `INSERT INTO agent_commands (device_id, kind, status, requested_by)
          VALUES ($1,'ce.assess','queued',$2) RETURNING id`, [s.device_id, req.session.user!.id])).rows[0];
+      wakeAgent(s.device_id);
       await pool.query(
         `UPDATE ce_device_results SET command_id=$3, status='queued', error=NULL
           WHERE assessment_id=$1 AND device_id=$2`, [id, s.device_id, cmd.id]);
