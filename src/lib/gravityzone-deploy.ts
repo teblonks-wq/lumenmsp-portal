@@ -34,8 +34,19 @@ const KIT_READY = 2;
 export const packageNameFor = (customerName: string) =>
   ('Lumen Managed AV - ' + String(customerName || '').trim()).slice(0, 64);
 
-/** Bitdefender's silent-install switch for the full kit. */
-const SILENT_ARGS = '/bdparams /silent';
+/**
+ * Bitdefender's silent-install switches for the setup downloader.
+ *
+ * The trailing bare `silent` is not a typo and not a duplicate. `/bdparams` marks the point
+ * where the remaining tokens stop being for the DOWNLOADER and start being passed through to
+ * the inner installer it unpacks. `/bdparams /silent` therefore quietens the downloader and
+ * leaves the real installer to run interactively - on a machine with no desktop to draw on,
+ * because our agent runs as SYSTEM.
+ *
+ * LUMEN-008 answered `installer exit code 3` on 19 Aug with the shorter form. Every published
+ * working deployment script uses the three-token version.
+ */
+const SILENT_ARGS = '/bdparams /silent silent';
 
 export interface PackageState {
   customerId: number; gzCompanyId: string; packageName: string;
