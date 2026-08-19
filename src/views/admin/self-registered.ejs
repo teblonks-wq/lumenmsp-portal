@@ -1,0 +1,90 @@
+<%- include('../partials/header', { title: 'Self-registered contacts', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/admin">← Admin</a></p>
+  <h1>Self-registered contacts</h1>
+  <p class="muted">
+    People who created their own account from the sign-in page so they could raise a support request.
+    <strong>Nothing was matched against our data</strong> — the company shown is what they typed.
+    Link them to a customer once you know who they are; their tickets move with them.
+  </p>
+</div>
+
+<% if (notice) { %><div class="alert-success" style="margin-bottom:16px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert-error" style="margin-bottom:16px;"><%= error %></div><% } %>
+
+<% if (!people.length) { %>
+  <div class="card"><p class="muted" style="margin:0;">Nobody has signed up yet.</p></div>
+<% } else { %>
+<div class="card" style="padding:0;overflow:auto;">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Person</th>
+        <th>Claims to work for</th>
+        <th>Email confirmed</th>
+        <th>Signed up</th>
+        <th>Tickets</th>
+        <th>Linked to</th>
+        <th style="width:1%;"></th>
+      </tr>
+    </thead>
+    <tbody>
+    <% people.forEach(function (p) { %>
+      <tr>
+        <td>
+          <strong><%= p.display_name %></strong><br>
+          <span class="muted" style="font-size:12px;"><%= p.email %></span>
+        </td>
+        <td><%= p.company_claimed || '—' %></td>
+        <td>
+          <% if (p.email_verified) { %>
+            <span class="badge badge-active">confirmed</span>
+          <% } else { %>
+            <span class="badge badge-inactive">not confirmed</span>
+          <% } %>
+          <span class="muted" style="font-size:12px;display:block;">via <%= p.signup_source %></span>
+        </td>
+        <td class="muted" style="font-size:12px;">
+          <%= p.signup_at ? new Date(p.signup_at).toLocaleString('en-GB', { timeZone: 'Europe/London', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—' %>
+          <% if (p.signup_ip) { %><br><span style="font-family:monospace;"><%= p.signup_ip %></span><% } %>
+        </td>
+        <td><%= p.tickets %></td>
+        <td>
+          <% if (p.is_placeholder || !p.customer_id) { %>
+            <span class="badge badge-inactive">not linked</span>
+          <% } else { %>
+            <a class="row-link" href="/customers/<%= p.customer_id %>"><%= p.customer_name %></a>
+          <% } %>
+        </td>
+        <td style="white-space:nowrap;">
+          <% if (p.is_placeholder || !p.customer_id) { %>
+          <form method="post" action="/admin/self-registered/<%= p.id %>/link" style="display:inline-flex;gap:6px;margin:0;">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <select name="customerId" required style="max-width:220px;">
+              <option value="">Link to customer…</option>
+              <% customers.forEach(function (c) { %>
+              <option value="<%= c.id %>"><%= c.name %></option>
+              <% }); %>
+            </select>
+            <button class="btn btn-primary" type="submit">Link</button>
+          </form>
+          <% } %>
+          <form method="post" action="/admin/self-registered/<%= p.id %>/disable" style="display:inline;margin:0;"
+                onsubmit="return confirm('Stop <%= p.email %> signing in?\n\nNothing is deleted - their tickets and history stay exactly as they are.');">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <button class="btn" type="submit">Disable</button>
+          </form>
+        </td>
+      </tr>
+    <% }); %>
+    </tbody>
+  </table>
+</div>
+<p class="muted" style="font-size:13px;margin-top:12px;">
+  Only customers with portal access switched on can be linked to. If the company you want is missing,
+  enable portal access on that customer first.
+</p>
+<% } %>
+
+<%- include('../partials/footer') %>

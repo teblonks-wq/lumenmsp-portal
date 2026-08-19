@@ -124,6 +124,18 @@ async function attachPerms(req: Request, res: Response, next: NextFunction): Pro
       ? contact.insights_sites.map((n: any) => parseInt(String(n), 10)).filter(Number.isInteger)
       : null,
   };
+  // Public self-registration (2026-08-19). These accounts hang off the placeholder company
+  // and have no customer_contacts key-contact role, so every permission above is already
+  // false. Two extra facts are needed: WHO they say they are (the placeholder's name must
+  // never be presented to them as "your company"), and whether they have confirmed the
+  // address - an unconfirmed one may sign in but may NOT raise a ticket, which is the whole
+  // point of confirming it.
+  const acct = (await rows(
+    'SELECT company_claimed, email_verified, signup_source FROM users WHERE id=$1', [u.id]))[0] || {};
+  (p as any).selfRegistered = !!acct.signup_source;
+  (p as any).claimedCompany = acct.company_claimed || null;
+  (p as any).unconfirmed = !!acct.signup_source && acct.email_verified === false;
+
   (req as any).perms = p;
   res.locals.perms = p;
   next();
@@ -143,7 +155,10 @@ router.get('/my', async (req: Request, res: Response) => {
   const c = cid(req);
   const p = perms(req);
   const crow = (await rows('SELECT name, agent_site_key FROM customers WHERE id=$1', [c]))[0] || {};
-  const company = crow.name || 'Your company';
+  // A self-registered visitor is attached to the "Self-registered (unverified)" placeholder.
+  // Showing them that as their company would be both confusing and a small disclosure of how
+  // the inside works, so they see the name they gave us.
+  const company = p.selfRegistered ? (p.claimedCompany || 'Your company') : (crow.name || 'Your company');
   // LumenMSP Agent self-service download — shown once Lumen has issued this company a
   // site key and uploaded the installer. The key rides in the filename, so it is a
   // download-and-double-click install (no options); the same link works for their RMM.
@@ -183,12 +198,26 @@ router.get('/my/tickets', async (req: Request, res: Response) => {
 });
 
 // ── Tickets — raise (everyone) ──────────────────────────────────────────────────────
+const CONFIRM_FIRST = 'Please confirm your email address first - we sent you a link when you '
+  + 'created your account. Check your junk folder, or request a new link from the sign-in page.';
+
 router.get('/my/tickets/new', (req: Request, res: Response) => {
+  // The confirmation gate lives on the ticket, not on the login. Someone who has just signed
+  // up can look around; what they cannot do is put an unproven address into the helpdesk.
+  if (perms(req).unconfirmed) {
+    res.render('my/ticket-new', { active: 'tickets', user: req.session.user, error: CONFIRM_FIRST });
+    return;
+  }
   res.render('my/ticket-new', { active: 'tickets', user: req.session.user, error: null });
 });
 
 router.post('/my/tickets', async (req: Request, res: Response) => {
   const u = req.session.user!; const c = cid(req); const p = perms(req);
+  // Re-checked here, not only on the GET: the form can be posted directly.
+  if (p.unconfirmed) {
+    res.render('my/ticket-new', { active: 'tickets', user: u, error: CONFIRM_FIRST });
+    return;
+  }
   const subject = String(req.body.subject || '').trim().slice(0, 200);
   const body = String(req.body.description || '').trim().slice(0, 10000);
   if (!subject || !body) {

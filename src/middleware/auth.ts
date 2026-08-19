@@ -98,5 +98,10 @@ declare module 'express-session' {
       customerId?: number | null;
     };
     msalState?: string;
+    // Public self-registration: set by POST /signup/microsoft and read once in
+    // /auth/callback, so an unknown visitor who came through the SIGN-UP form gets an
+    // account instead of "no account found" - and nobody who did not is affected.
+    signupMode?: boolean;
+    signupCompany?: string;
   }
 }

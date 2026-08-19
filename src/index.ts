@@ -33,6 +33,9 @@ import packageRoutes from './routes/packages';
 import purchaseRoutes from './routes/purchases';
 import mobileRoutes from './routes/mobile';
 import myRoutes, { ensureCustomerPortalColumn } from './routes/my';
+import signupRoutes, { bootstrapSelfSignup } from './routes/signup';
+import selfRegisteredRoutes from './routes/self-registered';
+import { ensureSignupColumns } from './lib/self-signup';
 import credentialRoutes from './routes/credentials';
 import ateraRoutes from './routes/atera';
 import assetRoutes from './routes/assets';
@@ -357,6 +360,7 @@ app.use('/', leadsApiRoutes);     // public website lead intake (bearer token, n
 app.use('/', agentApiRoutes);     // LumenMSP Agent API (device-token auth, no session)
 app.use('/', mcpRoutes);          // Claude MCP connector (capability-URL token, read-only, no session
                                   // → the CSRF guard's !req.session.user branch already exempts it)
+app.use('/', signupRoutes);      // public self-registration (no session, throttled)
 app.use('/', authRoutes);
 app.use('/', dashboardRoutes);
 app.use('/', customerRoutes);
@@ -369,6 +373,7 @@ app.use('/', leadRoutes);
 app.use('/', taskRoutes);
 app.use('/', contactRoutes);
 app.use('/', adminRoutes);
+app.use('/', selfRegisteredRoutes);   // Admin -> Self-registered contacts (link them to a real customer)
 app.use('/', integrationRoutes);
 app.use('/', subscriptionRoutes); // Microsoft/NCE subscriptions + exposure
 app.use('/', commsRoutes);
@@ -463,6 +468,9 @@ server.listen(config.PORT, () => {
   ensureSiteLogicColumn().catch((e) => console.error('ensureSiteLogicColumn failed:', e.message)); // Insights: lift call logic to the site level + backfill
   ensureReportPoolTables().catch((e) => console.error('ensureReportPoolTables failed:', e.message)); // Insights: report pool (templates) + per-site schedules
   ensureCustomerPortalColumn().catch((e) => console.error('ensureCustomerPortalColumn failed:', e.message)); // customer portal master switch
+  ensureSignupColumns()
+    .then(bootstrapSelfSignup)   // columns first: the placeholder customer insert needs none of them, but the users insert does
+    .catch((e) => console.error('self-signup bootstrap failed:', e.message)); // public self-registration
   ensureChatTables().catch((e) => console.error('ensureChatTables failed:', e.message)); // website live-chat
   ensureAlertsTable().catch((e) => console.error('ensureAlertsTable failed:', e.message)); // N3twrx alerts
   ensureItReportTables().catch((e) => console.error('ensureItReportTables failed:', e.message)); // Monthly IT Snapshot config/runs/notes

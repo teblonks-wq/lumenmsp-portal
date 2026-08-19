@@ -23,6 +23,15 @@ model User {
   lastLoginAt    DateTime? @map("last_login_at")
   oneboardPrefs  Json?     @map("oneboard_prefs") // OneBoard: per-user saved site selection {"sites":[ids]}
   theme          String?   // V4 portal colour theme: aurora | carbon | solstice (null = aurora default)
+  // Public self-registration (2026-08-19). MUST live here: `prisma db push` runs on every
+  // deploy and drops any column it does not know about.
+  companyClaimed  String?   @map("company_claimed")   // what they TYPED. Never matched against customers.
+  emailVerified   Boolean   @default(false) @map("email_verified")
+  verifyTokenHash String?   @map("verify_token_hash") // sha256 of the link token, single use
+  verifySentAt    DateTime? @map("verify_sent_at")
+  signupSource    String?   @map("signup_source")     // password | microsoft (null = staff-created)
+  signupIp        String?   @map("signup_ip")         // per-IP signup throttle + forensics
+  signupAt        DateTime? @map("signup_at")
   createdAt    DateTime  @default(now()) @map("created_at")
 
   customer     Customer? @relation(fields: [customerId], references: [id])

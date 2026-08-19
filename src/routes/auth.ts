@@ -5,6 +5,7 @@ import { pool } from '../db/pool';
 import { config } from '../config';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import { signInAsSelfRegistered } from './signup';
 
 const router = Router();
 
@@ -197,6 +198,16 @@ router.get('/auth/callback', async (req: Request, res: Response) => {
     // Tenant allow-list (multi-tenant mode): only our tenant + recorded customer tenants.
     const tid = (claims.tid as string) || '';
     if (!(await tenantAllowed(tid))) {
+      // Public self-registration: they came from /signup, so "we don't know your tenant" is
+      // the expected answer, not a refusal. They get a self-registered account attached to
+      // the placeholder company - own tickets and nothing else. The allow-list keeps its
+      // full force for every other arrival, because this branch needs signupMode, which is
+      // only ever set by POST /signup/microsoft.
+      if (req.session.signupMode) {
+        await logAttempt(email, clientIp, true);
+        await signInAsSelfRegistered(req, res, { email, name, oid, ip: clientIp });
+        return;
+      }
       await logAttempt(email, clientIp, false);
       res.render('error', { message: "Your organisation isn't set up for portal access yet. Please contact Lumen IT." });
       return;
@@ -253,6 +264,14 @@ router.get('/auth/callback', async (req: Request, res: Response) => {
     }
 
     if (!user) {
+      // Same case as above, from the other direction: their tenant is allowed but nobody has
+      // set them up. If they arrived through the sign-up form, make the self-registered
+      // account rather than turning away someone trying to report a fault.
+      if (req.session.signupMode) {
+        await logAttempt(email, clientIp, true);
+        await signInAsSelfRegistered(req, res, { email, name, oid, ip: clientIp });
+        return;
+      }
       await logAttempt(email, clientIp, false);
       res.render('error', { message: `No account found for ${email}. Contact an administrator to request access.` });
       return;
