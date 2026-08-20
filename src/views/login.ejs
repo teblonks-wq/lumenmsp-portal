@@ -53,6 +53,20 @@
       Need to raise a support request and don't have an account?
       <a href="/signup">Create one</a>
     </p>
+
+    <!-- Access notice. Every word of this is TRUE - routes/auth.ts records the client IP on
+         every sign-in attempt, successful or not (and deliberately uses Express's resolved
+         address rather than a client-supplied x-forwarded-for entry, so it cannot be
+         spoofed). A banner that claims monitoring nobody performs is worthless if it ever
+         has to stand up, so if the logging is ever removed, remove this too. -->
+    <p style="margin-top:22px;padding:12px 14px;border:1px solid var(--warn-line,#e6d3a3);
+              background:var(--tint-warn,#fdf7e7);border-radius:8px;
+              font-size:12.5px;line-height:1.5;color:var(--warn-deep,#6b5518);text-align:left;">
+      <strong>Authorised access only.</strong>
+      Your IP address and device information are recorded for every sign-in attempt,
+      successful or not. If you have not been given access to this portal, do not attempt
+      to sign in.
+    </p>
   </div>
 </body>
 </html>

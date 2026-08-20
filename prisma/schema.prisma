@@ -616,6 +616,107 @@ model AgentCommand {
   @@map("agent_commands")
 }
 
+// ── Network discovery ────────────────────────────────────────────────────────
+// Things on a customer's network that will NEVER have our agent - printers, switches,
+// routers, NAS, cameras. Deliberately NOT customer_assets: every screen and every count
+// in that table assumes an agent can eventually be installed, and a printer breaks all of
+// them. They are found BY an agent (usually the server) and monitored through it.
+
+model NetworkScanRange {
+  id            Int       @id @default(autoincrement())
+  customerId    Int       @map("customer_id")
+  // Which agent does the looking. A range is only meaningful from a machine that can see
+  // it, so the scanner is part of the range, not a setting somewhere else.
+  agentDeviceId Int       @map("agent_device_id")
+  cidr          String                          // 192.168.70.0/24
+  label         String    @default("")
+  enabled       Boolean   @default(true)
+  lastScanAt    DateTime? @map("last_scan_at")
+  lastResult    String?   @map("last_result")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  createdBy     Int?      @map("created_by")
+  @@index([customerId])
+  @@map("network_scan_ranges")
+}
+
+model NetworkDevice {
+  id            Int       @id @default(autoincrement())
+  customerId    Int       @map("customer_id")
+  // The agent that can reach it. This is also the route we proxy through, so losing it
+  // means losing access, not just discovery.
+  agentDeviceId Int?      @map("agent_device_id")
+  ip            String
+  mac           String?
+  hostname      String?
+  vendor        String?                          // from the MAC OUI, before SNMP says anything
+  sysName       String?   @map("sys_name")       // SNMP sysName
+  sysDescr      String?   @map("sys_descr")      // SNMP sysDescr - what it actually is
+  kind          String    @default("unknown")    // printer | switch | router | nas | ap | camera | unknown
+  // OURS, and the whole point: "Reception printer" beats 192.168.70.50 on every screen
+  // and every phone call. Same argument as friendlyName on an asset.
+  friendlyName  String?   @map("friendly_name")
+  notes         String?
+  monitored     Boolean   @default(false)        // are we polling it, or just aware of it
+  webUrl        String?   @map("web_url")        // http://192.168.70.50 - what we proxy to
+  snmpVersion   String?   @map("snmp_version")   // 1 | 2c | 3
+  snmpCommunity String?   @map("snmp_community") // ENCRYPTED (lib/vault.ts) - never plaintext
+  firstSeenAt   DateTime  @default(now()) @map("first_seen_at")
+  lastSeenAt    DateTime? @map("last_seen_at")
+  lastPollAt    DateTime? @map("last_poll_at")
+  lastPollError String?   @map("last_poll_error")
+  archivedAt    DateTime? @map("archived_at")
+  @@unique([customerId, ip])
+  @@index([customerId, kind])
+  @@map("network_devices")
+}
+
+// Web-interface logins for a network device. The blob is AES-256-GCM from lib/vault.ts and
+// this table is the reason VAULT_KEY has to exist before any of this is switched on: the
+// Portal holding a customer's switch password in plaintext would be a worse problem than
+// the one this module solves. Never returned to a browser - the proxy uses it server side.
+model NetworkDeviceCredential {
+  id              Int      @id @default(autoincrement())
+  networkDeviceId Int      @map("network_device_id")
+  kind            String   @default("web")       // web | snmpv3
+  username        String   @default("")
+  secretEnc       String   @map("secret_enc")
+  note            String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  createdBy       Int?     @map("created_by")
+  @@index([networkDeviceId])
+  @@map("network_device_credentials")
+}
+
+// One row per consumable per poll-of-record. Printer-MIB (RFC 3805) reports a level and a
+// max capacity per supply; percentage is computed, not reported, and the specials matter -
+// -2 means "unknown" and -3 means "some remaining", and rendering either as a number is
+// how a dashboard claims 0% toner on a printer that is fine.
+model NetworkPrinterSupply {
+  id              Int      @id @default(autoincrement())
+  networkDeviceId Int      @map("network_device_id")
+  name            String                              // "Black Toner Cartridge"
+  colour          String?
+  level           Int?
+  maxCapacity     Int?     @map("max_capacity")
+  percent         Int?                                // null when the device says unknown
+  at              DateTime @default(now())
+  @@index([networkDeviceId, at])
+  @@map("network_printer_supplies")
+}
+
+model NetworkDeviceAlert {
+  id              Int       @id @default(autoincrement())
+  networkDeviceId Int       @map("network_device_id")
+  code            String?
+  severity        String    @default("info")
+  description     String
+  firstSeenAt     DateTime  @default(now()) @map("first_seen_at")
+  lastSeenAt      DateTime  @default(now()) @map("last_seen_at")
+  clearedAt       DateTime? @map("cleared_at")
+  @@index([networkDeviceId, clearedAt])
+  @@map("network_device_alerts")
+}
+
 // ── Asset tags ───────────────────────────────────────────────────────────────
 // TAGS, not smart groups. Terry, 20 Aug: "the groups will be sort of tags - think Dell
 // computers, Larkmead Desktops and Larkmead Laptops, Clinical devices, Servers - we would

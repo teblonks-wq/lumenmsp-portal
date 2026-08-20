@@ -863,8 +863,21 @@
             { k:'name', t:'Name' }, { k:'version', t:'Version' }, { k:'publisher', t:'Publisher' },
             { k:'size_mb', t:'Size (MB)' }
           ], null, function(x){
-            if (!x.removable) return '<span class="muted" style="font-size:11px;" title="No silent uninstall command is recorded for this application">no silent uninstall</span>';
-            return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-uninst="' + esc(x.name) +
+            var out = '';
+            // Update first: it is the safe, common action, and putting it left of a
+            // destructive button means the mouse never travels past Uninstall to reach it.
+            // Only offered when we hold a REAL package id from device_patches - no id, no
+            // button, because upgrading by display name is how the wrong product gets it.
+            if (x.update_id) {
+              out += '<button class="btn" style="padding:2px 8px;font-size:11.5px;margin-right:6px;" data-upd="' + esc(x.update_id) +
+                     '" data-upsrc="' + esc(x.up_source || 'winget') + '" data-upname="' + esc(x.name) + '" title="' +
+                     esc('Update to ' + (x.available_version || 'the latest version') + ' via ' + (x.up_source || 'winget')) +
+                     '">Update' + (x.available_version ? ' &rarr; ' + esc(x.available_version) : '') + '</button>';
+            }
+            if (!x.removable) {
+              return out + '<span class="muted" style="font-size:11px;" title="No silent uninstall command is recorded for this application">no silent uninstall</span>';
+            }
+            return out + '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-uninst="' + esc(x.name) +
                    '" data-code="' + esc(x.product_code || '') + '" data-cmd="' + esc(x.uninstall_cmd || '') + '">Uninstall</button>';
           });
         })
@@ -883,6 +896,22 @@
     });
 
     softwareResult.addEventListener('click', function(e){
+      var u = e.target.closest('[data-upd]');
+      if (u) {
+        var un = u.getAttribute('data-upname');
+        if (!confirm('Update "' + un + '" on <%= asset.hostname %>?\n\nIt installs silently. Some applications close themselves to update.')) return;
+        u.disabled = true;
+        var kind = u.getAttribute('data-upsrc') === 'choco' ? 'choco.upgrade' : 'winget.upgrade';
+        run(kind, { id: u.getAttribute('data-upd'), name: un }, softwareBusy)
+          .then(function(r){
+            alert(r.output || 'Update sent.');
+            // The stored version is now wrong either way, so re-read from the device.
+            return run('inventory.software', {}, softwareBusy);
+          })
+          .then(loadSoftware)
+          .catch(function(err){ u.disabled = false; fail(softwareResult, err.message); });
+        return;
+      }
       var b = e.target.closest('[data-uninst]'); if (!b) return;
       var name = b.getAttribute('data-uninst');
       if (!confirm('Uninstall "' + name + '" from <%= asset.hostname %>?\n\nThis runs silently on the device and cannot be undone from here.')) return;

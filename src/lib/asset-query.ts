@@ -17,25 +17,32 @@
 
 type Kind = 'text' | 'number' | 'date' | 'enum' | 'tag';
 
-interface FieldDef { label: string; col: string; kind: Kind; options?: string[] }
+interface FieldDef {
+  label: string; col: string; kind: Kind;
+  /** Offer the values that actually exist in the estate. Only for fields with a SMALL set
+   *  of repeated values - "Dell Inc." appears on 200 machines and is worth suggesting;
+   *  a hostname appears once and a suggestion list of every hostname is just the device
+   *  list again, badly. IP is deliberately excluded for the same reason. */
+  lookup?: boolean;
+}
 
 /** field key -> the column expression WE control. */
 export const ASSET_FIELDS: Record<string, FieldDef> = {
   friendly_name: { label: 'Friendly name', col: 'a.friendly_name', kind: 'text' },
   hostname:      { label: 'Hostname',      col: 'a.hostname',      kind: 'text' },
-  customer:      { label: 'Customer',      col: 'c.name',          kind: 'text' },
-  device_type:   { label: 'Device type',   col: 'a.device_type',   kind: 'enum' },
-  manufacturer:  { label: 'Manufacturer',  col: 'a.manufacturer',  kind: 'text' },
-  model:         { label: 'Model',         col: 'a.model',         kind: 'text' },
-  cpu:           { label: 'CPU',           col: 'a.cpu',           kind: 'text' },
+  customer:      { label: 'Customer',      col: 'c.name',          kind: 'text', lookup: true },
+  device_type:   { label: 'Device type',   col: 'a.device_type',   kind: 'enum', lookup: true },
+  manufacturer:  { label: 'Manufacturer',  col: 'a.manufacturer',  kind: 'text', lookup: true },
+  model:         { label: 'Model',         col: 'a.model',         kind: 'text', lookup: true },
+  cpu:           { label: 'CPU',           col: 'a.cpu',           kind: 'text', lookup: true },
   ram_gb:        { label: 'Memory (GB)',   col: 'a.ram_gb',        kind: 'number' },
   ip:            { label: 'IP address',    col: 'a.ip_addresses',  kind: 'text' },
-  domain:        { label: 'Domain',        col: 'a.domain_or_workgroup', kind: 'text' },
-  os:            { label: 'OS',            col: 'a.os',            kind: 'text' },
-  os_version:    { label: 'OS version',    col: 'a.os_version',    kind: 'text' },
+  domain:        { label: 'Domain',        col: 'a.domain_or_workgroup', kind: 'text', lookup: true },
+  os:            { label: 'OS',            col: 'a.os',            kind: 'text', lookup: true },
+  os_version:    { label: 'OS version',    col: 'a.os_version',    kind: 'text', lookup: true },
   serial:        { label: 'Serial number', col: 'a.serial_number', kind: 'text' },
   last_user:     { label: 'Last user',     col: 'a.last_login_user', kind: 'text' },
-  agent_version: { label: 'Agent version', col: 'agd.agent_version', kind: 'text' },
+  agent_version: { label: 'Agent version', col: 'agd.agent_version', kind: 'text', lookup: true },
   last_seen:     { label: 'Last seen',     col: 'a.last_seen_at',  kind: 'date' },
   tag:           { label: 'Group',         col: '',                kind: 'tag' },
 };

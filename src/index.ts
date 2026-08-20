@@ -80,6 +80,7 @@ import { startAzureBackupSync } from './lib/azure-backup';
 import { startAcronisSync } from './lib/acronis';
 import { startEolSync } from './lib/eol-sync';
 import { startSecurityReconcile } from './lib/gravityzone-deploy';
+import { initVaultKey } from './lib/vault';
 import { startGravityZoneSync, startAteraImport, startSecurityFreshnessSweep } from './lib/auto-sync';
 import { resumeMassMailer } from './lib/mass-mailer';
 import { hasFinanceAccess, hasVaultAccess } from './middleware/auth';
@@ -506,6 +507,8 @@ server.listen(config.PORT, () => {
   startAzureBackupSync();   // Azure Backup: Recovery Services vaults per customer tenant (needs Reader RBAC per subscription)
   startAcronisSync();       // Acronis: per-tenant protected workloads + storage (linked like MSP360)
   startEolSync();           // End-of-life dates pulled nightly from endoflife.date
+  // Before anything that might need a secret. Never throws - see initVaultKey.
+  initVaultKey().catch((e) => console.error('[vault] init failed:', e.message));
   startSecurityReconcile(); // Bitdefender deployments: move queued -> installed -> protected, and
                             // chase a fresh security reading from any machine whose installer has
                             // finished. Previously reconcile() was never called at all.

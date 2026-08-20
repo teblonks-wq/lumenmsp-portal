@@ -414,6 +414,35 @@ router.post('/assets/:id/security-refresh', requireAuth, requireAdmin, async (re
   }
 });
 
+// ── Filter value lookups ────────────────────────────────────────────────────────
+// What is ACTUALLY in the estate, for the value box on the advanced filter. Typing
+// "Micosoft Windows" returns nothing and looks like a broken filter rather than a typo,
+// and "Dell Inc." vs "Dell" is the kind of difference nobody should have to remember.
+//
+// Ordered by how many machines carry each value, so the common answers are at the top -
+// an alphabetical list puts "AMD Ryzen 3" above "Intel Core i5" on an estate that is
+// almost entirely Intel. Free text still works; this only offers.
+router.get('/assets/field-values', requireAuth, async (req: Request, res: Response) => {
+  const key = String(req.query.field || '');
+  const def = (ASSET_FIELDS as any)[key];
+  if (!def || !def.lookup) { res.json({ values: [] }); return; }
+  try {
+    // def.col is OURS - it comes from the allow-list above, never from the request.
+    const r = await pool.query(
+      `SELECT ${def.col} AS v, COUNT(*)::int AS n
+         FROM customer_assets a
+         LEFT JOIN customers c ON c.id = a.customer_id
+         LEFT JOIN agent_devices agd ON agd.id = a.agent_device_id
+        WHERE a.merged_into_id IS NULL AND a.archived_at IS NULL
+          AND ${def.col} IS NOT NULL AND ${def.col} <> ''
+        GROUP BY 1 ORDER BY n DESC, v ASC LIMIT 300`);
+    res.json({ values: r.rows.map((x: any) => ({ v: String(x.v), n: Number(x.n) })) });
+  } catch (e: any) {
+    console.error('[assets] field values failed:', e.message);
+    res.json({ values: [] });
+  }
+});
+
 // ── Friendly name ───────────────────────────────────────────────────────────────
 // Portal-owned. The Atera sync is not allowed near it (see the schema comment) because
 // the whole value of this field is that a human chose it - "Cholsey Rec Left" is worth

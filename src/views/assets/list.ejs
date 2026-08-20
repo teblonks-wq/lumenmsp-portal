@@ -153,7 +153,7 @@ function tileHref(over){
       %>
       <script type="application/json" id="cond-meta"><%- JSON.stringify({
         fields: Object.keys(assetFields).filter(function(k){ return k !== 'tag'; })
-                  .map(function(k){ return { k: k, label: assetFields[k].label, kind: assetFields[k].kind }; }),
+                  .map(function(k){ return { k: k, label: assetFields[k].label, kind: assetFields[k].kind, lookup: !!assetFields[k].lookup }; }),
         ops: Object.keys(assetOps).map(function(k){ return { k: k, label: assetOps[k].label, kinds: assetOps[k].kinds, noValue: !!assetOps[k].noValue }; }),
         rows: conds
       }).replace(/</g, '\\u003c') %></script>
@@ -267,8 +267,10 @@ function tileHref(over){
       function opsFor(kind) { return (M.ops || []).filter(function (o) { return o.kinds.indexOf(kind) >= 0; }); }
       function kindOf(fk) { var f = (M.fields || []).filter(function (x) { return x.k === fk; })[0]; return f ? f.kind : 'text'; }
 
+      var CACHE = {};
       function row(cond) {
         var wrap = document.createElement('div');
+        function wrapAppend(el) { wrap.appendChild(el); }
         wrap.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;';
         var fSel = document.createElement('select'); fSel.className = 'input'; fSel.name = 'cf'; fSel.style.minWidth = '160px';
         (M.fields || []).forEach(function (f) {
@@ -280,6 +282,35 @@ function tileHref(over){
         var val  = document.createElement('input');  val.className  = 'input'; val.name  = 'cv'; val.style.width = '200px';
         val.placeholder = 'value';
         if (cond) val.value = cond.value || '';
+
+        // Suggestions from the estate itself. A datalist rather than a hard select, because
+        // "contains Latitude" is a perfectly good filter that no list of whole values would
+        // ever offer - the point is to save typing and prevent typos, not to take the free
+        // text away. Fetched per field, cached, and the count is shown so you can see that
+        // "Dell Inc." is the 200-machine answer and "Dell" is the four-machine one.
+        var dl = document.createElement('datalist');
+        dl.id = 'dl-' + Math.random().toString(36).slice(2);
+        wrapAppend(dl);
+        function loadValues() {
+          var f = (M.fields || []).filter(function (x) { return x.k === fSel.value; })[0];
+          dl.innerHTML = '';
+          val.setAttribute('list', (f && f.lookup) ? dl.id : '');
+          if (!f || !f.lookup) return;
+          if (CACHE[f.k]) return paint(CACHE[f.k]);
+          fetch('/assets/field-values?field=' + encodeURIComponent(f.k), { credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (j) { CACHE[f.k] = j.values || []; paint(CACHE[f.k]); })
+            .catch(function () { /* a failed lookup must never block typing */ });
+        }
+        function paint(list) {
+          dl.innerHTML = '';
+          list.forEach(function (o) {
+            var el = document.createElement('option');
+            el.value = o.v; el.label = o.n + ' device' + (o.n === 1 ? '' : 's');
+            dl.appendChild(el);
+          });
+        }
+        fSel.addEventListener('change', loadValues);
 
         function fillOps(keep) {
           var kind = kindOf(fSel.value);
@@ -296,6 +327,7 @@ function tileHref(over){
         fSel.addEventListener('change', function () { fillOps(null); });
         oSel.addEventListener('change', function () { fillOps(oSel.value); });
         fillOps(cond ? cond.op : null);
+        loadValues();
 
         var del = document.createElement('button');
         del.type = 'button'; del.className = 'btn'; del.textContent = 'Remove';

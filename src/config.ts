@@ -68,6 +68,10 @@ const schema = z.object({
 
   // Password vault — 32-byte AES-256-GCM key (base64 or hex). Set in server .env only.
   VAULT_KEY:           z.string().default(''),
+  // Key Vault takes over as the SOURCE of VAULT_KEY. The key itself is unchanged, so
+  // nothing already encrypted needs re-encrypting - it simply stops living on disk.
+  AZURE_KEYVAULT_URL:  z.string().default(''),
+  AZURE_KEYVAULT_SECRET: z.string().default('portal-vault-key'),
 
   // Atera RMM/PSA — API key (also settable in Settings → Integrations, which wins).
   ATERA_API_KEY:       z.string().default(''),

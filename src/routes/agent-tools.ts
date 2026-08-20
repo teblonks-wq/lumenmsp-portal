@@ -345,10 +345,30 @@ router.get('/assets/:id/software', requireAuth, requireAdmin, async (req: Reques
     const params: any[] = [device.id];
     let where = 'device_id = $1';
     if (q) { params.push('%' + q + '%'); where += ` AND (name ILIKE $${params.length} OR publisher ILIKE $${params.length})`; }
+    // Join what is actually UPGRADABLE, from the same device_patches rows the estate-wide
+    // software page uses. Matching on the normalised title rather than guessing a package
+    // id from the display name matters: an Update button that runs `winget upgrade --name
+    // "Adobe Acrobat"` on an ambiguous match is how the wrong product gets upgraded on
+    // somebody's machine. If we do not hold a real update id, no button is offered.
     const rows = (await pool.query(
-      `SELECT id, name, version, publisher, size_mb, install_date, product_code, uninstall_cmd, scope,
-              EXTRACT(EPOCH FROM (NOW() - collected_at)) AS age_secs
-         FROM agent_software WHERE ${where} ORDER BY name LIMIT 1000`, params)).rows;
+      `SELECT s.id, s.name, s.version, s.publisher, s.size_mb, s.install_date, s.product_code,
+              s.uninstall_cmd, s.scope,
+              up.update_id, up.source AS up_source, up.available_version,
+              EXTRACT(EPOCH FROM (NOW() - s.collected_at)) AS age_secs
+         FROM agent_software s
+         LEFT JOIN LATERAL (
+           SELECT p.update_id, p.source, p.available_version, p.title
+             FROM device_patches p
+            WHERE p.device_id = s.device_id
+              AND p.source IN ('winget','choco')
+              AND length(regexp_replace(lower(p.title), '[^a-z0-9]', '', 'g')) > 3
+              AND regexp_replace(lower(s.name), '[^a-z0-9]', '', 'g')
+                  LIKE regexp_replace(lower(p.title), '[^a-z0-9]', '', 'g') || '%'
+            ORDER BY (p.source = 'winget') DESC, length(p.title) DESC
+            LIMIT 1
+         ) up ON true
+        WHERE ${where.replace('device_id', 's.device_id').replace('name ILIKE', 's.name ILIKE').replace('publisher ILIKE', 's.publisher ILIKE')}
+        ORDER BY s.name LIMIT 1000`, params)).rows;
     res.json({
       ok: true,
       rows: rows.map((r: any) => ({ ...r, removable: !!(r.product_code || (r.uninstall_cmd && /\/q|\/s/i.test(r.uninstall_cmd))) })),
