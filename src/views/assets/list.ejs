@@ -127,42 +127,37 @@ function tileHref(over){
 
     <!-- Hardware and network. Behind a toggle because seven boxes across the top is a wall
          you read every time and use once a month. Opened automatically when one is set. -->
-    <div id="adv-panel" style="flex-basis:100%;<%= advOn ? '' : 'display:none;' %>margin-top:8px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg-soft,#f7f9fb);">
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-        <input class="input" name="make"   value="<%= flt.make || '' %>"   placeholder="Manufacturer" style="width:150px;">
-        <input class="input" name="model"  value="<%= flt.model || '' %>"  placeholder="Model" style="width:150px;">
-        <input class="input" name="cpu"    value="<%= flt.cpu || '' %>"    placeholder="CPU" style="width:150px;">
-        <input class="input" name="ip"     value="<%= flt.ip || '' %>"     placeholder="IP contains" style="width:130px;">
-        <input class="input" name="domain" value="<%= flt.domain || '' %>" placeholder="Domain" style="width:140px;">
-        <input class="input" name="rammin" value="<%= flt.rammin || '' %>" placeholder="RAM min" style="width:95px;" title="Gigabytes, at least">
-        <input class="input" name="rammax" value="<%= flt.rammax || '' %>" placeholder="RAM max" style="width:95px;" title="Gigabytes, at most - finds what cannot take Windows 11">
+    <div id="adv-panel" style="flex-basis:100%;<%= advOn ? '' : 'display:none;' %>margin-top:8px;padding:14px;border:1px solid var(--line);border-radius:10px;background:var(--bg-soft,#f7f9fb);">
+      <p class="muted" style="font-size:11.5px;margin:0 0 10px;">
+        Build a filter one line at a time. Unknown combinations are ignored rather than guessed at,
+        so a condition that cannot apply will simply not narrow the list.
+      </p>
+      <div id="cond-rows"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+        <button class="btn" type="button" id="cond-add">+ Add condition</button>
+        <label style="font-size:12.5px;display:flex;align-items:center;gap:6px;">
+          Match
+          <select class="input" name="cj" style="width:90px;">
+            <option value="and" <%= condJoin === 'and' ? 'selected' : '' %>>all</option>
+            <option value="or"  <%= condJoin === 'or'  ? 'selected' : '' %>>any</option>
+          </select>
+          of them
+        </label>
         <button class="btn btn-primary" type="submit">Apply</button>
       </div>
-      <p class="muted" style="font-size:11.5px;margin:8px 0 0;">
-        Text matches anywhere in the field, so <code>OptiPlex</code> or <code>192.168.70</code> both work.
-        Memory is a range: RAM max 8 finds everything that cannot take Windows 11.
-      </p>
+      <%
+         /* Escaped, not raw. This JSON carries the user's own filter values straight back
+            into the page, and a value containing </script> would otherwise close this tag
+            early and put the rest of the blob into the document as markup. Escaping < is
+            enough to make that impossible and JSON.parse is unaffected by \u003c. */
+      %>
+      <script type="application/json" id="cond-meta"><%- JSON.stringify({
+        fields: Object.keys(assetFields).filter(function(k){ return k !== 'tag'; })
+                  .map(function(k){ return { k: k, label: assetFields[k].label, kind: assetFields[k].kind }; }),
+        ops: Object.keys(assetOps).map(function(k){ return { k: k, label: assetOps[k].label, kinds: assetOps[k].kinds, noValue: !!assetOps[k].noValue }; }),
+        rows: conds
+      }).replace(/</g, '\\u003c') %></script>
     </div>
-  </form>
-
-  <!-- Bulk bar. Hidden until something is ticked, so it never sits there inviting a
-       mis-click. The row checkboxes belong to this form via form="bulk-form", which is
-       what lets them live inside the table without nesting a form in a <table>. -->
-  <form method="post" id="bulk-form" action="/assets/tags/add" style="display:none;margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap;">
-    <input type="hidden" name="back" value="/assets">
-    <strong id="sel-count" style="font-size:13px;"></strong>
-    <select class="input" name="tagId" style="min-width:170px;">
-      <option value="">Add to an existing group...</option>
-      <% (typeof allTags !== 'undefined' ? allTags : []).forEach(function(t){ %>
-        <option value="<%= t.id %>"><%= t.name %></option>
-      <% }); %>
-    </select>
-    <span class="muted" style="font-size:12px;">or</span>
-    <input class="input" name="newTag" placeholder="name a new group" style="width:200px;" maxlength="80">
-    <button class="btn" type="submit">Add to group</button>
-    <button class="btn" type="submit" formaction="/assets/tags/remove" title="Remove the selected devices from the group chosen on the left">Remove from group</button>
-  </form>
-</div>
 <script>
   // ── Live status ───────────────────────────────────────────────────────────────
   // The offline window is short (see ONLINE_WINDOW_SECS), which is no use on a page
@@ -256,6 +251,65 @@ function tileHref(over){
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initSelection);
     else initSelection();
+
+    // The condition builder. Rows are plain inputs named cf/co/cv, so the whole thing
+    // submits as an ordinary GET and every filter is a shareable, bookmarkable URL - no
+    // hidden state, and the back button behaves. Operators are re-offered when the field
+    // changes, because "starts with" makes no sense on a memory size and offering it is
+    // how you get a filter that silently matches nothing.
+    (function () {
+      var meta = document.getElementById('cond-meta');
+      var host = document.getElementById('cond-rows');
+      var add  = document.getElementById('cond-add');
+      if (!meta || !host || !add) return;
+      var M; try { M = JSON.parse(meta.textContent || '{}'); } catch (e) { return; }
+
+      function opsFor(kind) { return (M.ops || []).filter(function (o) { return o.kinds.indexOf(kind) >= 0; }); }
+      function kindOf(fk) { var f = (M.fields || []).filter(function (x) { return x.k === fk; })[0]; return f ? f.kind : 'text'; }
+
+      function row(cond) {
+        var wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;';
+        var fSel = document.createElement('select'); fSel.className = 'input'; fSel.name = 'cf'; fSel.style.minWidth = '160px';
+        (M.fields || []).forEach(function (f) {
+          var o = document.createElement('option'); o.value = f.k; o.textContent = f.label;
+          if (cond && cond.field === f.k) o.selected = true;
+          fSel.appendChild(o);
+        });
+        var oSel = document.createElement('select'); oSel.className = 'input'; oSel.name = 'co'; oSel.style.minWidth = '150px';
+        var val  = document.createElement('input');  val.className  = 'input'; val.name  = 'cv'; val.style.width = '200px';
+        val.placeholder = 'value';
+        if (cond) val.value = cond.value || '';
+
+        function fillOps(keep) {
+          var kind = kindOf(fSel.value);
+          oSel.innerHTML = '';
+          opsFor(kind).forEach(function (o) {
+            var el = document.createElement('option'); el.value = o.k; el.textContent = o.label;
+            if (keep && keep === o.k) el.selected = true;
+            oSel.appendChild(el);
+          });
+          // "is empty" takes no value - showing a box you must leave blank is a trap.
+          var cur = (M.ops || []).filter(function (o) { return o.k === oSel.value; })[0];
+          val.style.display = (cur && cur.noValue) ? 'none' : '';
+        }
+        fSel.addEventListener('change', function () { fillOps(null); });
+        oSel.addEventListener('change', function () { fillOps(oSel.value); });
+        fillOps(cond ? cond.op : null);
+
+        var del = document.createElement('button');
+        del.type = 'button'; del.className = 'btn'; del.textContent = 'Remove';
+        del.addEventListener('click', function () { wrap.remove(); if (!host.children.length) add.click(); });
+
+        var lbl = document.createElement('span');
+        lbl.className = 'muted'; lbl.style.fontSize = '12.5px'; lbl.textContent = 'Where';
+        wrap.appendChild(lbl); wrap.appendChild(fSel); wrap.appendChild(oSel); wrap.appendChild(val); wrap.appendChild(del);
+        return wrap;
+      }
+
+      (M.rows && M.rows.length ? M.rows : [null]).forEach(function (c) { host.appendChild(row(c)); });
+      add.addEventListener('click', function () { host.appendChild(row(null)); });
+    })();
 
     // Advanced filter panel toggle. Enter inside it submits the form, which is what
     // anyone typing a model number expects, so no extra handling is needed for that.

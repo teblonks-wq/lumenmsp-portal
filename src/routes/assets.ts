@@ -14,6 +14,7 @@ import { meshStatus } from './mesh';
 import { powerWhenText } from '../lib/device-power';
 import { deviceSecurity, deployLog, REQUIRED_EXCLUSIONS } from '../lib/gravityzone-deploy';
 import { customerEnabled } from '../lib/gravityzone';
+import { ASSET_FIELDS, ASSET_OPS, parseConditions, conditionsToSql } from '../lib/asset-query';
 
 const router = Router();
 
@@ -85,6 +86,13 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   if (fRamMin) { params.push(fRamMin); where.push(`a.ram_gb >= $${params.length}`); }
   if (fRamMax) { params.push(fRamMax); where.push(`a.ram_gb <= $${params.length}`); }
   if (fTag)    { params.push(fTag); where.push(`EXISTS (SELECT 1 FROM asset_tag_members m WHERE m.asset_id = a.id AND m.tag_id = $${params.length})`); }
+
+  // Advanced conditions. Built in lib/asset-query.ts, which allow-lists every field and
+  // operator - nothing from the request reaches the SQL except as a bound parameter.
+  const conds = parseConditions(req.query);
+  const condJoin = String(req.query.cj || 'and').toLowerCase() === 'or' ? 'or' : 'and';
+  const built = conditionsToSql(conds, params.length, condJoin as 'and' | 'or');
+  if (built.sql) { where.push(built.sql); params.push(...built.params); }
 
   const rows = (await pool.query(
     `SELECT a.*, c.name AS customer_name, c.agent_site_key, ac.full_name AS assigned_name,
@@ -160,6 +168,7 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
     user: req.session.user!, rows: shown, unmatchedCount, duplicateCount, types, customers, backupState,
     allTags, f: { make: fMake, model: fModel, cpu: fCpu, ip: fIp, domain: fDomain,
                   rammin: fRamMin, rammax: fRamMax, tag: fTag },
+    conds, condJoin, assetFields: ASSET_FIELDS, assetOps: ASSET_OPS,
     filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentFilter, servers: serversOnly, patch: patchOnly, sec: secOnly },
     // For the "agent required" copy button: the same keyed one-liner the Agents page hands out.
     baseUrl: req.protocol + '://' + req.get('host'),
