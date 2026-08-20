@@ -129,6 +129,21 @@
   <div class="tile"><span class="n <%= counts['infected'] ? 'bad' : '' %>" style="display:block;"><%= counts['infected'] || 0 %></span><span class="l" style="display:block;">infected</span></div>
   <div class="tile acc-plain"><span class="n" style="display:block;"><%= counts['no-agent'] || 0 %></span><span class="l" style="display:block;">no agent</span></div>
 </div>
+<%
+   /* Machines GravityZone flagged where every detection is OUR OWN tooling. Set aside from
+      the infected count, never hidden: a number that quietly drops to zero is exactly how a
+      real detection ends up behind a tile nobody reads. */
+   var ownFlagged = (rows || []).filter(function(r){ return r.ownToolFlagged; });
+%>
+<% if (ownFlagged.length) { %>
+  <p class="muted" style="font-size:12px;margin:8px 0 0;">
+    <%= ownFlagged.length %> machine<%= ownFlagged.length === 1 ? '' : 's' %>
+    (<%= ownFlagged.map(function(r){ return r.hostname; }).join(', ') %>)
+    <%= ownFlagged.length === 1 ? 'is' : 'are' %> flagged by Bitdefender for <strong>our own tooling</strong>
+    &mdash; recorded, not counted as an infection.
+    <a class="row-link" href="/security/infections">See the detections &rarr;</a>
+  </p>
+<% } %>
 
 <div class="toolbar" style="display:flex;gap:6px;margin:14px 0;flex-wrap:wrap;">
   <a class="btn <%= tab === 'devices' ? 'btn-primary' : '' %>" href="<%= here %>?tab=devices">Devices</a>
@@ -230,7 +245,14 @@
     it happen across a whole estate. And
     Hyper Detect files our <strong>Mesh remote control</strong> as <code>Gen:Illusion.PUP.MeshCentral</code> &mdash;
     a fair heuristic against a remote-access tool, and the wrong answer for the one we chose.
-    Tick On-Access <em>and</em> ATC for each: ATC is what produces the Hyper Detect hit.
+    These exclusions cover On-Access, On-Demand and ATC/IDS &mdash; tick all three.
+    <strong>They do NOT stop Hyper Detect.</strong> Verified in the console 20 Aug: the Antimalware
+    exclusion list has no Hyper Detect option at all (with Type = File it offers only On-demand and
+    On-access), so a <code>Gen:Illusion.PUP.MeshCentral</code> verdict survives a perfectly correct
+    exclusion. ATC/IDS and Hyper Detect are different engines. For that one, add a rule under
+    <strong>Incidents &rarr; Custom exclusion rules</strong>.
+    When an exclusion "is there and still does not work", read the <strong>Modules column</strong>,
+    not the presence of the entry.
   </p>
   <div class="table-wrap">
     <table class="table table-lift">

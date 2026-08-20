@@ -297,6 +297,53 @@ export interface QueueResult { ok: boolean; deviceId: number; commandId?: number
  * Queue the install on one device. Returns rather than throws for the per-row failures
  * a bulk rollout will hit — one machine with no agent must not abort the other forty.
  */
+/**
+ * Catch a machine up on Bitdefender when it comes back.
+ *
+ * Called from the agent heartbeat, beside the mesh-install catch-up that has been doing
+ * exactly this for remote control since it was written. A laptop that was switched off
+ * during a customer's rollout should not need somebody to remember it a fortnight later.
+ *
+ * Agent version and remote control already self-heal on reconnect — deviceConfig offers
+ * the ring-gated build on every heartbeat, and queueMeshInstall runs when mesh_installed
+ * is false. Bitdefender was the only one of the three with nobody watching for it.
+ *
+ * This is the one place in the estate that installs software on a customer's machine with
+ * no human present, so the guards matter more than the feature:
+ *
+ *  - **Held back always wins.** A machine someone deliberately excluded is never caught up.
+ *    Hold back would be worthless if a heartbeat could undo it.
+ *  - **Three attempts, then it stops.** An install that fails for a reason nobody has
+ *    looked at will fail identically at every check-in, and a machine that reconnects all
+ *    day would generate hundreds. Repeated failure is a thing to READ, not to retry.
+ *  - **Enablement is still a human decision.** customerEnabled() means a person mapped both
+ *    a GravityZone company and an installation package. This completes a decision already
+ *    made; it never makes a new one.
+ *
+ * Returns quietly on every path — a heartbeat must never fail because of this.
+ */
+export async function catchUpBitdefender(deviceId: number): Promise<void> {
+  try {
+    const r = (await pool.query(
+      `SELECT d.customer_id, dep.state, COALESCE(dep.attempts,0) AS attempts, se.gz_id
+         FROM agent_devices d
+         LEFT JOIN security_deployments dep ON dep.device_id = d.id
+         LEFT JOIN customer_assets a ON a.agent_device_id = d.id AND a.merged_into_id IS NULL
+         LEFT JOIN security_endpoints se ON se.asset_id = a.id
+        WHERE d.id = $1 AND COALESCE(d.revoked,false) = false
+        LIMIT 1`, [deviceId])).rows[0];
+    if (!r || !r.customer_id) return;
+    if (r.gz_id) return;                                   // GravityZone already has it
+    if (r.state === 'excluded') return;                    // held back on purpose
+    if (r.state === 'protected' || r.state === 'installed') return;
+    if (Number(r.attempts) >= 3) return;                   // read the failures, do not repeat them
+    if (!(await customerEnabled(Number(r.customer_id)))) return;
+    await queueDeploy(deviceId, null);
+  } catch (e: any) {
+    console.error('[gz] catch-up failed for device %s: %s', deviceId, e.message);
+  }
+}
+
 export async function queueDeploy(deviceId: number, userId: number | null = null): Promise<QueueResult> {
   // d.os, NOT d.os_name. agent_devices has `os`; os_name is a security_endpoints column.
   // That typo made this query throw for EVERY device, so "Deploy to all" failed with
@@ -474,6 +521,29 @@ export function startSecurityReconcile(): void {
   setInterval(tick, EVERY_MS);
 }
 
+/**
+ * Is this endpoint's "infected" flag about something that is actually a threat?
+ *
+ * GravityZone says `infected` when it has recorded a detection. It has no idea that
+ * MeshCentral is our own remote control, so a machine doing exactly what we installed it
+ * to do renders in red as INFECTED — which is how AMR-S1 read on 20 Aug while working
+ * perfectly. We already KNOW better: `isOwnToolDetection` runs on every sync and is the
+ * reason no support case is raised for it. The conclusion was simply thrown away instead
+ * of being applied to the state.
+ *
+ * So: an endpoint counts as infected only if it holds a detection that is NOT ours.
+ *
+ * The rule this must never break: **our own detections are set aside, never hidden.**
+ * They keep their row, their threat name and their date, and the screens say how many
+ * were set aside and why. A count that quietly drops to zero is how a real detection
+ * ends up sitting behind a number nobody reads — which is the whole reason our own noise
+ * is worth removing in the first place.
+ */
+const REAL_INFECTION = `EXISTS (SELECT 1 FROM security_detections sd
+                                 WHERE sd.endpoint_gz_id = se.gz_id AND sd.own_tool = false)`;
+/** Flagged by GravityZone, but every detection we hold for it is our own tooling. */
+const OWN_TOOL_ONLY = `(se.infected AND NOT ${REAL_INFECTION})`;
+
 export async function reconcile(): Promise<ReconcileResult> {
   const out: ReconcileResult = { checked: 0, installed: 0, protectedCount: 0, failed: 0, stillWaiting: 0 };
   const rows = (await pool.query(
@@ -561,6 +631,10 @@ export interface RolloutRow {
   bdVersion: string | null;
   definitions: 'current' | 'out-of-date' | null;
   infected: boolean;
+  /** GravityZone flagged this machine, but every detection on it is our own tooling.
+   *  Not an infection — and deliberately still visible, because a count that silently
+   *  drops to zero is how the next real one gets missed. */
+  ownToolFlagged: boolean;
   policyName: string | null;
   modulesOn: string | null;
   online: boolean | null;      // our agent's view — is the machine even reachable
@@ -581,7 +655,9 @@ const ROLLOUT_SELECT = `
   SELECT a.id AS asset_id, a.hostname, a.customer_id, d.id AS device_id, d.security_json,
          EXTRACT(EPOCH FROM d.last_seen_at)::bigint AS agent_seen,
          dep.state, dep.attempts, dep.last_error, dep.av_before,
-         se.gz_id, se.agent_version AS bd_version, se.outdated, se.infected,
+         se.gz_id, se.agent_version AS bd_version, se.outdated,
+         (se.infected AND ${REAL_INFECTION}) AS infected,
+         ${OWN_TOOL_ONLY} AS own_tool_only,
          se.policy_name, se.modules_on,
          EXTRACT(EPOCH FROM se.last_seen_at)::bigint AS gz_seen
     FROM customer_assets a
@@ -633,6 +709,7 @@ function mapRolloutRow(rows: any): RolloutRow {
       // "current" on a machine BD has never seen would be an invention.
       definitions: (r.gz_id ? (r.outdated ? 'out-of-date' : 'current') : null) as RolloutRow['definitions'],
       infected: r.infected === true,
+      ownToolFlagged: r.own_tool_only === true,
       policyName: r.policy_name || null,
       modulesOn: r.modules_on || null,
       // Offline is worth its own state: an install that has not run because the machine
@@ -642,6 +719,15 @@ function mapRolloutRow(rows: any): RolloutRow {
     };
     if (!r.device_id) return { ...base, state: 'no-agent', detail: 'No LumenMSP agent — that has to go on first.' };
     if (r.gz_id && r.infected) return { ...base, state: 'infected', detail: 'Bitdefender is reporting an active infection on this machine.' };
+    // Flagged, but everything it flagged is ours. Say so plainly and keep it visible —
+    // this machine is protected, and pretending the detection never happened is how the
+    // next one gets missed.
+    if (r.gz_id && r.own_tool_only && isBitdefender(names)) {
+      return { ...base, state: 'protected',
+        detail: `Installed and enrolled${r.bd_version ? ' — Bitdefender ' + r.bd_version : ''}` +
+                (r.outdated ? ', but its definitions are out of date.' : '.') +
+                ' Bitdefender has flagged our own tooling on this machine — recorded, not an infection.' };
+    }
     if (isBitdefender(names) && r.gz_id) {
       return { ...base, state: 'protected',
         detail: `Installed and enrolled${r.bd_version ? ' — Bitdefender ' + r.bd_version : ''}` +
@@ -769,6 +855,9 @@ export interface CustomerSummary {
   packageName: string | null; packageReady: boolean;
   devices: number; protectedCount: number; installing: number; notDeployed: number;
   failed: number; infected: number; noAgent: number;
+  /** Flagged by GravityZone, but every detection is our own tooling. Set aside from the
+   *  infected count and shown separately — never hidden. */
+  ownToolFlagged: number;
   ready: boolean;          // everything wired up and able to deploy
   blocker: string | null;  // the ONE thing stopping this customer, if any
 }
@@ -790,8 +879,9 @@ export async function customerSummaries(): Promise<CustomerSummary[]> {
             sc.gz_id, sc.name AS company_name,
             sp.package_name, COALESCE(sp.ready_windows, false) AS package_ready,
             COUNT(a.id)::int                                                  AS devices,
-            COUNT(*) FILTER (WHERE se.gz_id IS NOT NULL AND NOT se.infected)::int AS protected_count,
-            COUNT(*) FILTER (WHERE se.infected)::int                          AS infected,
+            COUNT(*) FILTER (WHERE se.gz_id IS NOT NULL AND NOT (se.infected AND ${REAL_INFECTION}))::int AS protected_count,
+            COUNT(*) FILTER (WHERE se.infected AND ${REAL_INFECTION})::int                                 AS infected,
+            COUNT(*) FILTER (WHERE ${OWN_TOOL_ONLY})::int                                                  AS own_tool_flagged,
             COUNT(*) FILTER (WHERE se.gz_id IS NULL AND dep.state IN ('queued','running'))::int AS installing,
             COUNT(*) FILTER (WHERE se.gz_id IS NULL AND dep.state = 'failed')::int AS failed,
             COUNT(*) FILTER (WHERE a.agent_device_id IS NULL)::int             AS no_agent
@@ -815,6 +905,7 @@ export async function customerSummaries(): Promise<CustomerSummary[]> {
     const installing = Number(r.installing || 0);
     const failed = Number(r.failed || 0);
     const noAgent = Number(r.no_agent || 0);
+    const ownToolFlagged = Number(r.own_tool_flagged || 0);
     const notDeployed = Math.max(0, devices - prot - infected - installing - failed - noAgent);
 
     // ONE blocker, in the order you would actually hit them. A list of six things wrong
@@ -832,7 +923,7 @@ export async function customerSummaries(): Promise<CustomerSummary[]> {
         : (!r.gz_id ? 'no company mapped' : 'no package mapped'),
       gzCompanyId: r.gz_id || null, gzCompanyName: r.company_name || null,
       packageName: r.package_name || null, packageReady: !!r.package_ready,
-      devices, protectedCount: prot, installing, notDeployed, failed, infected, noAgent,
+      devices, protectedCount: prot, installing, notDeployed, failed, infected, noAgent, ownToolFlagged,
       ready: !blocker, blocker,
     };
   });
@@ -895,7 +986,7 @@ export async function infectedDevices(): Promise<InfectedDevice[]> {
           WHERE sd.endpoint_gz_id = se.gz_id
           ORDER BY sd.detected_at DESC LIMIT 1
        ) d ON true
-      WHERE se.infected
+      WHERE se.infected AND ${REAL_INFECTION}
       ORDER BY c.name NULLS LAST, se.name`)).rows;
 
   return rows.map((r: any) => ({
@@ -956,7 +1047,74 @@ export interface PolicyExclusions {
   agentExcluded: boolean;
   /** Which of our own tools this policy does NOT exclude, in words. */
   missing: string[];
+  /** Exclusion-shaped keys found in the payload, with their types. Diagnostic only — it is
+   *  what turns "0 exclusions" from a dead end into something the next person can act on. */
+  shape: string[];
   note: string;
+}
+
+/**
+ * Collect every exclusion entry anywhere in a policy payload.
+ *
+ * The previous version found the FIRST key matching /exclusion/i and, if it was not an
+ * array, tried exactly ONE sibling before giving up. On Lumen's tenant the first hit is
+ * `settings.antimalware.settings.activateExclusions` — a boolean switch — and the real
+ * list is not its sibling, so the audit reported "0 exclusions" for a policy that visibly
+ * holds four (verified in the console, 20 Aug). That is the worst possible failure for an
+ * audit: it does not say "I could not tell", it says "there are none", and a policy that
+ * is actually fine looks broken while a policy that is broken looks identical.
+ *
+ * So: walk the whole payload, gather every array under any /exclu/ key, and flatten
+ * objects-of-arrays — GravityZone groups exclusions by type (folders, files, processes),
+ * which is exactly the shape the old one-array assumption could not see. Entries keep
+ * their modules where the payload carries them, because WHICH MODULES an exclusion covers
+ * is the whole question: ATC/IDS and Hyper Detect are different engines, and an exclusion
+ * that lists the right path against the wrong modules protects nothing.
+ *
+ * When nothing is found, report which keys matched and what they held. A dead message
+ * costs the next person the same afternoon this cost.
+ */
+function collectExclusions(d: any): { items: string[]; shape: string[] } {
+  const found: string[] = [];
+  const shape: string[] = [];
+
+  const asText = (x: any): string | null => {
+    if (x == null) return null;
+    if (typeof x === 'string') return x.trim() || null;
+    if (typeof x !== 'object') return String(x);
+    const v = x.path ?? x.value ?? x.name ?? x.hash ?? x.item ?? x.exclusionPath ?? x.file ?? x.folder;
+    if (typeof v !== 'string' || !v) return null;
+    const mods = Array.isArray(x.modules) ? x.modules
+      : Array.isArray(x.module) ? x.module
+      : null;
+    return mods && mods.length ? `${v} [${mods.join(', ')}]` : v;
+  };
+
+  // Everything under an exclusion key is fair game: arrays of strings, arrays of objects,
+  // and objects whose values are those arrays.
+  const harvest = (v: any, depth: number): void => {
+    if (v == null || depth > 8) return;
+    if (Array.isArray(v)) { for (const el of v) { const t = asText(el); if (t) found.push(t); else harvest(el, depth + 1); } return; }
+    if (typeof v === 'object') { for (const k of Object.keys(v)) harvest((v as any)[k], depth + 1); }
+  };
+
+  const walk = (o: any, path: string, depth: number): void => {
+    if (o == null || depth > 8 || typeof o !== 'object') return;
+    for (const k of Object.keys(o)) {
+      const here = path ? `${path}.${k}` : k;
+      const v = (o as any)[k];
+      if (/exclu/i.test(k)) {
+        shape.push(`${here}: ${Array.isArray(v) ? `array(${v.length})` : typeof v}`);
+        harvest(v, depth);
+      }
+      if (v && typeof v === 'object') walk(v, here, depth + 1);
+    }
+  };
+  walk(d, '', 0);
+
+  const seen = new Set<string>();
+  const items = found.filter((i) => (seen.has(i) ? false : (seen.add(i), true)));
+  return { items, shape };
 }
 
 export async function policyExclusions(): Promise<{ policies: PolicyExclusions[]; warnings: string[] }> {
@@ -973,28 +1131,7 @@ export async function policyExclusions(): Promise<{ policies: PolicyExclusions[]
     try { d = await rpc<any>('policies', 'getPolicyDetails', { policyId: p.id }); }
     catch (e: any) { warnings.push(`Could not read policy "${p.name || p.id}": ${e.message}`); continue; }
 
-    // Find the exclusion LIST, not the on/off switch beside it. The switch is what a
-    // naive search hits first — Lumen's tenant returns activateExclusions before the
-    // list, and reporting the boolean as "the exclusions" would be worse than useless.
-    let items: string[] = [];
-    let path = findKeyPath(d, /exclusion/i);
-    const seen = new Set<string>();
-    while (path && !seen.has(path)) {
-      seen.add(path);
-      const v = atPath(d, path);
-      if (Array.isArray(v)) {
-        items = v.map((x: any) => typeof x === 'string' ? x
-          : String(x?.path || x?.value || x?.name || x?.hash || JSON.stringify(x)));
-        break;
-      }
-      // not the list — look for a sibling array before giving up
-      const parentPath = path.split('.').slice(0, -1).join('.');
-      const parent = parentPath ? atPath(d, parentPath) : d;
-      const sibling = parent && typeof parent === 'object'
-        ? Object.keys(parent).find((k) => Array.isArray((parent as any)[k]) && /exclu/i.test(k)) : null;
-      if (sibling) { path = parentPath ? `${parentPath}.${sibling}` : sibling; continue; }
-      break;
-    }
+    const { items, shape } = collectExclusions(d);
 
     // Which of OUR tools this policy protects, named individually. "agentExcluded: false"
     // used to mean "one of the two hints is missing" without saying which — and with the
@@ -1010,11 +1147,14 @@ export async function policyExclusions(): Promise<{ policies: PolicyExclusions[]
     out.push({
       policyId: String(p.id), policyName: String(p.name || p.id),
       items, agentExcluded, missing,
+      shape,
       note: items.length
         ? (agentExcluded
-            ? 'Both LumenMSP tools are excluded here.'
-            : `No exclusion for ${missing.join(' or ')} — add the folder and the .exe, On-Access and ATC.`)
-        : 'No exclusions readable in this policy payload.',
+            ? 'Both LumenMSP tools are excluded here. Note this does NOT cover Hyper Detect — see below.'
+            : `No exclusion for ${missing.join(' or ')} — add the folder and the .exe (On-Access, On-Demand, ATC/IDS).`)
+        : (shape.length
+            ? `No exclusion list found in this policy payload. Keys that matched: ${shape.slice(0, 6).join('; ')}.`
+            : 'No exclusions readable in this policy payload, and no exclusion-shaped keys were found in it at all.'),
     });
   }
   return { policies: out, warnings };

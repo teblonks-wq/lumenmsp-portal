@@ -83,8 +83,14 @@
   <h4 style="margin:0 0 6px;">Add these to every policy Lumen manages</h4>
   <p class="muted" style="font-size:12px;margin:0 0 8px;">
     GravityZone &rarr; Policies &rarr; <em>your policy</em> &rarr; Antimalware &rarr; Settings &rarr; Exclusions.
-    Tick <strong>both</strong> On-Access and Advanced Threat Control for each &mdash; ATC is what produces the
-    Hyper Detect hit, so an On-Access-only exclusion does not stop it.
+    These exclusions cover On-Access, On-Demand and ATC/IDS &mdash; tick all three.
+    <strong>They do NOT stop Hyper Detect.</strong> Verified in the console 20 Aug: the Antimalware
+    exclusion list has no Hyper Detect option at all (with Type = File it offers only On-demand and
+    On-access), so a <code>Gen:Illusion.PUP.MeshCentral</code> verdict survives a perfectly correct
+    exclusion. ATC/IDS and Hyper Detect are different engines. For that one, add a rule under
+    <strong>Incidents &rarr; Custom exclusion rules</strong>.
+    When an exclusion "is there and still does not work", read the <strong>Modules column</strong>,
+    not the presence of the entry.
   </p>
   <div class="table-wrap">
     <table class="table table-lift">

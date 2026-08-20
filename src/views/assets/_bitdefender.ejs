@@ -138,8 +138,13 @@
         If it names <code>MeshAgent.exe</code> or the LumenMSP agent, that is our own tooling and the fix is a
         policy exclusion, not a clean-up
         <% if (requiredExclusions && requiredExclusions.length) { %>
-          (<%= requiredExclusions.map(function(x){ return x.value; }).join(', ') %> &mdash; On-Access <em>and</em> ATC)
+          (<%= requiredExclusions.map(function(x){ return x.value; }).join(', ') %> &mdash; On-Access, On-Demand and ATC/IDS)
         <% } %>.
+        <strong>Those do not stop Hyper Detect</strong> &mdash; the Antimalware exclusion list has no Hyper Detect
+        option at all, so a <code>Gen:Illusion.PUP.MeshCentral</code> verdict survives a perfectly correct
+        exclusion. Ask Bitdefender to allowlist it for the tenant; that is the only fix that does not turn
+        protection down. And <strong>check this detection is actually ours</strong> before dismissing it &mdash;
+        our own noise is only harmless while it is not hiding a real one.
       </p>
     <% } %>
 

@@ -246,12 +246,23 @@ app.get('/sw.js', (_req, res) => {
 // it runs full-screen with no address bar. Fingerprint + package come from env (set after
 // you generate the signing keystore): TWA_SHA256 (colon-separated SHA-256), TWA_PACKAGE.
 app.get('/.well-known/assetlinks.json', (_req, res) => {
-  const fp = (process.env.TWA_SHA256 || '').trim();
-  const pkg = (process.env.TWA_PACKAGE || 'uk.co.lumenmsp.portal').trim();
-  res.type('application/json').json(fp ? [{
+  // TWA_SHA256 accepts a COMMA-SEPARATED LIST of colon-separated SHA-256 fingerprints.
+  // Two are needed once the app is on the Play Store: our own upload keystore's (sideloaded
+  // builds) and Google's app-signing certificate (Play re-signs every store install - read
+  // it from Play Console -> Test and release -> App signing). One missing fingerprint means
+  // that flavour of install opens with a browser address bar instead of full-screen.
+  //
+  // Default package is the .v2 id: the original uk.co.lumenmsp.portal was already taken on
+  // Play (19 Aug 2026), so the store app is uk.co.lumenmsp.portal.v2. TWA_PACKAGE in the
+  // server .env can override, and TWA_PACKAGES (comma-separated) lists several during a
+  // transition - devices still carrying the old sideloaded package keep verifying.
+  const fps = (process.env.TWA_SHA256 || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const pkgs = (process.env.TWA_PACKAGES || process.env.TWA_PACKAGE || 'uk.co.lumenmsp.portal.v2,uk.co.lumenmsp.portal')
+    .split(',').map((x) => x.trim()).filter(Boolean);
+  res.type('application/json').json(fps.length ? pkgs.map((pkg) => ({
     relation: ['delegate_permission/common.handle_all_urls'],
-    target: { namespace: 'android_app', package_name: pkg, sha256_cert_fingerprints: [fp] },
-  }] : []);
+    target: { namespace: 'android_app', package_name: pkg, sha256_cert_fingerprints: fps },
+  })) : []);
 });
 
 // ── Sessions ──────────────────────────────────────────────────────────────────

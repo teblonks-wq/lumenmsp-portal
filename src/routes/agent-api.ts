@@ -595,6 +595,15 @@ router.post('/agent/api/heartbeat', requireDevice, async (req: Request, res: Res
       } catch { /* never let this break a heartbeat */ }
     }
 
+    // Same idea, for Bitdefender: a machine that was off during its customer's rollout
+    // catches itself up when it reappears. Guarded hard in catchUpBitdefender — held-back
+    // machines are never touched, and it gives up after three failed attempts rather than
+    // retrying at every heartbeat forever.
+    try {
+      const { catchUpBitdefender } = await import('../lib/gravityzone-deploy');
+      await catchUpBitdefender(d.id);
+    } catch { /* never let this break a heartbeat */ }
+
     res.json({ ok: true, public_ip: clientIp(req), config: await deviceConfig(d.customer_id, d.update_ring ?? 2) });
   } catch (e: any) {
     console.error('[agent] heartbeat failed:', e.message);

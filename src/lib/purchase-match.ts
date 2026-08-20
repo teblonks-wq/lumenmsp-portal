@@ -82,6 +82,13 @@ interface CatSuggestion { accountId: string; accountName: string; seen: number; 
 // (a report-only 'local:' category — never pushed to QuickBooks).
 const SEED_RULES: Array<{ pattern: RegExp; accountId: string; accountName: string }> = [
   { pattern: /mbna/i, accountId: 'local:TOK Director Loan', accountName: 'TOK Director Loan' },
+  // Family/staff transfers are all WAGES (Terry, 20 Aug 2026) — paid through payroll
+  // (Pi run PAYE), so they're coded to the report-only Wages category and reconcile
+  // against payroll journals in QB, never pushed as Purchases. Includes Andrew
+  // Simoncsics (~£1,273/mo salary). "Wages" must exist in Admin → Purchase Ledger →
+  // report-only categories for the dropdown; the rule writes it either way.
+  { pattern: /daniel +okelly|cody +o'?kelly|zachary +okelly|natalie +o'?kelly|terry +o'?kelly|andrew +simoncsics/i,
+    accountId: 'local:Wages', accountName: 'Wages' },
 ];
 
 // Build payee → most-frequently-used category, from our own ledger history.

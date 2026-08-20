@@ -2782,6 +2782,11 @@ model SecurityDetection {
   threatName   String?  @map("threat_name")
   detail       String?
   ticketId     Int?     @map("ticket_id")
+  // Is this detection one of OUR OWN tools? Computed on every sync by isOwnToolDetection
+  // and, until 20 Aug, thrown away — so the Portal knew a MeshCentral hit was ours (it
+  // withheld the support case on exactly that basis) and still rendered the machine
+  // INFECTED in red. Persisted so the read paths can use the conclusion the sync reached.
+  ownTool      Boolean  @default(false) @map("own_tool")
   detectedAt   DateTime @default(now()) @map("detected_at")
 
   @@index([customerId])

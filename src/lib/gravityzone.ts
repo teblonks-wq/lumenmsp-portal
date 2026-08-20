@@ -743,9 +743,9 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
             out.warnings.push(`Could not raise a case for ${name}: ${err.message}`);
           }
           await pool.query(
-            `INSERT INTO security_detections (dedupe_key, customer_id, endpoint_gz_id, hostname, threat_name, detail, ticket_id)
-             VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (dedupe_key) DO NOTHING`,
-            [key, customerId, gzId, name, threat, s(e.policy?.name), ticketId]);
+            `INSERT INTO security_detections (dedupe_key, customer_id, endpoint_gz_id, hostname, threat_name, detail, ticket_id, own_tool)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (dedupe_key) DO NOTHING`,
+            [key, customerId, gzId, name, threat, s(e.policy?.name), ticketId, ownTool]);
         }
       }
     }

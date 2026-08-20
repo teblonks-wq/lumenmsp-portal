@@ -45,7 +45,7 @@ const num = (v: any): number => { const x = parseFloat(String(v ?? '').replace(/
 // Report-only categories that DON'T exist in QuickBooks (e.g. TOK / NOK Director Loan).
 // Stored as "local:<name>" so they show in the dropdown + on the report but are skipped
 // when pushing to QB. Configurable in settings; defaults to the two director loans.
-const DEFAULT_EXTRA_CATEGORIES = 'TOK Director Loan\nNOK Director Loan';
+const DEFAULT_EXTRA_CATEGORIES = 'TOK Director Loan\nNOK Director Loan\nWages';
 async function getExtraCategories(): Promise<{ Id: string; Name: string; local: boolean }[]> {
   const raw = await getSetting('purchases', 'extra_categories');
   const text = (raw === null || raw === undefined) ? DEFAULT_EXTRA_CATEGORIES : raw;
