@@ -505,6 +505,39 @@ async function askForSecurity(deviceId: number): Promise<void> {
  * the query only touches deployments that are still unsettled, so an idle estate costs a
  * single indexed read.
  */
+/**
+ * Classify detections that were recorded before own_tool existed.
+ *
+ * Adding the column with `@default(false)` marked every historic row "not ours" — so the
+ * four AMR machines carried on reading INFECTED after the fix went live, because the only
+ * detections they hold predate the column. New rows are classified at insert; these never
+ * were, and nothing would ever have revisited them.
+ *
+ * Re-evaluates with `isOwnToolDetection` rather than a hand-written SQL regex, so the
+ * patterns stay in one place and a change to them cannot leave the backfill behind.
+ * Note the stored row has threat_name and detail (the policy name) but NOT the detection
+ * path the sync also had — a Bitdefender verdict names the product, so `Gen:Illusion.PUP.
+ * MeshCentral` still matches, but that is why this is a backfill and not the primary path.
+ *
+ * Idempotent and self-limiting: it only ever flips false to true, so after the first pass
+ * it matches nothing.
+ */
+async function backfillOwnTool(): Promise<void> {
+  try {
+    const rows = (await pool.query(
+      `SELECT id, threat_name, detail, hostname FROM security_detections WHERE own_tool = false`)).rows;
+    const ours = rows
+      .filter((r: any) => isOwnToolDetection(r.threat_name, r.detail, r.hostname))
+      .map((r: any) => Number(r.id));
+    if (!ours.length) return;
+    await pool.query(
+      `UPDATE security_detections SET own_tool = true WHERE id = ANY($1::int[])`, [ours]);
+    console.log('[gz] backfill: %d of %d detections re-classified as our own tooling', ours.length, rows.length);
+  } catch (e: any) {
+    console.error('[gz] own_tool backfill failed:', e.message);
+  }
+}
+
 export function startSecurityReconcile(): void {
   const EVERY_MS = 2 * 60 * 1000;
   const tick = async () => {
@@ -517,7 +550,9 @@ export function startSecurityReconcile(): void {
     } catch (e: any) { console.error('[gz] reconcile failed:', e.message); }
   };
   // Not at boot: a deploy restart should not race the first agent check-ins.
-  setTimeout(tick, 30_000);
+  // The backfill goes first — reconcile reads own_tool, so classifying the historic
+  // rows before the first pass means the estate is right on the first tick, not the second.
+  setTimeout(() => { backfillOwnTool().then(tick).catch(() => tick()); }, 30_000);
   setInterval(tick, EVERY_MS);
 }
 
