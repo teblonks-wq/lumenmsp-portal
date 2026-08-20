@@ -108,6 +108,39 @@ function tileHref(over){
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Anything Atera types as a server"><input class="js-autofilter" type="checkbox" name="servers" value="1" <%= filters.servers?'checked':'' %>> Servers only</label>
     <noscript><button class="btn" type="submit">Filter</button></noscript>
     <% if (_anyFilter) { %><a class="btn" href="/assets">Clear</a><% } %>
+    <% var flt = (typeof f !== 'undefined' && f) ? f : {}; %>
+    <div style="flex-basis:100%;height:0;"></div>
+    <input class="input js-autofilter" name="make"   value="<%= flt.make || '' %>"   placeholder="Manufacturer" style="width:150px;">
+    <input class="input js-autofilter" name="model"  value="<%= flt.model || '' %>"  placeholder="Model" style="width:150px;">
+    <input class="input js-autofilter" name="cpu"    value="<%= flt.cpu || '' %>"    placeholder="CPU" style="width:150px;">
+    <input class="input js-autofilter" name="ip"     value="<%= flt.ip || '' %>"     placeholder="IP contains" style="width:130px;">
+    <input class="input js-autofilter" name="domain" value="<%= flt.domain || '' %>" placeholder="Domain" style="width:140px;">
+    <input class="input js-autofilter" name="rammin" value="<%= flt.rammin || '' %>" placeholder="RAM min" style="width:90px;" title="Gigabytes, at least">
+    <input class="input js-autofilter" name="rammax" value="<%= flt.rammax || '' %>" placeholder="RAM max" style="width:90px;" title="Gigabytes, at most - finds what cannot take Windows 11">
+    <select class="input js-autofilter" name="tag" style="min-width:170px;" title="Show only devices in this group">
+      <option value="">All groups</option>
+      <% (typeof allTags !== 'undefined' ? allTags : []).forEach(function(t){ %>
+        <option value="<%= t.id %>" <%= (flt.tag === t.id) ? 'selected' : '' %>><%= t.name %> (<%= t.n %>)</option>
+      <% }); %>
+    </select>
+  </form>
+
+  <!-- Bulk bar. Hidden until something is ticked, so it never sits there inviting a
+       mis-click. The row checkboxes belong to this form via form="bulk-form", which is
+       what lets them live inside the table without nesting a form in a <table>. -->
+  <form method="post" id="bulk-form" action="/assets/tags/add" style="display:none;margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap;">
+    <input type="hidden" name="back" value="/assets">
+    <strong id="sel-count" style="font-size:13px;"></strong>
+    <select class="input" name="tagId" style="min-width:170px;">
+      <option value="">Add to an existing group...</option>
+      <% (typeof allTags !== 'undefined' ? allTags : []).forEach(function(t){ %>
+        <option value="<%= t.id %>"><%= t.name %></option>
+      <% }); %>
+    </select>
+    <span class="muted" style="font-size:12px;">or</span>
+    <input class="input" name="newTag" placeholder="name a new group" style="width:200px;" maxlength="80">
+    <button class="btn" type="submit">Add to group</button>
+    <button class="btn" type="submit" formaction="/assets/tags/remove" title="Remove the selected devices from the group chosen on the left">Remove from group</button>
   </form>
 </div>
 <script>
@@ -168,6 +201,35 @@ function tileHref(over){
   // Pick a customer (or any other single-click filter) and the list filters itself. The
   // search box is deliberately left alone - it submits on Enter, not on every keystroke.
   (function () {
+    // Selection: select-all, live count, and showing the bulk bar only once something
+    // is actually ticked. Select-all deliberately means "everything ON THIS PAGE" and the
+    // count says so - a select-all that silently spans a filtered set you cannot see is
+    // how the wrong machines get an install.
+    (function () {
+      var all = document.getElementById('sel-all');
+      var bar = document.getElementById('bulk-form');
+      var lbl = document.getElementById('sel-count');
+      function rows() { return Array.prototype.slice.call(document.querySelectorAll('.sel-row')); }
+      function sync() {
+        var picked = rows().filter(function (c) { return c.checked; });
+        if (!bar || !lbl) return;
+        bar.style.display = picked.length ? 'flex' : 'none';
+        lbl.textContent = picked.length + (picked.length === 1 ? ' device selected' : ' devices selected');
+        if (all) {
+          all.checked = picked.length > 0 && picked.length === rows().length;
+          all.indeterminate = picked.length > 0 && picked.length < rows().length;
+        }
+      }
+      if (all) all.addEventListener('change', function () {
+        rows().forEach(function (c) { c.checked = all.checked; });
+        sync();
+      });
+      document.addEventListener('change', function (e) {
+        if (e.target && e.target.classList && e.target.classList.contains('sel-row')) sync();
+      });
+      sync();
+    })();
+
     var form = document.getElementById('asset-filters');
     if (!form) return;
     form.querySelectorAll('.js-autofilter').forEach(function (el) {
@@ -181,15 +243,18 @@ function tileHref(over){
 <div class="card" style="padding:0;border-top:3px solid var(--accent);">
   <div class="table-wrap">
     <table class="table table-lift">
-      <thead><tr><th></th><th>Hostname</th><th>Customer</th><th>Type</th><th>Endpoint</th><th>Backup</th><th>OS</th><th>Manufacturer / Model</th><th>User</th><th>Last seen</th><th></th></tr></thead>
+      <thead><tr><th style="width:26px;"><input type="checkbox" id="sel-all" title="Select every device on this page"></th><th></th><th>Hostname</th><th>Customer</th><th>Type</th><th>Endpoint</th><th>Backup</th><th>OS</th><th>Manufacturer / Model</th><th>User</th><th>Last seen</th><th></th></tr></thead>
       <tbody>
-        <% if (rows.length===0) { %><tr><td colspan="11"><div class="empty-state">No devices match. Machines appear here as soon as the LumenMSP Agent enrols on them — use "↻ Import from Atera" to pull in the ones that do not have it yet.</div></td></tr><% } %>
+        <% if (rows.length===0) { %><tr><td colspan="12"><div class="empty-state">No devices match. Machines appear here as soon as the LumenMSP Agent enrols on them — use "↻ Import from Atera" to pull in the ones that do not have it yet.</div></td></tr><% } %>
         <% rows.forEach(function(a){
              var _lv = _isLive(a);
              var _re = a.security_bad === true ? 're-bad' : a.patch_due ? 're-warn' : (_lv ? 're-ok' : ''); %>
           <tr class="<%= _re %>">
+            <td><input type="checkbox" class="sel-row" form="bulk-form" name="ids" value="<%= a.id %>"></td>
             <td><span class="dot-live" data-asset="<%= a.id %>" data-agent="<%= a.agent_device_id ? '1' : '' %>" title="<%= _lv ? 'Online - the LumenMSP Agent checked in recently' : (a.agent_device_id ? 'Offline' : 'Offline - no LumenMSP Agent on this machine, so the Portal has no live status for it') %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= _lv ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
-            <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/assets') %>"><%= a.hostname || '(unnamed device)' %></a><% if (a.agent_device_id) { %> <img src="/static/img/lumen-agent-16.png" width="14" height="14" alt="LumenMSP Agent" style="vertical-align:-2px;margin-left:5px;" title="LumenMSP Agent<%= a.agent_agent_version ? ' v' + a.agent_agent_version : '' %> — last seen <%= secsAgo(a.agent_seen_secs) %>"><% if (a.agent_agent_version) { %><span class="muted" style="font-size:10.5px;margin-left:3px;">v<%= a.agent_agent_version %></span><% } %><% } %></td>
+            <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/assets') %>"><%= a.friendly_name || a.hostname || '(unnamed device)' %></a>
+              <% if (a.friendly_name && a.hostname) { %><span class="muted" style="font-size:11px;display:block;"><%= a.hostname %></span><% } %>
+              <% (a.tags || []).forEach(function(t){ %><span class="badge badge-inactive" style="font-size:10px;margin-right:3px;"><%= t.name %></span><% }); %><% if (a.agent_device_id) { %> <img src="/static/img/lumen-agent-16.png" width="14" height="14" alt="LumenMSP Agent" style="vertical-align:-2px;margin-left:5px;" title="LumenMSP Agent<%= a.agent_agent_version ? ' v' + a.agent_agent_version : '' %> — last seen <%= secsAgo(a.agent_seen_secs) %>"><% if (a.agent_agent_version) { %><span class="muted" style="font-size:10.5px;margin-left:3px;">v<%= a.agent_agent_version %></span><% } %><% } %></td>
             <td class="muted"><% if (a.customer_id) { %><a class="row-link" href="/customers/<%= a.customer_id %>#assets"><%= a.customer_name %></a><% } else { %>—<% } %></td>
             <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span><% if (!a.agent_device_id) { %> <button type="button" class="badge copy-install" data-key="<%= a.agent_site_key || '' %>" data-host="<%= a.hostname || 'this machine' %>" style="background:var(--tint-warn);color:var(--warn-deep);border:1px solid var(--warn-line);cursor:pointer;font:inherit;font-size:11px;" title="Copy the PowerShell command that installs the LumenMSP Agent on this machine, then paste it into an elevated PowerShell on the box">agent required — copy install ⧉</button><% } %></td>
             <td><%

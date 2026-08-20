@@ -2,6 +2,7 @@ import { pool } from '../db/pool';
 import { config } from '../config';
 import { sendTeamsNotice } from './teams';
 import { sendMail } from './mailer';
+import { publish as pulsePublish, resolve as pulseResolve } from './pulse';
 import { notifyAgents } from './callhub';
 import { nextTicketNumber } from '../routes/tickets';
 
@@ -116,6 +117,14 @@ export async function raiseAlert(a: AlertInput): Promise<{ id: number; isNew: bo
   const ticketId = a.autoTicket === false ? null : await createAlertTicket(a);
   if (ticketId) { try { await pool.query('UPDATE alerts SET ticket_id=$1 WHERE id=$2', [ticketId, id]); } catch { /* ignore */ } }
   try { notifyAgents({ type: 'alert', alertId: id, source: a.source, severity: a.severity || 'warning', title: a.title, body: (a.body || '').slice(0, 160), ticketId }); } catch { /* ignore */ }
+  // The Pulse: every genuinely-new alert becomes a card in the mobile briefing. Critical
+  // ones interrupt phones (the covenant - a critical alert IS "act within the hour");
+  // warnings wait in the feed. Fire-and-forget: the briefing never blocks the alerting.
+  pulsePublish({
+    kind: 'alert', title: a.title, body: (a.body || '').split('\n')[0].slice(0, 200),
+    link: '/admin/alerts', dedupeKey: 'alert:' + a.source + ':' + (a.externalId || a.title),
+    push: (a.severity || 'warning') === 'critical',
+  }).catch(() => {});
   await emailNotifyAlert(a, ticketId);   // primary
   await teamsNotifyAlert(a, ticketId);   // fallback
   return { id, isNew: true };
@@ -123,6 +132,9 @@ export async function raiseAlert(a: AlertInput): Promise<{ id: number; isNew: bo
 
 // Mark a source's alert resolved (the monitor saw it clear). No-op if not found / already resolved.
 export async function resolveAlert(source: string, externalId: string): Promise<void> {
+  // The card leaves the briefing the moment the alert clears - a Pulse showing a site
+  // dark that came back an hour ago teaches people to distrust the Pulse.
+  pulseResolve('alert:' + source + ':' + externalId).catch(() => {});
   await pool.query(
     "UPDATE alerts SET status='resolved', resolved_at=NOW() WHERE source=$1 AND external_id=$2 AND status='open'",
     [source, externalId]

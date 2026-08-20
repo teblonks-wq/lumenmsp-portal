@@ -1,26 +1,56 @@
-<%- include('header', { title: 'Lumen MSP', heading: greeting, subtitle: dateStr, user, active }) %>
+<%- include('header', { title: 'Lumen MSP', heading: greeting, subtitle: dateStr, user, active,
+      barAction: '<a class="act" href="/m/settings" aria-label="Notification settings"><i class="ti ti-bell-cog"></i></a>' }) %>
 <div class="m-wrap">
-  <a href="/m/receipt" class="sheet" style="display:flex;align-items:center;gap:13px;padding:16px;background:#dbeafe;margin-bottom:14px;">
-    <i class="ti ti-receipt" style="font-size:28px;color:#1e40af;"></i>
-    <div style="flex:1;"><div style="font-size:16px;font-weight:600;color:#1e40af;">Log a receipt</div><div style="font-size:12px;color:#1e40af;opacity:.75;">Amount · category · photo</div></div>
-    <i class="ti ti-camera" style="font-size:24px;color:#1e40af;"></i>
-  </a>
 
-  <div style="display:flex;gap:12px;margin-bottom:16px;">
+  <%# ── The Pulse — the briefing IS the home screen (design brief, 16 Aug 2026). ──
+      Ranked cards of what deserves attention right now; every card carries its link.
+      Empty is a STATEMENT, not an absence: "nothing needs you" is the best possible
+      briefing and it gets said in words. %>
+  <div class="m-label" style="display:flex;align-items:center;justify-content:space-between;">
+    <span>The Pulse</span>
+    <a href="#" id="pulse-refresh" style="color:#2563eb;text-transform:none;letter-spacing:0;">refresh</a>
+  </div>
+  <div id="pulse-feed">
+    <% if (!pulse.length) { %>
+      <div class="sheet" style="padding:22px 16px;text-align:center;color:#64748b;font-size:14px;">
+        Nothing needs you right now. <span style="opacity:.7;">The estate is quiet — this updates itself when that changes.</span>
+      </div>
+    <% } %>
+    <% pulse.forEach(function (c) { %>
+      <div class="sheet pulse-card" data-id="<%= c.id %>" style="margin-bottom:10px;">
+        <a class="row" href="<%= c.link %>" style="align-items:flex-start;border-bottom:0;padding:14px 14px 10px;">
+          <div style="font-size:22px;flex:none;line-height:1.3;"><%= c.icon %></div>
+          <div class="main" style="white-space:normal;">
+            <div style="font-size:14.5px;font-weight:600;line-height:1.35;"><%= c.title %></div>
+            <% if (c.body) { %><div style="font-size:12.5px;color:#64748b;margin-top:3px;line-height:1.4;"><%= c.body %></div><% } %>
+            <div style="font-size:11.5px;color:#94a3b8;margin-top:5px;"><%= c.ageLabel %></div>
+          </div>
+        </a>
+        <div style="display:flex;border-top:1px solid #f1f5f9;">
+          <a href="<%= c.link %>" style="flex:1;text-align:center;padding:10px;font-size:13px;font-weight:600;color:#2563eb;">Open</a>
+          <button class="pulse-dismiss" data-id="<%= c.id %>" style="flex:1;border:0;background:none;padding:10px;font-size:13px;font-weight:600;color:#94a3b8;border-left:1px solid #f1f5f9;">Dismiss</button>
+        </div>
+      </div>
+    <% }); %>
+  </div>
+
+  <%# Push enrolment: one banner, shown only while this phone is not subscribed. %>
+  <div id="push-banner" class="sheet" style="display:none;padding:14px 16px;background:#eff6ff;margin:4px 0 16px;">
+    <div style="font-size:14px;font-weight:600;color:#1e40af;">Get pushed for the things that matter</div>
+    <div style="font-size:12.5px;color:#1e40af;opacity:.8;margin:3px 0 10px;">A push means "act within the hour" — site dark, security, SLA. Everything else waits here quietly.</div>
+    <button id="push-enable" class="m-btn" style="padding:11px;font-size:15px;">Turn on notifications</button>
+  </div>
+
+  <div style="display:flex;gap:12px;margin:16px 0;">
     <a href="/m/support" class="sheet" style="flex:1;margin:0;padding:15px;"><div style="font-size:26px;font-weight:600;"><%= myCases %></div><div style="font-size:12px;color:#64748b;">My open cases</div></a>
     <a href="/m/tasks" class="sheet" style="flex:1;margin:0;padding:15px;"><div style="font-size:26px;font-weight:600;"><%= tasksDue %></div><div style="font-size:12px;color:#64748b;">Tasks due</div></a>
   </div>
 
-  <a href="/m/erecycling" class="sheet" style="display:flex;align-items:center;gap:13px;padding:16px;background:#d1fae5;margin-bottom:16px;">
-    <i class="ti ti-recycle" style="font-size:28px;color:#065f46;"></i>
-    <div style="flex:1;"><div style="font-size:16px;font-weight:600;color:#065f46;">E-Recycling</div><div style="font-size:12px;color:#065f46;opacity:.75;">Photograph kit · build collection</div></div>
-    <i class="ti ti-camera" style="font-size:24px;color:#065f46;"></i>
-  </a>
-
   <div class="m-label">Jump to</div>
   <div class="sheet">
+    <a class="row" href="/m/receipt"><i class="ti ti-receipt ic"></i><div class="main"><div class="t">Log a receipt</div><div class="s">Amount · category · photo</div></div><i class="ti ti-chevron-right chev"></i></a>
+    <a class="row" href="/m/erecycling"><i class="ti ti-recycle ic"></i><div class="main"><div class="t">E-Recycling</div><div class="s">Photograph kit · build collection</div></div><i class="ti ti-chevron-right chev"></i></a>
     <a class="row" href="/m/support"><i class="ti ti-headset ic"></i><div class="main"><div class="t">Support</div><div class="s">Your open cases</div></div><i class="ti ti-chevron-right chev"></i></a>
-    <a class="row" href="/m/erecycling"><i class="ti ti-recycle ic"></i><div class="main"><div class="t">E-Recycling</div><div class="s">Audit kit for disposal</div></div><i class="ti ti-chevron-right chev"></i></a>
     <a class="row" href="/m/customers"><i class="ti ti-building ic"></i><div class="main"><div class="t">Customers</div><div class="s">Call &amp; map</div></div><i class="ti ti-chevron-right chev"></i></a>
     <a class="row" href="/m/contacts"><i class="ti ti-user ic"></i><div class="main"><div class="t">Contacts</div><div class="s">Tap to dial</div></div><i class="ti ti-chevron-right chev"></i></a>
     <a class="row" href="/m/tasks"><i class="ti ti-checkbox ic"></i><div class="main"><div class="t">Tasks</div><div class="s">Your to-do list</div></div><i class="ti ti-chevron-right chev"></i></a>
@@ -28,4 +58,60 @@
     <a class="row" href="/invoices"><i class="ti ti-coin ic"></i><div class="main"><div class="t">Invoices</div></div><i class="ti ti-chevron-right chev"></i></a>
   </div>
 </div>
+
+<script>
+(function () {
+  var csrf = (document.querySelector('meta[name=csrf-token]') || {}).content || '';
+  function post(url, body) {
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf },
+      body: JSON.stringify(body || {}) }).then(function (r) { return r.json(); });
+  }
+
+  // Dismiss without leaving the briefing.
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('.pulse-dismiss');
+    if (!b) return;
+    e.preventDefault();
+    var card = b.closest('.pulse-card');
+    post('/m/pulse/' + b.getAttribute('data-id') + '/dismiss').then(function () {
+      if (card) { card.style.opacity = '0.3'; setTimeout(function () { card.remove(); }, 250); }
+    });
+  });
+
+  // Manual refresh re-renders the feed in place (pull-to-refresh reloads the page anyway).
+  var refresh = document.getElementById('pulse-refresh');
+  if (refresh) refresh.addEventListener('click', function (e) { e.preventDefault(); location.reload(); });
+
+  // ── Push enrolment ──────────────────────────────────────────────────────────
+  // The banner shows only when this phone supports push, the server has keys, and
+  // there is no live subscription yet. Everything else stays out of the way.
+  function b64ToU8(s) {
+    var pad = '='.repeat((4 - (s.length % 4)) % 4);
+    var raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+  if ('serviceWorker' in navigator && 'PushManager' in window) {
+    navigator.serviceWorker.ready.then(function (reg) {
+      return reg.pushManager.getSubscription().then(function (sub) {
+        if (sub) return; // already enrolled - quiet
+        fetch('/m/push/key').then(function (r) { return r.json(); }).then(function (k) {
+          if (!k.configured || !k.key) return;
+          var banner = document.getElementById('push-banner');
+          banner.style.display = 'block';
+          document.getElementById('push-enable').addEventListener('click', function () {
+            Notification.requestPermission().then(function (perm) {
+              if (perm !== 'granted') return;
+              reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(k.key) })
+                .then(function (sub2) { return post('/m/push/subscribe', { subscription: sub2 }); })
+                .then(function (r) { if (r.ok) banner.style.display = 'none'; });
+            });
+          });
+        });
+      });
+    }).catch(function () { /* no SW, no banner */ });
+  }
+})();
+</script>
 <%- include('footer', { active }) %>

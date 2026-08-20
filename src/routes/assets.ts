@@ -51,10 +51,23 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   // (see below) because the security verdict is judged in Node, not in SQL.
   const patchOnly = req.query.patch === '1';
   const secOnly = req.query.sec === '1';
+  // Hardware and network filters. Every one of these is already a column on the asset -
+  // nothing new had to be collected, it just was not reachable from the list. They are
+  // all substring matches except memory, because "16" should find 16.0 GB and nobody
+  // wants to type an exact float, while memory is genuinely a threshold question
+  // ("everything under 8 GB" is the Windows 11 conversation).
+  const fMake   = String(req.query.make   || '').trim();
+  const fModel  = String(req.query.model  || '').trim();
+  const fCpu    = String(req.query.cpu    || '').trim();
+  const fIp     = String(req.query.ip     || '').trim();
+  const fDomain = String(req.query.domain || '').trim();
+  const fRamMax = parseFloat(String(req.query.rammax || '')) || null;   // "under this much"
+  const fRamMin = parseFloat(String(req.query.rammin || '')) || null;
+  const fTag    = parseInt(String(req.query.tag || ''), 10) || null;
 
   const where: string[] = ['a.customer_id IS NOT NULL', 'a.merged_into_id IS NULL AND a.archived_at IS NULL'];
   const params: any[] = [];
-  if (q) { params.push('%' + q + '%'); where.push(`(a.hostname ILIKE $${params.length} OR a.serial_number ILIKE $${params.length} OR a.model ILIKE $${params.length} OR a.last_login_user ILIKE $${params.length} OR ac.full_name ILIKE $${params.length} OR c.name ILIKE $${params.length})`); }
+  if (q) { params.push('%' + q + '%'); where.push(`(a.hostname ILIKE $${params.length} OR a.friendly_name ILIKE $${params.length} OR a.serial_number ILIKE $${params.length} OR a.model ILIKE $${params.length} OR a.last_login_user ILIKE $${params.length} OR ac.full_name ILIKE $${params.length} OR c.name ILIKE $${params.length})`); }
   if (custId) { params.push(custId); where.push(`a.customer_id = $${params.length}`); }
   if (type) { params.push(type); where.push(`a.device_type = $${params.length}`); }
   if (onlineOnly) where.push('a.online_status = true');
@@ -64,8 +77,21 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   if (agentFilter === '1') where.push('agd.id IS NOT NULL');
   else if (agentFilter === '0') where.push('agd.id IS NULL');
 
+  if (fMake)   { params.push('%' + fMake   + '%'); where.push(`a.manufacturer ILIKE $${params.length}`); }
+  if (fModel)  { params.push('%' + fModel  + '%'); where.push(`a.model ILIKE $${params.length}`); }
+  if (fCpu)    { params.push('%' + fCpu    + '%'); where.push(`a.cpu ILIKE $${params.length}`); }
+  if (fIp)     { params.push('%' + fIp     + '%'); where.push(`a.ip_addresses ILIKE $${params.length}`); }
+  if (fDomain) { params.push('%' + fDomain + '%'); where.push(`a.domain_or_workgroup ILIKE $${params.length}`); }
+  if (fRamMin) { params.push(fRamMin); where.push(`a.ram_gb >= $${params.length}`); }
+  if (fRamMax) { params.push(fRamMax); where.push(`a.ram_gb <= $${params.length}`); }
+  if (fTag)    { params.push(fTag); where.push(`EXISTS (SELECT 1 FROM asset_tag_members m WHERE m.asset_id = a.id AND m.tag_id = $${params.length})`); }
+
   const rows = (await pool.query(
     `SELECT a.*, c.name AS customer_name, c.agent_site_key, ac.full_name AS assigned_name,
+            (SELECT COALESCE(json_agg(json_build_object('id', t.id, 'name', t.name, 'colour', t.colour)
+                                      ORDER BY t.name), '[]'::json)
+               FROM asset_tag_members m JOIN asset_tags t ON t.id = m.tag_id
+              WHERE m.asset_id = a.id) AS tags,
             agd.id AS agent_device_id, agd.last_seen_at AS agent_last_seen, agd.agent_version AS agent_agent_version,
             agd.seen_secs AS agent_seen_secs, agd.mesh_node_id AS agent_mesh_node_id,
             agd.patch_pending AS agent_patch_pending, agd.reboot_required AS agent_reboot_required,
@@ -125,8 +151,15 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   // Backup badge per device — one grouped query over the MSP360 snapshot.
   const backupState = await backupStateByComputer();
 
+  const allTags = (await pool.query(
+    `SELECT t.id, t.name, t.colour, COUNT(m.asset_id)::int AS n
+       FROM asset_tags t LEFT JOIN asset_tag_members m ON m.tag_id = t.id
+      GROUP BY t.id ORDER BY t.name`)).rows;
+
   res.render('assets/list', {
     user: req.session.user!, rows: shown, unmatchedCount, duplicateCount, types, customers, backupState,
+    allTags, f: { make: fMake, model: fModel, cpu: fCpu, ip: fIp, domain: fDomain,
+                  rammin: fRamMin, rammax: fRamMax, tag: fTag },
     filters: { q, customer: custId, type, online: onlineOnly, nouser: noUser, agent: agentFilter, servers: serversOnly, patch: patchOnly, sec: secOnly },
     // For the "agent required" copy button: the same keyed one-liner the Agents page hands out.
     baseUrl: req.protocol + '://' + req.get('host'),
@@ -369,6 +402,95 @@ router.post('/assets/:id/security-refresh', requireAuth, requireAdmin, async (re
   } catch (e: any) {
     console.error('[assets] security refresh failed:', e.message);
     res.redirect(back + '?err=' + encodeURIComponent('Could not queue the security refresh.') + '#security');
+  }
+});
+
+// ── Friendly name ───────────────────────────────────────────────────────────────
+// Portal-owned. The Atera sync is not allowed near it (see the schema comment) because
+// the whole value of this field is that a human chose it - "Cholsey Rec Left" is worth
+// more on a support call than DESKTOP-J4K2P9 will ever be.
+router.post('/assets/:id/friendly-name', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const back = safeBack(req.body.back, `/assets/${id}`);
+  const name = String(req.body.friendlyName || '').trim().slice(0, 120);
+  try {
+    await pool.query(`UPDATE customer_assets SET friendly_name = NULLIF($1,'') WHERE id=$2`, [name, id]);
+    await logActivity(req.session.user!.id, 'asset_friendly_name', 'customer_assets', id,
+      name ? `Named it "${name}"` : 'Cleared the friendly name');
+    res.redirect(back + '?msg=' + encodeURIComponent(name ? `Saved. It is now "${name}".` : 'Friendly name cleared.'));
+  } catch (e: any) {
+    console.error('[assets] friendly name failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not save that name.'));
+  }
+});
+
+// ── Tags ────────────────────────────────────────────────────────────────────────
+// Add the CURRENT SELECTION to a tag, creating it if the name is new. This is the whole
+// workflow Terry described: filter to what you want, tick, name it. The filter is a way
+// of finding machines quickly; the tag is the human judgement that survives the filter
+// changing its mind.
+function selectedIds(body: any): number[] {
+  const raw = body?.ids;
+  const arr = Array.isArray(raw) ? raw : (raw == null ? [] : [raw]);
+  return Array.from(new Set(arr.map((x: any) => parseInt(String(x), 10)).filter((n: number) => n > 0)));
+}
+
+router.post('/assets/tags/add', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const back = safeBack(req.body.back, '/assets');
+  const ids = selectedIds(req.body);
+  const newName = String(req.body.newTag || '').trim().slice(0, 80);
+  const tagId = parseInt(String(req.body.tagId || ''), 10) || null;
+  if (!ids.length) { res.redirect(back + '?err=' + encodeURIComponent('Nothing was selected.')); return; }
+  if (!newName && !tagId) { res.redirect(back + '?err=' + encodeURIComponent('Pick a group or type a new name.')); return; }
+  try {
+    let id = tagId;
+    let label = '';
+    if (newName) {
+      // Same name = same group. Typing "Servers" twice should not create two.
+      const r = await pool.query(
+        `INSERT INTO asset_tags (name, created_by) VALUES ($1,$2)
+         ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id, name`,
+        [newName, req.session.user!.id]);
+      id = Number(r.rows[0].id); label = r.rows[0].name;
+    } else {
+      const r = await pool.query(`SELECT name FROM asset_tags WHERE id=$1`, [id]);
+      if (!r.rows.length) { res.redirect(back + '?err=' + encodeURIComponent('That group no longer exists.')); return; }
+      label = r.rows[0].name;
+    }
+    // Already-a-member is success, not an error - re-running the same filter and pressing
+    // add again is a completely normal thing to do.
+    const r2 = await pool.query(
+      `INSERT INTO asset_tag_members (tag_id, asset_id, added_by)
+       SELECT $1, t.id, $3 FROM unnest($2::int[]) AS t(id)
+       ON CONFLICT (tag_id, asset_id) DO NOTHING`,
+      [id, ids, req.session.user!.id]);
+    const added = r2.rowCount || 0;
+    await logActivity(req.session.user!.id, 'asset_tag_add', 'asset_tags', id,
+      `Added ${added} of ${ids.length} selected device(s) to "${label}"`);
+    res.redirect(back + '?msg=' + encodeURIComponent(
+      added === ids.length
+        ? `${added} device(s) added to "${label}".`
+        : `${added} added to "${label}" - the other ${ids.length - added} were already in it.`));
+  } catch (e: any) {
+    console.error('[assets] tag add failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not add to that group.'));
+  }
+});
+
+router.post('/assets/tags/remove', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const back = safeBack(req.body.back, '/assets');
+  const ids = selectedIds(req.body);
+  const tagId = parseInt(String(req.body.tagId || ''), 10) || null;
+  if (!ids.length || !tagId) { res.redirect(back + '?err=' + encodeURIComponent('Select devices and a group.')); return; }
+  try {
+    const r = await pool.query(
+      `DELETE FROM asset_tag_members WHERE tag_id=$1 AND asset_id = ANY($2::int[])`, [tagId, ids]);
+    await logActivity(req.session.user!.id, 'asset_tag_remove', 'asset_tags', tagId,
+      `Removed ${r.rowCount || 0} device(s) from the group`);
+    res.redirect(back + '?msg=' + encodeURIComponent(`${r.rowCount || 0} device(s) removed from the group.`));
+  } catch (e: any) {
+    console.error('[assets] tag remove failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not remove from that group.'));
   }
 });
 

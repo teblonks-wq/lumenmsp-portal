@@ -34,6 +34,9 @@ import purchaseRoutes from './routes/purchases';
 import mobileRoutes from './routes/mobile';
 import myRoutes, { ensureCustomerPortalColumn } from './routes/my';
 import signupRoutes, { bootstrapSelfSignup } from './routes/signup';
+import pulseRoutes from './routes/pulse';
+import { ensurePulseTables } from './lib/pulse';
+import { ensurePushTables } from './lib/webpush';
 import selfRegisteredRoutes from './routes/self-registered';
 import { ensureSignupColumns } from './lib/self-signup';
 import credentialRoutes from './routes/credentials';
@@ -374,6 +377,7 @@ app.use('/', agentApiRoutes);     // LumenMSP Agent API (device-token auth, no s
 app.use('/', mcpRoutes);          // Claude MCP connector (capability-URL token, read-only, no session
                                   // → the CSRF guard's !req.session.user branch already exempts it)
 app.use('/', signupRoutes);      // public self-registration (no session, throttled)
+app.use('/', pulseRoutes);       // mobile Pulse feed + Web Push (staff only, session)
 app.use('/', authRoutes);
 app.use('/', dashboardRoutes);
 app.use('/', customerRoutes);
@@ -481,6 +485,8 @@ server.listen(config.PORT, () => {
   ensureSiteLogicColumn().catch((e) => console.error('ensureSiteLogicColumn failed:', e.message)); // Insights: lift call logic to the site level + backfill
   ensureReportPoolTables().catch((e) => console.error('ensureReportPoolTables failed:', e.message)); // Insights: report pool (templates) + per-site schedules
   ensureCustomerPortalColumn().catch((e) => console.error('ensureCustomerPortalColumn failed:', e.message)); // customer portal master switch
+  ensurePushTables().then(ensurePulseTables)
+    .catch((e) => console.error('pulse bootstrap failed:', e.message)); // mobile Pulse + Web Push
   ensureSignupColumns()
     .then(bootstrapSelfSignup)   // columns first: the placeholder customer insert needs none of them, but the users insert does
     .catch((e) => console.error('self-signup bootstrap failed:', e.message)); // public self-registration

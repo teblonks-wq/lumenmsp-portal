@@ -1,6 +1,7 @@
 import { pool } from '../db/pool';
 import { sendTeamsNotice } from './teams';
 import { config } from '../config';
+import { publish as pulsePublish } from './pulse';
 
 // Creates a notification for a user. Never throws.
 export async function notify(
@@ -25,6 +26,12 @@ export async function alertGroup(group: 'support' | 'sales', title: string, body
     const staff = await pool.query(
       `SELECT id, email FROM users WHERE is_active=true AND customer_id IS NULL AND ${col}=true`
     );
+    // Mirror into the mobile Pulse - feed-only (rank low, never a push): these are the
+    // "worth knowing" tier, and pushing them would spend the covenant on noise.
+    pulsePublish({
+      kind: group === 'sales' ? 'lead_new' : 'team',
+      title, body, link, dedupeKey: 'group:' + group + ':' + link,
+    }).catch(() => {});
     const tasks: Promise<any>[] = [];
     for (const s of staff.rows) {
       tasks.push(notify(s.id, title, { body, link, type: 'action' }));

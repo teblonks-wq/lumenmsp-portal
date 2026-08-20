@@ -32,6 +32,8 @@ model User {
   signupSource    String?   @map("signup_source")     // password | microsoft (null = staff-created)
   signupIp        String?   @map("signup_ip")         // per-IP signup throttle + forensics
   signupAt        DateTime? @map("signup_at")
+  // Mobile Pulse: per-user push preferences {"muted":[kinds],"quiet":{"start","end"}}.
+  pushPrefs       Json?     @map("push_prefs")
   createdAt    DateTime  @default(now()) @map("created_at")
 
   customer     Customer? @relation(fields: [customerId], references: [id])
@@ -614,6 +616,39 @@ model AgentCommand {
   @@map("agent_commands")
 }
 
+// ── Asset tags ───────────────────────────────────────────────────────────────
+// TAGS, not smart groups. Terry, 20 Aug: "the groups will be sort of tags - think Dell
+// computers, Larkmead Desktops and Larkmead Laptops, Clinical devices, Servers - we would
+// filter all devices by basically anything we have on record, then select, add to group
+// and name it."
+//
+// So membership is a deliberate act recorded once, NOT a rule re-evaluated forever. That
+// is the right call and worth defending: a filter can find every Dell OptiPlex, but no
+// hardware field on earth knows which machines are CLINICAL. The filter is how you build
+// the list quickly; the tag is a human judgement about what the machine is FOR, and it
+// must not silently change because someone swapped a motherboard or moved a subnet.
+//
+// A machine can carry as many tags as you like - a clinical Dell laptop at Larkmead is
+// all four of those things at once, and every one of them is a list somebody will want.
+model AssetTag {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  colour    String?
+  createdAt DateTime @default(now()) @map("created_at")
+  createdBy Int?     @map("created_by")
+  @@map("asset_tags")
+}
+
+model AssetTagMember {
+  tagId   Int      @map("tag_id")
+  assetId Int      @map("asset_id")
+  addedAt DateTime @default(now()) @map("added_at")
+  addedBy Int?     @map("added_by")
+  @@id([tagId, assetId])
+  @@index([assetId])
+  @@map("asset_tag_members")
+}
+
 model CustomerAsset {
   id             Int       @id @default(autoincrement())
   customerId     Int?      @map("customer_id") // null = Atera agent not yet matched to a portal customer
@@ -621,6 +656,11 @@ model CustomerAsset {
   externalId     String    @map("external_id") // Atera AgentID
   deviceGuid     String?   @map("device_guid") // Atera's device GUID — used by the new Atera web UI's device URL
   hostname       String?
+  // What a HUMAN calls this machine - "Cholsey Rec Left", "POD Computer", "Kim's laptop".
+  // The hostname is what IT named it; this is what the customer says on the phone, and it
+  // is therefore what somebody actually searches for. OURS, exactly like assignedContactId:
+  // the Atera sync must never write it, and it survives every re-import.
+  friendlyName   String?   @map("friendly_name")
   deviceType     String?   @map("device_type") // Workstation | Server | Mobile Device | Network Device | ...
   os             String?
   osVersion      String?   @map("os_version")
@@ -2844,4 +2884,41 @@ model SecurityDeployment {
   @@index([customerId])
   @@index([state])
   @@map("security_deployments")
+}
+
+// -- Mobile phase 1: Web Push + the Pulse (2026-08-20). MUST live here - `prisma db push`
+// runs on every deploy and drops anything it does not know about. --------------------
+model PushSubscription {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  endpoint  String    @unique
+  p256dh    String
+  auth      String
+  ua        String?
+  createdAt DateTime  @default(now()) @map("created_at")
+  lastOkAt  DateTime? @map("last_ok_at")
+  failures  Int       @default(0)
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}
+
+model PulseEvent {
+  id         Int       @id @default(autoincrement())
+  kind       String
+  dedupeKey  String    @unique @map("dedupe_key")
+  title      String
+  body       String?
+  link       String?
+  customerId Int?      @map("customer_id")
+  deviceId   Int?      @map("device_id")
+  rank       Int       @default(50)
+  pushed     Boolean   @default(false)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @default(now()) @map("updated_at")
+  expiresAt  DateTime? @map("expires_at")
+  resolvedAt DateTime? @map("resolved_at")
+
+  @@index([resolvedAt, expiresAt, rank])
+  @@map("pulse_events")
 }

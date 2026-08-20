@@ -1,0 +1,73 @@
+<%- include('header', { title: 'Notifications', heading: 'Notifications', subtitle: 'The push covenant: a push means act within the hour', user, active, back: '/m' }) %>
+<div class="m-wrap">
+  <% if (notice) { %><div class="m-alert ok"><%= notice %></div><% } %>
+
+  <% if (!pushOn) { %>
+  <div class="m-alert err" style="background:#fef3c7;color:#92400e;">
+    Push is not configured on the server yet (VAPID keys). The Pulse feed still works — only phone notifications are off.
+  </div>
+  <% } %>
+
+  <form method="post" action="/m/settings">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+
+    <div class="m-label">What may interrupt your phone</div>
+    <div class="sheet">
+      <% kinds.forEach(function (k) { %>
+      <label class="row" style="cursor:pointer;">
+        <div style="font-size:20px;flex:none;"><%= k.icon %></div>
+        <div class="main"><div class="t"><%= k.label %></div></div>
+        <%# The switch is "muted" in the data but shown as "on" to the person - nobody
+            thinks in double negatives at 7am. Checked = you get these pushes. %>
+        <input type="checkbox" name="mute_<%= k.key %>" <%= k.muted ? 'checked' : '' %> style="display:none;" class="mute-real">
+        <input type="checkbox" <%= k.muted ? '' : 'checked' %> class="mute-shown" style="width:22px;height:22px;accent-color:#2563eb;">
+      </label>
+      <% }); %>
+    </div>
+    <p style="font-size:12px;color:#94a3b8;margin:-6px 4px 16px;">Muting only silences the push — every card still appears in the Pulse.</p>
+
+    <div class="m-label">Quiet hours (Europe/London)</div>
+    <div class="sheet" style="padding:14px 16px;">
+      <div style="display:flex;gap:10px;align-items:center;">
+        <input class="m-input" style="flex:1;" type="time" name="quiet_start" value="<%= prefs.quiet ? prefs.quiet.start : '' %>">
+        <span style="color:#94a3b8;">to</span>
+        <input class="m-input" style="flex:1;" type="time" name="quiet_end" value="<%= prefs.quiet ? prefs.quiet.end : '' %>">
+      </div>
+      <p style="font-size:12px;color:#94a3b8;margin:8px 0 0;">Leave both empty for no quiet hours. Overnight windows (22:00 to 07:00) work.</p>
+    </div>
+
+    <button type="submit" class="m-btn" style="margin-top:6px;">Save</button>
+  </form>
+
+  <div class="m-label" style="margin-top:20px;">This phone</div>
+  <div class="sheet" style="padding:14px 16px;">
+    <button id="test-push" class="m-btn ghost" type="button">Send me a test push</button>
+    <p id="test-result" style="font-size:12.5px;color:#64748b;margin:8px 0 0;display:none;"></p>
+  </div>
+</div>
+<script>
+(function () {
+  var csrf = (document.querySelector('meta[name=csrf-token]') || {}).content || '';
+  // The shown switch is inverted relative to the stored "muted" flag.
+  document.querySelectorAll('.mute-shown').forEach(function (shown) {
+    shown.addEventListener('change', function () {
+      var real = shown.parentElement.querySelector('.mute-real');
+      real.checked = !shown.checked;
+    });
+  });
+  var t = document.getElementById('test-push');
+  t.addEventListener('click', function () {
+    t.disabled = true;
+    fetch('/m/push/test', { method: 'POST', headers: { 'x-csrf-token': csrf } })
+      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        var p = document.getElementById('test-result');
+        p.style.display = 'block';
+        p.textContent = r.ok ? 'Sent to ' + r.devices + ' device(s) - it should arrive within seconds.'
+          : 'Nothing sent - this phone may not be enrolled yet. Go back to the home screen and tap "Turn on notifications".';
+        t.disabled = false;
+      });
+  });
+})();
+</script>
+<%- include('footer', { active }) %>

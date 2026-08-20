@@ -74,7 +74,11 @@ router.get('/m', async (req: Request, res: Response) => {
   const h = new Date().getHours();
   const greeting = 'Good ' + (h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening') + ', ' + String(u.displayName || '').split(' ')[0];
   const dateStr = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
-  res.render('mobile/home', { user: u, active: 'home', greeting, dateStr, myCases, tasksDue });
+  // The Pulse IS the home screen (design brief, 16 Aug 2026) - the briefing loads with
+  // the page; the refresh endpoint (/m/pulse.json) keeps it live without a reload.
+  const { feed } = await import('../lib/pulse');
+  const pulse = await feed().catch(() => []);
+  res.render('mobile/home', { user: u, active: 'home', greeting, dateStr, myCases, tasksDue, pulse });
 });
 
 // ── Receipt logger ───────────────────────────────────────────────────────────────

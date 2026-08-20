@@ -527,7 +527,10 @@ async function backfillOwnTool(): Promise<void> {
     const rows = (await pool.query(
       `SELECT id, threat_name, detail, hostname FROM security_detections WHERE own_tool = false`)).rows;
     const ours = rows
-      .filter((r: any) => isOwnToolDetection(r.threat_name, r.detail, r.hostname))
+      // NOT the hostname. The patterns include /lumenmsp/i, so passing it would classify a
+      // REAL threat on a machine called LUMENMSP-01 as our own tooling and hide it. Judge the
+      // detection by what was detected, never by where.
+      .filter((r: any) => isOwnToolDetection(r.threat_name, r.detail))
       .map((r: any) => Number(r.id));
     if (!ours.length) return;
     await pool.query(
@@ -606,8 +609,15 @@ export async function reconcile(): Promise<ReconcileResult> {
     // a minute. Bounded three ways so this can never become a loop: only while we are still
     // waiting on this deployment, only once the command is done, and only if the reading we
     // have is more than five minutes old.
-    if (!bd && r.cmd_status === 'done'
-        && (r.state === 'queued' || r.state === 'running')
+    // 'installed' matters as much as 'queued' here, and it was the state I missed first
+    // time: GravityZone can see the endpoint, Bitdefender is on the machine and current,
+    // and the row still reads "installing" purely because OUR agent has not looked since
+    // before the install. That machine is finished and the screen is the only thing that
+    // does not know. Nothing else chases it — reconcile is the only thing watching an
+    // unsettled deployment — so without this it waits for the 15-minute sweep at best and
+    // the daily inventory pass at worst.
+    if (!bd && (r.state === 'queued' || r.state === 'running' || r.state === 'installed')
+        && (r.state === 'installed' || r.cmd_status === 'done')
         && (r.security_age_secs == null || Number(r.security_age_secs) > 300)) {
       await askForSecurity(Number(r.device_id));
     }

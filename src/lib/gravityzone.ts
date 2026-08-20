@@ -1,6 +1,7 @@
 import { pool } from '../db/pool';
 import { getSetting, setSetting } from './settings';
 import { logActivity } from './activity';
+import { publish as pulsePublish } from './pulse';
 import { nextTicketNumber } from '../routes/tickets';
 
 // ── Bitdefender GravityZone ─────────────────────────────────────────────────────
@@ -708,7 +709,16 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
 
       // Infected? That is a case, not a dashboard number somebody might notice.
       if (bool(malware.infected) || bool(malware.detection)) {
-        const threat = s(malware.detection) || s(malware.threatName) || 'Malware detected';
+        // `malware.detection` is a BOOLEAN in the API response, so s() turned it into the
+        // string "true" and it won the || chain before threatName was ever reached. Every
+        // detection the Portal has ever recorded is named "true" — which is why a real
+        // Heur.BZC.WBO.Pantera quarantine on a Group Policy scheduled task read as an
+        // anonymous red flag for a day, and why isOwnToolDetection could never classify
+        // anything: "true" matches no pattern. Take a NAME, never a flag.
+        const asName = (v: any) => (typeof v === 'string' && v.trim() && !/^(true|false)$/i.test(v.trim()))
+          ? v.trim() : '';
+        const threat = asName(malware.threatName) || asName(malware.detection)
+          || asName(malware.malwareName) || asName(malware.name) || 'Malware detected';
         const key = `gz:${gzId}:${threat}`.slice(0, 200);
         const existing = await pool.query(`SELECT id FROM security_detections WHERE dedupe_key=$1`, [key]);
         if (!existing.rows.length) {
@@ -746,6 +756,17 @@ export async function syncGravityZone(userId: number | null = null): Promise<Syn
             `INSERT INTO security_detections (dedupe_key, customer_id, endpoint_gz_id, hostname, threat_name, detail, ticket_id, own_tool)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (dedupe_key) DO NOTHING`,
             [key, customerId, gzId, name, threat, s(e.policy?.name), ticketId, ownTool]);
+          // The Pulse: a REAL detection is exactly what the push covenant exists for.
+          // Own-tool detections stay out - they are an exclusion to add, not a 2am page.
+          if (!ownTool) {
+            pulsePublish({
+              kind: 'security_flip',
+              title: 'Bitdefender flagged ' + threat + ' on ' + name + '.',
+              body: ticketId ? 'A case has been raised - open it from here.' : 'No case raised - the sync will retry.',
+              link: ticketId ? '/tickets/' + ticketId : '/security/infections',
+              customerId: customerId ?? undefined, dedupeKey: 'gzdet:' + key,
+            }).catch(() => {});
+          }
         }
       }
     }
