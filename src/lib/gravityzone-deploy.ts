@@ -428,10 +428,57 @@ export interface ReconcileResult {
  * only used to explain a failure, never to declare success. Success comes from the
  * machine and from GravityZone.
  */
+/**
+ * Ask one device for a fresh security report. Never stacks: an identical command already
+ * waiting means the machine has been asked and has not answered yet, and a second copy
+ * cannot make it answer sooner - it just gives an offline machine a pile to work through
+ * when it comes back.
+ */
+async function askForSecurity(deviceId: number): Promise<void> {
+  try {
+    const pending = (await pool.query(
+      `SELECT id FROM agent_commands
+        WHERE device_id=$1 AND kind='security.status' AND status IN ('queued','running') LIMIT 1`,
+      [deviceId])).rows[0];
+    if (pending) return;
+    await pool.query(
+      `INSERT INTO agent_commands (device_id, kind, payload, status)
+       VALUES ($1,'security.status','{}','queued')`, [deviceId]);
+    wakeAgent(deviceId);
+  } catch (e: any) {
+    console.error('[gz] could not ask %s for a security report: %s', deviceId, e.message);
+  }
+}
+
+/**
+ * reconcile() existed, was exported, and was never called by anything - so a deployment
+ * only ever moved off "queued" if a human happened to open the right page. This is the
+ * heartbeat that makes the state machine autonomous. Two minutes is chosen against what it
+ * is watching: an install takes minutes, so a two-minute pass is never the slow part, and
+ * the query only touches deployments that are still unsettled, so an idle estate costs a
+ * single indexed read.
+ */
+export function startSecurityReconcile(): void {
+  const EVERY_MS = 2 * 60 * 1000;
+  const tick = async () => {
+    try {
+      const r = await reconcile();
+      if (r.installed || r.protectedCount || r.failed) {
+        console.log('[gz] reconcile: %d checked, %d installed, %d protected, %d failed, %d waiting',
+          r.checked, r.installed, r.protectedCount, r.failed, r.stillWaiting);
+      }
+    } catch (e: any) { console.error('[gz] reconcile failed:', e.message); }
+  };
+  // Not at boot: a deploy restart should not race the first agent check-ins.
+  setTimeout(tick, 30_000);
+  setInterval(tick, EVERY_MS);
+}
+
 export async function reconcile(): Promise<ReconcileResult> {
   const out: ReconcileResult = { checked: 0, installed: 0, protectedCount: 0, failed: 0, stillWaiting: 0 };
   const rows = (await pool.query(
     `SELECT dep.device_id, dep.state, dep.command_id, d.security_json, d.hostname,
+            EXTRACT(EPOCH FROM (NOW() - d.security_at)) AS security_age_secs,
             c.status AS cmd_status, c.exit_code, c.output,
             (SELECT MAX(se.synced_at) FROM security_endpoints se
               JOIN customer_assets a ON a.id = se.asset_id
@@ -446,6 +493,19 @@ export async function reconcile(): Promise<ReconcileResult> {
     const names = avNames(r.security_json);
     const bd = isBitdefender(names);
     const gzSeen = r.gz_seen ? new Date(r.gz_seen) : null;
+
+    // The installer has finished and the machine has not told us what it is running now.
+    // Waiting for the daily inventory pass means the Portal is a day behind an outcome it
+    // caused itself - that is how a machine with Bitdefender happily installed sat here
+    // reading "Install queued". Ask the machine directly; an online agent answers in about
+    // a minute. Bounded three ways so this can never become a loop: only while we are still
+    // waiting on this deployment, only once the command is done, and only if the reading we
+    // have is more than five minutes old.
+    if (!bd && r.cmd_status === 'done'
+        && (r.state === 'queued' || r.state === 'running')
+        && (r.security_age_secs == null || Number(r.security_age_secs) > 300)) {
+      await askForSecurity(Number(r.device_id));
+    }
 
     if (bd && gzSeen) {
       await upsertDeployment(Number(r.device_id), null, {
@@ -670,7 +730,14 @@ export async function deployLog(deviceId: number, limit = 5): Promise<DeployLogE
   // (double stringify somewhere upstream), parse it rather than silently matching nothing -
   // and that would also explain why the SQL ->> filter saw NULLs.
   for (const r of rows) {
-    if (typeof r.payload === 'string') { try { r.payload = JSON.parse(r.payload); } catch { /* leave it */ } }
+    // Parse REPEATEDLY: a payload stringified once too often is a string containing a
+    // string containing the object, and one parse just peels one layer. This is why the
+    // log's "ran <url>" line rendered nothing on 19 Aug - the entries were found, but
+    // every payload field read as undefined through the remaining layer of quoting.
+    let guard = 0;
+    while (typeof r.payload === 'string' && guard++ < 3) {
+      try { r.payload = JSON.parse(r.payload); } catch { break; }
+    }
   }
   const bdRows = rows.filter((r: any) => String(r.payload?.name || '').startsWith('Bitdefender'));
   // Nothing labelled Bitdefender, but installs exist? Show them - each entry carries its

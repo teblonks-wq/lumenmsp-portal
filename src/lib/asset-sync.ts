@@ -80,7 +80,9 @@ export interface AssetSyncResult {
 // external_id) so re-running is always safe. Agents whose CustomerID doesn't map to a portal
 // customer (via customer_external_ids) are still stored (customerId=null) so nothing silently
 // disappears — they show up as "Unmatched" on the Assets list for someone to reconcile.
-export async function syncAssetsFromAtera(userId: number): Promise<AssetSyncResult> {
+// userId is nullable so the hourly scheduled import (lib/auto-sync.ts) can run with no
+// person behind it - it only ever reaches logActivity, which already takes null.
+export async function syncAssetsFromAtera(userId: number | null = null): Promise<AssetSyncResult> {
   const a = await Atera.load();
   if (!a.hasKey()) return { imported: 0, linked: 0, synced: 0, unmatched: 0, error: 'Atera API key not set - add it in Settings -> Integrations.' };
 

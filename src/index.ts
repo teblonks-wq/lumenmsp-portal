@@ -76,6 +76,8 @@ import { startGraphConsentCheck } from './lib/graph-consent';
 import { startAzureBackupSync } from './lib/azure-backup';
 import { startAcronisSync } from './lib/acronis';
 import { startEolSync } from './lib/eol-sync';
+import { startSecurityReconcile } from './lib/gravityzone-deploy';
+import { startGravityZoneSync, startAteraImport, startSecurityFreshnessSweep } from './lib/auto-sync';
 import { resumeMassMailer } from './lib/mass-mailer';
 import { hasFinanceAccess, hasVaultAccess } from './middleware/auth';
 import { startRecurringBilling } from './lib/recurring-billing';
@@ -487,4 +489,12 @@ server.listen(config.PORT, () => {
   startAzureBackupSync();   // Azure Backup: Recovery Services vaults per customer tenant (needs Reader RBAC per subscription)
   startAcronisSync();       // Acronis: per-tenant protected workloads + storage (linked like MSP360)
   startEolSync();           // End-of-life dates pulled nightly from endoflife.date
+  startSecurityReconcile(); // Bitdefender deployments: move queued -> installed -> protected, and
+                            // chase a fresh security reading from any machine whose installer has
+                            // finished. Previously reconcile() was never called at all.
+  startGravityZoneSync();        // GravityZone: what Bitdefender can see. Was a button only, so a
+                                 // machine could install cleanly and never reach 'protected'.
+  startAteraImport();            // Atera device list. Was a button only.
+  startSecurityFreshnessSweep(); // Ask the stalest machines for a fresh security reading, capped
+                                 // per pass so the estate is walked rather than stampeded.
 });

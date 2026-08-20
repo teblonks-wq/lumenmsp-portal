@@ -69,14 +69,16 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
             agd.id AS agent_device_id, agd.last_seen_at AS agent_last_seen, agd.agent_version AS agent_agent_version,
             agd.seen_secs AS agent_seen_secs, agd.mesh_node_id AS agent_mesh_node_id,
             agd.patch_pending AS agent_patch_pending, agd.reboot_required AS agent_reboot_required,
-            agd.security_json AS agent_security_json
+            agd.security_json AS agent_security_json, agd.security_at AS agent_security_at,
+            agd.security_age_secs AS agent_security_age_secs
      FROM customer_assets a
      LEFT JOIN customers c ON c.id = a.customer_id
      LEFT JOIN customer_contacts ac ON ac.id = a.assigned_contact_id
      LEFT JOIN LATERAL (
        SELECT ag.id, ag.last_seen_at, ag.agent_version, ag.mesh_node_id,
-              ag.patch_pending, ag.reboot_required, ag.security_json,
-              EXTRACT(EPOCH FROM (NOW() - ag.last_seen_at)) AS seen_secs FROM agent_devices ag
+              ag.patch_pending, ag.reboot_required, ag.security_json, ag.security_at,
+              EXTRACT(EPOCH FROM (NOW() - ag.last_seen_at)) AS seen_secs,
+              EXTRACT(EPOCH FROM (NOW() - ag.security_at)) AS security_age_secs FROM agent_devices ag
        WHERE ag.revoked = false AND ag.customer_id = a.customer_id
          AND (ag.id = a.agent_device_id
            OR (a.agent_device_id IS NULL
@@ -94,9 +96,22 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   for (const r of rows) {
     r.patch_due = !!(Number(r.agent_patch_pending) > 0 || r.agent_reboot_required);
     if (r.agent_security_json) {
-      try { r.security_bad = !!deriveSecurity({ security_json: r.agent_security_json }).bad; }
-      catch { r.security_bad = null; }
-    } else r.security_bad = null;
+      try {
+        const sec = deriveSecurity({
+          security_json: r.agent_security_json,
+          security_at: r.agent_security_at,
+          security_age_secs: r.agent_security_age_secs,
+        });
+        r.security_bad = !!sec.bad;
+        r.endpoint = deriveEndpoint(sec, sec.ageSecs);
+      } catch {
+        r.security_bad = null;
+        r.endpoint = { state: 'awaiting', product: null, label: 'The security reading from this machine could not be read.' };
+      }
+    } else {
+      r.security_bad = null;
+      r.endpoint = { state: 'awaiting', product: null, label: 'This machine has not reported its security status yet.' };
+    }
   }
   const shown = rows.filter((r: any) => (!patchOnly || r.patch_due) && (!secOnly || r.security_bad === true));
 
@@ -883,7 +898,18 @@ router.post('/agents/update-all', requireAuth, requireAdmin, async (req: Request
       WHERE revoked=false AND agent_version IS DISTINCT FROM $1
         AND string_to_array(regexp_replace(COALESCE(agent_version,'0.0.0'), '[^0-9.]', '', 'g'), '.')::int[] >= ARRAY[1,0,2]`,
     [version])).rows;
-  for (const r of rows) await queueUpdate(r.id, version, sha, req.session.user!.id);
+  // One INSERT, not one per device. This loop used to be `for (...) await queueUpdate(...)`:
+  // 170 devices meant 170 sequential database round-trips inside a single request, each
+  // taking a connection from a pool that defaulted to ten. That is what froze the Portal
+  // for everyone else while the button was working. wakeAgent is in-process and touches no
+  // database, so it stays a loop.
+  if (rows.length) {
+    await pool.query(
+      `INSERT INTO agent_commands (device_id, kind, payload, requested_by)
+       SELECT t.id, 'agent.update', $2::text, $3 FROM unnest($1::int[]) AS t(id)`,
+      [rows.map((r: any) => Number(r.id)), JSON.stringify({ version, sha256: sha }), req.session.user!.id]);
+    for (const r of rows) wakeAgent(Number(r.id));
+  }
   await logActivity(req.session.user!.id, 'agent_update_push', null, null, `Pushed ${version} to ${rows.length} device(s)`);
   res.redirect('/agents?msg=' + encodeURIComponent(rows.length
     ? `Update to ${version} sent to ${rows.length} device(s). Offline machines pick it up when they reconnect.`
@@ -1057,6 +1083,64 @@ function agoWords(secs: number): string {
   if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`;
   const d = Math.round(h / 24);
   return `${d} day${d === 1 ? '' : 's'} ago`;
+}
+
+// ── Endpoint shield (assets list) ───────────────────────────────────────────────
+// Answers one question at a glance: is OUR endpoint product on this machine, and is it
+// healthy? That is deliberately NOT the same question as "is this machine protected".
+// Mid-rollout the second one is the wrong question - a machine happily running Webroot is
+// protected AND still on the list of work, and a shield that went green for it would hide
+// exactly the devices we are trying to find.
+//
+// Green is the only state that asserts anything, so it has to be earned twice over: a
+// Bitdefender row that deriveSecurity graded ok, AND a reading recent enough to still mean
+// something. The collector runs on the agent's daily inventory pass, so a green shield on a
+// two-day-old reading would be claiming a fact nobody has checked since - the same mistake
+// as believing a Security Center registration, one level up. Stale degrades to amber and
+// says when it was read; the Security tab's "Refresh from device" is the way to settle it.
+const BD_RE = /bitdefender|gravityzone|endpoint security tools/i;
+const ENDPOINT_FRESH_SECS = 36 * 3600;
+
+function endpointAge(secs: number | null): string {
+  if (secs == null) return 'at an unknown time';
+  const s = Math.max(0, Math.round(secs));
+  if (s < 90) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 90) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 36) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  return `${d} day${d === 1 ? '' : 's'} ago`;
+}
+
+function deriveEndpoint(sec: any, ageSecs: number | null): any {
+  const av = (sec.rows || []).filter((r: any) => r.area === 'Antivirus');
+  const ago = endpointAge(ageSecs);
+  if (!av.length) return { state: 'awaiting', product: null, label: 'No security reading from this machine yet.' };
+
+  // A ghost Bitdefender registration is still a Bitdefender row here, and it must NOT read
+  // as installed - deriveSecurity already grades it warn, so requiring ok is what keeps a
+  // machine with leftover registry debris out of the green column.
+  const bd = av.find((r: any) => BD_RE.test(String(r.product || '')));
+  if (bd) {
+    if (bd.level !== 'ok') {
+      return { state: 'warn', product: bd.product,
+        label: `Bitdefender is on this machine but not healthy - ${bd.detail || 'see the Security tab'}. Read ${ago}.` };
+    }
+    if (ageSecs != null && ageSecs > ENDPOINT_FRESH_SECS) {
+      return { state: 'stale', product: bd.product,
+        label: `Bitdefender was installed and healthy when we last looked, ${ago}. That reading is over a day and a half old - refresh it from the device's Security tab to confirm.` };
+    }
+    return { state: 'ok', product: bd.product, label: `Bitdefender installed and healthy. Read ${ago}.` };
+  }
+
+  const live = av.filter((r: any) => r.level === 'ok');
+  if (live.length) {
+    const names = live.map((r: any) => r.product).join(', ');
+    return { state: 'other', product: names,
+      label: `Protected by ${names}, not by Bitdefender - this machine is still to do. Read ${ago}.` };
+  }
+  return { state: 'none', product: null, label: `Nothing is protecting this machine. Read ${ago}.` };
 }
 
 function deriveSecurity(agentInfo: any): any {

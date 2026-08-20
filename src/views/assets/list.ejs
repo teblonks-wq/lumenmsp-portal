@@ -181,9 +181,9 @@ function tileHref(over){
 <div class="card" style="padding:0;border-top:3px solid var(--accent);">
   <div class="table-wrap">
     <table class="table table-lift">
-      <thead><tr><th></th><th>Hostname</th><th>Customer</th><th>Type</th><th>Backup</th><th>OS</th><th>Manufacturer / Model</th><th>User</th><th>Last seen</th><th></th></tr></thead>
+      <thead><tr><th></th><th>Hostname</th><th>Customer</th><th>Type</th><th>Endpoint</th><th>Backup</th><th>OS</th><th>Manufacturer / Model</th><th>User</th><th>Last seen</th><th></th></tr></thead>
       <tbody>
-        <% if (rows.length===0) { %><tr><td colspan="10"><div class="empty-state">No devices match. Machines appear here as soon as the LumenMSP Agent enrols on them — use "↻ Import from Atera" to pull in the ones that do not have it yet.</div></td></tr><% } %>
+        <% if (rows.length===0) { %><tr><td colspan="11"><div class="empty-state">No devices match. Machines appear here as soon as the LumenMSP Agent enrols on them — use "↻ Import from Atera" to pull in the ones that do not have it yet.</div></td></tr><% } %>
         <% rows.forEach(function(a){
              var _lv = _isLive(a);
              var _re = a.security_bad === true ? 're-bad' : a.patch_due ? 're-warn' : (_lv ? 're-ok' : ''); %>
@@ -192,6 +192,19 @@ function tileHref(over){
             <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/assets') %>"><%= a.hostname || '(unnamed device)' %></a><% if (a.agent_device_id) { %> <img src="/static/img/lumen-agent-16.png" width="14" height="14" alt="LumenMSP Agent" style="vertical-align:-2px;margin-left:5px;" title="LumenMSP Agent<%= a.agent_agent_version ? ' v' + a.agent_agent_version : '' %> — last seen <%= secsAgo(a.agent_seen_secs) %>"><% if (a.agent_agent_version) { %><span class="muted" style="font-size:10.5px;margin-left:3px;">v<%= a.agent_agent_version %></span><% } %><% } %></td>
             <td class="muted"><% if (a.customer_id) { %><a class="row-link" href="/customers/<%= a.customer_id %>#assets"><%= a.customer_name %></a><% } else { %>—<% } %></td>
             <td><span class="badge badge-inactive"><%= a.device_type || '—' %></span><% if (!a.agent_device_id) { %> <button type="button" class="badge copy-install" data-key="<%= a.agent_site_key || '' %>" data-host="<%= a.hostname || 'this machine' %>" style="background:var(--tint-warn);color:var(--warn-deep);border:1px solid var(--warn-line);cursor:pointer;font:inherit;font-size:11px;" title="Copy the PowerShell command that installs the LumenMSP Agent on this machine, then paste it into an elevated PowerShell on the box">agent required — copy install ⧉</button><% } %></td>
+            <td><%
+                 /* Endpoint shield. Green is Bitdefender installed AND healthy AND recently
+                    read - see deriveEndpoint in routes/assets.ts for why all three are
+                    required. Everything else is a shade of "not done yet", and the title
+                    always carries when the reading was taken so the colour is never a
+                    claim on its own. */
+                 var ep = a.endpoint || { state: 'awaiting', label: 'No security reading yet.' };
+                 var epC = { ok: 'var(--ok)', warn: 'var(--warn)', stale: 'var(--warn)',
+                             none: 'var(--bad)', other: 'var(--line-strong)',
+                             awaiting: 'var(--line-strong)' }[ep.state] || 'var(--line-strong)';
+                 var epFill = (ep.state === 'ok') ? epC : 'none';
+                 var epOp = (ep.state === 'awaiting') ? '.45' : '1';
+              %><span title="<%= ep.label %>" aria-label="<%= ep.label %>" role="img" style="display:inline-block;line-height:0;opacity:<%= epOp %>;"><svg width="16" height="16" viewBox="0 0 24 24" fill="<%= epFill %>" stroke="<%= epC %>" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><% if (ep.state === 'ok') { %><path d="M9 12l2 2 4-4" stroke="#fff" fill="none"/><% } else if (ep.state === 'none') { %><path d="M12 8v5M12 16.5v.01" stroke="<%= epC %>" fill="none"/><% } else if (ep.state === 'warn' || ep.state === 'stale') { %><path d="M12 8v4M12 15.5v.01" stroke="<%= epC %>" fill="none"/><% } %></svg></span></td>
             <td><% var bs = backupState[String(a.hostname||'').toLowerCase()]; %>
               <% if (bs === 'ok') { %><span class="badge badge-sent" title="All backup plans succeeded (MSP360)">Protected</span>
               <% } else if (bs === 'failed') { %><span class="badge badge-failed" title="A backup plan needs attention (MSP360)">Attention</span>
