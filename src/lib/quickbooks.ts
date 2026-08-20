@@ -243,6 +243,28 @@ export class QuickBooks {
     return this.uploadAttachable(purchaseId, 'Purchase', filePath, fileName, contentType);
   }
 
+  // Historic Purchases (expenses) — payee + expense account per line. Used by the
+  // purchase ledger's auto-categoriser to learn "how was this payee coded before?".
+  // Pages through QB (100/page) up to a sane cap; best-effort on a per-page basis.
+  async getPurchaseHistory(days = 730): Promise<Array<{ payee: string; accountId: string; accountName: string; amount: number; date: string }>> {
+    const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+    const out: Array<{ payee: string; accountId: string; accountName: string; amount: number; date: string }> = [];
+    for (let start = 1; start <= 901; start += 100) { // cap at ~1000 purchases
+      const d = await this.query(`SELECT * FROM Purchase WHERE TxnDate >= '${since}' STARTPOSITION ${start} MAXRESULTS 100`);
+      const rows: any[] = d?.QueryResponse?.Purchase || [];
+      for (const p of rows) {
+        const payee = p.EntityRef?.name || p.PrivateNote || '';
+        for (const ln of (p.Line || [])) {
+          const det = ln.AccountBasedExpenseLineDetail;
+          if (!det?.AccountRef?.value) continue;
+          out.push({ payee, accountId: String(det.AccountRef.value), accountName: det.AccountRef.name || '', amount: Number(ln.Amount) || 0, date: p.TxnDate || '' });
+        }
+      }
+      if (rows.length < 100) break;
+    }
+    return out;
+  }
+
   async findItemByName(name: string): Promise<string | null> {
     const esc = (name || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     const d = await this.query(`SELECT Id, Name FROM Item WHERE Name = '${esc}' MAXRESULTS 1`);

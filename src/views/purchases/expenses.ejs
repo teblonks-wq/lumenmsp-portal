@@ -166,6 +166,8 @@
     <button class="btn btn-primary" type="submit">Import</button>
   </form>
   <form method="post" action="/purchases/sync" style="margin:0;"><button class="btn" type="submit" title="Pull live from Open Banking (needs provider keys)">↻ Sync Open Banking</button></form>
+  <form method="post" action="/purchases/autocategorise" style="margin:0;"><button class="btn" type="submit" title="Fill categories on all outstanding transactions from how each payee was coded before (ledger history + QuickBooks history). Nothing is locked — review then save.">🏷 Auto-categorise</button></form>
+  <form method="post" action="/purchases/inbox/automatch" style="margin:0;"><button class="btn" type="submit" title="Try to auto-match pooled invoices to transactions (supplier aliases, DD collection lag, USD card billing)">🔗 Auto-match invoices</button></form>
   <% if (!(accounts||[]).length) { %><span class="muted" style="font-size:12px;margin-left:auto;">No accounts yet — add them in <a class="row-link" href="/purchases/settings">Admin → Purchase Ledger</a>.</span><% } else { %><a class="row-link" href="/purchases/settings" style="margin-left:auto;font-size:12px;">Manage accounts / bookkeeper →</a><% } %>
 </div>
 <% } %>

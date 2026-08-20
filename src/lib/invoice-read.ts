@@ -41,11 +41,14 @@ export function parseInvoiceFields(text: string): ParsedInvoice {
 
   // Total: prefer a line mentioning the amount due / grand total / total payable (gross,
   // VAT-inclusive — that's what the bank pays). Fall back to the largest money value seen.
-  const priority = /(amount\s+due|balance\s+due|total\s+(?:due|payable|to\s+pay)|grand\s+total|invoice\s+total)/i;
+  const priority = /(amount\s+due|balance\s+due|total\s+(?:due|payable|to\s+pay)|grand\s+total|invoice\s+total|total\s+for\s+this\s+invoice)/i;
   let amount: number | null = null;
   for (const l of lines) { if (priority.test(l)) { const v = money(l); if (v != null) { amount = v; break; } } }
   if (amount == null) {
-    for (const l of lines) { if (/\btotal\b/i.test(l) && !/sub\s*-?\s*total/i.test(l)) { const v = money(l); if (v != null) amount = v; } }
+    // Statement-style invoices (Giacom) carry a "Total amount now outstanding" that is the
+    // ACCOUNT balance, not this invoice — never let those lines win the fallback.
+    const accountBalance = /outstanding|account\s+balance|balance\s+(?:brought|carried)|previous\s+balance/i;
+    for (const l of lines) { if (/\btotal\b/i.test(l) && !/sub\s*-?\s*total/i.test(l) && !accountBalance.test(l)) { const v = money(l); if (v != null) amount = v; } }
   }
   if (amount == null) {
     let max = 0; const all = text.match(/(?:£|gbp\s*)?\d{1,3}(?:,\d{3})*\.\d{2}/gi) || [];

@@ -5,6 +5,7 @@ import { pool } from '../db/pool';
 import { graphConfigured, graphListInbox, graphListAttachments, GraphMessage, graphSendMail } from './graph';
 import { getSetting, setSetting } from './settings';
 import { parseAndStoreDoc } from './invoice-read';
+import { aliasTokensFor, isFxBilled, FX_MIN, FX_MAX } from './purchase-match';
 
 // ── Invoice inbox ───────────────────────────────────────────────────────────────
 // Polls a DEDICATED mailbox (invoice@lumenmsp.co.uk) and pools any PDF/image
@@ -185,21 +186,30 @@ export async function autoMatchInvoices(): Promise<{ matched: number; considered
     const anchor = d.received_at || d.created_at;
     // Candidate transactions: money out, not yet pushed, no receipt yet, within ±45 days.
     const cands = (await pool.query(
-      `SELECT id, amount, counterparty, description, booked_at FROM bank_transactions
+      `SELECT id, amount, counterparty, description, reference, booked_at FROM bank_transactions
         WHERE amount < 0 AND status IN ('new','categorised') AND attachment_path IS NULL
           AND booked_at BETWEEN $1::timestamp - INTERVAL '45 days' AND $1::timestamp + INTERVAL '45 days'`,
       [anchor]
     )).rows;
     const scored = cands.map((t: any) => {
-      const hay = ((t.counterparty || '') + ' ' + (t.description || '')).toLowerCase();
-      const supplierHit = tokens.some((tok) => hay.includes(tok));
+      const hay = ((t.counterparty || '') + ' ' + (t.description || '') + ' ' + (t.reference || '')).toLowerCase();
+      // The statement descriptor often names the PROCESSOR, not the supplier
+      // (FastSpring→MSP360, BlueSnap→Atera, Aventis→rent, DWS→Giacom…). Fold the
+      // alias tokens for this transaction into the supplier check.
+      const aliases = aliasTokensFor(hay);
+      const supplierHit = tokens.some((tok) => hay.includes(tok)) || aliases.some((al) => tokens.some((tok) => tok.includes(al) || al.includes(tok)));
       const amountHit = amount != null && Math.abs(Number(t.amount)) === amount;
+      // USD-billed card charges (Anthropic/CrashPlan/MSP360) land in GBP at a
+      // 0.68–0.95 ratio of the invoice total — a fuzzy hit, only trusted with a supplier hit.
+      const ratio = amount ? Math.abs(Number(t.amount)) / amount : 0;
+      const fxHit = !amountHit && amount != null && supplierHit && isFxBilled(hay) && ratio >= FX_MIN && ratio <= FX_MAX;
       const days = Math.abs((new Date(t.booked_at).getTime() - new Date(anchor).getTime()) / 86400000);
       let score = 0;
       if (amountHit) score += 3;
+      if (fxHit) score += 2;
       if (supplierHit) score += 2;
       if (days <= 14) score += 1;
-      return { t, score, amountHit, supplierHit };
+      return { t, score, amountHit, fxHit, supplierHit };
     }).sort((a, b) => b.score - a.score);
 
     const best = scored[0];
@@ -207,10 +217,13 @@ export async function autoMatchInvoices(): Promise<{ matched: number; considered
     // High-confidence to auto-attach: the invoice total matches a payment AND either the
     // supplier name also matches, OR that exact total is unique in the window (so there's
     // no other candidate it could be). It must also clearly beat the runner-up.
+    // FX-billed suppliers qualify on supplier + ratio when the fuzzy hit is unique.
     const exactAmountMatches = scored.filter((s) => s.amountHit).length;
-    const confident = best.amountHit
+    const fxMatches = scored.filter((s) => s.fxHit).length;
+    const confident = (best.amountHit
       && (best.supplierHit || exactAmountMatches === 1)
-      && (scored.length < 2 || best.score - scored[1].score >= 2);
+      && (scored.length < 2 || best.score - scored[1].score >= 2))
+      || (best.fxHit && fxMatches === 1 && (scored.length < 2 || best.score - scored[1].score >= 2));
     if (!confident) continue;
     await pool.query('UPDATE bank_transactions SET attachment_path=$1, attachment_name=$2, updated_at=NOW() WHERE id=$3', [d.file_path, d.file_name, best.t.id]);
     await pool.query("UPDATE purchase_documents SET status='attached', bank_transaction_id=$1 WHERE id=$2", [best.t.id, d.id]);

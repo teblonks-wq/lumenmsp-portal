@@ -9,6 +9,7 @@ import { getSetting, setSetting } from '../lib/settings';
 import { QuickBooks } from '../lib/quickbooks';
 import { syncOpenBanking } from '../lib/openbanking';
 import { syncInvoiceInbox, getInvoiceMailbox, autoMatchInvoices } from '../lib/purchase-inbox';
+import { autoCategoriseOutstanding } from '../lib/purchase-match';
 import { parseAndStoreDoc } from '../lib/invoice-read';
 import { renderExpenseReportPdf, loadExpenseReport } from '../lib/expense-report';
 import { graphSendMail, graphConfigured } from '../lib/graph';
@@ -221,6 +222,22 @@ router.post('/purchases/inbox/automatch', async (_req: Request, res: Response) =
     res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent(`Auto-match: linked ${r.matched} invoice(s) to transactions.`));
   } catch (e: any) {
     res.redirect('/purchases/expenses?view=inbox&err=' + encodeURIComponent(e.message || 'Auto-match failed.'));
+  }
+});
+
+// Auto-categorise all outstanding transactions from how each payee was coded before
+// (this ledger's own history first, then QuickBooks' historic Purchases). Fills the
+// category but never locks the row — every suggestion still gets a human pass.
+router.post('/purchases/autocategorise', async (req: Request, res: Response) => {
+  try {
+    const r = await autoCategoriseOutstanding();
+    await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Purchases: auto-categorised ${r.applied}/${r.considered} outstanding (${r.fromLedger} from ledger history, ${r.fromQb} from QuickBooks)`);
+    res.redirect('/purchases/expenses?msg=' + encodeURIComponent(
+      `Auto-categorise: filled ${r.applied} of ${r.considered} outstanding` +
+      (r.fromQb ? ` (${r.fromLedger} from ledger history, ${r.fromQb} from QuickBooks history)` : '') +
+      (r.noHistory ? `; ${r.noHistory} payee(s) have no history yet — categorise once and they'll follow next time.` : '.')));
+  } catch (e: any) {
+    res.redirect('/purchases/expenses?err=' + encodeURIComponent(e.message || 'Auto-categorise failed.'));
   }
 });
 
