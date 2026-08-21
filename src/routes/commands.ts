@@ -28,6 +28,8 @@ const KIND_LABEL: Record<string, string> = {
   'software.install': 'Installing software',
   'software.uninstall': 'Removing software',
   'agent.update': 'Updating the agent',
+  'net.scan': 'Scanning the network',
+  'snmp.poll': 'Reading the device over SNMP',
 };
 
 router.get('/commands/:id/status.json', requireAuth, requireAdmin, async (req: Request, res: Response) => {

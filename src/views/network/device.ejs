@@ -1,0 +1,278 @@
+<%- include('../partials/header', { title: (d.friendly_name || d.ip), user }) %>
+<%
+var csrf = (typeof csrfToken !== 'undefined' ? csrfToken : '');
+function agoIso(iso){
+  if (!iso) return 'never';
+  var mins = Math.round((Date.now() - new Date(iso).getTime())/60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  var hrs = Math.round(mins/60);
+  if (hrs < 24) return hrs + 'h ago';
+  return Math.round(hrs/24) + 'd ago';
+}
+var SWATCH = { black:'#111827', cyan:'#06b6d4', magenta:'#db2777', yellow:'#eab308' };
+var title = d.friendly_name || d.sys_name || d.hostname || d.ip;
+var openAlerts = alerts.filter(function(a){ return !a.cleared_at; });
+%>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <h1 style="margin-bottom:2px;"><%= title %></h1>
+    <p class="muted" style="margin:0;">
+      <span style="font-family:ui-monospace,Menlo,Consolas,monospace;"><%= d.ip %></span>
+      · <%= kindLabels[d.kind] || d.kind %>
+      · <%= d.customer_name || 'unknown customer' %>
+      <% if (d.agent_hostname) { %> · reached through <%= d.agent_hostname %><% } %>
+      <% if (d.archived_at) { %> · <strong style="color:var(--bad);">archived</strong><% } %>
+    </p>
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <a class="btn" href="/network?customer=<%= d.customer_id %>">&larr; Network</a>
+    <form method="post" action="/network/device/<%= d.id %>/poll" style="display:inline;">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <button class="btn" type="submit" title="Ask the agent to read this device over SNMP now">Poll now</button>
+    </form>
+    <% if (!d.archived_at) { %>
+    <form method="post" action="/network/device/<%= d.id %>/archive" style="display:inline;" onsubmit="return confirm('Archive this device? It is kept, not deleted.');">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <button class="btn" type="submit">Archive</button>
+    </form>
+    <% } %>
+  </div>
+</div>
+
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
+<% if (d.last_poll_error) { %>
+  <div class="alert alert-error">Last poll failed: <%= d.last_poll_error %> <span class="muted">(<%= agoIso(d.last_poll_at) %>)</span></div>
+<% } %>
+<% if (openAlerts.length) { %>
+  <div class="alert alert-error">
+    <strong><%= openAlerts.length %> open warning<%= openAlerts.length === 1 ? '' : 's' %>:</strong>
+    <%= openAlerts.slice(0,3).map(function(a){ return a.description; }).join(' · ') %><%= openAlerts.length > 3 ? ' …' : '' %>
+  </div>
+<% } %>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;align-items:start;">
+
+  <!-- ── Details ─────────────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header"><h2 style="margin:0;font-size:1.05rem;">Details</h2></div>
+    <form method="post" action="/network/device/<%= d.id %>">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+
+      <div class="form-group">
+        <label for="friendlyName">Friendly name</label>
+        <input class="input" id="friendlyName" name="friendlyName" maxlength="120" value="<%= d.friendly_name || '' %>" placeholder="Reception printer">
+        <small class="muted">What people actually call it. Beats an IP address on every phone call.</small>
+      </div>
+
+      <div class="form-group">
+        <label for="kind">Kind</label>
+        <select class="input" id="kind" name="kind">
+          <% kinds.forEach(function(k){ %><option value="<%= k %>" <%= k === d.kind ? 'selected' : '' %>><%= kindLabels[k] %></option><% }); %>
+        </select>
+        <% if (d.sys_descr) { %><small class="muted">It describes itself as: <%= d.sys_descr %></small><% } %>
+      </div>
+
+      <div class="form-group">
+        <label for="notes">Notes</label>
+        <textarea class="input" id="notes" name="notes" rows="3" placeholder="Behind the reception desk. Takes 26X toner."><%= d.notes || '' %></textarea>
+      </div>
+
+      <div class="form-group">
+        <label for="webUrl">Web interface</label>
+        <input class="input" id="webUrl" name="webUrl" value="<%= d.web_url || '' %>" placeholder="http://<%= d.ip %>">
+      </div>
+
+      <div class="form-group">
+        <label for="agentDeviceId">Reached through</label>
+        <select class="input" id="agentDeviceId" name="agentDeviceId">
+          <option value="">— none —</option>
+          <% scanners.forEach(function(s){ %>
+          <option value="<%= s.id %>" <%= String(s.id) === String(d.agent_device_id) ? 'selected' : '' %>><%= s.hostname %><%= /server/i.test(String(s.device_type||'')) ? ' (server)' : '' %></option>
+          <% }); %>
+        </select>
+        <small class="muted">The agent that can see this device. Losing it means losing access, not just discovery.</small>
+      </div>
+
+      <div class="form-group">
+        <label for="monitored">Monitoring</label>
+        <select class="input" id="monitored" name="monitored">
+          <option value="1" <%= d.monitored ? 'selected' : '' %>>Monitored — poll it and raise warnings</option>
+          <option value="0" <%= d.monitored ? '' : 'selected' %>>Known about only — do not poll</option>
+        </select>
+      </div>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <div class="form-group" style="flex:1;min-width:130px;">
+          <label for="snmpVersion">SNMP version</label>
+          <select class="input" id="snmpVersion" name="snmpVersion">
+            <% ['', '1', '2c', '3'].forEach(function(v){ %>
+            <option value="<%= v %>" <%= String(d.snmp_version || '') === v ? 'selected' : '' %>><%= v === '' ? '— not set —' : ('v' + v) %></option>
+            <% }); %>
+          </select>
+        </div>
+        <div class="form-group" style="flex:1;min-width:160px;">
+          <label for="snmpCommunity">Community string</label>
+          <input class="input" id="snmpCommunity" name="snmpCommunity" type="password" autocomplete="new-password" placeholder="<%= d.snmp_community ? 'stored — type to replace' : 'usually public' %>">
+          <small class="muted">Stored encrypted. Never shown back.</small>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" type="submit">Save</button>
+    </form>
+
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:12px;" class="muted">
+      First seen <%= agoIso(d.first_seen_at) %> · last seen <%= agoIso(d.last_seen_at) %> · last polled <%= agoIso(d.last_poll_at) %>
+      <% if (d.mac) { %><br>MAC <span style="font-family:ui-monospace,Menlo,Consolas,monospace;"><%= d.mac %></span><% if (d.vendor) { %> · <%= d.vendor %><% } %><% } %>
+      <% if (d.sys_name) { %><br>SNMP name: <%= d.sys_name %><% } %>
+    </div>
+  </div>
+
+  <!-- ── Access ──────────────────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-header"><h2 style="margin:0;font-size:1.05rem;">Access</h2></div>
+    <% if (d.web_url) { %>
+      <p style="margin-top:0;">
+        <a class="btn btn-primary" href="<%= d.web_url %>" target="_blank" rel="noopener noreferrer">Open the web interface &nearr;</a>
+      </p>
+      <p class="muted" style="font-size:12px;">This opens the device directly, so it works from the customer's network or over a VPN. Reaching it <em>through</em> the agent — so you can get at a printer's page from here without remote-controlling anybody's desktop — needs the agent-side relay, which is the next piece of work.</p>
+    <% } else { %>
+      <p class="muted" style="margin-top:0;">No web interface recorded. Add one above — for most kit it is just http://<%= d.ip %>.</p>
+    <% } %>
+
+    <h3 style="font-size:0.92rem;margin:16px 0 6px;">Credentials</h3>
+    <% if (!vaultOk) { %>
+      <div class="alert alert-error" style="font-size:13px;">
+        The credential vault has no key, so passwords cannot be stored. Putting them in plain text would be worse than not storing them at all.
+      </div>
+    <% } %>
+
+    <% if (creds.length) { %>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Kind</th><th>Username</th><th>Note</th><th style="text-align:right;">&nbsp;</th></tr></thead>
+        <tbody>
+        <% creds.forEach(function(c){ %>
+          <tr>
+            <td><%= c.kind === 'snmpv3' ? 'SNMP v3' : 'Web' %></td>
+            <td><%= c.username || '—' %></td>
+            <td class="muted" style="font-size:12px;"><%= c.note || '' %></td>
+            <td style="text-align:right;">
+              <form method="post" action="/network/device/<%= d.id %>/credential/<%= c.id %>/delete" style="display:inline;" onsubmit="return confirm('Remove this credential?');">
+                <input type="hidden" name="_csrf" value="<%= csrf %>">
+                <button class="btn" type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table>
+    </div>
+    <% } else { %>
+      <p class="muted" style="font-size:13px;">None stored.</p>
+    <% } %>
+
+    <% if (vaultOk) { %>
+    <form method="post" action="/network/device/<%= d.id %>/credential" style="margin-top:10px;padding-top:12px;border-top:1px solid var(--line);">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <div class="form-group" style="flex:1;min-width:120px;">
+          <label for="ckind">Kind</label>
+          <select class="input" id="ckind" name="kind">
+            <option value="web">Web interface</option>
+            <option value="snmpv3">SNMP v3</option>
+          </select>
+        </div>
+        <div class="form-group" style="flex:1;min-width:130px;">
+          <label for="cuser">Username</label>
+          <input class="input" id="cuser" name="username" autocomplete="off" placeholder="admin">
+        </div>
+        <div class="form-group" style="flex:1;min-width:130px;">
+          <label for="cpass">Password</label>
+          <input class="input" id="cpass" name="password" type="password" autocomplete="new-password" required>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="cnote">Note</label>
+        <input class="input" id="cnote" name="note" placeholder="Admin page — set at install">
+      </div>
+      <button class="btn" type="submit">Store credential</button>
+    </form>
+    <% } %>
+  </div>
+</div>
+
+<!-- ── Supplies ───────────────────────────────────────────────────────────── -->
+<div class="card" style="margin-top:16px;">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <h2 style="margin:0;font-size:1.05rem;">Supplies</h2>
+    <span class="muted" style="font-size:12px;">Low is <%= lowPercent %>% or under. A printer that will not report a level says so — we do not invent a figure.</span>
+  </div>
+  <% if (!supplies.length) { %>
+    <p class="muted" style="margin:0;">Nothing reported yet. Toner and ink levels arrive with an SNMP poll.</p>
+  <% } else { %>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Supply</th><th style="min-width:220px;">Level</th><th>Raw</th><th>Read</th></tr></thead>
+      <tbody>
+      <% supplies.forEach(function(s){
+           var p = s.pct;
+           var col = SWATCH[String(s.colour || '').toLowerCase()] || '#64748b';
+           var low = (p != null && p <= lowPercent);
+      %>
+        <tr>
+          <td>
+            <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:<%= col %>;margin-right:7px;vertical-align:middle;"></span>
+            <%= s.name %>
+          </td>
+          <td>
+            <% if (p == null) { %>
+              <span class="muted"><%= s.note || 'not reported' %></span>
+            <% } else { %>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="flex:1;max-width:200px;height:10px;background:var(--line);border-radius:5px;overflow:hidden;display:inline-block;">
+                  <span style="display:block;height:100%;width:<%= p %>%;background:<%= low ? 'var(--bad)' : col %>;"></span>
+                </span>
+                <strong style="<%= low ? 'color:var(--bad);' : '' %>"><%= p %>%</strong>
+                <% if (low) { %><span class="badge" style="background:var(--bad-soft);color:var(--bad-fg);">order one</span><% } %>
+              </div>
+            <% } %>
+          </td>
+          <td class="muted" style="font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;"><%= s.level == null ? '—' : s.level %> / <%= s.max_capacity == null ? '—' : s.max_capacity %></td>
+          <td class="muted" style="font-size:12px;"><%= agoIso(s.at) %></td>
+        </tr>
+      <% }); %>
+      </tbody>
+    </table>
+  </div>
+  <% } %>
+</div>
+
+<!-- ── Warnings ───────────────────────────────────────────────────────────── -->
+<div class="card" style="margin-top:16px;">
+  <div class="card-header"><h2 style="margin:0;font-size:1.05rem;">Warnings</h2></div>
+  <% if (!alerts.length) { %>
+    <p class="muted" style="margin:0;">Nothing reported. Paper jams, open doors, empty trays and the rest arrive with a poll.</p>
+  <% } else { %>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Status</th><th>Warning</th><th>Severity</th><th>First seen</th><th>Last seen</th></tr></thead>
+      <tbody>
+      <% alerts.forEach(function(a){ %>
+        <tr style="<%= a.cleared_at ? 'opacity:.6;' : '' %>">
+          <td><%= a.cleared_at ? 'Cleared' : 'Open' %></td>
+          <td><%= a.description %><% if (a.code) { %> <span class="muted" style="font-size:11px;">(<%= a.code %>)</span><% } %></td>
+          <td><%= a.severity %></td>
+          <td class="muted" style="font-size:12px;"><%= agoIso(a.first_seen_at) %></td>
+          <td class="muted" style="font-size:12px;"><%= agoIso(a.last_seen_at) %></td>
+        </tr>
+      <% }); %>
+      </tbody>
+    </table>
+  </div>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>

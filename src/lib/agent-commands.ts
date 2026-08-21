@@ -34,6 +34,8 @@ const BUDGET_MINUTES: Record<string, number> = {
   'useractivity.list': 15,
   'patch.history': 15,
   'security.status': 10,
+  'net.scan': 30,        // a /22 is 1,000 addresses; slow, but it does finish
+  'snmp.poll': 5,        // one device, a handful of OIDs
   'gpo.unlink': 15,
   'gpo.restore': 15,
 };

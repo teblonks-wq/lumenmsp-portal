@@ -1,32 +1,302 @@
 import { Router, Request, Response } from 'express';
-import { requireAuth } from '../middleware/auth';
-import { listAlerts, resolveAlertById, createTicketForAlert } from '../lib/alerts';
+import { requireAuth, requireAdmin } from '../middleware/auth';
+import { pool } from '../db/pool';
+import { logActivity } from '../lib/activity';
+import { wakeAgent } from './agent-api';
+import { encryptSecret, vaultConfigured } from '../lib/vault';
+import {
+  expandCidr, cidrSize, isIpv4, DEVICE_KINDS, KIND_LABELS, guessKind,
+  supplyPercent, supplyNote, SUPPLY_LOW_PERCENT,
+} from '../lib/network-discovery';
 
-// N3twrx — network tools hub (UniFi + Giacom/comms outages now; Azure & more to come).
 const router = Router();
 
-router.get('/n3twrx', requireAuth, async (req: Request, res: Response) => {
-  const status = req.query.status === 'all' ? 'all' : 'open';
-  let alerts: any[] = [];
-  try { alerts = await listAlerts(status, 150); } catch { alerts = []; }
-  res.render('network/index', { user: req.session.user!, alerts, status, notice: req.query.msg || null });
+// ── Network discovery ───────────────────────────────────────────────────────────
+// Everything on a customer's network that will never have our agent. Found by an agent
+// (usually the server, because it is the machine that is always on and can see the whole
+// subnet), monitored through it, and reached through it.
+//
+// The agent verbs this queues — net.scan and snmp.poll — DO NOT EXIST YET. Commands sit
+// queued until an agent build understands them, which is deliberate: the Portal side is
+// finished and testable now via "Add a device by hand", and nothing has to be rewritten
+// when the agent catches up.
+
+const back = (raw: unknown, fallback: string): string => {
+  const s = String(raw || '');
+  return /^\/(?!\/)/.test(s) ? s : fallback;
+};
+
+/** Agents that could plausibly do the scanning — servers first, then anything online. */
+async function scannerChoices(customerId: number | null) {
+  if (!customerId) return [];
+  return (await pool.query(
+    `SELECT d.id, d.hostname, a.device_type,
+            EXTRACT(EPOCH FROM (NOW() - d.last_seen_at)) AS seen_secs
+       FROM agent_devices d
+       LEFT JOIN customer_assets a ON a.agent_device_id = d.id
+      WHERE d.revoked = false AND d.customer_id = $1
+      ORDER BY (a.device_type ILIKE '%server%') DESC, d.last_seen_at DESC NULLS LAST`,
+    [customerId])).rows;
+}
+
+router.get('/network', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const custId = parseInt(String(req.query.customer || ''), 10) || null;
+  const kind = String(req.query.kind || '').trim();
+
+  const customers = (await pool.query(
+    `SELECT id, name FROM customers WHERE deleted_at IS NULL ORDER BY name`)).rows;
+
+  let ranges: any[] = [], devices: any[] = [], scanners: any[] = [];
+  if (custId) {
+    ranges = (await pool.query(
+      `SELECT r.*, d.hostname AS scanner_hostname,
+              EXTRACT(EPOCH FROM (NOW() - d.last_seen_at)) AS scanner_seen_secs
+         FROM network_scan_ranges r
+         LEFT JOIN agent_devices d ON d.id = r.agent_device_id
+        WHERE r.customer_id = $1 ORDER BY r.cidr`, [custId])).rows;
+
+    const params: any[] = [custId];
+    let where = 'n.customer_id = $1 AND n.archived_at IS NULL';
+    if (kind) { params.push(kind); where += ` AND n.kind = $${params.length}`; }
+
+    devices = (await pool.query(
+      `SELECT n.*,
+              (SELECT COUNT(*)::int FROM network_device_alerts al
+                WHERE al.network_device_id = n.id AND al.cleared_at IS NULL) AS open_alerts,
+              (SELECT COUNT(*)::int FROM network_device_credentials cr
+                WHERE cr.network_device_id = n.id) AS cred_count,
+              (SELECT json_agg(json_build_object('name', s.name, 'colour', s.colour,
+                                                 'level', s.level, 'max', s.max_capacity,
+                                                 'percent', s.percent) ORDER BY s.name)
+                 FROM network_printer_supplies s
+                WHERE s.network_device_id = n.id
+                  AND s.at = (SELECT MAX(s2.at) FROM network_printer_supplies s2
+                               WHERE s2.network_device_id = n.id)) AS supplies
+         FROM network_devices n
+        WHERE ${where}
+        ORDER BY n.kind, n.friendly_name NULLS LAST, n.ip`, params)).rows;
+
+    scanners = await scannerChoices(custId);
+  }
+
+  res.render('network/index', {
+    user: req.session.user!, customers, custId, kind, ranges, devices, scanners,
+    kinds: DEVICE_KINDS, kindLabels: KIND_LABELS, lowPercent: SUPPLY_LOW_PERCENT,
+    vaultOk: vaultConfigured(),
+    msg: req.query.msg || null, error: req.query.err || null,
+  });
 });
 
-// Live poll for open alerts (the page refreshes the list without a full reload).
-router.get('/n3twrx/alerts.json', requireAuth, async (_req: Request, res: Response) => {
-  try { res.json(await listAlerts('open', 150)); } catch { res.json([]); }
+// ── Scan ranges ─────────────────────────────────────────────────────────────────
+router.post('/network/ranges', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const custId = parseInt(String(b.customerId || ''), 10) || null;
+  const agentId = parseInt(String(b.agentDeviceId || ''), 10) || null;
+  const cidr = String(b.cidr || '').trim();
+  const label = String(b.label || '').trim().slice(0, 80);
+  const to = `/network?customer=${custId || ''}`;
+  if (!custId || !agentId) { res.redirect(to + '&err=' + encodeURIComponent('Pick a customer and the agent that will do the scanning.')); return; }
+
+  const size = cidrSize(cidr);
+  if (!size) {
+    res.redirect(to + '&err=' + encodeURIComponent(
+      'That is not a range I can scan. Use CIDR like 192.168.70.0/24, and nothing larger than a /22 — '
+      + 'a /16 is 65,000 addresses and a scan nobody ever finishes.'));
+    return;
+  }
+  try {
+    await pool.query(
+      `INSERT INTO network_scan_ranges (customer_id, agent_device_id, cidr, label, created_by)
+       VALUES ($1,$2,$3,$4,$5)`, [custId, agentId, cidr, label, req.session.user!.id]);
+    await logActivity(req.session.user!.id, 'network_range_add', 'customers', custId, `Added scan range ${cidr}`);
+    res.redirect(to + '&msg=' + encodeURIComponent(`Added ${cidr} — ${size} address(es) to scan.`));
+  } catch (e: any) {
+    res.redirect(to + '&err=' + encodeURIComponent('Could not add that range.'));
+  }
 });
 
-router.post('/n3twrx/alert/:id/resolve', requireAuth, async (req: Request, res: Response) => {
-  await resolveAlertById(parseInt(String(req.params.id), 10)).catch(() => {});
-  res.redirect('/n3twrx?msg=' + encodeURIComponent('Alert resolved'));
+router.post('/network/ranges/:id/delete', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const r = (await pool.query(`DELETE FROM network_scan_ranges WHERE id=$1 RETURNING customer_id, cidr`, [id])).rows[0];
+  await logActivity(req.session.user!.id, 'network_range_delete', null, null, `Removed scan range ${r?.cidr || id}`);
+  res.redirect(`/network?customer=${r?.customer_id || ''}&msg=` + encodeURIComponent('Range removed. Devices already found are kept.'));
 });
 
-// Manually raise a ticket for an alert (UniFi alerts don't auto-create one).
-router.post('/n3twrx/alert/:id/ticket', requireAuth, async (req: Request, res: Response) => {
-  const tid = await createTicketForAlert(parseInt(String(req.params.id), 10)).catch(() => null);
-  if (tid) { res.redirect('/tickets/' + tid); return; }
-  res.redirect('/n3twrx?msg=' + encodeURIComponent('Could not create ticket'));
+router.post('/network/ranges/:id/scan', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const r = (await pool.query(
+    `SELECT r.*, EXTRACT(EPOCH FROM (NOW() - d.last_seen_at)) AS seen
+       FROM network_scan_ranges r LEFT JOIN agent_devices d ON d.id = r.agent_device_id
+      WHERE r.id=$1`, [id])).rows[0];
+  const to = `/network?customer=${r?.customer_id || ''}`;
+  if (!r) { res.redirect(to + '&err=' + encodeURIComponent('That range no longer exists.')); return; }
+
+  // Never stack scans. A second identical command cannot make the machine answer sooner
+  // and an offline agent would collect a pile of them.
+  const pending = (await pool.query(
+    `SELECT id FROM agent_commands WHERE device_id=$1 AND kind='net.scan' AND status IN ('queued','running') LIMIT 1`,
+    [r.agent_device_id])).rows[0];
+  if (pending) { res.redirect(to + '&msg=' + encodeURIComponent('A scan is already queued on that agent.')); return; }
+
+  await pool.query(
+    `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
+     VALUES ($1,'net.scan',$2,'queued',$3)`,
+    [r.agent_device_id, JSON.stringify({ rangeId: r.id, cidr: r.cidr }), req.session.user!.id]);
+  wakeAgent(r.agent_device_id);
+  await pool.query(`UPDATE network_scan_ranges SET last_scan_at=NOW(), last_result='queued' WHERE id=$1`, [id]);
+  await logActivity(req.session.user!.id, 'network_scan', null, null, `Queued a scan of ${r.cidr}`);
+
+  const offline = r.seen == null || Number(r.seen) > 900;
+  res.redirect(to + '&msg=' + encodeURIComponent(offline
+    ? 'Scan queued. That agent is offline, so it runs when it next checks in.'
+    : 'Scan queued. NOTE: no agent build understands net.scan yet, so this will sit queued — '
+      + 'add devices by hand in the meantime.'));
+});
+
+// ── Devices ─────────────────────────────────────────────────────────────────────
+router.post('/network/devices', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const custId = parseInt(String(b.customerId || ''), 10) || null;
+  const ip = String(b.ip || '').trim();
+  const to = `/network?customer=${custId || ''}`;
+  if (!custId || !isIpv4(ip)) { res.redirect(to + '&err=' + encodeURIComponent('A customer and a valid IPv4 address are needed.')); return; }
+  const name = String(b.friendlyName || '').trim().slice(0, 120);
+  const kind = DEVICE_KINDS.includes(String(b.kind) as any) ? String(b.kind) : 'unknown';
+  const agentId = parseInt(String(b.agentDeviceId || ''), 10) || null;
+  try {
+    await pool.query(
+      `INSERT INTO network_devices (customer_id, agent_device_id, ip, friendly_name, kind, web_url, notes, last_seen_at)
+       VALUES ($1,$2,$3,NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''),NOW())
+       ON CONFLICT (customer_id, ip) DO UPDATE
+         SET friendly_name = COALESCE(NULLIF(EXCLUDED.friendly_name,''), network_devices.friendly_name),
+             kind = EXCLUDED.kind, archived_at = NULL`,
+      [custId, agentId, ip, name, kind, String(b.webUrl || '').trim(), String(b.notes || '').trim()]);
+    await logActivity(req.session.user!.id, 'network_device_add', 'customers', custId, `Added ${name || ip}`);
+    res.redirect(to + '&msg=' + encodeURIComponent(`${name || ip} added.`));
+  } catch (e: any) {
+    res.redirect(to + '&err=' + encodeURIComponent('Could not add that device.'));
+  }
+});
+
+router.get('/network/device/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const d = (await pool.query(
+    `SELECT n.*, c.name AS customer_name, ag.hostname AS agent_hostname
+       FROM network_devices n
+       LEFT JOIN customers c ON c.id = n.customer_id
+       LEFT JOIN agent_devices ag ON ag.id = n.agent_device_id
+      WHERE n.id=$1`, [id])).rows[0];
+  if (!d) { res.redirect('/network?err=' + encodeURIComponent('No such device.')); return; }
+
+  const supplies = (await pool.query(
+    `SELECT * FROM network_printer_supplies
+      WHERE network_device_id=$1 AND at = (SELECT MAX(at) FROM network_printer_supplies WHERE network_device_id=$1)
+      ORDER BY name`, [id])).rows
+    .map((s: any) => ({ ...s, pct: supplyPercent(s.level, s.max_capacity), note: supplyNote(s.level, s.max_capacity) }));
+
+  const alerts = (await pool.query(
+    `SELECT * FROM network_device_alerts WHERE network_device_id=$1
+      ORDER BY cleared_at NULLS FIRST, last_seen_at DESC LIMIT 50`, [id])).rows;
+
+  const creds = (await pool.query(
+    `SELECT id, kind, username, note, created_at FROM network_device_credentials
+      WHERE network_device_id=$1 ORDER BY kind, username`, [id])).rows;
+
+  const scanners = await scannerChoices(d.customer_id);
+
+  res.render('network/device', {
+    user: req.session.user!, d, supplies, alerts, creds, scanners,
+    kinds: DEVICE_KINDS, kindLabels: KIND_LABELS, lowPercent: SUPPLY_LOW_PERCENT,
+    vaultOk: vaultConfigured(),
+    msg: req.query.msg || null, error: req.query.err || null,
+  });
+});
+
+router.post('/network/device/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const b = req.body || {};
+  const kind = DEVICE_KINDS.includes(String(b.kind) as any) ? String(b.kind) : 'unknown';
+  try {
+    await pool.query(
+      `UPDATE network_devices
+          SET friendly_name = NULLIF($1,''), notes = NULLIF($2,''), kind = $3,
+              web_url = NULLIF($4,''), monitored = $5, agent_device_id = $6,
+              snmp_version = NULLIF($7,'')
+        WHERE id = $8`,
+      [String(b.friendlyName || '').trim().slice(0, 120), String(b.notes || '').trim(),
+       kind, String(b.webUrl || '').trim(), b.monitored === '1',
+       parseInt(String(b.agentDeviceId || ''), 10) || null,
+       String(b.snmpVersion || '').trim(), id]);
+    // The community string is a secret like any other - encrypted, never stored plain.
+    if (String(b.snmpCommunity || '').trim()) {
+      await pool.query(`UPDATE network_devices SET snmp_community=$1 WHERE id=$2`,
+        [encryptSecret(String(b.snmpCommunity).trim()), id]);
+    }
+    await logActivity(req.session.user!.id, 'network_device_edit', null, id, 'Updated a network device');
+    res.redirect(`/network/device/${id}?msg=` + encodeURIComponent('Saved.'));
+  } catch (e: any) {
+    console.error('[network] save failed:', e.message);
+    res.redirect(`/network/device/${id}?err=` + encodeURIComponent('Could not save that.'));
+  }
+});
+
+router.post('/network/device/:id/credential', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const b = req.body || {};
+  const to = `/network/device/${id}`;
+  if (!vaultConfigured()) {
+    res.redirect(to + '?err=' + encodeURIComponent(
+      'The credential vault has no key, so a password cannot be stored. Storing it in plain text '
+      + 'would be worse than not storing it at all.'));
+    return;
+  }
+  const secret = String(b.password || '');
+  if (!secret) { res.redirect(to + '?err=' + encodeURIComponent('No password given.')); return; }
+  try {
+    await pool.query(
+      `INSERT INTO network_device_credentials (network_device_id, kind, username, secret_enc, note, created_by)
+       VALUES ($1,$2,$3,$4,NULLIF($5,''),$6)`,
+      [id, String(b.kind || 'web'), String(b.username || '').trim(),
+       encryptSecret(secret), String(b.note || '').trim(), req.session.user!.id]);
+    await logActivity(req.session.user!.id, 'network_cred_add', null, id, 'Stored a device credential');
+    res.redirect(to + '?msg=' + encodeURIComponent('Credential stored, encrypted.'));
+  } catch (e: any) {
+    console.error('[network] credential failed:', e.message);
+    res.redirect(to + '?err=' + encodeURIComponent('Could not store that credential.'));
+  }
+});
+
+router.post('/network/device/:id/credential/:cid/delete', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  await pool.query(`DELETE FROM network_device_credentials WHERE id=$1 AND network_device_id=$2`,
+    [parseInt(String(req.params.cid), 10), id]);
+  await logActivity(req.session.user!.id, 'network_cred_delete', null, id, 'Removed a device credential');
+  res.redirect(`/network/device/${id}?msg=` + encodeURIComponent('Credential removed.'));
+});
+
+router.post('/network/device/:id/poll', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const d = (await pool.query(`SELECT * FROM network_devices WHERE id=$1`, [id])).rows[0];
+  const to = `/network/device/${id}`;
+  if (!d?.agent_device_id) {
+    res.redirect(to + '?err=' + encodeURIComponent('No agent is set to reach this device — pick one first.'));
+    return;
+  }
+  await pool.query(
+    `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
+     VALUES ($1,'snmp.poll',$2,'queued',$3)`,
+    [d.agent_device_id, JSON.stringify({ networkDeviceId: id, ip: d.ip }), req.session.user!.id]);
+  wakeAgent(d.agent_device_id);
+  res.redirect(to + '?msg=' + encodeURIComponent(
+    'Poll queued. NOTE: no agent build understands snmp.poll yet, so it will sit queued.'));
+});
+
+router.post('/network/device/:id/archive', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const r = (await pool.query(
+    `UPDATE network_devices SET archived_at=NOW() WHERE id=$1 RETURNING customer_id`, [id])).rows[0];
+  await logActivity(req.session.user!.id, 'network_device_archive', null, id, 'Archived a network device');
+  res.redirect(`/network?customer=${r?.customer_id || ''}&msg=` + encodeURIComponent('Device archived — kept, not deleted.'));
 });
 
 export default router;

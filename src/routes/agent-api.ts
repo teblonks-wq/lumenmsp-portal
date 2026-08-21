@@ -15,6 +15,7 @@ import { ingestServerFacts } from '../lib/server-facts';
 import { ingestGpoInventory, ingestGpoDelete, ingestGpoUnlink, ingestGpoRestore } from '../lib/gpo';
 import { htmlToPlain } from '../lib/whatsapp';
 import { nextTicketNumber } from './tickets';
+import { guessKind, supplyPercent, isIpv4 } from '../lib/network-discovery';
 
 // ── LumenMSP Agent API ──────────────────────────────────────────────────────────
 // Server-to-server API for the Windows LumenMSP Agent (tray app + service on end-user
@@ -1076,6 +1077,148 @@ router.post('/agent/api/tools/result', requireDevice, async (req: Request, res: 
   } catch (e: any) {
     res.status(500).json({ ok: false });
   }
+});
+
+// ── Network discovery results ───────────────────────────────────────────────────
+// Where net.scan and snmp.poll post what they found. NO SHIPPED AGENT SENDS THESE YET —
+// this is the landing pad, written now so the agent is built against a fixed contract
+// rather than a moving one, and so the Portal side is finished and testable today.
+//
+// Everything is scoped to the POSTING DEVICE'S customer. An agent can only tell us about
+// the network it is standing on, and a compromised token must not be able to write rows
+// against somebody else's estate.
+
+/** net.scan → the devices an agent saw on a range. */
+router.post('/agent/api/network/scan', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  const b = req.body || {};
+  if (!d.customer_id) { res.status(409).json({ ok: false, error: 'no customer' }); return; }
+
+  const found = Array.isArray(b.devices) ? b.devices.slice(0, 2000) : [];
+  const rangeId = parseInt(String(b.rangeId || ''), 10) || null;
+  let stored = 0;
+
+  try {
+    for (const one of found) {
+      const ip = String((one || {}).ip || '').trim();
+      if (!isIpv4(ip)) continue;                       // a scanner that sends rubbish gets ignored, not trusted
+      const ports = Array.isArray(one.openPorts) ? one.openPorts.map((p: any) => parseInt(String(p), 10)).filter(Boolean) : [];
+      const kind = guessKind(one.sysDescr, one.vendor, ports);
+
+      // The guess only ever fills a blank. A kind a human set, and a friendly name a human
+      // typed, survive every future scan — the heuristic is not allowed to argue with them.
+      // archived_at is deliberately untouched: archiving is a decision, finding it again is
+      // just an observation, and an observation should not overturn a decision.
+      await pool.query(
+        `INSERT INTO network_devices
+           (customer_id, agent_device_id, ip, mac, hostname, vendor, sys_name, sys_descr, kind, last_seen_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+         ON CONFLICT (customer_id, ip) DO UPDATE SET
+           mac       = COALESCE(EXCLUDED.mac,       network_devices.mac),
+           hostname  = COALESCE(EXCLUDED.hostname,  network_devices.hostname),
+           vendor    = COALESCE(EXCLUDED.vendor,    network_devices.vendor),
+           sys_name  = COALESCE(EXCLUDED.sys_name,  network_devices.sys_name),
+           sys_descr = COALESCE(EXCLUDED.sys_descr, network_devices.sys_descr),
+           kind      = CASE WHEN network_devices.kind = 'unknown' THEN EXCLUDED.kind ELSE network_devices.kind END,
+           agent_device_id = COALESCE(network_devices.agent_device_id, EXCLUDED.agent_device_id),
+           last_seen_at = NOW()`,
+        [d.customer_id, d.id, ip, s(one.mac, 40), s(one.hostname, 120), s(one.vendor, 120),
+         s(one.sysName, 160), s(one.sysDescr, 500), kind]);
+      stored++;
+    }
+
+    if (rangeId) {
+      await pool.query(
+        `UPDATE network_scan_ranges SET last_scan_at=NOW(), last_result=$1
+          WHERE id=$2 AND customer_id=$3`,
+        [`${stored} found`, rangeId, d.customer_id]);
+    }
+    res.json({ ok: true, stored });
+  } catch (e: any) {
+    console.error('[agent] network scan store failed:', e.message);
+    res.status(500).json({ ok: false, error: 'scan not stored' });
+  }
+});
+
+/** snmp.poll → one device's supplies and warnings. */
+router.post('/agent/api/network/poll', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  const b = req.body || {};
+  const id = parseInt(String(b.networkDeviceId || ''), 10);
+  if (!id || !d.customer_id) { res.status(400).json({ ok: false, error: 'networkDeviceId required' }); return; }
+
+  const client = await pool.connect();
+  try {
+    // Scope check first: the device has to belong to the customer this agent serves.
+    const dev = (await client.query(
+      `SELECT id FROM network_devices WHERE id=$1 AND customer_id=$2`, [id, d.customer_id])).rows[0];
+    if (!dev) { res.status(404).json({ ok: false, error: 'not your device' }); return; }
+
+    const err = s(b.error, 400);
+    await client.query('BEGIN');
+
+    await client.query(
+      `UPDATE network_devices
+          SET last_poll_at = NOW(),
+              last_poll_error = $1,
+              last_seen_at = CASE WHEN $1 IS NULL THEN NOW() ELSE last_seen_at END,
+              sys_name  = COALESCE($2, sys_name),
+              sys_descr = COALESCE($3, sys_descr)
+        WHERE id = $4`,
+      [err, s(b.sysName, 160), s(b.sysDescr, 500), id]);
+
+    // A failed poll must not wipe the last good readings — "we could not reach it" is a
+    // different fact from "it has no toner", and rewriting one as the other sends somebody
+    // out with a cartridge that was not needed.
+    if (!err) {
+      const supplies = Array.isArray(b.supplies) ? b.supplies.slice(0, 40) : [];
+      for (const sup of supplies) {
+        const level = sup.level == null ? null : parseInt(String(sup.level), 10);
+        const max = sup.max == null && sup.maxCapacity == null ? null
+          : parseInt(String(sup.max != null ? sup.max : sup.maxCapacity), 10);
+        await client.query(
+          `INSERT INTO network_printer_supplies (network_device_id, name, colour, level, max_capacity, percent)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [id, s(sup.name, 120) || 'Supply', s(sup.colour, 40),
+           Number.isFinite(level as number) ? level : null,
+           Number.isFinite(max as number) ? max : null,
+           supplyPercent(level, max)]);           // null for the -1/-2/-3 sentinels, never 0
+      }
+
+      // Warnings are reconciled, not appended: what the device still reports stays open,
+      // what it has stopped reporting is cleared. Otherwise a jam cleared five minutes
+      // after it happened sits on the screen forever.
+      const alerts = Array.isArray(b.alerts) ? b.alerts.slice(0, 60) : [];
+      const live: string[] = [];
+      for (const a of alerts) {
+        const desc = s(a.description || a.desc, 300);
+        if (!desc) continue;
+        live.push(desc);
+        const open = (await client.query(
+          `SELECT id FROM network_device_alerts
+            WHERE network_device_id=$1 AND description=$2 AND cleared_at IS NULL LIMIT 1`, [id, desc])).rows[0];
+        if (open) {
+          await client.query(`UPDATE network_device_alerts SET last_seen_at=NOW() WHERE id=$1`, [open.id]);
+        } else {
+          await client.query(
+            `INSERT INTO network_device_alerts (network_device_id, code, severity, description)
+             VALUES ($1,$2,$3,$4)`,
+            [id, s(a.code, 60), s(a.severity, 20) || 'warning', desc]);
+        }
+      }
+      await client.query(
+        `UPDATE network_device_alerts SET cleared_at=NOW()
+          WHERE network_device_id=$1 AND cleared_at IS NULL AND NOT (description = ANY($2::text[]))`,
+        [id, live]);
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (e: any) {
+    try { await client.query('ROLLBACK'); } catch { /* gone */ }
+    console.error('[agent] network poll store failed:', e.message);
+    res.status(500).json({ ok: false, error: 'poll not stored' });
+  } finally { client.release(); }
 });
 
 export default router;

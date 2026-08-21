@@ -1,68 +1,263 @@
-<%- include('../partials/header', { title: 'N3twrx', user }) %>
+<%- include('../partials/header', { title: 'Network discovery', user }) %>
 <%
-  function rel(s){ if(!s) return ''; var d=new Date(s),n=new Date(); var t=('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
-    return d.toDateString()===n.toDateString() ? 'Today '+t : d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' '+t; }
-  function sevColour(s){ return s==='critical'?'var(--bad-bright)':(s==='info'?'var(--blue)':'var(--amber)'); }
-  function srcLabel(s){ return s==='giacom'?'Giacom (comms)':(s==='unifi'?'UniFi':s); }
-  var open = alerts.filter(function(a){ return a.status==='open'; });
+// Network discovery — the things on a customer's network that will never run our agent.
+// Deliberately NOT customer_assets: every count and screen there assumes an agent can
+// eventually be installed, and a printer breaks all of them.
+var csrf = (typeof csrfToken !== 'undefined' ? csrfToken : '');
+function ago(secs){
+  if (secs == null) return 'never';
+  var m = Math.round(Number(secs)/60);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + 'm ago';
+  var h = Math.round(m/60);
+  if (h < 24) return h + 'h ago';
+  return Math.round(h/24) + 'd ago';
+}
+function agoIso(iso){ if (!iso) return 'never'; return ago((Date.now() - new Date(iso).getTime())/1000); }
+var cust = customers.filter(function(c){ return String(c.id) === String(custId); })[0];
+var SWATCH = { black:'#111827', cyan:'#06b6d4', magenta:'#db2777', yellow:'#eab308' };
 %>
-<div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div>
-    <h1 style="margin:0;"><span style="font-weight:800;background:linear-gradient(90deg,var(--indigo),var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent;">N3twrx</span></h1>
-    <p class="muted" style="margin:4px 0 0;">Network monitoring — UniFi devices &amp; Giacom comms outages. More to come (Azure, etc.).</p>
+    <h1>Network discovery</h1>
+    <p class="muted">Printers, switches, routers, NAS, cameras — everything that will never run our agent. Found and reached <em>through</em> an agent that can see the subnet.</p>
   </div>
-  <div style="display:flex;gap:8px;">
-    <a class="btn <%= status==='open'?'btn-primary':'' %>" href="/n3twrx">Open</a>
-    <a class="btn <%= status==='all'?'btn-primary':'' %>" href="/n3twrx?status=all">All</a>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <a class="btn" href="/assets">&larr; Assets</a>
   </div>
 </div>
 
-<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (msg) { %><div class="alert alert-success"><%= msg %></div><% } %>
+<% if (error) { %><div class="alert alert-error"><%= error %></div><% } %>
 
-<!-- Tool tiles -->
-<div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin-bottom:18px;">
-  <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Open alerts</div><div style="font-size:30px;font-weight:800;color:<%= open.length?'var(--bad-bright)':'var(--ok)' %>;"><%= open.length %></div></div>
-  <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">UniFi</div><div style="font-size:30px;font-weight:800;"><%= open.filter(function(a){return a.source==='unifi';}).length %></div><div class="muted" style="font-size:12px;">device alerts open</div></div>
-  <div class="card"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Giacom / comms</div><div style="font-size:30px;font-weight:800;"><%= open.filter(function(a){return a.source==='giacom';}).length %></div><div class="muted" style="font-size:12px;">incidents open</div></div>
-  <div class="card" style="opacity:.6;"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;">Azure</div><div style="font-size:16px;font-weight:700;margin-top:8px;">Coming soon</div></div>
+<div class="card" style="margin-bottom:18px;">
+  <form method="get" action="/network" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin:0;">
+    <div class="form-group" style="margin:0;min-width:240px;">
+      <label for="customer">Customer</label>
+      <select class="input" id="customer" name="customer" onchange="this.form.submit()">
+        <option value="">Pick a customer&hellip;</option>
+        <% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= String(c.id) === String(custId) ? 'selected' : '' %>><%= c.name %></option><% }); %>
+      </select>
+    </div>
+    <% if (custId) { %>
+    <div class="form-group" style="margin:0;min-width:170px;">
+      <label for="kind">Kind</label>
+      <select class="input" id="kind" name="kind" onchange="this.form.submit()">
+        <option value="">All kinds</option>
+        <% kinds.forEach(function(k){ %><option value="<%= k %>" <%= k === kind ? 'selected' : '' %>><%= kindLabels[k] %></option><% }); %>
+      </select>
+    </div>
+    <% } %>
+    <button class="btn" type="submit">Show</button>
+  </form>
 </div>
 
-<div class="card" style="padding:0;" id="alertList">
-  <div class="card-header" style="padding:16px 20px;"><h2 style="margin:0;"><%= status==='open'?'Open alerts':'All alerts' %> <span class="muted" style="font-weight:400;font-size:14px;">(<%= alerts.length %>)</span></h2></div>
-  <% if (!alerts.length) { %>
-    <p class="muted" style="padding:0 20px 16px;margin:0;">No <%= status==='open'?'open':'' %> alerts. All quiet. ✅</p>
+<% if (!custId) { %>
+
+  <div class="card">
+    <div class="empty-state">
+      <h3>Pick a customer to begin</h3>
+      <p class="muted">Add the IP ranges you want scanned, choose the agent that can see them — usually the server, because it is the machine that is always on — then name what comes back.</p>
+    </div>
+  </div>
+
+<% } else { %>
+
+<%
+  var printers  = devices.filter(function(d){ return d.kind === 'printer'; });
+  var monitored = devices.filter(function(d){ return d.monitored; });
+  var alertsOpen = devices.reduce(function(n,d){ return n + (Number(d.open_alerts)||0); }, 0);
+  var lowSupply = devices.filter(function(d){
+    return (d.supplies || []).some(function(s){ return s.percent != null && s.percent <= lowPercent; });
+  });
+%>
+
+<div class="stat-band" style="margin-bottom:18px;">
+  <div class="tile"><span class="n" style="display:block;"><%= devices.length %></span><span class="l" style="display:block;">devices</span></div>
+  <div class="tile"><span class="n" style="display:block;"><%= printers.length %></span><span class="l" style="display:block;">printers</span></div>
+  <div class="tile"><span class="n" style="display:block;"><%= monitored.length %></span><span class="l" style="display:block;">monitored</span></div>
+  <div class="tile"><span class="n" style="display:block;color:<%= lowSupply.length ? 'var(--bad)' : '' %>;"><%= lowSupply.length %></span><span class="l" style="display:block;">low on supplies</span></div>
+  <div class="tile"><span class="n" style="display:block;color:<%= alertsOpen ? 'var(--amber)' : '' %>;"><%= alertsOpen %></span><span class="l" style="display:block;">open warnings</span></div>
+</div>
+
+<!-- ── Scan ranges ─────────────────────────────────────────────────────────── -->
+<div class="card" style="margin-bottom:18px;">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <h2 style="margin:0;font-size:1.05rem;">Scan ranges</h2>
+    <span class="muted" style="font-size:12px;">A range belongs to the agent that can see it. Nothing larger than a /22 — a /16 is 65,000 addresses and a scan nobody finishes.</span>
+  </div>
+
+  <% if (!scanners.length) { %>
+    <div class="empty-state" style="padding:18px;">
+      <p><strong>No agent for <%= cust ? cust.name : 'this customer' %> yet.</strong></p>
+      <p class="muted">Scanning happens from a machine on the network, so the agent has to be installed somewhere first — the server if there is one.</p>
+      <a class="btn" href="/agents#download">Download the agent</a>
+    </div>
   <% } else { %>
-    <div class="table-wrap"><table class="table" style="margin:0;">
-      <thead><tr><th></th><th>Source</th><th>Alert</th><th>When</th><th>Ticket</th><th></th></tr></thead>
+
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Range</th><th>Label</th><th>Scanned from</th><th>Last scan</th><th style="text-align:right;">&nbsp;</th></tr></thead>
       <tbody>
-        <% alerts.forEach(function(a){ %>
-          <tr>
-            <td style="width:10px;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:<%= sevColour(a.severity) %>;" title="<%= a.severity %>"></span></td>
-            <td style="white-space:nowrap;"><span class="badge <%= a.source==='unifi'?'badge-primary':'badge-sent' %>"><%= srcLabel(a.source) %></span></td>
-            <td><strong><%= a.title %></strong><% if (a.url) { %> <a class="row-link" href="<%= a.url %>" target="_blank" rel="noopener" style="font-size:12px;">↗</a><% } %><% if (a.body && a.body !== a.title) { %><div class="muted" style="font-size:12px;max-width:520px;"><%= String(a.body).replace(/<[^>]+>/g,'').slice(0,160) %></div><% } %></td>
-            <td class="muted" style="font-size:12px;white-space:nowrap;"><%= rel(a.started_at || a.created_at) %><% if (a.status==='resolved') { %> · <span class="badge badge-inactive">resolved</span><% } %></td>
-            <td><% if (a.ticket_id) { %><a class="row-link" href="/tickets/<%= a.ticket_id %>">#<%= a.ticket_id %></a><% } else { %>—<% } %></td>
-            <td style="text-align:right;white-space:nowrap;">
-              <div style="display:inline-flex;gap:6px;justify-content:flex-end;">
-                <% if (!a.ticket_id) { %><form method="post" action="/n3twrx/alert/<%= a.id %>/ticket" style="margin:0;"><button class="btn btn-primary" type="submit" style="padding:4px 12px;font-size:13px;">Create ticket</button></form><% } %>
-                <% if (a.status==='open') { %><form method="post" action="/n3twrx/alert/<%= a.id %>/resolve" style="margin:0;"><button class="btn" type="submit" style="padding:4px 12px;font-size:13px;">Resolve</button></form><% } %>
-              </div>
-            </td>
-          </tr>
+        <% if (!ranges.length) { %>
+          <tr><td colspan="5" class="muted" style="padding:14px;">No ranges yet. Add the one your machines live on — 192.168.1.0/24 is the usual answer.</td></tr>
+        <% } %>
+        <% ranges.forEach(function(r){ var online = r.scanner_seen_secs != null && Number(r.scanner_seen_secs) < 900; %>
+        <tr>
+          <td style="font-family:ui-monospace,Menlo,Consolas,monospace;"><%= r.cidr %></td>
+          <td><%= r.label || '' %></td>
+          <td>
+            <span title="<%= online ? 'Online' : 'Not checked in recently' %>" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:<%= online ? 'var(--ok)' : 'var(--muted)' %>;margin-right:6px;"></span>
+            <%= r.scanner_hostname || 'agent removed' %>
+            <span class="muted" style="font-size:11px;">· <%= ago(r.scanner_seen_secs) %></span>
+          </td>
+          <td><%= agoIso(r.last_scan_at) %><% if (r.last_result) { %> <span class="muted" style="font-size:11px;">(<%= r.last_result %>)</span><% } %></td>
+          <td style="text-align:right;white-space:nowrap;">
+            <form method="post" action="/network/ranges/<%= r.id %>/scan" style="display:inline;">
+              <input type="hidden" name="_csrf" value="<%= csrf %>">
+              <button class="btn" type="submit">Scan now</button>
+            </form>
+            <form method="post" action="/network/ranges/<%= r.id %>/delete" style="display:inline;" onsubmit="return confirm('Remove this range? Devices already found are kept.');">
+              <input type="hidden" name="_csrf" value="<%= csrf %>">
+              <button class="btn" type="submit" title="Devices already found are kept">Remove</button>
+            </form>
+          </td>
+        </tr>
         <% }); %>
       </tbody>
-    </table></div>
+    </table>
+  </div>
+
+  <form method="post" action="/network/ranges" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;padding:14px 0 2px;border-top:1px solid var(--line);margin-top:10px;">
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <input type="hidden" name="customerId" value="<%= custId %>">
+    <div class="form-group" style="margin:0;">
+      <label for="cidr">Range (CIDR)</label>
+      <input class="input" id="cidr" name="cidr" placeholder="192.168.1.0/24" required style="font-family:ui-monospace,Menlo,Consolas,monospace;">
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label for="rlabel">Label</label>
+      <input class="input" id="rlabel" name="label" placeholder="Main office" maxlength="80">
+    </div>
+    <div class="form-group" style="margin:0;min-width:230px;">
+      <label for="ragent">Scanned from</label>
+      <select class="input" id="ragent" name="agentDeviceId" required>
+        <% scanners.forEach(function(s){ var on = s.seen_secs != null && Number(s.seen_secs) < 900; %>
+        <option value="<%= s.id %>"><%= s.hostname %><%= /server/i.test(String(s.device_type||'')) ? ' (server)' : '' %> — <%= on ? 'online' : ago(s.seen_secs) %></option>
+        <% }); %>
+      </select>
+    </div>
+    <button class="btn btn-primary" type="submit">Add range</button>
+  </form>
   <% } %>
 </div>
 
-<script>
-  // Refresh the open-alerts view every 15s (only on the Open tab).
-  <% if (status === 'open') { %>
-  setInterval(function(){ fetch(location.pathname).then(function(r){return r.text();}).then(function(html){
-    var doc = new DOMParser().parseFromString(html,'text/html'); var fresh = doc.getElementById('alertList');
-    if (fresh) document.getElementById('alertList').innerHTML = fresh.innerHTML;
-  }).catch(function(){}); }, 15000);
+<!-- ── Devices ─────────────────────────────────────────────────────────────── -->
+<div class="card" style="margin-bottom:18px;">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <h2 style="margin:0;font-size:1.05rem;">Devices<% if (kind) { %> — <%= kindLabels[kind] %><% } %></h2>
+    <span class="muted" style="font-size:12px;"><%= devices.length %> shown<%= kind ? ' of this kind' : '' %></span>
+  </div>
+
+  <% if (!devices.length) { %>
+    <div class="empty-state" style="padding:18px;">
+      <p class="muted">Nothing here yet. Scan a range, or add a device by hand below — a printer's IP is enough to start.</p>
+    </div>
+  <% } else { %>
+  <%
+    var byKind = {};
+    devices.forEach(function(d){ (byKind[d.kind] = byKind[d.kind] || []).push(d); });
+    var order = kinds.filter(function(k){ return byKind[k]; });
+  %>
+  <% order.forEach(function(k){ %>
+    <h3 style="margin:16px 0 6px;font-size:0.92rem;text-transform:uppercase;letter-spacing:.04em;" class="muted"><%= kindLabels[k] %> <span style="font-weight:400;">(<%= byKind[k].length %>)</span></h3>
+    <div class="table-wrap">
+      <table class="table table-lift">
+        <thead><tr><th>Name</th><th>IP</th><th>What it says it is</th><th style="min-width:190px;">Supplies</th><th>Warnings</th><th>Last seen</th></tr></thead>
+        <tbody>
+        <% byKind[k].forEach(function(d){ %>
+          <tr class="row-link" onclick="location.href='/network/device/<%= d.id %>'" style="cursor:pointer;">
+            <td>
+              <span title="<%= d.monitored ? 'Monitored' : 'Known about, not polled' %>" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:<%= d.monitored ? 'var(--ok)' : 'var(--muted)' %>;margin-right:6px;"></span>
+              <a href="/network/device/<%= d.id %>"><strong><%= d.friendly_name || d.sys_name || d.hostname || 'Unnamed' %></strong></a>
+              <% if (!d.friendly_name) { %><span class="muted" style="font-size:11px;"> · needs a name</span><% } %>
+              <% if (Number(d.cred_count) > 0) { %><span title="<%= d.cred_count %> stored credential(s)" style="margin-left:6px;">&#128273;</span><% } %>
+            </td>
+            <td style="font-family:ui-monospace,Menlo,Consolas,monospace;"><%= d.ip %></td>
+            <td class="muted" style="font-size:12px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<%= d.sys_descr || '' %>"><%= d.sys_descr || d.vendor || '—' %></td>
+            <td>
+              <% var sup = d.supplies || []; %>
+              <% if (!sup.length) { %><span class="muted" style="font-size:11px;">—</span><% } %>
+              <% sup.forEach(function(s){
+                   var p = s.percent;
+                   var col = SWATCH[String(s.colour || '').toLowerCase()] || '#64748b';
+                   var low = (p != null && p <= lowPercent);
+              %>
+              <div style="display:flex;align-items:center;gap:6px;margin:2px 0;">
+                <span class="muted" style="width:64px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<%= s.name %>"><%= String(s.name || '').replace(/\s*(cartridge|toner)\s*$/i, '') %></span>
+                <% if (p == null) { %>
+                  <span class="muted" style="font-size:11px;">not reported</span>
+                <% } else { %>
+                  <span style="flex:1;min-width:54px;max-width:90px;height:8px;background:var(--line);border-radius:4px;overflow:hidden;display:inline-block;">
+                    <span style="display:block;height:100%;width:<%= p %>%;background:<%= low ? 'var(--bad)' : col %>;"></span>
+                  </span>
+                  <span style="font-size:11px;<%= low ? 'color:var(--bad);font-weight:700;' : '' %>"><%= p %>%</span>
+                <% } %>
+              </div>
+              <% }); %>
+            </td>
+            <td><% if (Number(d.open_alerts) > 0) { %><span class="badge" style="background:var(--bad-soft);color:var(--bad-fg);"><%= d.open_alerts %></span><% } else { %><span class="muted">—</span><% } %></td>
+            <td class="muted" style="font-size:12px;"><%= agoIso(d.last_seen_at) %></td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table>
+    </div>
+  <% }); %>
   <% } %>
-</script>
+</div>
+
+<!-- ── Add by hand ─────────────────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-header"><h2 style="margin:0;font-size:1.05rem;">Add a device by hand</h2></div>
+  <p class="muted" style="margin-top:0;">You do not have to wait for a scan. If you know the printer is on 192.168.1.50, put it in.</p>
+  <form method="post" action="/network/devices" style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <input type="hidden" name="customerId" value="<%= custId %>">
+    <div class="form-group" style="margin:0;">
+      <label for="dip">IP address</label>
+      <input class="input" id="dip" name="ip" placeholder="192.168.1.50" required style="font-family:ui-monospace,Menlo,Consolas,monospace;">
+    </div>
+    <div class="form-group" style="margin:0;min-width:200px;">
+      <label for="dname">Friendly name</label>
+      <input class="input" id="dname" name="friendlyName" placeholder="Reception printer" maxlength="120">
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label for="dkind">Kind</label>
+      <select class="input" id="dkind" name="kind">
+        <% kinds.forEach(function(k){ %><option value="<%= k %>" <%= k === 'printer' ? 'selected' : '' %>><%= kindLabels[k] %></option><% }); %>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;min-width:210px;">
+      <label for="dagent">Reached through</label>
+      <select class="input" id="dagent" name="agentDeviceId">
+        <option value="">— pick later —</option>
+        <% scanners.forEach(function(s){ %><option value="<%= s.id %>"><%= s.hostname %><%= /server/i.test(String(s.device_type||'')) ? ' (server)' : '' %></option><% }); %>
+      </select>
+    </div>
+    <div class="form-group" style="margin:0;min-width:200px;">
+      <label for="dweb">Web interface</label>
+      <input class="input" id="dweb" name="webUrl" placeholder="http://192.168.1.50">
+    </div>
+    <div class="form-group" style="margin:0;min-width:200px;">
+      <label for="dnotes">Notes</label>
+      <input class="input" id="dnotes" name="notes" placeholder="Behind reception desk">
+    </div>
+    <button class="btn btn-primary" type="submit">Add device</button>
+  </form>
+</div>
+
+<% } %>
 
 <%- include('../partials/footer') %>

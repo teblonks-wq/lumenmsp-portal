@@ -7,6 +7,7 @@
   <div><h1>Assets</h1><p class="muted"><%= rows.length %> device<%= rows.length===1?'':'s' %> shown · reported by the LumenMSP Agent · last Atera import <%= timeAgo(lastSynced) %></p></div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
     <a class="btn" href="/agents#download" style="display:inline-flex;align-items:center;gap:6px;"><img src="/static/img/lumen-agent-16.png" width="14" height="14" alt=""> Download Agent</a>
+    <% if (typeof user!=='undefined' && user.role==='admin') { %><a class="btn" href="/network" title="Printers, switches, routers and the rest - everything on the network that will never run our agent">&#9783; Network discovery</a><% } %>
     <% if (typeof user!=='undefined' && user.role==='admin') { %>
     <form method="post" action="/assets/sync"><button class="btn" type="submit" title="Pulls Atera's device list to find machines we do not have. It never overwrites anything our own agent reports.">↻ Import from Atera</button></form>
     <% } %>
