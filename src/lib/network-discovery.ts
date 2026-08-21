@@ -101,3 +101,21 @@ export function supplyNote(level: number | null | undefined, max: number | null 
 
 /** Below this, tell somebody. Toner rarely fails gracefully at 0. */
 export const SUPPLY_LOW_PERCENT = 20;
+
+/** The agent build that first understood net.scan and snmp.poll. Anything older collects
+ *  the command, does not recognise the verb, and the operator is left watching a spinner
+ *  wondering what they did wrong — so the Portal checks first and says so. */
+export const NET_DISCO_MIN_AGENT = '1.0.29';
+
+/** Compare two dotted versions. Missing parts count as 0, and anything unparseable is
+ *  treated as OLD: an agent that will not say what it is has not proved it is new enough. */
+export function agentAtLeast(have: string | null | undefined, want: string): boolean {
+  const parse = (v: string) => String(v || '').trim().split('.').map((n) => parseInt(n, 10));
+  const a = parse(have || ''), b = parse(want);
+  if (!a.length || a.some((n) => !Number.isFinite(n))) return false;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? 0, y = b[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return true;
+}

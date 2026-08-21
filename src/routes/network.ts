@@ -6,7 +6,7 @@ import { wakeAgent } from './agent-api';
 import { encryptSecret, vaultConfigured } from '../lib/vault';
 import {
   expandCidr, cidrSize, isIpv4, DEVICE_KINDS, KIND_LABELS, guessKind,
-  supplyPercent, supplyNote, SUPPLY_LOW_PERCENT,
+  supplyPercent, supplyNote, SUPPLY_LOW_PERCENT, NET_DISCO_MIN_AGENT, agentAtLeast,
 } from '../lib/network-discovery';
 
 const router = Router();
@@ -16,10 +16,10 @@ const router = Router();
 // (usually the server, because it is the machine that is always on and can see the whole
 // subnet), monitored through it, and reached through it.
 //
-// The agent verbs this queues — net.scan and snmp.poll — DO NOT EXIST YET. Commands sit
-// queued until an agent build understands them, which is deliberate: the Portal side is
-// finished and testable now via "Add a device by hand", and nothing has to be rewritten
-// when the agent catches up.
+// The agent verbs this queues — net.scan and snmp.poll — landed in agent 1.0.29. An older
+// agent collects the command and does not recognise it, so the version is checked BEFORE
+// queueing and the operator is told plainly, rather than being left watching a spinner.
+// Adding a device by hand still works regardless of the agent version.
 
 const back = (raw: unknown, fallback: string): string => {
   const s = String(raw || '');
@@ -125,11 +125,18 @@ router.post('/network/ranges/:id/delete', requireAuth, requireAdmin, async (req:
 router.post('/network/ranges/:id/scan', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const r = (await pool.query(
-    `SELECT r.*, EXTRACT(EPOCH FROM (NOW() - d.last_seen_at)) AS seen
+    `SELECT r.*, EXTRACT(EPOCH FROM (NOW() - d.last_seen_at)) AS seen, d.agent_version
        FROM network_scan_ranges r LEFT JOIN agent_devices d ON d.id = r.agent_device_id
       WHERE r.id=$1`, [id])).rows[0];
   const to = `/network?customer=${r?.customer_id || ''}`;
   if (!r) { res.redirect(to + '&err=' + encodeURIComponent('That range no longer exists.')); return; }
+  if (!agentAtLeast(r.agent_version, NET_DISCO_MIN_AGENT)) {
+    res.redirect(to + '&err=' + encodeURIComponent(
+      `That agent is on ${r.agent_version || 'an unknown version'} and network scanning needs `
+      + `${NET_DISCO_MIN_AGENT}. Update it from the Agents page first — queueing this now would `
+      + `sit there doing nothing.`));
+    return;
+  }
 
   // Never stack scans. A second identical command cannot make the machine answer sooner
   // and an offline agent would collect a pile of them.
@@ -149,8 +156,7 @@ router.post('/network/ranges/:id/scan', requireAuth, requireAdmin, async (req: R
   const offline = r.seen == null || Number(r.seen) > 900;
   res.redirect(to + '&msg=' + encodeURIComponent(offline
     ? 'Scan queued. That agent is offline, so it runs when it next checks in.'
-    : 'Scan queued. NOTE: no agent build understands net.scan yet, so this will sit queued — '
-      + 'add devices by hand in the meantime.'));
+    : `Scanning ${r.cidr} now. A /24 takes about a minute; refresh to see what turns up.`));
 });
 
 // ── Devices ─────────────────────────────────────────────────────────────────────
@@ -276,10 +282,19 @@ router.post('/network/device/:id/credential/:cid/delete', requireAuth, requireAd
 
 router.post('/network/device/:id/poll', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
-  const d = (await pool.query(`SELECT * FROM network_devices WHERE id=$1`, [id])).rows[0];
+  const d = (await pool.query(
+    `SELECT n.*, ag.agent_version FROM network_devices n
+       LEFT JOIN agent_devices ag ON ag.id = n.agent_device_id
+      WHERE n.id=$1`, [id])).rows[0];
   const to = `/network/device/${id}`;
   if (!d?.agent_device_id) {
     res.redirect(to + '?err=' + encodeURIComponent('No agent is set to reach this device — pick one first.'));
+    return;
+  }
+  if (!agentAtLeast(d.agent_version, NET_DISCO_MIN_AGENT)) {
+    res.redirect(to + '?err=' + encodeURIComponent(
+      `The agent that reaches this device is on ${d.agent_version || 'an unknown version'}, and SNMP `
+      + `polling needs ${NET_DISCO_MIN_AGENT}. Update it from the Agents page first.`));
     return;
   }
   await pool.query(
@@ -288,7 +303,7 @@ router.post('/network/device/:id/poll', requireAuth, requireAdmin, async (req: R
     [d.agent_device_id, JSON.stringify({ networkDeviceId: id, ip: d.ip }), req.session.user!.id]);
   wakeAgent(d.agent_device_id);
   res.redirect(to + '?msg=' + encodeURIComponent(
-    'Poll queued. NOTE: no agent build understands snmp.poll yet, so it will sit queued.'));
+    'Reading the device now. Refresh in a few seconds — supplies and warnings land as soon as it answers.'));
 });
 
 router.post('/network/device/:id/archive', requireAuth, requireAdmin, async (req: Request, res: Response) => {

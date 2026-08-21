@@ -1096,13 +1096,34 @@ router.post('/agent/api/network/scan', requireDevice, async (req: Request, res: 
 
   const found = Array.isArray(b.devices) ? b.devices.slice(0, 2000) : [];
   const rangeId = parseInt(String(b.rangeId || ''), 10) || null;
-  let stored = 0;
+  let stored = 0, skipped = 0;
+
+  // Hostnames we already manage. A machine running our agent belongs on Assets, and putting
+  // it here as well would mean two records for one device and two places to keep current.
+  const managed = new Set<string>(
+    (await pool.query(
+      `SELECT LOWER(SPLIT_PART(hostname, '.', 1)) AS h FROM agent_devices
+        WHERE customer_id=$1 AND revoked=false AND hostname IS NOT NULL`, [d.customer_id]))
+      .rows.map((r: any) => r.h).filter(Boolean));
 
   try {
     for (const one of found) {
       const ip = String((one || {}).ip || '').trim();
       if (!isIpv4(ip)) continue;                       // a scanner that sends rubbish gets ignored, not trusted
       const ports = Array.isArray(one.openPorts) ? one.openPorts.map((p: any) => parseInt(String(p), 10)).filter(Boolean) : [];
+
+      // THIS LIST IS FOR THE THINGS THAT WILL NEVER RUN AN AGENT. A computer found by the
+      // sweep is not a network device, and letting PCs in here is how a page meant for
+      // "3 printers and a switch" turns into a second, worse copy of the asset list.
+      //
+      // Two ways to spot one: we already manage it by name, or it answers on SMB/RDP with
+      // nothing printer-shaped about it. The second test is deliberately conservative —
+      // a print server answers on 445 AND 9100, and that IS worth having here.
+      const shortName = String(one.hostname || '').split('.')[0].toLowerCase();
+      const printerish = ports.includes(9100) || ports.includes(631) || ports.includes(515);
+      const windowsish = ports.includes(445) || ports.includes(3389);
+      if ((shortName && managed.has(shortName)) || (windowsish && !printerish)) { skipped++; continue; }
+
       const kind = guessKind(one.sysDescr, one.vendor, ports);
 
       // The guess only ever fills a blank. A kind a human set, and a friendly name a human
@@ -1128,15 +1149,52 @@ router.post('/agent/api/network/scan', requireDevice, async (req: Request, res: 
     }
 
     if (rangeId) {
+      // Say what was left out as well as what was kept. A count that quietly omits half of
+      // what the scan saw reads as "that is everything", and it is not.
       await pool.query(
         `UPDATE network_scan_ranges SET last_scan_at=NOW(), last_result=$1
           WHERE id=$2 AND customer_id=$3`,
-        [`${stored} found`, rangeId, d.customer_id]);
+        [`${stored} found` + (skipped ? `, ${skipped} computer(s) left on Assets` : ''), rangeId, d.customer_id]);
     }
-    res.json({ ok: true, stored });
+    res.json({ ok: true, stored, skipped });
   } catch (e: any) {
     console.error('[agent] network scan store failed:', e.message);
     res.status(500).json({ ok: false, error: 'scan not stored' });
+  }
+});
+
+/** The community string for one device, handed over at the moment of use.
+ *
+ * NOT put in the snmp.poll payload. agent_commands rows are stored in clear and are shown
+ * on the command history screens — a credential that lives there is a credential written
+ * down, and it would stay written down for as long as the row does.
+ *
+ * Scoped to the agent that is actually assigned to reach the device, not merely to the
+ * customer. A workstation token then cannot enumerate the community strings for every
+ * network device on that site, and the assigned agent is the only one that can run the
+ * poll anyway. */
+router.get('/agent/api/network/device/:id/snmp', requireDevice, async (req: Request, res: Response) => {
+  const d = (req as any).agentDevice;
+  const id = parseInt(String(req.params.id), 10);
+  if (!id || !d.customer_id) { res.status(400).json({ ok: false, error: 'bad request' }); return; }
+  try {
+    const dev = (await pool.query(
+      `SELECT snmp_community, snmp_version FROM network_devices
+        WHERE id=$1 AND customer_id=$2 AND agent_device_id=$3`,
+      [id, d.customer_id, d.id])).rows[0];
+    if (!dev) { res.status(404).json({ ok: false, error: 'not a device you are set to reach' }); return; }
+
+    // No stored string is not an error: "public" is the default on nearly every device
+    // that has SNMP switched on, so the poll is worth trying.
+    let community = 'public';
+    if (dev.snmp_community) {
+      try { community = decryptSecret(dev.snmp_community) || 'public'; }
+      catch (e: any) { console.error('[agent] snmp community decrypt failed:', e.message); }
+    }
+    res.json({ ok: true, community, version: dev.snmp_version || null });
+  } catch (e: any) {
+    console.error('[agent] snmp credential lookup failed:', e.message);
+    res.status(500).json({ ok: false, error: 'lookup failed' });
   }
 });
 
