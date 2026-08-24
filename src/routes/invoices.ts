@@ -222,14 +222,14 @@ router.post('/invoices', requireAuth, async (req: Request, res: Response) => {
     const invoiceNumber = await nextInvoiceNumber(scheme);
     const { rows } = await client.query(
       `INSERT INTO invoices (customer_id, quote_id, invoice_number, invoice_scheme, title, status, payment_status,
-        payment_method, issue_date, due_date, currency_code, notes, terms, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+        payment_method, issue_date, due_date, currency_code, notes, terms, fao_name, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
       [
         b.customer_id ? parseInt(b.customer_id, 10) : null, b.quote_id ? parseInt(b.quote_id, 10) : null,
         invoiceNumber, scheme, title, STATUSES.includes(b.status) ? b.status : 'draft',
         PAY_STATUSES.includes(b.payment_status) ? b.payment_status : 'unpaid',
         nz(b.payment_method) || 'upfront', nz(b.issue_date), nz(b.due_date), nz(b.currency_code) || 'GBP',
-        nz(b.notes), nz(b.terms), user.id,
+        nz(b.notes), nz(b.terms), nz(b.fao_name), user.id,
       ]
     );
     await saveItemsAndTotals(client, rows[0].id, b);
@@ -259,6 +259,60 @@ function withParam(url: string, qs: string): string {
   const hash = i >= 0 ? url.slice(i) : '';
   return base + (base.includes('?') ? '&' : '?') + qs + hash;
 }
+
+// -- Duplicate --------------------------------------------------------------------
+// Copy an invoice into a NEW DRAFT for the same customer: lines, prices, terms, notes.
+// Deliberately copies NOTHING that makes a document real - number, status, balance,
+// emailed_at, billing_period, QuickBooks/GoCardless ids, recurring settings, quote_id
+// and contract_type are all left off (contract_type in particular carries a
+// one-per-customer rule that a copy would collide with).
+// Copied LINES become source='manual'. The originals may be comms/giacom/calls/contract
+// rows; leaving that source on a hand-made copy invites the refresh + sync engines to
+// reconcile against it. sync_ref / sync_locked / contract_line_id are dropped for the
+// same reason. Nothing in service_items is touched, so duplicating never marks a
+// service line or a call record as billed.
+// Payment terms are preserved as a GAP (due - issue) re-based on today, computed in SQL
+// so no JS date arithmetic can shift it an hour - see the timestamp trap.
+router.post('/invoices/:id/duplicate', requireAuth, async (req: Request, res: Response) => {
+  const user = req.session.user!;
+  const id = parseInt(String(req.params.id), 10);
+  const back = safeBack(req.body.back, '/invoices/' + id);
+  if (!Number.isInteger(id)) { res.redirect(withParam(back, 'err=' + encodeURIComponent('Invoice not found.'))); return; }
+  const src = (await pool.query(
+    'SELECT invoice_number, invoice_scheme, title FROM invoices WHERE id=$1 AND deleted_at IS NULL', [id])).rows[0];
+  if (!src) { res.redirect(withParam(back, 'err=' + encodeURIComponent('Invoice not found.'))); return; }
+
+  const scheme = SCHEMES.includes(src.invoice_scheme) ? src.invoice_scheme : 'IT';
+  const client = await pool.connect();
+  let newId = 0; let num = '';
+  try {
+    await client.query('BEGIN');
+    num = await nextInvoiceNumber(scheme);
+    const ins = await client.query(
+      `INSERT INTO invoices (customer_id, invoice_number, invoice_scheme, title, status, payment_status,
+         payment_method, issue_date, due_date, currency_code, notes, terms, fao_name, created_by)
+       SELECT customer_id, $2, $3, $4, 'draft', 'unpaid',
+              COALESCE(payment_method, 'upfront'),
+              CURRENT_DATE,
+              CURRENT_DATE + GREATEST(COALESCE(due_date - issue_date, 0), 0),
+              COALESCE(currency_code, 'GBP'), notes, terms, fao_name, $5
+         FROM invoices WHERE id=$1 RETURNING id`,
+      [id, num, scheme, String(src.title || 'Invoice').slice(0, 240) + ' (copy)', user.id]);
+    newId = ins.rows[0].id;
+    await client.query(
+      `INSERT INTO invoice_items (invoice_id, product_id, source, sort_order, description,
+         quantity, unit_price, tax_rate, line_total, is_one_off, invoice_category)
+       SELECT $1, product_id, 'manual', sort_order, description,
+              quantity, unit_price, tax_rate, line_total, is_one_off, invoice_category
+         FROM invoice_items WHERE invoice_id=$2
+        ORDER BY sort_order NULLS LAST, id`, [newId, id]);
+    await recomputeInvoiceTotals(client, newId);
+    await client.query('COMMIT');
+  } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+
+  await logActivity(user.id, 'created', 'invoices', newId, `Duplicated ${src.invoice_number} - created ${num} as a draft`);
+  res.redirect('/invoices/' + newId + '/edit?msg=' + encodeURIComponent('Draft ' + num + ' copied from ' + src.invoice_number + '. Check the lines and dates before sending.'));
+});
 
 // ── Bulk actions on selected invoices (email / QB / GC / reminders) ──────────────
 router.post('/invoices/bulk', requireAuth, async (req: Request, res: Response) => {
@@ -464,7 +518,7 @@ router.get('/invoices/:id/edit', requireAuth, async (req: Request, res: Response
     pool.query('SELECT ii.*, ap.name AS product_name FROM invoice_items ii LEFT JOIN asset_products ap ON ap.id=ii.product_id WHERE ii.invoice_id=$1 ORDER BY ii.sort_order, ii.id', [id]),
     pool.query(`SELECT id, name FROM customers WHERE deleted_at IS NULL AND is_placeholder=false ORDER BY name`),
   ]);
-  res.render('invoices/form', { user, invoice: r.rows[0], items: items.rows, customers: customers.rows, preselectCustomer: null, error: null });
+  res.render('invoices/form', { user, invoice: r.rows[0], items: items.rows, customers: customers.rows, preselectCustomer: null, error: null, notice: req.query.msg || null });
 });
 
 // ── Update ──────────────────────────────────────────────────────────────────────
@@ -492,7 +546,7 @@ router.post('/invoices/:id', requireAuth, async (req: Request, res: Response, ne
       `UPDATE invoices SET customer_id=$1, title=$2, invoice_scheme=$3,
         payment_method=$4, issue_date=$5, due_date=$6, currency_code=$7, notes=$8, terms=$9, contract_type=$11,
         is_recurring=$12, recurring_active=$13, send_day=$14, due_day=$15, recurring_name=$16,
-        auto_send=$17, auto_qb=$18, auto_gc=$19, updated_at=NOW()
+        auto_send=$17, auto_qb=$18, auto_gc=$19, fao_name=$20, updated_at=NOW()
        WHERE id=$10 AND deleted_at IS NULL`,
       [
         custId, (b.title || '').trim(),
@@ -503,7 +557,7 @@ router.post('/invoices/:id', requireAuth, async (req: Request, res: Response, ne
         nz(b.payment_method) || 'upfront', nz(b.issue_date), nz(b.due_date), nz(b.currency_code) || 'GBP',
         nz(b.notes), nz(b.terms), id, contractType,
         on(b.is_recurring), on(b.recurring_active), parseInt(b.send_day, 10) || 23, parseInt(b.due_day, 10) || 1,
-        nz(b.recurring_name), on(b.auto_send), on(b.auto_qb), on(b.auto_gc),
+        nz(b.recurring_name), on(b.auto_send), on(b.auto_qb), on(b.auto_gc), nz(b.fao_name),
       ]
     );
     await saveItemsAndTotals(client, id, b);

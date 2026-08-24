@@ -38,7 +38,7 @@
 <table width="100%" style="margin-bottom:18px;"><tr>
   <td style="vertical-align:top;width:55%;">
     <div class="lbl" style="margin-bottom:6px;">Invoice To</div>
-    <div style="font-size:13px;line-height:1.7;color:#111827;"><strong><%= invoice.customer_name %></strong><br><%= addrLines.join(', ') %></div>
+    <div style="font-size:13px;line-height:1.7;color:#111827;"><strong><%= invoice.customer_name %></strong><% if (invoice.fao_name) { %><br>FAO <%= invoice.fao_name %><% } %><br><%= addrLines.join(', ') %></div>
   </td>
   <td style="vertical-align:top;text-align:right;">
     <table cellspacing="4" style="margin-left:auto;">

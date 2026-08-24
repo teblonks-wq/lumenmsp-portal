@@ -1312,6 +1312,11 @@ model Invoice {
   // for quotes and contracts.
   viewToken           String?   @unique @map("view_token")
   customerId          Int?      @map("customer_id")
+  // "FAO <person>" on the invoice address block. The CUSTOMER stays the bill-to and the
+  // debtor - this only names who at that company the invoice is for. Stored as TEXT, not a
+  // contact FK, on purpose: an invoice is a historical document, so renaming or deleting a
+  // contact must not change or blank what a already-sent PDF says.
+  faoName             String?   @map("fao_name")
   quoteId             Int?      @map("quote_id")
   quickbooksInvoiceId String?   @map("quickbooks_invoice_id")
   gocardlessPaymentId String?   @map("gocardless_payment_id")

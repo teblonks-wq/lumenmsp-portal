@@ -15,7 +15,7 @@
     </h1>
     <p class="doc-sub">
       <%= invoice.title %>
-      <% if (invoice.customer_name) { %> · <a class="row-link" href="/customers/<%= invoice.customer_id %>"><%= invoice.customer_name %></a><% } %>
+      <% if (invoice.customer_name) { %> · <a class="row-link" href="/customers/<%= invoice.customer_id %>"><%= invoice.customer_name %></a><% } %><% if (invoice.fao_name) { %> <span class="badge badge-inactive" style="font-size:11px;" title="Printed on the invoice under the company name. The customer is still the bill-to.">FAO <%= invoice.fao_name %></span><% } %>
       <% if (invoice.quote_number) { %> · from quote <a class="row-link" href="/quotes/<%= invoice.quote_id %>"><%= invoice.quote_number %></a><% } %>
     </p>
   </div>
@@ -35,6 +35,7 @@
     <details class="dd">
       <summary class="btn">⋯</summary>
       <div class="dd-pop">
+        <form method="post" action="/invoices/<%= invoice.id %>/duplicate" onsubmit="return confirm('Copy this invoice into a new DRAFT for the same customer? Lines and prices are copied; the number, dates and status are fresh, and nothing is sent.');"><button type="submit">⧉ Duplicate as new draft</button></form>
         <a href="/invoices/<%= invoice.id %>/pdf?dl=1">Download PDF</a>
         <form method="post" action="/invoices/<%= invoice.id %>/regenerate" onsubmit="return confirm('Rebuild this invoice\'s lines from current source data (Giacom / calls / IT &amp; Cloud)? Totals will change. QuickBooks is not auto-updated — re-push if it\'s already in QB.');"><button type="submit">↻ Regenerate from source</button></form>
         <% if (invoice.invoice_scheme==='IC') { %>
