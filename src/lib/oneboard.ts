@@ -12,6 +12,10 @@ import {
   baselineForRange, buildCurve, summariseCurve, CURVE_TARGET_DEFAULT,
   type CurveHour, type CurveSummary, type RangeBaseline,
 } from './oneboard-curve';
+import {
+  buildDaily, buildDow, buildMissedHours,
+  type DailyPoint, type DowPoint, type MissedHourPoint,
+} from './oneboard-charts';
 
 // ── OneBoard — "Dashboard for the whole company" ─────────────────────────────────
 // One customer-facing dashboard that brings a customer's SITES together WITHOUT
@@ -51,6 +55,11 @@ export interface OneBoardSite {
   baseline: RangeBaseline | null;   // null = not enough history yet, or cache not built
   curve: CurveHour[];               // one entry per business hour
   curveSummary: CurveSummary | null;
+  // Chart-ready series. Derived here, once, so the screen, the PDF and the test suite
+  // all draw the same numbers instead of each re-deriving them from the raw arrays.
+  dailyPoints: DailyPoint[];
+  dowPoints: DowPoint[];
+  missedHourPoints: MissedHourPoint[];
 }
 
 export interface OneBoardData {
@@ -219,7 +228,8 @@ export async function buildOneBoard(
         sites.push({ id: Number(s.id), label: s.site_label, configured: !!logic, included, metrics: null, prev: null,
           daily: [], missedByHour: [], totalByHour: [],
           missedByDow: [], totalByDow: [], daysSeenByDow: [], missedByDowHour: [], totalByDowHour: [],
-          baseline: null, curve: [], curveSummary: null });
+          baseline: null, curve: [], curveSummary: null,
+          dailyPoints: [], dowPoints: [], missedHourPoints: [] });
         continue;
       }
       const journeys = buildJourneys(rows, logic);
@@ -257,16 +267,22 @@ export async function buildOneBoard(
       const stats = yearStats.get(Number(s.id));
       const baseline = stats && stats.daysCovered >= BASELINE_MIN_DAYS ? baselineForRange(stats, daysSeenByDow) : null;
       const curve = buildCurve({ totalByHour: heatAll, missedByHour: heat, days: days.length, baseline, target });
+      const dailyRows = days.map((d) => ({ ...d, ...(byDay.get(d.day) || { total: 0, answered: 0, missed: 0 }) }));
 
       sites.push({
         id: Number(s.id), label: s.site_label, configured: true, included: true,
         metrics: metricsOf(journeys),
         prev: compare ? metricsOf(prevJourneys) : null,
-        daily: days.map((d) => ({ ...d, ...(byDay.get(d.day) || { total: 0, answered: 0, missed: 0 }) })),
+        daily: dailyRows,
         missedByHour: heat,
         totalByHour: heatAll,
         missedByDow, totalByDow, daysSeenByDow, missedByDowHour, totalByDowHour,
         baseline, curve, curveSummary: summariseCurve(curve),
+        dailyPoints: buildDaily(dailyRows, dowIndex, baseline ? baseline.dowAvg : null, target),
+        dowPoints: buildDow(totalByDow, missedByDow, daysSeenByDow,
+          baseline ? baseline.dowAvg : null, baseline ? baseline.dowMissedAvg : null),
+        missedHourPoints: buildMissedHours(ONEBOARD_HOURS, heat, heatAll, days.length,
+          baseline ? baseline.hourMissedAvg : null),
       });
     }
 

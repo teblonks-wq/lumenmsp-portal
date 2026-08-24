@@ -13,6 +13,7 @@ import { clientFromCustomer } from '../lib/insights/tollring-client';
 import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam } from '../lib/oneboard';
 import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
 import { curveSvg } from '../lib/oneboard-curve';
+import { dailySvg, dowSvg, missedHourSvg } from '../lib/oneboard-charts';
 import { askInsights } from '../lib/insights-ask';
 import { cacheNote } from '../lib/ai-compose';
 import { htmlToPdf } from '../lib/pdf';
@@ -44,6 +45,7 @@ router.get('/insights/oneboard', requireAuth, async (req: Request, res: Response
   res.render('insights/oneboard', {
     user: req.session.user, customers, customerId, ...(data || {}), ...r,
     obCurveSvg: curveSvg,
+    obDailySvg: dailySvg, obDowSvg: dowSvg, obMissedHourSvg: missedHourSvg,
     // Staff only for now. Pointing this at /my/oneboard would put it in front of customers
     // too - a one-line change once we are happy with what it says.
     obAskUrl: customerId ? '/insights/oneboard/ask' : '',

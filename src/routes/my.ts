@@ -10,6 +10,7 @@ import { sendMail } from '../lib/mailer';
 import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam, siteLogicsByIds } from '../lib/oneboard';
 import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
 import { curveSvg } from '../lib/oneboard-curve';
+import { dailySvg, dowSvg, missedHourSvg } from '../lib/oneboard-charts';
 import { buildWallboard, wallboardSites, WALLBOARD_MODULES, WALLBOARD_DEFAULT } from '../lib/wallboard';
 import { htmlToPdf } from '../lib/pdf';
 import * as fsx from 'fs';
@@ -780,7 +781,7 @@ router.get('/my/oneboard', need('insights'), async (req: Request, res: Response)
   const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare, allowedSiteIds: (perms(req) as any).insightsSites, target: r.met });
   // curveSvg is handed to the view because an EJS partial cannot require() one. Same
   // function the PDF uses, so the take-away and the screen draw the same picture.
-  res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, ...r, obCurveSvg: curveSvg });
+  res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, ...r, obCurveSvg: curveSvg, obDailySvg: dailySvg, obDowSvg: dowSvg, obMissedHourSvg: missedHourSvg });
 });
 
 // Take-aways — the same view as a polished PDF, and the data behind it as CSV.
