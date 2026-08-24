@@ -21,6 +21,19 @@ router.get('/contacts/search.json', requireAuth, async (req: Request, res: Respo
   res.json(rows);
 });
 
+// Contacts for ONE customer - feeds the invoice FAO lookup. Name-bearing rows only, primary
+// first. No deleted_at on this table (contacts cascade with the customer), so no filter needed.
+router.get('/contacts/for-customer.json', requireAuth, async (req: Request, res: Response) => {
+  const cid = parseInt(String(req.query.customer || ''), 10) || 0;
+  if (!cid) { res.json([]); return; }
+  const { rows } = await pool.query(
+    `SELECT id, full_name, job_title, email FROM customer_contacts
+      WHERE customer_id = $1 AND COALESCE(full_name,'') <> ''
+      ORDER BY is_primary DESC, full_name LIMIT 200`, [cid]
+  );
+  res.json(rows);
+});
+
 // Merge contact :id (source) INTO target_id (master): fold blanks, repoint refs, delete source.
 router.post('/contacts/:id/merge', requireAuth, async (req: Request, res: Response) => {
   const sourceId = parseInt(String(req.params.id), 10);

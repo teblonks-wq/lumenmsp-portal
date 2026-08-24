@@ -25,7 +25,7 @@
           <% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= (invoice && invoice.customer_id===c.id) || (preselectCustomer===c.id) ? 'selected' : '' %>><%= c.name %></option><% }); %>
         </select>
       </div>
-      <div class="form-group"><label>FAO (optional)</label><input class="input" name="fao_name" value="<%= v('fao_name') %>" placeholder="e.g. Dave Reynolds" title="Prints as &quot;FAO &lt;name&gt;&quot; under the company name on the invoice. The customer stays the bill-to."><p class="muted" style="font-size:11px;margin:4px 0 0;">Names a person at this company. Does not change who owes it.</p></div>
+      <div class="form-group"><label>FAO (optional)</label><input class="input" name="fao_name" list="faoList" value="<%= v('fao_name') %>" placeholder="Pick a contact…" title="Prints as &quot;FAO &lt;name&gt;&quot; under the company name on the invoice. The customer stays the bill-to."><datalist id="faoList"></datalist><p class="muted" style="font-size:11px;margin:4px 0 0;">Contacts for the selected customer. Does not change who owes it.</p></div>
       <div class="form-group"><label>Scheme</label><select class="input" name="invoice_scheme"><% ['IT','CS'].forEach(function(s){ %><option value="<%= s %>" <%= v('invoice_scheme')===s?'selected':'' %>><%= s %></option><% }); %></select></div>
       <div class="form-group"><label>Service type (contract)</label>
         <select class="input" name="contract_type">
@@ -149,6 +149,31 @@
         var o2 = document.createElement('option'); o2.value = p.name; pl.appendChild(o2);
       });
     }).catch(function(){});
+
+    // FAO lookup - contacts for whichever customer is selected, refreshed when it changes.
+    // Free text still posts: the stored value is a NAME, not a contact id, so an invoice keeps
+    // what it said even if that contact is later renamed or removed.
+    var faoCust = document.querySelector('[name="customer_id"]');
+    var faoList = document.getElementById('faoList');
+    function loadFao(){
+      if (!faoList) return;
+      faoList.innerHTML = '';
+      var cid = faoCust && faoCust.value;
+      if (!cid) return;
+      fetch('/contacts/for-customer.json?customer=' + encodeURIComponent(cid))
+        .then(function(r){ return r.json(); })
+        .then(function(rows){
+          (rows || []).forEach(function(c){
+            var o = document.createElement('option');
+            o.value = c.full_name;
+            var sub = [c.job_title, c.email].filter(Boolean).join(' \u00b7 ');
+            if (sub) o.label = sub;
+            faoList.appendChild(o);
+          });
+        }).catch(function(){});
+    }
+    if (faoCust) faoCust.addEventListener('change', loadFao);
+    loadFao();
 
     // Per-line product picker — selecting a product sets product_id + fills the row
     body.addEventListener('change', function(e){

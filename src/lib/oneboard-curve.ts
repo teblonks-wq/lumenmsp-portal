@@ -37,7 +37,10 @@ export interface RangeBaseline {
   lastDay: string | null;
   expected: { total: number; answered: number; missed: number; rate: number };
   hourAvg: number[];                         // 24 — DOW-weighted to the selected range
+  hourMissedAvg: number[];                   // 24 — the same, for missed calls only
   hourRate: (number | null)[];               // 24
+  dowAvg: number[];                          // 7  — calls on a typical Monday, Tuesday, …
+  dowMissedAvg: number[];                    // 7  — missed on a typical Monday, Tuesday, …
   gapDays: number;                           // days in the range whose weekday has no history
 }
 
@@ -65,6 +68,21 @@ export function baselineForRange(stats: SiteYearStats, daysSeenByDow: number[]):
   let total = 0, answered = 0, gapDays = 0, rangeDays = 0;
   const hourSum = Array(24).fill(0) as number[];
   const hourAnsSum = Array(24).fill(0) as number[];
+
+  // Per-weekday means, computed for ALL SEVEN regardless of what the range contains —
+  // the daily chart needs "a typical Tuesday" for every Tuesday it draws, and the
+  // weekday chart needs the whole week to compare against.
+  const dowAvg = Array(7).fill(0) as number[];
+  const dowMissedAvg = Array(7).fill(0) as number[];
+  for (let d = 0; d < 7; d++) {
+    const b = byDow[d];
+    const useAll = !b || !b.days;
+    const days = useAll ? allDays : b.days;
+    const t = useAll ? allTotal : b.total;
+    const a = useAll ? allAns : b.answered;
+    dowAvg[d] = mean(t, days);
+    dowMissedAvg[d] = mean(t - a, days);
+  }
 
   for (let d = 0; d < 7; d++) {
     const seen = daysSeenByDow[d] || 0;
@@ -101,7 +119,9 @@ export function baselineForRange(stats: SiteYearStats, daysSeenByDow: number[]):
       rate: total > 0 ? Math.round((answered / total) * 100) : 0,
     },
     hourAvg: hourSum.map((n) => (rangeDays ? n / rangeDays : 0)),
+    hourMissedAvg: hourSum.map((n, h) => (rangeDays ? Math.max(0, n - hourAnsSum[h]) / rangeDays : 0)),
     hourRate: hourSum.map((n, h) => (n >= 1 ? (hourAnsSum[h] / n) * 100 : null)),
+    dowAvg, dowMissedAvg,
     gapDays,
   };
 }
