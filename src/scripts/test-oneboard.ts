@@ -21,6 +21,7 @@ import {
   CURVE_MIN_SAMPLE, CURVE_TARGET_DEFAULT,
 } from '../lib/oneboard-curve';
 import type { DowBucket, SiteYearStats } from '../lib/oneboard-baseline';
+import { buildDaily, buildDow, buildMissedHours, dailySvg, dowSvg, missedHourSvg } from '../lib/oneboard-charts';
 
 let pass = 0, fail = 0;
 function check(name: string, cond: boolean, detail = ''): void {
@@ -151,6 +152,67 @@ console.log('\n── C: the curve and its verdicts ─────────�
     const out = curveSvg({ label: 'Quiet', curve: flat, target: 90 });
     return out.includes('<svg') && !/NaN|Infinity/.test(out);
   })());
+}
+
+console.log('\n── G: the rest of the board, as charts ──────────────────────────────');
+{
+  const DOW_AVG      = [100, 100, 100, 100, 100, 10, 0];   // a typical Mon..Sun
+  const DOW_MISS_AVG = [10, 10, 10, 10, 10, 1, 0];
+  const daily = [
+    { day: '2026-08-17', label: 'Mon 17 Aug', total: 120, answered: 114, missed: 6 },   // 95% - met
+    { day: '2026-08-18', label: 'Tue 18 Aug', total: 100, answered: 75,  missed: 25 },  // 75% - short (82% would be 'near')
+    { day: '2026-08-22', label: 'Sat 22 Aug', total: 4,   answered: 0,   missed: 4 },   // below the floor
+    { day: '2026-08-23', label: 'Sun 23 Aug', total: 0,   answered: 0,   missed: 0 },
+  ];
+  const dp = buildDaily(daily, dowIndex, DOW_AVG, 90);
+
+  // The reference MOVES with the weekday. A flat "average day" would mark every
+  // Saturday as a collapse and every Tuesday as a triumph.
+  check('G1 each day is compared with its OWN weekday average',
+    dp[0].expected === 100 && dp[2].expected === 10 && dp[3].expected === 0,
+    `${dp[0].expected} / ${dp[2].expected} / ${dp[3].expected}`);
+  check('G2 the day verdict uses the same rule as the hour verdict',
+    dp[0].verdict === 'met' && dp[1].verdict === 'short' && dp[2].verdict === 'quiet',
+    `${dp[0].verdict} / ${dp[1].verdict} / ${dp[2].verdict}`);
+  check('G3 no baseline means no reference line, not a zero one',
+    buildDaily(daily, dowIndex, null, 90).every((d) => d.expected === null));
+
+  const dw = buildDow([500, 300, 0, 0, 0, 20, 0], [50, 60, 0, 0, 0, 2, 0], [5, 2, 0, 0, 0, 1, 0], DOW_AVG, DOW_MISS_AVG);
+  // Five Mondays and two Tuesdays: the raw totals say Monday is worse, the per-day
+  // figures say the opposite. This is the whole reason the chart plots per-day.
+  check('G4 weekday bars are PER DAY, not totals',
+    dw[0].perDay === 100 && dw[1].perDay === 150 && dw[0].missedPerDay === 10 && dw[1].missedPerDay === 30,
+    `${dw[0].perDay}/${dw[1].perDay} · ${dw[0].missedPerDay}/${dw[1].missedPerDay}`);
+  check('G5 a weekday the range never contained reads as nothing, not as zero calls',
+    dw[2].seen === 0 && dw[2].perDay === 0 && dw[2].basePerDay === 100, String(dw[2].basePerDay));
+
+  const HOURS = [7, 8, 9];
+  const missedByHour = Array(24).fill(0); missedByHour[8] = 14; missedByHour[9] = 7;
+  const totalByHour = Array(24).fill(0);  totalByHour[8] = 70;  totalByHour[9] = 70;
+  const baseMissed = Array(24).fill(0);   baseMissed[8] = 1.0;  baseMissed[9] = 1.5;
+  const mh = buildMissedHours(HOURS, missedByHour, totalByHour, 7, baseMissed);
+  check('G6 missed-per-hour is per day of the range', mh[1].avg === 2 && mh[2].avg === 1, `${mh[1].avg}/${mh[2].avg}`);
+  check('G7 …and carries the year average for the same hour', mh[1].baseAvg === 1 && mh[2].baseAvg === 1.5);
+  check('G8 a zero-day range divides by zero nowhere',
+    buildMissedHours(HOURS, missedByHour, totalByHour, 0, null).every((h) => h.avg === 0 && h.baseAvg === null));
+
+  const svgs = [
+    dailySvg({ label: 'Didcot', points: dp, target: 90, baselineLabel: '2026 average' }),
+    dowSvg({ label: 'Didcot', points: dw, baselineLabel: '2026 average' }),
+    missedHourSvg({ label: 'Didcot', points: mh, baselineLabel: '2026 average' }),
+  ];
+  check('G9 all three charts draw, with a tooltip on every mark that has data',
+    svgs.every((x) => x.includes('<svg') && x.includes('<title>')));
+  check('G10 no chart produces NaN or Infinity from empty data', (() => {
+    const empty = [
+      dailySvg({ label: 'Q', points: buildDaily([{ day: '2026-08-23', label: 'Sun', total: 0, answered: 0, missed: 0 }], dowIndex, null, 90), target: 90 }),
+      dowSvg({ label: 'Q', points: buildDow(Array(7).fill(0), Array(7).fill(0), Array(7).fill(0), null, null) }),
+      missedHourSvg({ label: 'Q', points: buildMissedHours([7, 8], Array(24).fill(0), Array(24).fill(0), 0, null) }),
+    ];
+    return empty.every((x) => x.includes('<svg') && !/NaN|Infinity/.test(x));
+  })());
+  check('G11 the year average is a dashed reference on every chart that has one',
+    svgs.every((x) => x.includes('stroke-dasharray')));
 }
 
 console.log('\n── the label a customer reads ───────────────────────────────────────');
