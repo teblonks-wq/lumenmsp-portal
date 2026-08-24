@@ -1,5 +1,6 @@
 import { OneBoardData, OneBoardSite, ONEBOARD_HOURS } from './oneboard';
 import { curveSvg, CURVE_PALETTE_PRINT, VERDICT_LABEL } from './oneboard-curve';
+import { dailySvg, dowSvg, missedHourSvg } from './oneboard-charts';
 
 // ── OneBoard take-away exports — CSV (the data) and PDF (the view) ─────────────────
 // Both are built from the SAME OneBoardData the on-screen board renders, so what the
@@ -92,6 +93,34 @@ export function oneBoardCsv(data: OneBoardData, from: string, to: string): strin
   }
 
   return '\uFEFF' + rows.join('\r\n') + '\r\n';   // BOM so Excel opens it as UTF-8
+}
+
+// The three board charts, drawn by the SAME functions the screen uses — only the
+// palette differs, because Puppeteer prints a page with none of our CSS variables in
+// scope. A take-away that disagreed with the board would be worse than no take-away.
+function chartSection(data: OneBoardData, sites: OneBoardSite[]): string {
+  const withCharts = sites.filter((s) => s.dailyPoints?.length || s.dowPoints?.length);
+  if (!withCharts.length) return '';
+  const key = `<div class="key">
+    <span><svg width="10" height="10"><rect width="10" height="10" rx="2" fill="#0ea5b7"/></svg> Answered</span>
+    <span><svg width="10" height="10"><rect width="10" height="10" rx="2" fill="#dc2626"/></svg> Missed</span>
+    <span><svg width="24" height="8"><line x1="1" y1="4" x2="23" y2="4" stroke="#64748b" stroke-width="2" stroke-dasharray="5 4"/></svg> ${esc(data.baselineName)}</span>
+  </div>`;
+  const blocks = withCharts.map((s) => `<div class="curve">
+    <div class="curve-h"><div class="curve-n">${esc(s.label)}</div>
+      <div class="curve-s">${s.metrics ? `${s.metrics.total} calls &middot; ${s.metrics.missed} missed` : ''}${
+        s.baseline && s.baseline.expected.total
+          ? ` &middot; ${Math.abs(Math.round(((s.metrics!.total - s.baseline.expected.total) / s.baseline.expected.total) * 100))}% ${s.metrics!.total >= s.baseline.expected.total ? 'above' : 'below'} the ${esc(data.baselineName.toLowerCase())} for these dates`
+          : ''}</div></div>
+    ${dailySvg({ label: s.label, points: s.dailyPoints, target: data.target, palette: CURVE_PALETTE_PRINT, width: 980, height: 150, baselineLabel: data.baselineName })}
+    <div class="curve-s" style="margin-top:6px;">By day of the week &mdash; per day, against the same weekday's average</div>
+    ${dowSvg({ label: s.label, points: s.dowPoints, palette: CURVE_PALETTE_PRINT, width: 980, height: 140, baselineLabel: data.baselineName })}
+    <div class="curve-s" style="margin-top:6px;">Missed calls by hour &mdash; per day, against the year's average</div>
+    ${missedHourSvg({ label: s.label, points: s.missedHourPoints, palette: CURVE_PALETTE_PRINT, width: 980, height: 130, baselineLabel: data.baselineName })}
+  </div>`).join('');
+  return `<div class="card curve-card"><div class="card-t">Calls against the ${esc(data.baselineName.toLowerCase())}</div>
+    <div class="card-n">Every chart plots this period against the mean for the same weekdays, so "busy" and "worse than normal" can be told apart. Bars split answered from missed; the dashed line is the average.</div>
+    ${key}${blocks}</div>`;
 }
 
 // The demand curve, drawn by the SAME curveSvg() the board uses — a take-away that
@@ -237,6 +266,7 @@ export function oneBoardPdfHtml(data: OneBoardData, opts: { from: string; to: st
   <div class="cards">${scorecards}</div>
   <div class="card"><div class="card-t">Daily calls &mdash; answered v missed</div><div class="card-n">Per branch, per day across the period.</div>
     <table><thead><tr><th>Day</th>${dailyHead1}</tr><tr><th></th>${dailyHead2}</tr></thead><tbody>${dailyRows}</tbody></table></div>
+  ${chartSection(data, sites)}
   ${heatTable('Missed calls by hour', 'Each cell = missed calls in that hour across the selected dates.', HEAT_MISSED, data.maxHeat, (s, h) => s.missedByHour[h], 'More missed')}
   ${heatTable('All incoming calls by hour', 'Each cell = every incoming call in that hour across the selected dates.', HEAT_ALL, data.maxHeatAll, (s, h) => s.totalByHour[h], 'More calls')}
   ${curveSection(data, sites)}
