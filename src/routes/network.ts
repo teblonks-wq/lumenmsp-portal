@@ -184,6 +184,42 @@ router.post('/network/devices', requireAuth, requireAdmin, async (req: Request, 
   }
 });
 
+/** Turn monitoring on or off for a batch.
+ *
+ * Monitoring is the switch that decides whether the 30-minute sweep ever reads a device,
+ * so doing it one page at a time for a site with fifteen printers is the difference between
+ * a feature that gets used and one that does not. */
+router.post('/network/devices/monitor', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const custId = parseInt(String(b.customerId || ''), 10) || null;
+  const on = String(b.on || '') === '1';
+  const to = `/network?customer=${custId || ''}${b.kind ? '&kind=' + encodeURIComponent(String(b.kind)) : ''}`;
+
+  const raw = Array.isArray(b.ids) ? b.ids : (b.ids ? [b.ids] : []);
+  const ids = raw.map((x: any) => parseInt(String(x), 10)).filter((n: number) => Number.isFinite(n) && n > 0);
+  if (!ids.length) { res.redirect(to + '&err=' + encodeURIComponent('Nothing was ticked.')); return; }
+
+  try {
+    // Scoped to the customer on the form as well as by id. Ticking rows on one customer's
+    // page must not be able to reach into another's, however the form is posted.
+    const r = await pool.query(
+      `UPDATE network_devices SET monitored=$1
+        WHERE id = ANY($2::int[]) AND customer_id=$3 AND archived_at IS NULL
+        RETURNING id`, [on, ids, custId]);
+    await logActivity(req.session.user!.id, 'network_monitor', 'customers', custId,
+      `${on ? 'Started' : 'Stopped'} monitoring ${r.rowCount} network device(s)`);
+
+    // Say what a tick actually causes, because "monitored" on its own means nothing to
+    // somebody who has not read the scheduler.
+    res.redirect(to + '&msg=' + encodeURIComponent(on
+      ? `${r.rowCount} device(s) now monitored — each one is read every 30 minutes, and low toner or a printer warning raises an alert on N3twrx.`
+      : `${r.rowCount} device(s) no longer monitored. They stay on the list; nothing polls them.`));
+  } catch (e: any) {
+    console.error('[network] bulk monitor failed:', e.message);
+    res.redirect(to + '&err=' + encodeURIComponent('Could not change those.'));
+  }
+});
+
 router.get('/network/device/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const d = (await pool.query(

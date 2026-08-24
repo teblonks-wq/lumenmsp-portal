@@ -82,7 +82,7 @@ import { startAcronisSync } from './lib/acronis';
 import { startEolSync } from './lib/eol-sync';
 import { startSecurityReconcile } from './lib/gravityzone-deploy';
 import { initVaultKey } from './lib/vault';
-import { startGravityZoneSync, startAteraImport, startSecurityFreshnessSweep } from './lib/auto-sync';
+import { startGravityZoneSync, startAteraImport, startSecurityFreshnessSweep , startNetworkPolling } from './lib/auto-sync';
 import { resumeMassMailer } from './lib/mass-mailer';
 import { hasFinanceAccess, hasVaultAccess } from './middleware/auth';
 import { startRecurringBilling } from './lib/recurring-billing';
@@ -99,6 +99,7 @@ import { startGoCardlessSync } from './lib/gocardless-sync';
 import { startExtLabelSync } from './lib/insights/ext-labels';
 import { startTollringSync } from './lib/insights/tollring-sync';
 import { startReportScheduler } from './lib/insights/report-scheduler';
+import { startOneBoardBaseline } from './lib/oneboard-baseline';
 import { ensureSiteLogicColumn, ensureReportPoolTables } from './lib/insights/report-generator';
 import { ensureItReportTables } from './lib/it-report/generate';
 import { startItReportScheduler } from './lib/it-report/scheduler';
@@ -485,6 +486,7 @@ server.listen(config.PORT, () => {
   startRecurringBilling();
   startTollringSync();      // Insights: Tollring call sync every 10 min → call_events
   startReportScheduler();   // Insights: per-minute due-report generate + email
+  startOneBoardBaseline(); // OneBoard: nightly year-to-date per-day/per-hour roll-up
   ensureSiteLogicColumn().catch((e) => console.error('ensureSiteLogicColumn failed:', e.message)); // Insights: lift call logic to the site level + backfill
   ensureReportPoolTables().catch((e) => console.error('ensureReportPoolTables failed:', e.message)); // Insights: report pool (templates) + per-site schedules
   ensureCustomerPortalColumn().catch((e) => console.error('ensureCustomerPortalColumn failed:', e.message)); // customer portal master switch
@@ -518,5 +520,6 @@ server.listen(config.PORT, () => {
                                  // machine could install cleanly and never reach 'protected'.
   startAteraImport();            // Atera device list. Was a button only.
   startSecurityFreshnessSweep(); // Ask the stalest machines for a fresh security reading, capped
+  startNetworkPolling();   // read every monitored printer/switch every 30 minutes
                                  // per pass so the estate is walked rather than stampeded.
 });

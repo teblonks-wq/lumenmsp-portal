@@ -9,6 +9,7 @@ import { generateFromTemplate } from '../lib/insights/report-generator';
 import { sendMail } from '../lib/mailer';
 import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam, siteLogicsByIds } from '../lib/oneboard';
 import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
+import { curveSvg } from '../lib/oneboard-curve';
 import { buildWallboard, wallboardSites, WALLBOARD_MODULES, WALLBOARD_DEFAULT } from '../lib/wallboard';
 import { htmlToPdf } from '../lib/pdf';
 import * as fsx from 'fs';
@@ -776,15 +777,17 @@ router.get('/my/oneboard', need('insights'), async (req: Request, res: Response)
   const u = req.session.user!; const c = cid(req);
   const company = (await rows('SELECT name FROM customers WHERE id=$1', [c]))[0]?.name || '';
   const r = parseOneBoardRange(req.query as Record<string, any>);
-  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare, allowedSiteIds: (perms(req) as any).insightsSites });
-  res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, ...r });
+  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare, allowedSiteIds: (perms(req) as any).insightsSites, target: r.met });
+  // curveSvg is handed to the view because an EJS partial cannot require() one. Same
+  // function the PDF uses, so the take-away and the screen draw the same picture.
+  res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, ...r, obCurveSvg: curveSvg });
 });
 
 // Take-aways — the same view as a polished PDF, and the data behind it as CSV.
 router.get('/my/oneboard.pdf', need('insights'), async (req: Request, res: Response) => {
   const c = cid(req);
   const r = parseOneBoardRange(req.query as Record<string, any>);
-  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare, allowedSiteIds: (perms(req) as any).insightsSites });
+  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare, allowedSiteIds: (perms(req) as any).insightsSites, target: r.met });
   const pdf = await htmlToPdf(oneBoardPdfHtml(data, { from: r.from, to: r.to, compare: r.compare }),
     { format: 'A4', landscape: true, margin: { top: '10mm', right: '10mm', bottom: '12mm', left: '10mm' } });
   res.setHeader('Content-Type', 'application/pdf');
@@ -795,7 +798,7 @@ router.get('/my/oneboard.pdf', need('insights'), async (req: Request, res: Respo
 router.get('/my/oneboard.csv', need('insights'), async (req: Request, res: Response) => {
   const c = cid(req);
   const r = parseOneBoardRange(req.query as Record<string, any>);
-  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: false, allowedSiteIds: (perms(req) as any).insightsSites });
+  const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: false, allowedSiteIds: (perms(req) as any).insightsSites, target: r.met });
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${exportFilename(data.insName, r.from, r.to, 'csv')}"`);
   res.send(oneBoardCsv(data, r.from, r.to));

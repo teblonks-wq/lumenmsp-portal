@@ -28,7 +28,7 @@ export interface InsightsAnswer {
 const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
 const avg = (n: number, d: number) => (d > 0 ? (n / d).toFixed(1) : '0.0');
 
-function siteBlock(s: OneBoardSite): string {
+function siteBlock(s: OneBoardSite, data: OneBoardData): string {
   if (!s.configured || !s.metrics) return `SITE: ${s.label}\n  (no call logic configured - no data)`;
   const m = s.metrics;
   const lines: string[] = [];
@@ -36,6 +36,23 @@ function siteBlock(s: OneBoardSite): string {
   lines.push(`  Totals: ${m.total} calls, ${m.answered} answered, ${m.missed} missed (${m.rate}% answered)`);
   if (s.prev) {
     lines.push(`  Previous equivalent period: ${s.prev.total} calls, ${s.prev.missed} missed (${s.prev.rate}% answered)`);
+  }
+  // "Up on last week" and "normal" are different questions and the model must be able to
+  // tell them apart, so the mean for these same weekdays is given as its own line.
+  if (s.baseline) {
+    const e = s.baseline.expected;
+    const volume = e.total ? Math.round(((m.total - e.total) / e.total) * 100) : 0;
+    lines.push(`  NORMAL FOR THESE WEEKDAYS (${data.baselineName}, built from ${s.baseline.daysCovered} days ${data.baselineFrom} to ${data.baselineTo}): ${e.total} calls, ${e.missed} missed (${e.rate}% answered).`);
+    lines.push(`    This period is ${volume >= 0 ? '+' : ''}${volume}% on call volume and ${m.rate - e.rate >= 0 ? '+' : ''}${m.rate - e.rate} percentage points on answer rate versus that normal.`);
+    if (s.baseline.gapDays) lines.push(`    (${s.baseline.gapDays} day(s) in this range are a weekday with no history of its own, so the overall daily mean was used for them.)`);
+  }
+  if (s.curve?.length) {
+    lines.push(`  DEMAND THROUGH THE DAY - calls per day in each hour, this period v ${data.baselineName}, and whether the hour cleared the ${data.target}% answer target:`);
+    for (const c of s.curve) {
+      const base = c.baseAvg == null ? '' : ` (normally ${avg(c.baseAvg, 1)})`;
+      const rate = c.rate == null ? 'too few calls to judge' : `${c.rate}% answered, ${c.verdict}`;
+      lines.push(`    ${String(c.hour).padStart(2, '0')}:00 ${avg(c.avg, 1)} calls/day${base} - ${rate}`);
+    }
   }
 
   lines.push('  BY DAY OF WEEK (the range covers a different number of each weekday, so the per-day averages are the fair comparison):');
@@ -71,10 +88,11 @@ export function buildInsightsCorpus(data: OneBoardData, from: string, to: string
     `PERIOD: ${from} to ${to} inclusive (${spanDays} days)`,
     'DEFINITIONS: "missed" includes abandoned calls - a caller who hung up waiting counts as missed.',
     'All times are Europe/London wall-clock. Hourly columns cover 07:00-19:00 only; calls outside those hours are in the totals but not the grid.',
+    `DEFINITIONS: "${data.baselineName}" is the mean for the SAME WEEKDAYS across ${data.baselineFrom} to ${data.baselineTo} - it answers "is this normal", where the previous-period figures answer "are we up or down". An hour is judged only when it carried enough calls to judge; hours marked "quiet" are not evidence of poor cover.`,
     data.compareNote ? `NOTE: ${data.compareNote}` : null,
   ].filter(Boolean).join('\n');
   // The blank line matters: without it the last header line runs straight into "SITE:".
-  return head + '\n\n' + included.map(siteBlock).join('\n\n') + '\n';
+  return head + '\n\n' + included.map((s) => siteBlock(s, data)).join('\n\n') + '\n';
 }
 
 const SYSTEM = [

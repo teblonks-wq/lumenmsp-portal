@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "test:journeys": "tsx src/scripts/test-journeys.ts",
+    "test:oneboard": "tsx src/scripts/test-oneboard.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "migrate": "prisma migrate deploy",

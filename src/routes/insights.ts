@@ -12,6 +12,7 @@ import { moduleList } from '../lib/insights/reports/modules';
 import { clientFromCustomer } from '../lib/insights/tollring-client';
 import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam } from '../lib/oneboard';
 import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
+import { curveSvg } from '../lib/oneboard-curve';
 import { askInsights } from '../lib/insights-ask';
 import { cacheNote } from '../lib/ai-compose';
 import { htmlToPdf } from '../lib/pdf';
@@ -38,10 +39,11 @@ router.get('/insights/oneboard', requireAuth, async (req: Request, res: Response
   const customerId = parseInt(String(req.query.customer || ''), 10) || 0;
   const r = parseOneBoardRange(req.query as Record<string, any>);
   const data = customerId
-    ? await buildOneBoard(customerId, { from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: r.compare })
+    ? await buildOneBoard(customerId, { from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: r.compare, target: r.met })
     : null;
   res.render('insights/oneboard', {
     user: req.session.user, customers, customerId, ...(data || {}), ...r,
+    obCurveSvg: curveSvg,
     // Staff only for now. Pointing this at /my/oneboard would put it in front of customers
     // too - a one-line change once we are happy with what it says.
     obAskUrl: customerId ? '/insights/oneboard/ask' : '',
@@ -61,6 +63,7 @@ router.post('/insights/oneboard/ask', requireAuth, async (req: Request, res: Res
     const r = parseOneBoardRange(req.query as Record<string, any>);
     const data = await buildOneBoard(customerId, {
       from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: r.compare,
+      target: r.met,
     });
     if (data.state !== 'ok') { res.status(400).json({ ok: false, error: 'Call analytics is not available for this customer right now.' }); return; }
     if (!data.sites.some((s) => s.included && s.configured)) {
@@ -89,7 +92,7 @@ router.get('/insights/oneboard.pdf', requireAuth, async (req: Request, res: Resp
   const customerId = parseInt(String(req.query.customer || ''), 10) || 0;
   if (!customerId) { res.status(400).send('customer required'); return; }
   const r = parseOneBoardRange(req.query as Record<string, any>);
-  const data = await buildOneBoard(customerId, { from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: r.compare });
+  const data = await buildOneBoard(customerId, { from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: r.compare, target: r.met });
   const pdf = await htmlToPdf(oneBoardPdfHtml(data, { from: r.from, to: r.to, compare: r.compare }),
     { format: 'A4', landscape: true, margin: { top: '10mm', right: '10mm', bottom: '12mm', left: '10mm' } });
   res.setHeader('Content-Type', 'application/pdf');
@@ -101,7 +104,7 @@ router.get('/insights/oneboard.csv', requireAuth, async (req: Request, res: Resp
   const customerId = parseInt(String(req.query.customer || ''), 10) || 0;
   if (!customerId) { res.status(400).send('customer required'); return; }
   const r = parseOneBoardRange(req.query as Record<string, any>);
-  const data = await buildOneBoard(customerId, { from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: false });
+  const data = await buildOneBoard(customerId, { from: r.from, to: r.to, siteIds: parseSiteIdsParam(req.query as Record<string, any>), compare: false, target: r.met });
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${exportFilename(data.insName, r.from, r.to, 'csv')}"`);
   res.send(oneBoardCsv(data, r.from, r.to));

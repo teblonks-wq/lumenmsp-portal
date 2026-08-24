@@ -1,4 +1,5 @@
 import { OneBoardData, OneBoardSite, ONEBOARD_HOURS } from './oneboard';
+import { curveSvg, CURVE_PALETTE_PRINT, VERDICT_LABEL } from './oneboard-curve';
 
 // ── OneBoard take-away exports — CSV (the data) and PDF (the view) ─────────────────
 // Both are built from the SAME OneBoardData the on-screen board renders, so what the
@@ -57,7 +58,71 @@ export function oneBoardCsv(data: OneBoardData, from: string, to: string): strin
   rows.push(['Site', ...hourHead].map(q).join(','));
   for (const s of sites) rows.push([s.label, ...ONEBOARD_HOURS.map((h) => s.totalByHour[h] || 0)].map(q).join(','));
 
+  // The mean, and what the period did against it. Expected figures are weighted by the
+  // weekdays this period actually contains, so a Mon-Fri range is compared with normal
+  // Mon-Fris and not dragged down by the year's Sundays.
+  const withBase = sites.filter((s) => s.baseline);
+  if (withBase.length) {
+    rows.push('');
+    rows.push(`${data.baselineName} (${data.baselineFrom} to ${data.baselineTo}), weighted to the weekdays in this period`);
+    rows.push(['Site', 'Expected calls', 'Expected answered', 'Expected missed', 'Expected answer rate %',
+               'Actual calls', 'Actual answer rate %', 'Calls vs average %', 'Answer rate vs average (points)',
+               'Days of history behind the average'].map(q).join(','));
+    for (const s of withBase) {
+      const e = s.baseline!.expected, m = s.metrics!;
+      rows.push([s.label, e.total, e.answered, e.missed, e.rate, m.total, m.rate,
+                 e.total ? Math.round(((m.total - e.total) / e.total) * 100) : '',
+                 m.rate - e.rate, s.baseline!.daysCovered].map(q).join(','));
+    }
+  }
+
+  const withCurve = sites.filter((s) => s.curve && s.curve.length);
+  if (withCurve.length) {
+    rows.push('');
+    rows.push(`Demand through the day (answer target ${data.target}%)`);
+    rows.push(['Site', 'Hour', 'Avg calls per day', `${data.baselineName} calls per day`,
+               'Calls in period', 'Answered in period', 'Answered %', `Verdict at ${data.target}%`].map(q).join(','));
+    for (const s of withCurve) {
+      for (const c of s.curve) {
+        rows.push([s.label, String(c.hour).padStart(2, '0') + ':00', c.avg.toFixed(2),
+                   c.baseAvg == null ? '' : c.baseAvg.toFixed(2),
+                   c.total, c.answered, c.rate == null ? '' : c.rate, VERDICT_LABEL[c.verdict]].map(q).join(','));
+      }
+    }
+  }
+
   return '\uFEFF' + rows.join('\r\n') + '\r\n';   // BOM so Excel opens it as UTF-8
+}
+
+// The demand curve, drawn by the SAME curveSvg() the board uses — a take-away that
+// disagreed with the screen would be worse than no take-away at all. Only the palette
+// changes: Puppeteer prints a page with none of our CSS variables in scope.
+function curveSection(data: OneBoardData, sites: OneBoardSite[]): string {
+  const withCurve = sites.filter((s) => s.curve && s.curve.length);
+  if (!withCurve.length) return '';
+  const key = `<div class="key">
+    <span><svg width="24" height="8"><line x1="1" y1="4" x2="23" y2="4" stroke="#0ea5b7" stroke-width="2"/></svg> This period</span>
+    <span><svg width="24" height="8"><line x1="1" y1="4" x2="23" y2="4" stroke="#64748b" stroke-width="2" stroke-dasharray="5 4"/></svg> ${esc(data.baselineName)}</span>
+    <span><svg width="12" height="12"><circle cx="6" cy="6" r="4" fill="#16a34a"/></svg> Target met</span>
+    <span><svg width="12" height="12"><path d="M6 1.2L10.8 6L6 10.8L1.2 6Z" fill="#d97706"/></svg> Within 10 points</span>
+    <span><svg width="12" height="12"><path d="M6 1L11 10.6L1 10.6Z" fill="#dc2626"/></svg> Under target</span>
+    <span><svg width="12" height="12"><circle cx="6" cy="6" r="3" fill="none" stroke="#cbd5e1" stroke-width="1.5"/></svg> Too few calls to judge</span>
+  </div>`;
+  const blocks = withCurve.map((s) => {
+    const cs = s.curveSummary;
+    const line = !cs || !cs.judged
+      ? 'Too few calls in this period to judge cover hour by hour.'
+      : `Target met in <b>${cs.met} of ${cs.judged}</b> busy hours &middot; `
+        + `<b>${Math.round((cs.callsMet / (cs.callsJudged || 1)) * 100)}%</b> of calls arrive in an hour that clears it`
+        + (cs.weakest && cs.weakest.rate != null ? ` &middot; weakest ${String(cs.weakest.hour).padStart(2, '0')}:00 (${cs.weakest.rate}%)` : '');
+    return `<div class="curve">
+      <div class="curve-h"><div class="curve-n">${esc(s.label)}</div><div class="curve-s">${line}</div></div>
+      ${curveSvg({ label: s.label, curve: s.curve, target: data.target, palette: CURVE_PALETTE_PRINT, width: 980, height: 150, baselineLabel: data.baselineName })}
+    </div>`;
+  }).join('');
+  return `<div class="card curve-card"><div class="card-t">Meeting demand through the day</div>
+    <div class="card-n">Calls per hour on an average day of this period (solid) against the ${esc(data.baselineName.toLowerCase())} for the same weekdays (dashed). Markers show whether that hour cleared the ${data.target}% answer target; each branch is scaled to its own busiest hour.</div>
+    ${key}${blocks}</div>`;
 }
 
 // ── PDF — a standalone A4-landscape document that mirrors the on-screen board ──────
@@ -85,6 +150,9 @@ export function oneBoardPdfHtml(data: OneBoardData, opts: { from: string; to: st
         <div><div class="sc-n" style="color:#dc2626;">${m.missed}</div><div class="sc-l">Missed${delta(m.missed, p?.missed, true)}</div></div>
         <div><div class="sc-n">${m.rate}%</div><div class="sc-l">Answer rate${p ? delta(m.rate, p.rate, false) : ''}</div></div>
       </div>
+      ${s.baseline ? `<div class="sc-base">${esc(data.baselineName)} for these dates: <b>${s.baseline.expected.total}</b> calls${
+        s.baseline.expected.total ? ` (${m.total >= s.baseline.expected.total ? '+' : ''}${Math.round(((m.total - s.baseline.expected.total) / s.baseline.expected.total) * 100)}%)` : ''
+      } &middot; <b>${s.baseline.expected.rate}%</b> answered (${m.rate - s.baseline.expected.rate >= 0 ? '+' : ''}${m.rate - s.baseline.expected.rate}pp)</div>` : ''}
       ${p ? `<div class="sc-prev">Previous period: ${p.total} calls &middot; ${p.rate}% answered</div>` : ''}
     </div>`;
   }).join('');
@@ -131,7 +199,17 @@ export function oneBoardPdfHtml(data: OneBoardData, opts: { from: string; to: st
   .sc-row { display: flex; gap: 12px; }
   .sc-n { font-size: 17px; font-weight: 700; line-height: 1; }
   .sc-l { font-size: 8.5px; color: #64748b; margin-top: 3px; }
-  .sc-prev { font-size: 8.5px; color: #94a3b8; margin-top: 6px; }
+  .sc-prev { font-size: 8.5px; color: #94a3b8; margin-top: 4px; }
+  .sc-base { font-size: 8.5px; color: #475569; margin-top: 6px; padding-top: 5px; border-top: 1px solid #f1f5f9; }
+  .curve { page-break-inside: avoid; border-top: 1px solid #f1f5f9; padding-top: 8px; margin-top: 8px; }
+  .curve:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+  .curve-h { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .curve-n { font-size: 10px; font-weight: 700; }
+  .curve-s { font-size: 8.5px; color: #64748b; }
+  .key { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font-size: 8.5px; color: #64748b; margin-bottom: 8px; }
+  /* Keep a section heading with the chart it introduces - a page that opens with two
+     unlabelled curves is a page nobody can read. */
+  .curve-card .card-t, .curve-card .card-n, .key { page-break-after: avoid; break-after: avoid; }
   .card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
   .card-t { font-size: 12px; font-weight: 700; }
   .card-n { font-size: 9px; color: #64748b; margin: 2px 0 8px; }
@@ -161,6 +239,7 @@ export function oneBoardPdfHtml(data: OneBoardData, opts: { from: string; to: st
     <table><thead><tr><th>Day</th>${dailyHead1}</tr><tr><th></th>${dailyHead2}</tr></thead><tbody>${dailyRows}</tbody></table></div>
   ${heatTable('Missed calls by hour', 'Each cell = missed calls in that hour across the selected dates.', HEAT_MISSED, data.maxHeat, (s, h) => s.missedByHour[h], 'More missed')}
   ${heatTable('All incoming calls by hour', 'Each cell = every incoming call in that hour across the selected dates.', HEAT_ALL, data.maxHeatAll, (s, h) => s.totalByHour[h], 'More calls')}
+  ${curveSection(data, sites)}
   ` : '<div class="card">No sites selected or configured for this period.</div>'}
   <div class="foot">Generated ${generated} &middot; Lumen IT Solutions &middot; portal.lumenmsp.co.uk</div>
 </body></html>`;

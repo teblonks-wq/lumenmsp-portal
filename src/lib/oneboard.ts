@@ -1,5 +1,17 @@
 import { insightsPool } from '../db/pool';
-import { buildJourneys, type CallEventRow, type CallJourney, type LogicConfig } from './insights-journeys';
+import { buildJourneys, type LogicConfig } from './insights-journeys';
+import {
+  ONEBOARD_HOURS, DOW_LABELS, DOW_SHORT, dowIndex,
+  addDays, dayList, ldn, logicFingerprint, metricsOf, siteLogicOf,
+} from './oneboard-core';
+import {
+  BASELINE_MIN_DAYS, baselineLabel, baselineWindow, fetchRowsBetween,
+  isBaselineBuilding, kickBaselineBuild, loadSiteBaselines,
+} from './oneboard-baseline';
+import {
+  baselineForRange, buildCurve, summariseCurve, CURVE_TARGET_DEFAULT,
+  type CurveHour, type CurveSummary, type RangeBaseline,
+} from './oneboard-curve';
 
 // ── OneBoard — "Dashboard for the whole company" ─────────────────────────────────
 // One customer-facing dashboard that brings a customer's SITES together WITHOUT
@@ -8,6 +20,13 @@ import { buildJourneys, type CallEventRow, type CallJourney, type LogicConfig } 
 // A site with no logic configured renders as "not set up" and contributes NOTHING,
 // never a whole-customer bleed. Data is fetched once per range and re-filtered per
 // site, so a 4-site customer costs one query, not four.
+//
+// Two questions, two comparisons. "Are we up or down?" is the previous-period compare.
+// "Is this normal?" is the baseline — the year-to-date mean for these weekdays, read
+// from the nightly cache in oneboard-baseline.ts. They answer different things and a
+// week can easily be up on last week and still below a normal week.
+
+export { ONEBOARD_HOURS, DOW_LABELS, DOW_SHORT, dowIndex };
 
 export interface OneBoardSite {
   id: number;
@@ -28,6 +47,10 @@ export interface OneBoardSite {
                                     // a 10-day range does not make Mon/Tue look busier
   missedByDowHour: number[][];      // [7][24] - the grid Ask Insights reasons over
   totalByDowHour: number[][];       // [7][24]
+  // The year-to-date mean for exactly these weekdays, and the day-shaped demand curve.
+  baseline: RangeBaseline | null;   // null = not enough history yet, or cache not built
+  curve: CurveHour[];               // one entry per business hour
+  curveSummary: CurveSummary | null;
 }
 
 export interface OneBoardData {
@@ -38,26 +61,22 @@ export interface OneBoardData {
   maxHeat: number;                  // max missed-per-hour cell across included sites
   maxHeatAll: number;               // max all-calls-per-hour cell across included sites
   compareNote: string | null;       // set when compare was requested but history can't support it
+  // Baseline state for the whole board — the panels stay honest about which of these
+  // three worlds they are in rather than drawing an average out of thin air.
+  baselineState: 'ready' | 'building' | 'thin' | 'off';
+  baselineNote: string | null;
+  baselineName: string;             // "2026 average" / "12-month average"
+  baselineFrom: string;
+  baselineTo: string;
+  target: number;                   // answer-rate target the demand curve is judged against
 }
 
-export const ONEBOARD_HOURS = Array.from({ length: 13 }, (_, i) => i + 7); // 07:00–19:00
-export const DOW_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-export const DOW_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-/** Monday-first index for a YYYY-MM-DD day string. JS getUTCDay() is Sunday-first, and a
- *  working week that starts on Sunday reads wrong to everyone who works here. */
-export function dowIndex(day: string): number {
-  return (new Date(day + 'T00:00:00Z').getUTCDay() + 6) % 7;
-}
-
-// Europe/London wall-clock parts for an ISO timestamp — the same clock the customer reads.
-const LDN_FMT = new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit',
-  hour: '2-digit', hourCycle: 'h23',
-});
-function ldn(iso: string): { day: string; hour: number } {
-  const parts = LDN_FMT.formatToParts(new Date(iso));
-  const g = (t: string) => parts.find((p) => p.type === t)?.value || '00';
-  return { day: `${g('year')}-${g('month')}-${g('day')}`, hour: parseInt(g('hour'), 10) || 0 };
+// Answer-rate target for the demand curve. Clamped: below 50% nothing is a target, and
+// 100% would paint every hour red for one abandoned call.
+export function parseTarget(q: Record<string, any>): number {
+  const n = parseInt(String(q?.met ?? ''), 10);
+  if (!Number.isFinite(n)) return CURVE_TARGET_DEFAULT;
+  return Math.min(100, Math.max(50, n));
 }
 
 // Logic configs for a set of this customer's sites — used by /my/insights to apply the
@@ -71,53 +90,8 @@ export async function siteLogicsByIds(insCustomerId: number, ids: number[]): Pro
   return r.rows.map((row: any) => siteLogicOf(row)).filter(Boolean) as LogicConfig[];
 }
 
-function siteLogicOf(row: any): LogicConfig | null {
-  const logic: LogicConfig = row.logic_config || {};
-  if (!logic.source_of_truth_group?.length && !logic.staff_extensions?.length) return null; // unconfigured
-  if (row.business_hours) logic.business_hours = row.business_hours;
-  return logic;
-}
-
-function metricsOf(journeys: CallJourney[]): { total: number; answered: number; missed: number; rate: number } {
-  const total = journeys.length;
-  const answered = journeys.filter((j) => j.status === 'Answered').length;
-  const missed = total - answered; // Missed + Abandoned + anything not answered — "missed includes abandoned"
-  return { total, answered, missed, rate: total ? Math.round((answered / total) * 100) : 0 };
-}
-
-async function fetchRows(insCustomerId: number, from: string, toExclusive: string): Promise<CallEventRow[]> {
-  if (!insightsPool) return [];
-  const r = await insightsPool.query(
-    `SELECT id, customer_id AS site_id, event_datetime, group_name, outcome,
-            number_raw, number_normalised, ddi, wait_seconds, source_file, call_id, extno, direction
-       FROM call_events
-      WHERE customer_id = $1
-        AND event_datetime >= $2 AND event_datetime < $3
-        AND (source_file ILIKE 'ContactGroupDetail%' OR source_file = 'tollring-sync')
-      ORDER BY event_datetime ASC LIMIT 2000000`,
-    [insCustomerId, from + ' 00:00:00', toExclusive + ' 00:00:00']
-  );
-  return r.rows as CallEventRow[];
-}
-
-// Every calendar day in [from, to] so quiet days still show as zero rows, not gaps.
-function dayList(from: string, to: string): { day: string; label: string }[] {
-  const out: { day: string; label: string }[] = [];
-  const d = new Date(from + 'T00:00:00Z');
-  const end = new Date(to + 'T00:00:00Z');
-  while (d <= end && out.length < 120) {
-    out.push({
-      day: d.toISOString().slice(0, 10),
-      label: d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }),
-    });
-    d.setUTCDate(d.getUTCDate() + 1);
-  }
-  return out;
-}
-
-function addDays(iso: string, n: number): string {
-  const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
+async function fetchRows(insCustomerId: number, from: string, toExclusive: string) {
+  return fetchRowsBetween(insCustomerId, from + ' 00:00:00', toExclusive + ' 00:00:00');
 }
 
 // ── Query parsing shared by the customer page (/my/oneboard), the staff page
@@ -128,6 +102,7 @@ export interface OneBoardRange {
   weeks: { mon: string; label: string }[];
   months: { first: string; last: string; label: string }[];
   weekSel: string; monthSel: string;
+  met: number;                      // answer-rate target for the demand curve
 }
 
 export function parseOneBoardRange(q: Record<string, any>): OneBoardRange {
@@ -158,7 +133,7 @@ export function parseOneBoardRange(q: Record<string, any>): OneBoardRange {
   const spanNow = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86400000) + 1;
   const weekSel = (spanNow === 7 && weeks.some((w) => w.mon === from)) ? from : '';
   const monthSel = months.find((m) => m.first === from && m.last === to)?.first || '';
-  return { from, to, compare: q.cmp === '1', weeks, months, weekSel, monthSel };
+  return { from, to, compare: q.cmp === '1', weeks, months, weekSel, monthSel, met: parseTarget(q) };
 }
 
 // Explicit ?sites= param → int list (possibly empty). Absent → null, so the caller
@@ -171,9 +146,15 @@ export function parseSiteIdsParam(q: Record<string, any>): number[] | null {
 
 export async function buildOneBoard(
   portalCustomerId: number,
-  opts: { from: string; to: string; siteIds: number[] | null; compare: boolean; allowedSiteIds?: number[] | null }
+  opts: { from: string; to: string; siteIds: number[] | null; compare: boolean; allowedSiteIds?: number[] | null; target?: number }
 ): Promise<OneBoardData> {
-  const empty: OneBoardData = { state: 'down', insName: '', sites: [], hours: ONEBOARD_HOURS, maxHeat: 0, maxHeatAll: 0, compareNote: null };
+  const target = opts.target || CURVE_TARGET_DEFAULT;
+  const win = baselineWindow();
+  const empty: OneBoardData = {
+    state: 'down', insName: '', sites: [], hours: ONEBOARD_HOURS, maxHeat: 0, maxHeatAll: 0, compareNote: null,
+    baselineState: 'off', baselineNote: null, baselineName: baselineLabel(win.from, win.to),
+    baselineFrom: win.from, baselineTo: win.to, target,
+  };
   if (!insightsPool) return empty;
   try {
     const ins = (await insightsPool.query(
@@ -216,7 +197,15 @@ export async function buildOneBoard(
         compareNote = `Comparison unavailable: the previous period would start ${prevFrom}, but call history only begins ${floor}.`;
       }
     }
-    const prevRows = compare ? await fetchRows(ins.id, prevFrom, opts.from) : [];
+    const prevRows = compare ? await fetchRowsBetween(ins.id, prevFrom + ' 00:00:00', opts.from + ' 00:00:00') : [];
+
+    // The cached year, for the sites actually on the board. Rows built under different
+    // site logic are dropped by loadSiteBaselines, so a retuned site shows no average
+    // until the next nightly rebuild rather than a mean of two different definitions.
+    const includedRows = siteRows.filter((s: any) => wanted.has(Number(s.id)) && siteLogicOf(s));
+    const yearStats = await loadSiteBaselines(
+      includedRows.map((s: any) => ({ id: Number(s.id), fingerprint: logicFingerprint(s) })), win
+    );
 
     const days = dayList(opts.from, opts.to);
     const sites: OneBoardSite[] = [];
@@ -229,7 +218,8 @@ export async function buildOneBoard(
       if (!logic || !included) {
         sites.push({ id: Number(s.id), label: s.site_label, configured: !!logic, included, metrics: null, prev: null,
           daily: [], missedByHour: [], totalByHour: [],
-          missedByDow: [], totalByDow: [], daysSeenByDow: [], missedByDowHour: [], totalByDowHour: [] });
+          missedByDow: [], totalByDow: [], daysSeenByDow: [], missedByDowHour: [], totalByDowHour: [],
+          baseline: null, curve: [], curveSummary: null });
         continue;
       }
       const journeys = buildJourneys(rows, logic);
@@ -264,6 +254,10 @@ export async function buildOneBoard(
       for (const d of days) daysSeenByDow[dowIndex(d.day)]++;
       for (const h of ONEBOARD_HOURS) { maxHeat = Math.max(maxHeat, heat[h]); maxHeatAll = Math.max(maxHeatAll, heatAll[h]); }
 
+      const stats = yearStats.get(Number(s.id));
+      const baseline = stats && stats.daysCovered >= BASELINE_MIN_DAYS ? baselineForRange(stats, daysSeenByDow) : null;
+      const curve = buildCurve({ totalByHour: heatAll, missedByHour: heat, days: days.length, baseline, target });
+
       sites.push({
         id: Number(s.id), label: s.site_label, configured: true, included: true,
         metrics: metricsOf(journeys),
@@ -272,9 +266,38 @@ export async function buildOneBoard(
         missedByHour: heat,
         totalByHour: heatAll,
         missedByDow, totalByDow, daysSeenByDow, missedByDowHour, totalByDowHour,
+        baseline, curve, curveSummary: summariseCurve(curve),
       });
     }
-    return { state: 'ok', insName: ins.name, sites, hours: ONEBOARD_HOURS, maxHeat, maxHeatAll, compareNote };
+
+    // Say which of the three baseline worlds we are in, once, for the whole board.
+    let baselineState: OneBoardData['baselineState'] = 'ready';
+    let baselineNote: string | null = null;
+    const shown = sites.filter((s) => s.included && s.configured);
+    const withBase = shown.filter((s) => s.baseline);
+    if (!shown.length) {
+      baselineState = 'off';
+    } else if (!withBase.length) {
+      if (isBaselineBuilding(ins.id)) {
+        baselineState = 'building';
+        baselineNote = 'The year-to-date average is being calculated for the first time. It will appear here within a few minutes — reload then.';
+      } else if (yearStats.size) {
+        baselineState = 'thin';
+        baselineNote = `Not enough history yet for a ${baselineLabel(win.from, win.to).toLowerCase()} — it needs at least ${BASELINE_MIN_DAYS} days per site.`;
+      } else {
+        baselineState = 'building';
+        baselineNote = 'The year-to-date average has not been calculated for this customer yet. It is being built now — reload in a few minutes.';
+        kickBaselineBuild(ins.id);
+      }
+    } else if (withBase.length < shown.length) {
+      baselineNote = `${shown.length - withBase.length} of ${shown.length} sites have no ${baselineLabel(win.from, win.to).toLowerCase()} yet (new site, or their call logic changed recently).`;
+    }
+
+    return {
+      state: 'ok', insName: ins.name, sites, hours: ONEBOARD_HOURS, maxHeat, maxHeatAll, compareNote,
+      baselineState, baselineNote, baselineName: baselineLabel(win.from, win.to),
+      baselineFrom: win.from, baselineTo: win.to, target,
+    };
   } catch (e: any) {
     console.error('[oneboard] build failed:', e?.message || e);
     return empty;

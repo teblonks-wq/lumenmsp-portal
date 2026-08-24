@@ -160,6 +160,20 @@ var SWATCH = { black:'#111827', cyan:'#06b6d4', magenta:'#db2777', yellow:'#eab3
     <span class="muted" style="font-size:12px;"><%= devices.length %> shown<%= kind ? ' of this kind' : '' %></span>
   </div>
 
+  <% if (devices.length) { %>
+  <div id="netBulk" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 0 12px;border-bottom:1px solid var(--line);margin-bottom:6px;">
+    <strong id="netSelCount">0 selected</strong>
+    <button class="btn btn-primary" type="submit" name="on" value="1" form="netForm">Start monitoring</button>
+    <button class="btn" type="submit" name="on" value="0" form="netForm">Stop monitoring</button>
+    <span class="muted" style="font-size:12px;">Monitored devices are read every 30 minutes. Low toner or a printer warning raises an alert on N3twrx.</span>
+  </div>
+  <form id="netForm" method="post" action="/network/devices/monitor">
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <input type="hidden" name="customerId" value="<%= custId %>">
+    <input type="hidden" name="kind" value="<%= kind %>">
+  </form>
+  <% } %>
+
   <% if (!devices.length) { %>
     <div class="empty-state" style="padding:18px;">
       <p class="muted">Nothing here yet. Scan a range, or add a device by hand below — a printer's IP is enough to start.</p>
@@ -174,12 +188,15 @@ var SWATCH = { black:'#111827', cyan:'#06b6d4', magenta:'#db2777', yellow:'#eab3
     <h3 style="margin:16px 0 6px;font-size:0.92rem;text-transform:uppercase;letter-spacing:.04em;" class="muted"><%= kindLabels[k] %> <span style="font-weight:400;">(<%= byKind[k].length %>)</span></h3>
     <div class="table-wrap">
       <table class="table table-lift">
-        <thead><tr><th>Name</th><th>IP</th><th>What it says it is</th><th style="min-width:190px;">Supplies</th><th>Warnings</th><th>Last seen</th></tr></thead>
+        <thead><tr><th style="width:28px;"><input type="checkbox" class="netSelAll" data-kind="<%= k %>" title="Select every <%= kindLabels[k] %>"></th><th>Name</th><th>IP</th><th>What it says it is</th><th style="min-width:190px;">Supplies</th><th>Warnings</th><th>Last seen</th></tr></thead>
         <tbody>
         <% byKind[k].forEach(function(d){ %>
-          <tr class="row-link" onclick="location.href='/network/device/<%= d.id %>'" style="cursor:pointer;">
+          <tr class="row-link" onclick="if(!/input|label/i.test(event.target.tagName)) location.href='/network/device/<%= d.id %>'" style="cursor:pointer;">
+            <td onclick="event.stopPropagation();">
+              <input type="checkbox" class="netSel" data-kind="<%= k %>" form="netForm" name="ids" value="<%= d.id %>"<%- d.monitored ? ' data-on="1"' : '' %>>
+            </td>
             <td>
-              <span title="<%= d.monitored ? 'Monitored' : 'Known about, not polled' %>" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:<%= d.monitored ? 'var(--ok)' : 'var(--muted)' %>;margin-right:6px;"></span>
+              <span title="<%= d.monitored ? 'Monitored — read every 30 minutes' : 'Known about, not polled' %>" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:<%= d.monitored ? 'var(--ok)' : 'var(--muted)' %>;margin-right:6px;"></span>
               <a href="/network/device/<%= d.id %>"><strong><%= d.friendly_name || d.sys_name || d.hostname || 'Unnamed' %></strong></a>
               <% if (!d.friendly_name) { %><span class="muted" style="font-size:11px;"> · needs a name</span><% } %>
               <% if (Number(d.cred_count) > 0) { %><span title="<%= d.cred_count %> stored credential(s)" style="margin-left:6px;">&#128273;</span><% } %>
@@ -259,5 +276,41 @@ var SWATCH = { black:'#111827', cyan:'#06b6d4', magenta:'#db2777', yellow:'#eab3
 </div>
 
 <% } %>
+
+<script>
+// Bound on DOMContentLoaded, not inline: this block sits above nothing in particular, and
+// a getElementById that runs before its table is parsed silently does nothing — which is
+// precisely how the assets select-all shipped broken once already.
+document.addEventListener('DOMContentLoaded', function () {
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.netSel'));
+  var alls  = Array.prototype.slice.call(document.querySelectorAll('.netSelAll'));
+  var bar   = document.getElementById('netBulk');
+  var count = document.getElementById('netSelCount');
+  if (!boxes.length || !bar || !count) return;
+
+  function refresh() {
+    var n = boxes.filter(function (b) { return b.checked; }).length;
+    bar.style.display = n ? 'flex' : 'none';
+    var on = boxes.filter(function (b) { return b.checked && b.dataset.on === '1'; }).length;
+    count.textContent = n + ' selected' + (on ? ' · ' + on + ' already monitored' : '');
+    alls.forEach(function (a) {
+      var mine = boxes.filter(function (b) { return b.dataset.kind === a.dataset.kind; });
+      var ticked = mine.filter(function (b) { return b.checked; }).length;
+      a.checked = ticked > 0 && ticked === mine.length;
+      a.indeterminate = ticked > 0 && ticked < mine.length;
+    });
+  }
+
+  boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+  alls.forEach(function (a) {
+    a.addEventListener('change', function () {
+      boxes.filter(function (b) { return b.dataset.kind === a.dataset.kind; })
+           .forEach(function (b) { b.checked = a.checked; });
+      refresh();
+    });
+  });
+  refresh();
+});
+</script>
 
 <%- include('../partials/footer') %>

@@ -38,8 +38,31 @@
     var col = good ? 'var(--ok)' : 'var(--bad)';
     return '<span style="font-size:11px;color:'+col+';font-weight:700;">' + (d>0?'▲':'▼') + '&nbsp;' + Math.abs(d) + '</span>';
   }
+  // The board now carries TWO comparisons and they mean different things. delta() above
+  // is "vs the previous period" - direction of travel. These are "vs a normal day" - is
+  // this level normal at all. Volume against a mean is neither good nor bad, so it stays
+  // neutral; missed calls and answer rate keep their polarity.
+  function pctVs(cur, exp){ return (exp > 0) ? Math.round((cur - exp) / exp * 100) : null; }
+  function baseChip(cur, exp, mode){
+    var p = pctVs(cur, exp);
+    if (p === null) return '';
+    var col = (mode === 'neutral') ? 'var(--muted)'
+            : (mode === 'low' ? (p <= 0 ? 'var(--ok)' : 'var(--bad)') : (p >= 0 ? 'var(--ok)' : 'var(--bad)'));
+    return '<span style="font-size:11px;font-weight:700;color:' + col + ';">' + (p > 0 ? '+' : '') + p + '%</span>';
+  }
+  // An answer rate is already a percentage - the honest difference between two of them is
+  // percentage POINTS, not a percentage of a percentage.
+  function ppChip(cur, exp){
+    var d = Math.round(cur - exp);
+    var col = (d === 0) ? 'var(--muted)' : (d > 0 ? 'var(--ok)' : 'var(--bad)');
+    return '<span style="font-size:11px;font-weight:700;color:' + col + ';">' + (d > 0 ? '+' : '') + d + 'pp</span>';
+  }
+  function hh(h){ return ('0' + h).slice(-2) + ':00'; }
+  function n1(v){ return (v >= 10) ? v.toFixed(0) : v.toFixed(1); }
+  var obTarget   = (typeof target !== 'undefined' && target) ? target : 90;
+  var obBaseName = (typeof baselineName !== 'undefined' && baselineName) ? baselineName : 'Year average';
   var included = sites.filter(function(s){ return s.included && s.configured && s.metrics; });
-  var obExportQs = 'from=' + from + '&to=' + to + (compare ? '&cmp=1' : '') +
+  var obExportQs = 'from=' + from + '&to=' + to + (compare ? '&cmp=1' : '') + '&met=' + obTarget +
     sites.filter(function(s){ return s.included; }).map(function(s){ return '&sites=' + s.id; }).join('') +
     (typeof obExtraQs !== 'undefined' ? obExtraQs : '');
 %>
@@ -70,6 +93,13 @@
     </div>
     <div><label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:4px;">From</label><input class="input" type="date" name="from" id="obFrom" value="<%= from %>"></div>
     <div><label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:4px;">To</label><input class="input" type="date" name="to" id="obTo" value="<%= to %>"></div>
+    <div>
+      <label for="obMet" style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:4px;" title="The answer rate an hour has to clear to count as covered">Answer target</label>
+      <div style="display:flex;align-items:center;gap:5px;">
+        <input class="input" type="number" name="met" id="obMet" min="50" max="100" step="1" value="<%= obTarget %>" style="width:82px;">
+        <span class="muted" style="font-size:13px;">%</span>
+      </div>
+    </div>
     <label style="display:flex;align-items:center;gap:7px;font-size:14px;padding-bottom:9px;cursor:pointer;">
       <input type="checkbox" name="cmp" value="1" <%= compare ? 'checked' : '' %> style="width:auto;"> Compare with previous period
     </label>
@@ -111,10 +141,72 @@
       <div><div style="font-size:26px;font-weight:700;line-height:1;color:var(--bad);"><%= m.missed %></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Missed <%- delta(m.missed, p ? p.missed : null, true) %></div></div>
       <div><div style="font-size:26px;font-weight:700;line-height:1;color:var(--ink);"><%= m.rate %>%</div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Answer rate <%- p ? delta(m.rate, p.rate, false) : '' %></div></div>
     </div>
+    <% if (s.baseline) { var eb = s.baseline.expected; %>
+      <div style="font-size:11px;color:var(--muted);margin-top:9px;padding-top:8px;border-top:1px solid var(--line);" title="The mean for these same weekdays across <%= baselineFrom %> to <%= baselineTo %>">
+        <%= obBaseName %> for these dates: <strong style="color:var(--ink);"><%= eb.total %></strong> calls <%- baseChip(m.total, eb.total, 'neutral') %>
+        &middot; <strong style="color:var(--ink);"><%= eb.rate %>%</strong> answered <%- ppChip(m.rate, eb.rate) %>
+        &middot; <%= eb.missed %> missed <%- baseChip(m.missed, eb.missed, 'low') %>
+      </div>
+    <% } %>
     <% if (p) { %><div style="font-size:11px;color:var(--faint);margin-top:8px;">Previous period: <%= p.total %> calls · <%= p.rate %>% answered</div><% } %>
   </div>
   <% }); %>
 </div>
+
+<!-- Demand curve: the shape of the day, and the hours where cover meets it.
+     One axis (calls per hour). Whether an hour is covered is carried by the marker's
+     colour AND shape, never colour alone - a second scale for answer-rate would invent
+     a correlation that isn't in the data. -->
+<% if (typeof obCurveSvg !== 'undefined' && obCurveSvg && included.some(function(s){ return s.curve && s.curve.length; })) { %>
+<div class="card" style="padding:0;margin-bottom:16px;">
+  <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">Meeting demand through the day</h2>
+    <span class="muted" style="font-size:12px;">Calls per hour on an average day of this period (solid) against the <%= obBaseName.toLowerCase() %> for the same weekdays (dashed). Each marker says whether that hour cleared the <%= obTarget %>% answer target.</span></div>
+  <% if (typeof baselineNote !== 'undefined' && baselineNote) { %>
+    <p class="muted" style="margin:0;padding:2px 18px 0;font-size:12px;">&#9888; <%= baselineNote %></p>
+  <% } %>
+  <div style="display:flex;gap:15px;flex-wrap:wrap;padding:10px 18px 2px;font-size:11.5px;color:var(--muted);align-items:center;">
+    <span style="display:inline-flex;align-items:center;gap:6px;"><svg width="26" height="10" aria-hidden="true"><line x1="1" y1="5" x2="25" y2="5" stroke="var(--accent)" stroke-width="2"/></svg>This period</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;"><svg width="26" height="10" aria-hidden="true"><line x1="1" y1="5" x2="25" y2="5" stroke="var(--muted)" stroke-width="2" stroke-dasharray="5 4"/></svg><%= obBaseName %></span>
+    <span style="display:inline-flex;align-items:center;gap:6px;"><svg width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="4.5" fill="var(--ok)"/></svg>Target met</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;"><svg width="14" height="14" aria-hidden="true"><path d="M7 1.5L12.5 7L7 12.5L1.5 7Z" fill="var(--warn)"/></svg>Within 10 points</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;"><svg width="14" height="14" aria-hidden="true"><path d="M7 1.2L12.4 11.8L1.6 11.8Z" fill="var(--bad)"/></svg>Under target</span>
+    <span style="display:inline-flex;align-items:center;gap:6px;"><svg width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="3.4" fill="none" stroke="var(--faint)" stroke-width="1.6"/></svg>Too few calls to judge</span>
+  </div>
+  <% included.forEach(function(s){ var cs = s.curveSummary; %>
+  <div style="padding:12px 18px 2px;border-top:1px solid var(--line);margin-top:10px;">
+    <div style="display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;align-items:baseline;margin-bottom:2px;">
+      <div style="font-weight:700;font-size:13px;"><%= esc(s.label) %></div>
+      <div class="muted" style="font-size:12px;">
+        <% if (!cs || !cs.judged) { %>
+          Too few calls in this period to judge cover hour by hour.
+        <% } else { %>
+          Target met in <strong style="color:var(--ink);"><%= cs.met %> of <%= cs.judged %></strong> busy hours
+          &middot; <strong style="color:var(--ink);"><%= Math.round(cs.callsMet / (cs.callsJudged || 1) * 100) %>%</strong> of calls arrive in an hour that clears it
+          <% if (cs.weakest && cs.weakest.rate != null) { %>&middot; weakest <strong style="color:var(--ink);"><%= hh(cs.weakest.hour) %></strong> (<%= cs.weakest.rate %>%)<% } %>
+          <% if (cs.peak) { %>&middot; busiest <%= hh(cs.peak.hour) %><% } %>
+        <% } %>
+      </div>
+    </div>
+    <%- obCurveSvg({ label: s.label, curve: s.curve, target: obTarget, baselineLabel: obBaseName }) %>
+    <details style="margin:0 0 8px;">
+      <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--muted);">Show the numbers</summary>
+      <div class="table-wrap" style="margin-top:8px;"><table class="table" style="margin:0;">
+        <thead><tr><th style="min-width:130px;"></th><% s.curve.forEach(function(c){ %><th class="muted" style="text-align:center;font-size:11px;"><%= hh(c.hour) %></th><% }); %></tr></thead>
+        <tbody>
+          <tr><td style="font-size:12px;font-weight:600;">Calls per day</td>
+            <% s.curve.forEach(function(c){ %><td class="num" style="text-align:center;font-size:12px;"><%= n1(c.avg) %></td><% }); %></tr>
+          <tr><td style="font-size:12px;font-weight:600;color:var(--muted);"><%= obBaseName %></td>
+            <% s.curve.forEach(function(c){ %><td class="num" style="text-align:center;font-size:12px;color:var(--muted);"><%= c.baseAvg == null ? '—' : n1(c.baseAvg) %></td><% }); %></tr>
+          <tr><td style="font-size:12px;font-weight:600;">Answered</td>
+            <% s.curve.forEach(function(c){ var col = c.verdict === 'met' ? 'var(--ok)' : (c.verdict === 'near' ? 'var(--warn-fg)' : (c.verdict === 'short' ? 'var(--bad)' : 'var(--faint)')); %>
+              <td class="num" style="text-align:center;font-size:12px;font-weight:600;color:<%= col %>;" title="<%= c.total %> calls, <%= c.answered %> answered"><%= c.rate == null ? '—' : c.rate + '%' %></td><% }); %></tr>
+        </tbody>
+      </table></div>
+    </details>
+  </div>
+  <% }); %>
+</div>
+<% } %>
 
 <!-- Daily totals: answered v missed per branch -->
 <% var _askUrl = (typeof obAskUrl !== 'undefined' && obAskUrl) ? obAskUrl : ''; %>

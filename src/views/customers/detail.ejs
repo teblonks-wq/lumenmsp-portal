@@ -341,12 +341,13 @@
       <% if (pkg && pkg.period) { %><span class="badge badge-primary" style="font-size:12px;margin-left:8px;vertical-align:middle;">Rate card · <%= pkg.period %></span><% } %></h2>
       <div style="display:flex;align-items:center;gap:12px;">
         <% if (pkg && pkg.period) { %><span class="muted" style="font-size:12px;"><%= commsClis.length %> CLIs/refs</span><% } %>
+        <% if (user.role === 'admin') { %><a class="btn" href="/bureau/register?customer=<%= customer.id %>" style="font-size:12px;padding:5px 12px;" title="The register: every line we hold for this customer and every recorded change - added, ceased, qty, cost">Service history</a><% } %>
         <% if (pkg && (pkg.seats.count || pkg.broadband.length || pkg.lineRental.length || pkg.other.length)) { %>
         <button type="button" id="rcEditBtn" class="btn" style="font-size:12px;padding:5px 12px;">✎ Edit</button>
         <% } %>
       </div>
     </div>
-    <% if (pkg && pkg.period) { %><p class="muted" style="font-size:12px;margin:-4px 0 12px;">This rate card is for <strong><%= pkg.period %></strong> and changes month to month as the supplier feed updates.</p><% } %>
+    <% if (pkg && pkg.period) { %><p class="muted" style="font-size:12px;margin:-4px 0 12px;">This rate card is for <strong><%= pkg.period %></strong> and changes month to month as the supplier feed updates.<% if (user.role === 'admin') { %> <a class="row-link" href="/bureau/register?customer=<%= customer.id %>">See what changed &rarr;</a><% } %></p><% } %>
     <% if (!pkg || (!pkg.seats.count && !pkg.broadband.length && !pkg.lineRental.length && !pkg.other.length)) { %>
       <p class="muted" style="margin:0;">No comms services yet. They appear once the Giacom feed is imported and this customer's CLIs are allocated in the <a class="row-link" href="/bureau">Bureau</a>.</p>
     <% } else { %>
@@ -928,6 +929,7 @@
       <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
         <% if (itc.unmatched) { %><span class="badge" style="background:var(--bad-bg);color:var(--bad-fg);font-size:11px;">⚠ <%= itc.unmatched %> not in product list</span><% } %>
         <% if (itc.unpriced) { %><span class="badge" style="background:var(--warn-bg);color:var(--warn-deep);font-size:11px;"><%= itc.unpriced %> Giacom unpriced</span><% } %>
+        <% if (user.role === 'admin') { %><a class="btn" href="/bureau/register?customer=<%= customer.id %>" style="font-size:12px;padding:4px 10px;" title="The register: every line we hold for this customer and every recorded change - added, ceased, qty, cost">Service history</a><% } %>
         <a class="btn" href="/products" style="font-size:12px;padding:4px 10px;">Product list</a>
         <a class="btn" href="/invoices/<%= tpl.id %>/edit" style="font-size:12px;padding:4px 10px;">Full editor</a>
         <% var _giacomCount = (itc.cloudLines||[]).length; %>

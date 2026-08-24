@@ -15,7 +15,8 @@ import { ingestServerFacts } from '../lib/server-facts';
 import { ingestGpoInventory, ingestGpoDelete, ingestGpoUnlink, ingestGpoRestore } from '../lib/gpo';
 import { htmlToPlain } from '../lib/whatsapp';
 import { nextTicketNumber } from './tickets';
-import { guessKind, supplyPercent, isIpv4 } from '../lib/network-discovery';
+import { guessKind, supplyPercent, isIpv4, SUPPLY_LOW_PERCENT } from '../lib/network-discovery';
+import { raiseAlert, resolveAlert } from '../lib/alerts';
 
 // ── LumenMSP Agent API ──────────────────────────────────────────────────────────
 // Server-to-server API for the Windows LumenMSP Agent (tray app + service on end-user
@@ -1132,8 +1133,8 @@ router.post('/agent/api/network/scan', requireDevice, async (req: Request, res: 
       // just an observation, and an observation should not overturn a decision.
       await pool.query(
         `INSERT INTO network_devices
-           (customer_id, agent_device_id, ip, mac, hostname, vendor, sys_name, sys_descr, kind, last_seen_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+           (customer_id, agent_device_id, ip, mac, hostname, vendor, sys_name, sys_descr, kind, monitored, last_seen_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9 = 'printer',NOW())
          ON CONFLICT (customer_id, ip) DO UPDATE SET
            mac       = COALESCE(EXCLUDED.mac,       network_devices.mac),
            hostname  = COALESCE(EXCLUDED.hostname,  network_devices.hostname),
@@ -1142,6 +1143,8 @@ router.post('/agent/api/network/scan', requireDevice, async (req: Request, res: 
            sys_descr = COALESCE(EXCLUDED.sys_descr, network_devices.sys_descr),
            kind      = CASE WHEN network_devices.kind = 'unknown' THEN EXCLUDED.kind ELSE network_devices.kind END,
            agent_device_id = COALESCE(network_devices.agent_device_id, EXCLUDED.agent_device_id),
+           -- monitored is deliberately absent: a printer starts monitored, but if somebody
+           -- has since turned it off, a re-scan must not turn it back on behind them.
            last_seen_at = NOW()`,
         [d.customer_id, d.id, ip, s(one.mac, 40), s(one.hostname, 120), s(one.vendor, 120),
          s(one.sysName, 160), s(one.sysDescr, 500), kind]);
@@ -1209,10 +1212,14 @@ router.post('/agent/api/network/poll', requireDevice, async (req: Request, res: 
   try {
     // Scope check first: the device has to belong to the customer this agent serves.
     const dev = (await client.query(
-      `SELECT id FROM network_devices WHERE id=$1 AND customer_id=$2`, [id, d.customer_id])).rows[0];
+      `SELECT n.id, n.ip, n.friendly_name, n.monitored, c.name AS customer_name
+         FROM network_devices n LEFT JOIN customers c ON c.id = n.customer_id
+        WHERE n.id=$1 AND n.customer_id=$2`, [id, d.customer_id])).rows[0];
     if (!dev) { res.status(404).json({ ok: false, error: 'not your device' }); return; }
 
     const err = s(b.error, 400);
+    const seenSupplies: { name: string; pct: number | null }[] = [];
+    const seenAlerts: { desc: string; severity: string }[] = [];
     await client.query('BEGIN');
 
     await client.query(
@@ -1230,7 +1237,7 @@ router.post('/agent/api/network/poll', requireDevice, async (req: Request, res: 
     // out with a cartridge that was not needed.
     if (!err) {
       const supplies = Array.isArray(b.supplies) ? b.supplies.slice(0, 40) : [];
-      for (const sup of supplies) {
+      for (const sup of supplies) {   // seen[] is filled as we go, for the alerting below
         const level = sup.level == null ? null : parseInt(String(sup.level), 10);
         const max = sup.max == null && sup.maxCapacity == null ? null
           : parseInt(String(sup.max != null ? sup.max : sup.maxCapacity), 10);
@@ -1241,6 +1248,7 @@ router.post('/agent/api/network/poll', requireDevice, async (req: Request, res: 
            Number.isFinite(level as number) ? level : null,
            Number.isFinite(max as number) ? max : null,
            supplyPercent(level, max)]);           // null for the -1/-2/-3 sentinels, never 0
+        seenSupplies.push({ name: s(sup.name, 120) || 'Supply', pct: supplyPercent(level, max) });
       }
 
       // Warnings are reconciled, not appended: what the device still reports stays open,
@@ -1263,6 +1271,7 @@ router.post('/agent/api/network/poll', requireDevice, async (req: Request, res: 
              VALUES ($1,$2,$3,$4)`,
             [id, s(a.code, 60), s(a.severity, 20) || 'warning', desc]);
         }
+        seenAlerts.push({ desc, severity: s(a.severity, 20) || 'warning' });
       }
       await client.query(
         `UPDATE network_device_alerts SET cleared_at=NOW()
@@ -1271,6 +1280,13 @@ router.post('/agent/api/network/poll', requireDevice, async (req: Request, res: 
     }
 
     await client.query('COMMIT');
+
+    // Alerting is deliberately AFTER the commit and wrapped in its own try: an email
+    // server having a bad day must not roll back a perfectly good toner reading.
+    if (!err && dev.monitored) {
+      try { await netDeviceAlerts(dev, seenSupplies, seenAlerts); }
+      catch (e: any) { console.error('[agent] network alerting failed:', e.message); }
+    }
     res.json({ ok: true });
   } catch (e: any) {
     try { await client.query('ROLLBACK'); } catch { /* gone */ }
@@ -1278,5 +1294,63 @@ router.post('/agent/api/network/poll', requireDevice, async (req: Request, res: 
     res.status(500).json({ ok: false, error: 'poll not stored' });
   } finally { client.release(); }
 });
+
+/** Turn one poll into N3twrx alerts, and clear the ones that have fixed themselves.
+ *
+ * Only ever called for a MONITORED device. Something added by a scan and never ticked is
+ * on the list to be known about, not to be shouted about.
+ *
+ * The two thresholds are NOT the same number on purpose. Raising at 20% and only clearing
+ * again at 25% means a cartridge hovering on the line does not open and close an alert
+ * every half hour — it goes on the board once and stays there until it is actually dealt
+ * with. */
+const SUPPLY_CLEAR_PERCENT = SUPPLY_LOW_PERCENT + 5;
+
+async function netDeviceAlerts(
+  dev: any,
+  supplies: { name: string; pct: number | null }[],
+  alerts: { desc: string; severity: string }[],
+): Promise<void> {
+  const label = dev.friendly_name || dev.ip;
+  const where = [dev.customer_name, dev.ip].filter(Boolean).join(' · ');
+  const url = `/network/device/${dev.id}`;
+
+  for (const sup of supplies) {
+    // A null percentage is the device saying it cannot measure this one. That is not an
+    // empty cartridge and must never be alerted on.
+    if (sup.pct == null) continue;
+    const extId = `netdev:${dev.id}:supply:${sup.name}`;
+    if (sup.pct <= SUPPLY_LOW_PERCENT) {
+      await raiseAlert({
+        source: 'printer', externalId: extId, severity: 'warning',
+        title: `${label}: ${sup.name} at ${sup.pct}%`,
+        body: `${where}\n${sup.name} is down to ${sup.pct}%. Low is ${SUPPLY_LOW_PERCENT}% or under.`,
+        url, autoTicket: false,     // Terry's call whether it becomes a job
+      });
+    } else if (sup.pct >= SUPPLY_CLEAR_PERCENT) {
+      await resolveAlert('printer', extId);   // refilled
+    }
+  }
+
+  const live = new Set(alerts.map((a) => `netdev:${dev.id}:alert:${a.desc}`));
+  for (const a of alerts) {
+    await raiseAlert({
+      source: 'printer', externalId: `netdev:${dev.id}:alert:${a.desc}`,
+      severity: a.severity === 'critical' ? 'critical' : 'warning',
+      title: `${label}: ${a.desc}`, body: where, url, autoTicket: false,
+    });
+  }
+
+  // Anything this device was complaining about last time and is not complaining about now
+  // has been dealt with. Clearing it here rather than waiting for a human keeps the board
+  // trustworthy — a list full of jams that were cleared days ago is a list nobody reads.
+  const open = (await pool.query(
+    `SELECT external_id FROM alerts
+      WHERE source='printer' AND status='open' AND external_id LIKE $1`,
+    [`netdev:${dev.id}:alert:%`])).rows;
+  for (const o of open) {
+    if (!live.has(o.external_id)) await resolveAlert('printer', o.external_id);
+  }
+}
 
 export default router;

@@ -31,6 +31,7 @@ import { pool } from '../db/pool';
 import { syncGravityZone, gzConfigured } from './gravityzone';
 import { syncAssetsFromAtera } from './asset-sync';
 import { wakeAgent } from '../routes/agent-api';
+import { NET_DISCO_MIN_AGENT, agentAtLeast } from './network-discovery';
 
 /** How often GravityZone is asked what it can see. */
 const GZ_EVERY_MS = 10 * 60 * 1000;
@@ -114,5 +115,74 @@ export function startSecurityFreshnessSweep(): void {
       [ids]);
     for (const id of ids) wakeAgent(id);
     console.log('[auto-sync] security-sweep: asked %d device(s) for a fresh reading', ids.length);
+  });
+}
+
+// ── Network device polling ──────────────────────────────────────────────────────
+// Every device someone ticked as Monitored, read on a timer. Until this existed the
+// "Monitored" flag was decoration: it put a green dot on a row and nothing ever went and
+// looked at the device, so a printer could sit at 4% toner for a fortnight with the Portal
+// perfectly content.
+
+/** How often the monitored estate is swept. Toner does not move fast, but a paper jam
+ *  wants noticing the same morning rather than the same week. */
+const NET_POLL_EVERY_MS = 30 * 60 * 1000;
+/** Do not re-ask a device that was read this recently — a sweep landing slightly early
+ *  should not double the traffic on a customer's LAN. */
+const NET_POLL_FRESH_MINS = 25;
+/** Most polls queued against ONE agent per sweep. Commands run one at a time in order and
+ *  a poll is a couple of seconds, so ten is well under a minute of work — but it stops a
+ *  server with forty printers behind it collecting a queue it will never finish before the
+ *  next sweep adds more. */
+const NET_POLL_PER_AGENT = 10;
+
+export function startNetworkPolling(): void {
+  every('network-poll', NET_POLL_EVERY_MS, 4 * 60_000, async () => {
+    const due = (await pool.query(
+      `SELECT n.id, n.ip, n.agent_device_id, d.agent_version
+         FROM network_devices n
+         JOIN agent_devices d ON d.id = n.agent_device_id
+        WHERE n.monitored = true
+          AND n.archived_at IS NULL
+          AND d.revoked = false
+          AND d.last_seen_at > NOW() - ($1 || ' seconds')::interval
+          AND (n.last_poll_at IS NULL OR n.last_poll_at < NOW() - ($2 || ' minutes')::interval)
+        ORDER BY n.last_poll_at NULLS FIRST`,
+      [ONLINE_SECS, NET_POLL_FRESH_MINS])).rows;
+    if (!due.length) return;
+
+    // What each agent is already carrying, so a slow or offline one is not buried.
+    const pending = new Map<number, number>();
+    for (const r of (await pool.query(
+      `SELECT device_id, COUNT(*)::int AS n FROM agent_commands
+        WHERE kind='snmp.poll' AND status IN ('queued','running') GROUP BY device_id`)).rows) {
+      pending.set(Number(r.device_id), Number(r.n));
+    }
+
+    let queued = 0, skippedOld = 0;
+    for (const d of due) {
+      // An agent that does not know the verb would collect the command and drop it, and
+      // the device would then look like it had been polled and said nothing.
+      if (!agentAtLeast(d.agent_version, NET_DISCO_MIN_AGENT)) { skippedOld++; continue; }
+
+      const agentId = Number(d.agent_device_id);
+      const already = pending.get(agentId) || 0;
+      if (already >= NET_POLL_PER_AGENT) continue;
+      pending.set(agentId, already + 1);
+
+      await pool.query(
+        `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
+         VALUES ($1,'snmp.poll',$2,'queued',NULL)`,
+        [agentId, JSON.stringify({ networkDeviceId: d.id, ip: d.ip })]);
+      wakeAgent(agentId);
+      queued++;
+    }
+
+    // Say what was left out as well as what was done. A count that quietly omits the
+    // devices behind an old agent reads as "everything is being watched", and it is not.
+    if (queued || skippedOld) {
+      console.log('[auto-sync] network-poll: queued %d, skipped %d on agents older than %s',
+        queued, skippedOld, NET_DISCO_MIN_AGENT);
+    }
   });
 }
