@@ -1476,6 +1476,14 @@ model Ticket {
   persistentCc          String?   @map("persistent_cc")        // CC kept for every reply on this case (engineer ticked "remember")
   persistentBcc         String?   @map("persistent_bcc")
   agentDeviceId         Int?      @map("agent_device_id") // LumenMSP Agent chat case — the enrolled device it came from
+  // ── Waiting on a third party ───────────────────────────────────────────────────
+  // Set together with status 'awaiting_3rd_party'. chaseBy is a 'YYYY-MM-DD' day key,
+  // deliberately TEXT: node-pg hands back `date` columns as JS Dates and every string
+  // comparison against one silently inverts (see the OneBoard day-key incident).
+  thirdPartyId          Int?      @map("third_party_id")   // suppliers.id
+  thirdPartyRef         String?   @map("third_party_ref")  // their reference for it
+  chaseBy               String?   @map("chase_by")         // 'YYYY-MM-DD' — when we go back at them
+  waitingSince          DateTime? @map("waiting_since")    // when the case was parked on them
 
   customer Customer?       @relation(fields: [customerId], references: [id])
   messages TicketMessage[]
@@ -1487,6 +1495,7 @@ model Ticket {
   @@index([assignedUserId])
   @@index([deletedAt])
   @@index([agentDeviceId])
+  @@index([thirdPartyId])
   @@map("inbox_tickets")
 }
 
@@ -1777,6 +1786,18 @@ model Supplier {
   address     String?                          // free-text multi-line postal address
   notes       String?
   isActive    Boolean  @default(true) @map("is_active")
+  // ── Third parties ──────────────────────────────────────────────────────────────
+  // The outside organisations a case can be WAITING ON — Openreach, a carrier, a
+  // landlord's IT, a customer's own web developer. They live in this one table rather
+  // than a second address book, because most of them are already suppliers and a case
+  // that says "waiting on third party" with no name attached is the thing being fixed.
+  isThirdParty   Boolean @default(false) @map("is_third_party")
+  category       String?                       // see THIRD_PARTY_CATEGORIES in lib/third-party.ts
+  supportEmail   String? @map("support_email") // where chases go, if not the main email
+  supportPhone   String? @map("support_phone")
+  portalUrl      String? @map("portal_url")    // their ticket portal
+  typicalDays    Int?    @map("typical_days")  // how long they usually take — seeds the chase-by date
+  escalationNote String? @map("escalation_note") // who to escalate to, and how
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 

@@ -388,6 +388,7 @@
       <div id="postponeWrap" style="margin-bottom:12px;display:<%= (ticket.status==='postponed'||ticket.status==='awaiting_installation')?'block':'none' %>;font-size:13px;color:var(--violet-deep);">
         📅 <span id="postponeLabel"><%= ticket.status==='awaiting_installation'?'Installation date':'Postpone until' %></span> <strong id="postponeShow"></strong> · <a href="#" id="postponeChange" class="row-link">change</a>
       </div>
+      <%- include('./_third-party', { ticket: ticket, thirdParties: (typeof thirdParties !== 'undefined' ? thirdParties : []) }) %>
       <input type="hidden" name="department" value="support">
       <% var _catReq = (typeof aiCatOn !== 'undefined' && aiCatOn && !ticket.category); %>
       <div class="form-group" style="margin-bottom:12px;"><label>Category<% if(_catReq){ %> <span style="color:var(--bad);font-weight:700;">— required</span><% } %></label><select class="input" name="category" id="ticketCategory" style="width:100%;<%= _catReq ? 'border-color:var(--bad);' : '' %>"><option value="" disabled <%= !ticket.category ? 'selected' : '' %>>— choose a category —</option><% CATEGORIES.forEach(function(c){ %><option value="<%= c %>" <%= ticket.category===c?'selected':'' %>><%= cap(c) %></option><% }); %></select></div>

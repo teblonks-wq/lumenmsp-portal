@@ -146,7 +146,7 @@
           <div class="t"><%= e.title %><% if (isSpan) { %> <span class="dy-tag">⇥ <%= e.spanIndex+1 %>/<%= e.spanTotal %></span><% } %><% if (e.seriesId) { %> <span class="dy-tag" title="Part of a repeating series">↻</span><% } %></div>
           <% if (!isCont) { %>
           <div class="m">
-            <span class="k"><%= KINDS[e.kind] ? KINDS[e.kind].label : e.kind %></span><%= e.feed === 'postponed' ? ' · postponed case' : '' %>
+            <span class="k"><%= KINDS[e.kind] ? KINDS[e.kind].label : e.kind %></span><%= e.feed === 'postponed' ? ' · postponed case' : (e.feed === 'chase' ? ' · chase due' : '') %>
             <% if (e.endDayKey) { %><span>· <%= shortDay(e.dayKey) %> → <%= shortDay(e.endDayKey) %></span><% } %>
             <% if (e.customerName) { %><span>· <%= e.customerName %></span><% } %>
             <% e.people.forEach(function(p){ %><span class="dy-chip" title="<%= p.name %>"><%= initials(p.name) %></span><% }); %>

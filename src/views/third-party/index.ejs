@@ -1,0 +1,200 @@
+<%- include('../partials/header', { title: 'Third parties', user }) %>
+<%
+  function cap(s){ return String(s||'').replace(/_/g,' ').replace(/^./, function(c){ return c.toUpperCase(); }); }
+  function dayLabel(dk){ return dk ? new Date(dk+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}) : '—'; }
+  var isAdmin = user.role === 'admin';
+%>
+<style>
+  .tp-grid { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:16px; align-items:start; }
+  @media (max-width: 1100px) { .tp-grid { grid-template-columns:1fr; } }
+  .tp-card { background:var(--surface,#fff); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .tp-card > h3 { margin:0; padding:11px 14px; font-size:13.5px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .tp-row { padding:10px 14px; border-bottom:1px solid var(--line); font-size:13px; }
+  .tp-row:last-child { border-bottom:0; }
+  .tp-row .nm { font-weight:700; }
+  .tp-row .meta { color:var(--muted); font-size:11.5px; margin-top:2px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .tp-group { border-bottom:1px solid var(--line); }
+  .tp-group > .gh { padding:9px 14px; background:var(--surface-2,#f8fafc); font-size:12.5px; font-weight:700; display:flex; justify-content:space-between; gap:10px; }
+  .tp-case { padding:8px 14px 8px 22px; border-top:1px dashed var(--line); font-size:12.5px; display:flex; justify-content:space-between; gap:10px; align-items:baseline; }
+  .tp-case a { text-decoration:none; font-weight:700; color:var(--ink); }
+  .tp-case .w { color:var(--muted); font-size:11.5px; white-space:nowrap; }
+  .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; }
+  .pill.bad { background:var(--tint-bad,#fef2f2); color:var(--bad-fg,#b91c1c); }
+  .pill.warn { background:var(--tint-warn,#fffbeb); color:var(--warn-fg,#b45309); }
+  .pill.ok { background:var(--tint-ok,#f0fdf4); color:var(--ok-fg,#15803d); }
+  .pill.plain { background:var(--surface-2,#f1f5f9); color:var(--muted); }
+  .tp-form { display:none; padding:12px 14px; border-top:1px solid var(--line); background:var(--surface-2,#f8fafc); }
+  .tp-form.on { display:block; }
+  .tp-form label { font-size:11.5px; font-weight:700; color:var(--muted); display:block; margin:8px 0 3px; }
+  .tp-form input, .tp-form select, .tp-form textarea {
+    width:100%; font:inherit; font-size:12.5px; padding:6px 9px; border:1px solid var(--line-strong); border-radius:7px;
+    background:var(--card,#fff); color:var(--ink); box-sizing:border-box; }
+  .tp-two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+</style>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--warn-fg,#b45309),var(--accent));margin-bottom:14px;">
+  <p class="doc-kicker">Who we wait on, and what is waiting</p>
+  <h1>Third parties</h1>
+  <p class="doc-sub">Every case parked on <strong>Awaiting 3rd party</strong> now names who it is with, their reference, and the day we go back at them. This is that list.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div class="stat-band">
+  <span class="tile" style="display:block;"><span class="n info" style="display:block;"><%= waiting.length %></span><span class="l" style="display:block;">cases waiting</span></span>
+  <span class="tile" style="display:block;"><span class="n" style="display:block;color:var(--bad-fg,#b91c1c);"><%= overdue %></span><span class="l" style="display:block;">chase overdue</span></span>
+  <span class="tile" style="display:block;"><span class="n" style="display:block;color:var(--warn-fg,#b45309);"><%= unnamed %></span><span class="l" style="display:block;">with nobody named</span></span>
+  <span class="tile acc-plain" style="display:block;"><span class="n" style="display:block;color:var(--muted);"><%= parties.length %></span><span class="l" style="display:block;">third parties on file</span></span>
+</div>
+
+<div class="tp-grid" style="margin-top:14px;">
+
+  <!-- ── What is waiting ─────────────────────────────────────────────────────── -->
+  <div class="tp-card">
+    <h3>Waiting on someone else <span class="muted" style="font-weight:400;font-size:11.5px;">oldest first</span></h3>
+    <% if (!groups.length) { %>
+      <div class="tp-row muted">Nothing is parked on a third party. That is the good outcome.</div>
+    <% } %>
+    <% groups.forEach(function(g){ %>
+      <div class="tp-group">
+        <div class="gh">
+          <span>
+            <% if (g.id) { %><%= g.name %><% } else { %><span style="color:var(--warn-fg,#b45309);">⚠ Nobody named yet</span><% } %>
+          </span>
+          <span class="muted" style="font-weight:400;"><%= g.cases.length %> case<%= g.cases.length===1?'':'s' %></span>
+        </div>
+        <% if (!g.id) { %>
+          <div class="tp-case" style="display:block;color:var(--muted);font-size:11.5px;padding-left:22px;">
+            These sat at &ldquo;Awaiting 3rd party&rdquo; before there was anyone to attach — open each one and set the status again to name who it is with.
+          </div>
+        <% } %>
+        <% g.cases.forEach(function(c){ %>
+          <div class="tp-case">
+            <span>
+              <a href="/tickets/<%= c.id %>"><%= c.ticketNumber %></a>
+              <span> — <%= c.subject.length > 70 ? c.subject.slice(0,70) + '…' : c.subject %></span>
+              <% if (c.customerName) { %><span class="muted"> · <%= c.customerName %></span><% } %>
+              <% if (c.thirdPartyRef) { %><span class="pill plain">ref <%= c.thirdPartyRef %></span><% } %>
+            </span>
+            <span class="w">
+              <%= c.daysWaiting %>d waiting ·
+              <% if (c.overdue) { %><span class="pill bad">chase was <%= dayLabel(c.chaseBy) %></span>
+              <% } else if (c.chaseBy) { %><span class="pill ok">chase <%= dayLabel(c.chaseBy) %></span>
+              <% } else { %><span class="pill warn">no chase date</span><% } %>
+            </span>
+          </div>
+        <% }); %>
+      </div>
+    <% }); %>
+  </div>
+
+  <!-- ── Who they are ────────────────────────────────────────────────────────── -->
+  <div class="tp-card">
+    <h3>
+      The list
+      <span style="display:flex;gap:8px;align-items:center;">
+        <a class="btn" style="padding:3px 10px;font-size:12px;" href="?archived=<%= showArchived ? '0' : '1' %>"><%= showArchived ? 'Hide archived' : 'Show archived' %></a>
+        <% if (isAdmin) { %><button class="btn btn-primary" type="button" style="padding:3px 10px;font-size:12px;" onclick="tpNew()">+ Add</button><% } %>
+      </span>
+    </h3>
+
+    <% if (isAdmin) { %>
+    <form method="post" action="/third-parties" class="tp-form" id="tpNewForm">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <div class="tp-two">
+        <div><label>Name</label><input name="name" required placeholder="e.g. Openreach"></div>
+        <div><label>Category</label><select name="category"><option value="">—</option><% categories.forEach(function(c){ %><option><%= c %></option><% }); %></select></div>
+      </div>
+      <div class="tp-two">
+        <div><label>Support email (where chases go)</label><input name="support_email" type="email"></div>
+        <div><label>Support phone</label><input name="support_phone"></div>
+      </div>
+      <div class="tp-two">
+        <div><label>Their portal</label><input name="portal_url" placeholder="https://…"></div>
+        <div><label>Our account ref</label><input name="account_ref"></div>
+      </div>
+      <div class="tp-two">
+        <div><label>Typical turnaround (working days)</label><input name="typical_days" type="number" min="1" max="90" placeholder="3"></div>
+        <div><label>Escalation — who, and how</label><input name="escalation_note" placeholder="e.g. account manager after 5 days"></div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end;">
+        <button class="btn" type="button" onclick="tpNew(false)">Cancel</button>
+        <button class="btn btn-primary" type="submit">Add third party</button>
+      </div>
+    </form>
+    <% } %>
+
+    <% if (!parties.length) { %>
+      <div class="tp-row muted">Nobody on the list yet<% if (isAdmin) { %> — add the ones you chase most: Openreach, your carrier, the hardware vendor<% } %>.</div>
+    <% } %>
+    <% parties.forEach(function(p){ %>
+      <div class="tp-row">
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;">
+          <span class="nm"><%= p.name %><% if (!p.isActive) { %> <span class="pill plain">archived</span><% } %></span>
+          <span>
+            <% if (p.openCases) { %><span class="pill <%= p.oldestDays && p.oldestDays > 7 ? 'bad' : 'warn' %>"><%= p.openCases %> waiting<% if (p.oldestDays) { %> · oldest <%= p.oldestDays %>d<% } %></span><% } %>
+            <% if (isAdmin) { %><button class="btn" type="button" style="padding:1px 8px;font-size:11px;" onclick="tpEdit(<%= p.id %>)">Edit</button><% } %>
+          </span>
+        </div>
+        <div class="meta">
+          <% if (p.category) { %><span><%= p.category %></span><% } %>
+          <% if (p.supportEmail || p.email) { %><span>· <%= p.supportEmail || p.email %></span><% } %>
+          <% if (p.supportPhone || p.phone) { %><span>· <%= p.supportPhone || p.phone %></span><% } %>
+          <% if (p.accountRef) { %><span>· acct <%= p.accountRef %></span><% } %>
+          <% if (p.typicalDays) { %><span>· usually <%= p.typicalDays %> working day<%= p.typicalDays===1?'':'s' %></span><% } %>
+          <% if (p.portalUrl) { %><span>· <a href="<%= p.portalUrl %>" target="_blank" rel="noopener">portal</a></span><% } %>
+        </div>
+        <% if (p.escalationNote) { %><div class="meta" style="color:var(--warn-fg,#b45309);">↑ <%= p.escalationNote %></div><% } %>
+
+        <% if (isAdmin) { %>
+        <form method="post" action="/third-parties/<%= p.id %>" class="tp-form" id="tpF<%= p.id %>" style="margin:10px -14px -10px;">
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+          <div class="tp-two">
+            <div><label>Name</label><input name="name" value="<%= p.name %>" required></div>
+            <div><label>Category</label><select name="category"><option value="">—</option><% categories.forEach(function(c){ %><option <%= p.category===c?'selected':'' %>><%= c %></option><% }); %></select></div>
+          </div>
+          <div class="tp-two">
+            <div><label>Support email</label><input name="support_email" value="<%= p.supportEmail || '' %>"></div>
+            <div><label>Support phone</label><input name="support_phone" value="<%= p.supportPhone || '' %>"></div>
+          </div>
+          <div class="tp-two">
+            <div><label>Main contact</label><input name="contact_name" value="<%= p.contactName || '' %>"></div>
+            <div><label>Main email</label><input name="email" value="<%= p.email || '' %>"></div>
+          </div>
+          <div class="tp-two">
+            <div><label>Their portal</label><input name="portal_url" value="<%= p.portalUrl || '' %>"></div>
+            <div><label>Our account ref</label><input name="account_ref" value="<%= p.accountRef || '' %>"></div>
+          </div>
+          <div class="tp-two">
+            <div><label>Typical turnaround (working days)</label><input name="typical_days" type="number" min="1" max="90" value="<%= p.typicalDays || '' %>"></div>
+            <div><label>Escalation — who, and how</label><input name="escalation_note" value="<%= p.escalationNote || '' %>"></div>
+          </div>
+          <label>Notes</label><textarea name="notes" rows="2"><%= p.notes || '' %></textarea>
+          <div style="display:flex;gap:8px;margin-top:12px;justify-content:space-between;">
+            <span></span>
+            <span style="display:flex;gap:8px;">
+              <button class="btn" type="button" onclick="tpEdit(<%= p.id %>, false)">Cancel</button>
+              <button class="btn btn-primary" type="submit">Save</button>
+            </span>
+          </div>
+        </form>
+        <% if (p.isActive) { %>
+          <form method="post" action="/third-parties/<%= p.id %>/archive" style="display:none;" id="tpA<%= p.id %>"><input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>"></form>
+        <% } else { %>
+          <form method="post" action="/third-parties/<%= p.id %>/restore" style="margin-top:8px;"><input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>"><button class="btn" style="padding:1px 8px;font-size:11px;">Put back on the list</button></form>
+        <% } %>
+        <% } %>
+      </div>
+    <% }); %>
+  </div>
+</div>
+
+<script>
+  function tpNew(on){ var f = document.getElementById('tpNewForm'); if (!f) return;
+    f.classList.toggle('on', on !== false ? !f.classList.contains('on') : false); }
+  function tpEdit(id, on){ var f = document.getElementById('tpF' + id); if (!f) return;
+    f.classList.toggle('on', on !== false ? !f.classList.contains('on') : false); }
+</script>
+
+<%- include('../partials/footer') %>

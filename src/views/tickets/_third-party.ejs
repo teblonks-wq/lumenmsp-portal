@@ -1,0 +1,36 @@
+<%
+// ── "Awaiting 3rd party" — WHO, and when we go back at them ──────────────────────
+// ONE block, included by BOTH the composer form and the Properties panel, because the
+// status can be set from either and a case parked with nobody attached is precisely the
+// hole this closes. Shown by _third-party-js.ejs whenever its own form's status select
+// reads awaiting_3rd_party. Locals: ticket, thirdParties (optional — empty renders the
+// "add one first" line rather than an empty picker that looks broken).
+var _tps = (typeof thirdParties !== 'undefined' && thirdParties) ? thirdParties : [];
+%>
+<div class="tp-block" style="display:none;margin-top:10px;border:1px solid var(--warn-line,#fde68a);background:var(--tint-yellow,#fffbeb);border-radius:10px;padding:10px 12px;">
+  <div style="font-size:12.5px;font-weight:700;color:var(--warn-deep,#92400e);margin-bottom:8px;">Waiting on whom?</div>
+  <% if (!_tps.length) { %>
+    <p style="font-size:12px;margin:0;">There are no third parties on the list yet — <a href="/third-parties" target="_blank">add the ones you chase ↗</a>. The case will still park, but nothing will chase it.</p>
+  <% } else { %>
+  <div style="display:grid;grid-template-columns:1.3fr 1fr 0.95fr;gap:10px;">
+    <div>
+      <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">Third party</label>
+      <select class="input tp-id" name="tp_id" style="width:100%;padding:5px 8px;font-size:12.5px;">
+        <option value="">— pick one —</option>
+        <% _tps.forEach(function(tp){ %>
+          <option value="<%= tp.id %>" data-chase="<%= tp.chaseBy %>" <%= String(ticket.third_party_id||'')===String(tp.id)?'selected':'' %>><%= tp.name %></option>
+        <% }); %>
+      </select>
+    </div>
+    <div>
+      <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">Their reference <span style="font-weight:400;">(optional)</span></label>
+      <input class="input tp-ref" name="tp_ref" value="<%= ticket.third_party_ref || '' %>" placeholder="e.g. INC0043221" style="width:100%;padding:5px 8px;font-size:12.5px;">
+    </div>
+    <div>
+      <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">Chase by</label>
+      <input class="input tp-chase" type="date" name="tp_chase" value="<%= ticket.chase_by || '' %>" style="width:100%;padding:5px 8px;font-size:12.5px;">
+    </div>
+  </div>
+  <p class="muted" style="font-size:11px;margin:7px 0 0;">On the chase date the case returns to Awaiting engineer by itself, and it stays on the <a href="/third-parties" target="_blank">Third parties board ↗</a> until it does.</p>
+  <% } %>
+</div>

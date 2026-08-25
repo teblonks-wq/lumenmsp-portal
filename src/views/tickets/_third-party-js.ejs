@@ -1,0 +1,35 @@
+<script>
+// Reveal the third-party block for whichever form's status select was changed. Bound per
+// FORM rather than per page, so the composer and the Properties panel each drive their own
+// copy and neither reaches into the other. Include ONCE per page.
+function tpWire(){
+  document.querySelectorAll('.tp-block').forEach(function(block){
+    var form = block.closest('form');
+    if (!form) return;
+    var sel = form.querySelector('select[name="status"], select[name="set_status"]');
+    if (!sel) return;
+    var id = block.querySelector('.tp-id');
+    var chase = block.querySelector('.tp-chase');
+    function sync(){
+      var on = sel.value === 'awaiting_3rd_party';
+      block.style.display = on ? 'block' : 'none';
+      // Fill the chase date from the chosen party's usual turnaround the moment it is
+      // pickable. A blank date is how a chase gets forgotten, so it is never left blank.
+      if (on && id && chase && !chase.value) {
+        var o = id.options[id.selectedIndex];
+        if (o && o.getAttribute('data-chase')) chase.value = o.getAttribute('data-chase');
+      }
+    }
+    sel.addEventListener('change', sync);
+    if (id) id.addEventListener('change', function(){
+      var o = id.options[id.selectedIndex];
+      // Changing WHO re-dates the chase — different suppliers, different patience.
+      if (o && o.getAttribute('data-chase') && chase) chase.value = o.getAttribute('data-chase');
+    });
+    sync();
+  });
+}
+// The composer and the Properties panel are rendered in either order, so wire up once
+// the whole page exists rather than at the point this script happens to sit.
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tpWire); else tpWire();
+</script>

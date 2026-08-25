@@ -366,6 +366,33 @@ export async function loadWeek(monday: string): Promise<WeekEntry[]> {
     }));
   }
 
+  // ── Feed: third-party chases land on the day we said we'd go back at them ─────
+  // Same principle as postponed cases: the commitment lives on the case, the diary just
+  // shows the day it comes due. Read-time only — nothing is copied.
+  const chases = await pool.query(
+    `SELECT t.id, t.ticket_number, t.subject, t.customer_id, c.name AS customer_name,
+            t.assigned_user_id, u.display_name AS who, t.chase_by AS dk,
+            s.name AS tp_name, t.third_party_ref
+       FROM inbox_tickets t
+       LEFT JOIN customers c ON c.id = t.customer_id
+       LEFT JOIN users u ON u.id = t.assigned_user_id
+       LEFT JOIN suppliers s ON s.id = t.third_party_id
+      WHERE t.status = 'awaiting_3rd_party' AND t.chase_by = ANY($1::text[])
+        AND t.deleted_at IS NULL AND t.is_spam = false`,
+    [days]);
+  for (const x of chases.rows) {
+    out.push(feedEntry({
+      id: -2000000 - Number(x.id), kind: 'promise',
+      title: `Chase ${x.tp_name || 'third party'}: ${x.subject || x.ticket_number}`
+             + (x.third_party_ref ? ` (ref ${x.third_party_ref})` : ''),
+      customerId: x.customer_id ? Number(x.customer_id) : null, customerName: x.customer_name || null,
+      ticketId: Number(x.id), ticketNumber: x.ticket_number || null, dayKey: String(x.dk),
+      people: x.assigned_user_id ? [{ id: Number(x.assigned_user_id), name: String(x.who || '') }] : [],
+      accent: entryAccent('promise', null),
+      feed: 'chase', link: `/tickets/${x.id}`,
+    }));
+  }
+
   // ── Feed: scheduled restarts/shutdowns + windowed installs (Support view) ──────
   const cmds = await pool.query(
     `SELECT ac.id, ac.kind, EXTRACT(EPOCH FROM ac.run_after)::bigint AS s,

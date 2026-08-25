@@ -56,6 +56,7 @@ import meshRoutes from './routes/mesh';
 import m365Routes from './routes/m365';
 import patchingRoutes from './routes/patching';
 import diaryRoutes from './routes/diary';
+import thirdPartyRoutes from './routes/third-party';
 import securityRoutes from './routes/security';
 import ceRoutes from './routes/ce';
 import softwareRoutes from './routes/software';
@@ -414,6 +415,7 @@ app.use('/', meshRoutes);        // MeshCentral: bridge API (shared-secret) + re
 app.use('/', m365Routes);        // Microsoft 365 read-only panel per customer
 app.use('/', patchingRoutes);    // Windows Update reporting across the estate
 app.use('/', diaryRoutes);       // The Diary — business scheduling (hard-block clash engine)
+app.use('/', thirdPartyRoutes); // Third parties — who a case is waiting on, and the chase board
 app.use('/', securityRoutes);    // Endpoint Security — Bitdefender/GravityZone
 app.use('/', ceRoutes);          // Cyber Essentials assessment, actions and the end-of-life list
 app.use('/', softwareRoutes);    // Software across the estate: installed, behind, out of support

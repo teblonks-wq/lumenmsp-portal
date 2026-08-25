@@ -6,6 +6,7 @@ import { sendTicketStatusEmail } from '../lib/emails';
 import { cleanHtml } from '../lib/sanitize';
 import { attachmentUpload, processAttachments } from '../lib/attachments';
 import { logActivity } from '../lib/activity';
+import { listThirdParties, parkOnThirdParty, clearThirdParty, chaseByDefault } from '../lib/third-party';
 import { notify } from '../lib/notifications';
 import { sendTeamsNotice } from '../lib/teams'; // sendTeamsReply (relay) disabled pending Power Automate fix
 import { teamsGraphConnected, sendTeamsChatMessage } from '../lib/teamsgraph';
@@ -513,7 +514,9 @@ async function composerContext(ticket: any) {
   const aiCatOn = await aiTicketCategoryEnabled();
   await ensureReplyTemplates().catch(() => {});
   const replyTemplates = await listReplyTemplates().catch(() => [] as any[]);
-  return { contacts, customerDomain, lastChannel, waNum, waWindowOpen, teamsSendOk, agentSendOk, aiCatOn, replyTemplates };
+  const thirdParties = (await listThirdParties(false).catch(() => [])).map(tp => ({
+    id: tp.id, name: tp.name, chaseBy: chaseByDefault(tp.typicalDays) }));
+  return { contacts, customerDomain, lastChannel, waNum, waWindowOpen, teamsSendOk, agentSendOk, aiCatOn, replyTemplates, thirdParties };
 }
 
 router.get('/tickets/review', requireAuth, async (req: Request, res: Response) => {
@@ -620,7 +623,13 @@ router.post('/tickets/review/:id', requireAuth, async (req: Request, res: Respon
     await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1,$2,'private_note',$3)`, [id, user.id, body]);
   }
   if (setStatus) {
-    await pool.query('UPDATE inbox_tickets SET status=$2, postponed_until=$3, updated_at=NOW() WHERE id=$1', [id, setStatus, autoReturnAt(setStatus, ppVal)]);
+    await pool.query('UPDATE inbox_tickets SET status=$2, postponed_until=$3, updated_at=NOW() WHERE id=$1',
+      [id, setStatus, chaseReturn(setStatus, req.body, autoReturnAt(setStatus, ppVal))]);
+    const tpNote = await applyThirdParty(id, setStatus, req.body);
+    if (tpNote.trim()) {
+      await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1,$2,'system_log',$3)`,
+        [id, user.id, tpNote.trim()]).catch(() => {});
+    }
     await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1,$2,'system_log',$3)`,
       [id, user.id, `Status: ${cur.status} → ${setStatus} (helpdesk review by ${user.displayName})`]);
     await logActivity(user.id, 'status_changed', 'tickets', id, `Ticket #${id} → ${setStatus} (helpdesk review)`);
@@ -786,9 +795,48 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
   const aiCatOn = await aiTicketCategoryEnabled();
   await ensureReplyTemplates().catch(() => {});
   const replyTemplates = await listReplyTemplates().catch(() => [] as any[]);
+  // The Properties panel sets status too, so it needs the third-party picker as well as
+  // the composer does — one list, both places, or the two disagree about who a case is with.
+  const thirdParties = (await listThirdParties(false).catch(() => [])).map(tp => ({
+    id: tp.id, name: tp.name, chaseBy: chaseByDefault(tp.typicalDays) }));
 
-  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, requesterAssets, subjectInvoice, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, agentSendOk, teamsChatId, aiCatOn, replyTemplates, ourDomains, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
+  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, requesterAssets, subjectInvoice, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, agentSendOk, teamsChatId, aiCatOn, replyTemplates, thirdParties, ourDomains, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
 });
+
+/**
+ * Keep the third-party attachment honest whenever a case's status moves.
+ * Parking on 'awaiting 3rd party' names WHO and dates the chase; moving off it clears
+ * the attachment, so a resolved case can never still read as waiting on someone.
+ * Returns a sentence to append to the redirect, or '' — the engineer should see the
+ * chase date that was chosen for them rather than discover it later.
+ */
+async function applyThirdParty(ticketId: number, status: string | null, b: any): Promise<string> {
+  if (!status) return '';
+  if (status !== 'awaiting_3rd_party') { await clearThirdParty(ticketId); return ''; }
+  const tpId = parseInt(String(b.tp_id || ''), 10);
+  if (!Number.isFinite(tpId) || tpId <= 0) {
+    // Parked with nobody named. Allowed — refusing the status would just push people to
+    // pick the wrong one — but it lands on the Third parties board flagged as unnamed.
+    await pool.query(
+      `UPDATE inbox_tickets SET waiting_since=COALESCE(waiting_since, NOW()) WHERE id=$1`, [ticketId]);
+    return ' Nobody was named, so it shows on the Third parties board as unattached.';
+  }
+  const parked = await parkOnThirdParty(ticketId, tpId, String(b.tp_ref || ''), String(b.tp_chase || ''));
+  if (!parked) return ' That third party is no longer on the list, so nothing was attached.';
+  return ` Waiting on ${parked.name} — chase by ${parked.chaseBy}.`;
+}
+
+/** A chase-by day key overrides the blanket 24h auto-return for a third-party park. */
+function chaseReturn(status: string | null, b: any, fallback: Date | null): Date | null {
+  if (status !== 'awaiting_3rd_party') return fallback;
+  const day = String(b.tp_chase || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return fallback;
+  // 09:00 London on the chase day — it should be back in the queue when work starts,
+  // not at midnight where it lands under yesterday's date.
+  const naive = Date.parse(day + 'T09:00:00Z');
+  const offset = Date.parse(new Date(naive).toLocaleString('sv-SE', { timeZone: 'Europe/London' }).replace(' ', 'T') + 'Z') - naive;
+  return new Date(naive - offset);
+}
 
 // ── Update fields ────────────────────────────────────────────────────────────────
 router.post('/tickets/:id', requireAuth, async (req: Request, res: Response, next: NextFunction) => {
@@ -818,8 +866,12 @@ router.post('/tickets/:id', requireAuth, async (req: Request, res: Response, nex
   // Assigning a ticket starts it: a 'new' ticket becomes 'open' once it has an engineer.
   const effectiveStatus = (resultingAssignee && newStatus === 'new') ? 'open' : newStatus;
 
-  // Postpone keeps its explicit date; Awaiting customer / 3rd party get a 24h auto-return timer.
-  const postponedUntil = autoReturnAt(effectiveStatus, b.postponed_until ? new Date(b.postponed_until) : null);
+  // Postpone keeps its explicit date; Awaiting customer gets a 24h auto-return timer.
+  // Awaiting 3rd party used to get that same blanket 24h, which is why chases were guesswork:
+  // when a chase-by day is given it wins, so the case returns on the day we said we would
+  // go back at them rather than tomorrow regardless of who we are waiting on.
+  const postponedUntil = chaseReturn(effectiveStatus, b,
+    autoReturnAt(effectiveStatus, b.postponed_until ? new Date(b.postponed_until) : null));
   await pool.query(
     `UPDATE inbox_tickets SET
        status=$1, department=$2, category=$3,
@@ -850,8 +902,17 @@ router.post('/tickets/:id', requireAuth, async (req: Request, res: Response, nex
     try { await notifyTicketStatus(id, 'resolved', user.displayName); }
     catch (e) { console.error('Resolved notify failed:', e); }
   }
+  // Name (or release) the third party this case is waiting on.
+  const tpNote = effectiveStatus !== prevStatus ? await applyThirdParty(id, effectiveStatus, b) : '';
+  if (tpNote.trim()) {
+    await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1,$2,'system_log',$3)`,
+      [id, user.id, tpNote.trim()]);
+  }
+
   // Resolving a case sends you back to the helpdesk overview, not the (now-done) ticket.
-  res.redirect(effectiveStatus === 'resolved' ? '/tickets' : '/tickets/' + id);
+  res.redirect(effectiveStatus === 'resolved'
+    ? '/tickets'
+    : '/tickets/' + id + (tpNote ? '?msg=' + encodeURIComponent(tpNote.trim()) : ''));
 });
 
 // ── Quick inline update from the board (status and/or assignee) ──────────────────
@@ -948,9 +1009,19 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
     res.redirect(back + '?err=' + encodeURIComponent('Pick a date & time to postpone the case.')); return;
   }
   const ppVal = ppRaw && !isNaN(ppRaw.getTime()) ? ppRaw : null;
-  const applyStatus = async (s: string | null) => {
-    if (!s) return;
-    await pool.query('UPDATE inbox_tickets SET status=$2, postponed_until=$3, updated_at=NOW() WHERE id=$1', [id, s, autoReturnAt(s, ppVal)]);
+  // A chase-by day beats the blanket 24h timer for a third-party park, and naming the
+  // third party (or releasing it) rides with the status change itself, so the two can
+  // never disagree about who a case is sitting with.
+  let tpNote = '';
+  const applyStatus = async (st: string | null) => {
+    if (!st) return;
+    await pool.query('UPDATE inbox_tickets SET status=$2, postponed_until=$3, updated_at=NOW() WHERE id=$1',
+      [id, st, chaseReturn(st, req.body, autoReturnAt(st, ppVal))]);
+    tpNote = await applyThirdParty(id, st, req.body);
+    if (tpNote.trim()) {
+      await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1,$2,'system_log',$3)`,
+        [id, user.id, tpNote.trim()]).catch(() => {});
+    }
   };
 
   // A public reply needs a requester (someone to reply to). The engineer requirement is met

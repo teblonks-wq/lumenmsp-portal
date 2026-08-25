@@ -7,7 +7,8 @@
 //
 // Locals contract (all required unless noted):
 //   ticket, user, contacts, customerDomain, replyTemplates, STATUSES, cap,
-//   teamsSendOk, agentSendOk, lastChannel, waWindowOpen, waNum, aiCatOn
+//   teamsSendOk, agentSendOk, lastChannel, waWindowOpen, waNum, aiCatOn,
+//   thirdParties  - [{id,name,typicalDays,chaseBy}] for the "Awaiting 3rd party" block
 //   reviewMode  (optional) - adds review=1 to the post, so saving advances the review
 //   standalone  (optional) - page has no Properties panel: bring our own postpone
 //                lightbox and status wiring (review). detail.ejs handles these itself.
@@ -144,6 +145,8 @@ var _standalone = (typeof standalone !== 'undefined' && !!standalone);
           </label>
           <button class="btn btn-primary" type="submit" id="replyUpdateBtn">Update</button>
         </div>
+
+        <%- include('./_third-party', { ticket: ticket, thirdParties: (typeof thirdParties !== 'undefined' ? thirdParties : []) }) %>
       </form>
       <script>
       (function(){
@@ -505,3 +508,4 @@ var _standalone = (typeof standalone !== 'undefined' && !!standalone);
 })();
 </script>
 <% } %>
+<%- include('./_third-party-js') %>
