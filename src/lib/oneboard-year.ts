@@ -1,19 +1,19 @@
-import { CURVE_PALETTE_SCREEN, type CurvePalette } from './oneboard-curve';
 import type { SiteYearStats } from './oneboard-baseline';
 
 // ── The year pool ─────────────────────────────────────────────────────────────────
-// The board's panels all answer "what happened in the dates you picked". These answer
-// "what does this branch look like across 2026 so far" — the same metrics, drawn from
-// the whole cached year in oneboard_day_stats rather than the selected range.
+// The board's panels answer "what happened in the dates you picked". These answer
+// "what does this branch look like across 2026 so far" — the same metrics, the same
+// heatmap shape, drawn from the whole cached year in oneboard_day_stats.
 //
-// The unit is PER DAY, not the year's total. A total says "412 missed at 09:00" which
-// sounds enormous and means nothing without dividing by the number of days in your
-// head; the year total is in the tooltip for anyone who wants it.
+// They are RATES, not counts. Across 236 days a count says "412 missed at 09:00",
+// which needs dividing by something before it means anything; a rate says "21% of the
+// calls arriving at 09:00 go unanswered", which is a fact you can act on and which
+// compares honestly between a busy branch and a quiet one.
 //
-// Pure: numbers in, an SVG string out. No database, no clock.
+// Pure: numbers in, numbers and a sentence out. No database, no clock.
 
 export interface YearSeries {
-  days: number;                 // days of history behind these figures
+  days: number;
   from: string | null; to: string | null;
   hourTotal: number[];          // 24 — every call in that hour across the year
   hourMissed: number[];         // 24
@@ -42,117 +42,129 @@ export function yearSeries(stats: SiteYearStats): YearSeries {
   return { days, from: stats.firstDay, to: stats.lastDay, hourTotal, hourMissed, dowTotal, dowMissed, dowDays };
 }
 
-export interface YearBar {
+/** Across a whole year, a slot carrying fewer than this many calls cannot support a
+ *  percentage — 1 missed of 3 is not "33% missed", it is three calls. Those cells read
+ *  blank rather than alarming, exactly as an hour under 5 calls does on the day view. */
+export const YEAR_MIN_SAMPLE = 20;
+
+export interface RateCell {
   key: string; label: string;
-  perDay: number;        // the bar height
-  total: number;         // across the whole year — tooltip only
-  days: number;          // days the mean is over
-  share: number;         // this bar as a share of the row, 0..1 (missed rate, or share of calls)
-  shareLabel: string;
-}
-
-/** Missed calls per day, by hour of the day, across the year. */
-export function yearMissedByHour(y: YearSeries, hours: number[]): YearBar[] {
-  return hours.map((h) => ({
-    key: String(h),
-    label: String(h).padStart(2, '0'),
-    perDay: y.days ? y.hourMissed[h] / y.days : 0,
-    total: y.hourMissed[h],
-    days: y.days,
-    share: y.hourTotal[h] ? y.hourMissed[h] / y.hourTotal[h] : 0,
-    shareLabel: y.hourTotal[h] ? `${Math.round((y.hourMissed[h] / y.hourTotal[h]) * 100)}% of that hour's calls` : 'no calls',
-  }));
-}
-
-/** Every incoming call per day, by hour of the day, across the year. */
-export function yearCallsByHour(y: YearSeries, hours: number[]): YearBar[] {
-  const all = y.hourTotal.reduce((n, v) => n + v, 0);
-  return hours.map((h) => ({
-    key: String(h),
-    label: String(h).padStart(2, '0'),
-    perDay: y.days ? y.hourTotal[h] / y.days : 0,
-    total: y.hourTotal[h],
-    days: y.days,
-    share: all ? y.hourTotal[h] / all : 0,
-    shareLabel: all ? `${Math.round((y.hourTotal[h] / all) * 100)}% of the day's calls` : 'no calls',
-  }));
+  pct: number | null;           // null = too few calls across the whole year to judge
+  missed: number; total: number;
+  days: number;
 }
 
 const DOW3 = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DOWFULL = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-/** Missed calls per day, by day of the week, across the year. */
-export function yearMissedByDow(y: YearSeries): YearBar[] {
-  return DOW3.map((name, d) => ({
-    key: name,
-    label: name,
-    perDay: y.dowDays[d] ? y.dowMissed[d] / y.dowDays[d] : 0,
-    total: y.dowMissed[d],
-    days: y.dowDays[d],
-    share: y.dowTotal[d] ? y.dowMissed[d] / y.dowTotal[d] : 0,
-    shareLabel: y.dowTotal[d] ? `${Math.round((y.dowMissed[d] / y.dowTotal[d]) * 100)}% of that day's calls` : 'no calls',
+function rate(missed: number, total: number): number | null {
+  return total >= YEAR_MIN_SAMPLE ? Math.round((missed / total) * 100) : null;
+}
+
+/** % of each hour's calls that went unanswered, across the year. */
+export function yearMissedRateByHour(y: YearSeries, hours: number[]): RateCell[] {
+  return hours.map((h) => ({
+    key: String(h), label: String(h).padStart(2, '0') + ':00',
+    pct: rate(y.hourMissed[h], y.hourTotal[h]),
+    missed: y.hourMissed[h], total: y.hourTotal[h], days: y.days,
   }));
 }
 
-function esc(s: any): string {
-  return String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+/** % of each weekday's calls that went unanswered, across the year. */
+export function yearMissedRateByDow(y: YearSeries): RateCell[] {
+  return DOW3.map((name, d) => ({
+    key: name, label: name,
+    pct: rate(y.dowMissed[d], y.dowTotal[d]),
+    missed: y.dowMissed[d], total: y.dowTotal[d], days: y.dowDays[d],
+  }));
 }
-function n1(v: number): string { return v >= 10 ? v.toFixed(0) : v.toFixed(1); }
 
-/**
- * One row of bars — thin marks, hairline grid, a single direct label on the tallest
- * bar and every other value in a tooltip. One colour for the whole series: these are
- * one measure over an ordered scale, so a per-bar ramp would double-encode the height
- * and buy nothing.
- */
-export function yearBarSvg(opts: {
-  label: string; bars: YearBar[]; unit: string;
-  tone?: 'missed' | 'calls';
-  palette?: CurvePalette; width?: number; height?: number;
-}): string {
-  const p = opts.palette || CURVE_PALETTE_SCREEN;
-  const colour = opts.tone === 'calls' ? p.accent : p.bad;
-  const W = opts.width || 780, H = opts.height || 168;
-  const padL = 40, padR = 14, padT = 18, padB = 28;
-  const plotW = W - padL - padR, plotH = H - padT - padB;
-  const bars = opts.bars;
-  if (!bars.length) return '';
+/** Share of the year's incoming calls that arrive in each hour. Sums to 100%. */
+export function yearShareByHour(y: YearSeries, hours: number[]): RateCell[] {
+  const all = y.hourTotal.reduce((n, v) => n + v, 0);
+  return hours.map((h) => ({
+    key: String(h), label: String(h).padStart(2, '0') + ':00',
+    pct: all >= YEAR_MIN_SAMPLE ? Math.round((y.hourTotal[h] / all) * 100) : null,
+    missed: y.hourMissed[h], total: y.hourTotal[h], days: y.days,
+  }));
+}
 
-  const peak = Math.max(...bars.map((b) => b.perDay));
-  const yMax = peak <= 0 ? 1 : peak <= 2 ? Math.ceil(peak * 2) / 2 : Math.ceil(peak);
-  const Y = (v: number) => padT + plotH - Math.min(1, v / yMax) * plotH;
-  const slot = plotW / bars.length;
-  const bw = Math.max(3, Math.min(38, slot - 8));
-  const X = (i: number) => padL + slot * i + slot / 2;
-  const ax = (v: number) => (yMax >= 10 ? v.toFixed(0) : v.toFixed(1));
+// ── The observation ───────────────────────────────────────────────────────────────
+// One plain sentence per chart, computed from the cells and nothing else. It must say
+// something a reader could act on, and it must never reach past what the numbers show:
+// no causes, no advice, no "probably". When the data cannot support a statement, it
+// says that instead of inventing one.
 
-  const grid = [0, 0.5, 1].map((f) => {
-    const y = padT + plotH - f * plotH;
-    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="${p.grid}" stroke-width="1"/>`
-      + `<text x="${padL - 6}" y="${y + 3.5}" text-anchor="end" font-size="9.5" fill="${p.faint}">${ax(yMax * f)}</text>`;
-  }).join('');
+function judged(cells: RateCell[]): RateCell[] { return cells.filter((c) => c.pct != null); }
 
-  const body = bars.map((b, i) => {
-    const yBase = padT + plotH, yTop = Y(b.perDay);
-    const h = Math.max(b.perDay > 0 ? 1 : 0, yBase - yTop);
-    const tip = `${opts.label} ${b.label} — ${n1(b.perDay)} ${opts.unit} on an average day`
-      + ` · ${b.total} in total over ${b.days} day${b.days === 1 ? '' : 's'} · ${b.shareLabel}`;
-    const bar = b.days
-      ? `<rect x="${X(i) - bw / 2}" y="${yBase - h}" width="${bw}" height="${h}" fill="${colour}" rx="2"/>`
-      : `<text x="${X(i)}" y="${yBase - 4}" text-anchor="middle" font-size="9" fill="${p.faint}" opacity="0.7">none</text>`;
-    return `<g><title>${esc(tip)}</title>`
-      + `<rect x="${X(i) - slot / 2}" y="${padT}" width="${slot}" height="${plotH}" fill="transparent"/>`
-      + bar + `</g>`
-      + `<text x="${X(i)}" y="${H - 9}" text-anchor="middle" font-size="9.5" fill="${p.faint}">${esc(b.label)}</text>`;
-  }).join('');
+function worstBest(cells: RateCell[]): { worst: RateCell; best: RateCell } | null {
+  const j = judged(cells);
+  if (j.length < 2) return null;
+  const sorted = [...j].sort((a, b) => (b.pct as number) - (a.pct as number));
+  return { worst: sorted[0], best: sorted[sorted.length - 1] };
+}
 
-  let peakI = 0; bars.forEach((b, i) => { if (b.perDay > bars[peakI].perDay) peakI = i; });
-  const lbl = bars[peakI].perDay > 0
-    ? `<text x="${X(peakI)}" y="${Math.max(padT - 4, Y(bars[peakI].perDay) - 6)}" text-anchor="middle" font-size="10.5" font-weight="700" fill="${p.ink}">${n1(bars[peakI].perDay)}</text>`
-    : '';
+/** "Worst at 09:00 — 21% of that hour's calls missed, against 6% at your best hour." */
+export function observeMissedByHour(cells: RateCell[]): string {
+  const j = judged(cells);
+  if (!j.length) return 'Too few calls in any hour across the year to judge a rate.';
+  const wb = worstBest(cells);
+  const overallMissed = j.reduce((n, c) => n + c.missed, 0);
+  const overallTotal = j.reduce((n, c) => n + c.total, 0);
+  const overall = overallTotal ? Math.round((overallMissed / overallTotal) * 100) : 0;
+  if (!wb) return `${overall}% of calls go unanswered across the year, but only one hour carries enough calls to judge.`;
+  const quiet = cells.length - j.length;
+  const gap = (wb.worst.pct as number) - (wb.best.pct as number);
+  const lead = `**${wb.worst.label}** is the weakest hour of the year at **${wb.worst.pct}% missed**`
+    + (gap >= 3
+      ? `, against ${wb.best.pct}% at ${wb.best.label} — a ${gap}-point spread across the working day.`
+      : `, and the day is even — only ${gap} point${gap === 1 ? '' : 's'} separate the best and worst hours.`);
+  return `${lead} ${overall}% of calls are missed across the year overall.`
+    + (quiet ? ` ${quiet} hour${quiet === 1 ? '' : 's'} carried too few calls to judge.` : '');
+}
 
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="auto" preserveAspectRatio="xMidYMid meet" role="img" `
-    + `aria-label="${esc(opts.label)} — ${esc(opts.unit)} per day across the year" style="display:block;max-width:100%;">`
-    + grid
-    + `<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="${p.grid}" stroke-width="1"/>`
-    + body + lbl + `</svg>`;
+/** "Monday is the worst day at 14% missed, against 8% on Thursday." */
+export function observeMissedByDow(cells: RateCell[]): string {
+  const j = judged(cells);
+  if (!j.length) return 'Too few calls on any weekday across the year to judge a rate.';
+  const wb = worstBest(cells);
+  const open = j.filter((c) => c.days > 0).length;
+  if (!wb) return `Only one weekday carries enough calls across the year to judge (${j[0].label}, ${j[0].pct}% missed).`;
+  const gap = (wb.worst.pct as number) - (wb.best.pct as number);
+  if (gap < 3) {
+    return `The week is flat: every open day sits within ${gap} point${gap === 1 ? '' : 's'} of the others, `
+      + `between ${wb.best.pct}% and ${wb.worst.pct}% missed. Nothing here points at one day.`;
+  }
+  return `**${DOWFULL[DOW3.indexOf(wb.worst.label)] || wb.worst.label}** is the weakest day of the year at `
+    + `**${wb.worst.pct}% missed**, against ${wb.best.pct}% on ${DOWFULL[DOW3.indexOf(wb.best.label)] || wb.best.label} `
+    + `— a ${gap}-point spread across ${open} open days.`;
+}
+
+/** "Half the year's calls arrive before 11:00; 09:00 alone carries 18%." */
+export function observeCallShare(cells: RateCell[]): string {
+  const j = judged(cells);
+  if (!j.length) return 'Too few calls across the year to describe the shape of the day.';
+  let peak = j[0];
+  for (const c of j) if ((c.pct as number) > (peak.pct as number)) peak = c;
+  // How many hours, taken busiest-first, cover half the day's calls? A blunt but honest
+  // measure of how concentrated the demand is.
+  const sorted = [...j].sort((a, b) => (b.pct as number) - (a.pct as number));
+  let acc = 0, need = 0;
+  for (const c of sorted) { acc += c.pct as number; need++; if (acc >= 50) break; }
+  return `**${peak.label}** is the busiest hour of the year, carrying **${peak.pct}%** of all incoming calls. `
+    + `Half the day's calls land in just ${need} hour${need === 1 ? '' : 's'}.`;
+}
+
+// ── Colouring ─────────────────────────────────────────────────────────────────────
+// A rate gets ABSOLUTE bands, not a scale-to-the-max ramp. "Deepest red = the worst
+// cell here" makes a good year look as alarming as a bad one; 30% missed should be the
+// same colour in January as in August, and on every branch.
+
+export const RATE_BANDS = [0, 5, 10, 20, 30];   // upper edges: <5, <10, <20, <30, 30+
+
+export function rateBand(pct: number | null): number {
+  if (pct == null) return -1;               // not judged
+  if (pct <= 0) return 0;
+  for (let i = 1; i < RATE_BANDS.length; i++) if (pct < RATE_BANDS[i]) return i;
+  return RATE_BANDS.length;
 }

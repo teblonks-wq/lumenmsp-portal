@@ -12,7 +12,11 @@ import {
   baselineForRange, buildCurve, summariseCurve, CURVE_TARGET_DEFAULT,
   type CurveHour, type CurveSummary, type RangeBaseline,
 } from './oneboard-curve';
-import { yearSeries, yearMissedByHour, type YearBar, type YearSeries } from './oneboard-year';
+import {
+  yearSeries, yearMissedRateByHour, yearMissedRateByDow, yearShareByHour,
+  observeMissedByHour, observeMissedByDow, observeCallShare,
+  type RateCell, type YearSeries,
+} from './oneboard-year';
 
 // ── OneBoard — "Dashboard for the whole company" ─────────────────────────────────
 // One customer-facing dashboard that brings a customer's SITES together WITHOUT
@@ -55,7 +59,14 @@ export interface OneBoardSite {
   // The YEAR pool — the same metrics over every day since January, not the dates on
   // screen. Null until the nightly cache has enough history for this site.
   year: YearSeries | null;
-  yearMissedHourBars: YearBar[];
+  // The year panels, as RATES. Each carries its own one-line observation, computed
+  // from the cells and nothing else, so the chart never needs a human to interpret it.
+  yearMissedByHour: RateCell[];
+  yearMissedByDow: RateCell[];
+  yearCallsByHour: RateCell[];
+  yearNoteHour: string;
+  yearNoteDow: string;
+  yearNoteCalls: string;
 }
 
 export interface OneBoardData {
@@ -227,7 +238,9 @@ export async function buildOneBoard(
         sites.push({ id: Number(s.id), label: s.site_label, configured: !!logic, included, metrics: null, prev: null,
           daily: [], missedByHour: [], totalByHour: [],
           missedByDow: [], totalByDow: [], daysSeenByDow: [], missedByDowHour: [], totalByDowHour: [],
-          baseline: null, curve: [], curveSummary: null, year: null, yearMissedHourBars: [] });
+          baseline: null, curve: [], curveSummary: null, year: null,
+          yearMissedByHour: [], yearMissedByDow: [], yearCallsByHour: [],
+          yearNoteHour: '', yearNoteDow: '', yearNoteCalls: '' });
         continue;
       }
       const journeys = buildJourneys(rows, logic);
@@ -266,6 +279,15 @@ export async function buildOneBoard(
       const baseline = stats && stats.daysCovered >= BASELINE_MIN_DAYS ? baselineForRange(stats, daysSeenByDow) : null;
       const curve = buildCurve({ totalByHour: heatAll, missedByHour: heat, days: days.length, baseline, target });
       const year = stats && stats.daysCovered >= BASELINE_MIN_DAYS ? yearSeries(stats) : null;
+      const yHour = year ? yearMissedRateByHour(year, ONEBOARD_HOURS) : [];
+      const yDow = year ? yearMissedRateByDow(year) : [];
+      const yCalls = year ? yearShareByHour(year, ONEBOARD_HOURS) : [];
+      const yearPanels = {
+        yearMissedByHour: yHour, yearMissedByDow: yDow, yearCallsByHour: yCalls,
+        yearNoteHour: year ? observeMissedByHour(yHour) : '',
+        yearNoteDow: year ? observeMissedByDow(yDow) : '',
+        yearNoteCalls: year ? observeCallShare(yCalls) : '',
+      };
 
       sites.push({
         id: Number(s.id), label: s.site_label, configured: true, included: true,
@@ -276,7 +298,7 @@ export async function buildOneBoard(
         totalByHour: heatAll,
         missedByDow, totalByDow, daysSeenByDow, missedByDowHour, totalByDowHour,
         baseline, curve, curveSummary: summariseCurve(curve),
-        year, yearMissedHourBars: year ? yearMissedByHour(year, ONEBOARD_HOURS) : [],
+        year, ...yearPanels,
       });
     }
 

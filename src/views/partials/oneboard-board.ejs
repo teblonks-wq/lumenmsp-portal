@@ -58,6 +58,15 @@
     return '<span style="font-size:11px;font-weight:700;color:' + col + ';">' + (d > 0 ? '+' : '') + d + 'pp</span>';
   }
   function hh(h){ return ('0' + h).slice(-2) + ':00'; }
+  // A RATE gets absolute bands, not a scale-to-the-max ramp: 30% missed must look the
+  // same in January as in August and on every branch. Scaling to the worst cell present
+  // makes a good year look exactly as alarming as a bad one.
+  var RATE_STEPS = ['var(--surface-2)','var(--bad-bg)','var(--bad-line2)','var(--bad-soft)','var(--bad)','#7f1d1d'];
+  function rateBand(p){ if (p == null) return -1; if (p <= 0) return 0; if (p < 5) return 1; if (p < 10) return 2; if (p < 20) return 3; if (p < 30) return 4; return 5; }
+  function rateBg(p){ var b = rateBand(p); return b < 0 ? 'var(--surface)' : RATE_STEPS[b]; }
+  function rateInk(p){ var b = rateBand(p); return b < 0 ? 'var(--faint)' : (b >= 4 ? '#ffffff' : 'var(--ink)'); }
+  // Observations arrive as plain text with **emphasis**; escape first, then bold.
+  function obs(t){ return esc(t).replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--ink);">$1</strong>'); }
   function n1(v){ return (v >= 10) ? v.toFixed(0) : v.toFixed(1); }
   var obTarget   = (typeof target !== 'undefined' && target) ? target : 90;
   var obBaseName = (typeof baselineName !== 'undefined' && baselineName) ? baselineName : 'Year average';
@@ -370,24 +379,35 @@
   </div>
 </div>
 
-<!-- THE YEAR POOL. Same metric as the heatmap above, different pool: every day since
-     January rather than the dates picked at the top. It sits in its OWN panel and
-     changes nothing above it. -->
-<% if (typeof obYearSvg !== 'undefined' && obYearSvg && included.some(function(s){ return s.yearMissedHourBars && s.yearMissedHourBars.length; })) { %>
+<!-- THE YEAR POOL. Same metric and same shape as the heatmap above, different pool
+     and a different unit: every day since January, as a PERCENTAGE. It sits in its own
+     panel and changes nothing above it. -->
+<% if (included.some(function(s){ return s.yearMissedByHour && s.yearMissedByHour.length; })) { %>
 <div class="card" style="padding:0;margin-top:16px;">
   <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">Missed calls by hour &mdash; <%= obBaseName.replace(' average', '') %> so far</h2>
-    <span class="muted" style="font-size:12px;">Every day since <%= baselineFrom %>, not the dates above. Bar height is missed calls in that hour on an average day; hover for the year's total and what share of the hour's calls it is.</span></div>
-  <% included.forEach(function(s, si){ if (!s.yearMissedHourBars || !s.yearMissedHourBars.length) return; %>
-  <div style="padding:12px 18px 6px;<%= si ? 'border-top:1px solid var(--line);' : '' %>">
-    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline;">
-      <div style="font-weight:700;font-size:13px;"><%= esc(s.label) %></div>
-      <div class="muted" style="font-size:12px;">
-        <% var yb = -1, yv = -1; s.yearMissedHourBars.forEach(function(b, i){ if (b.perDay > yv) { yv = b.perDay; yb = i; } }); %>
-        <strong style="color:var(--ink);"><%= s.year.days %></strong> days of history<% if (yb >= 0 && yv > 0) { %>
-        &middot; worst hour <strong style="color:var(--ink);"><%= hh(s.yearMissedHourBars[yb].key) %></strong> at <%= yv.toFixed(1) %> missed a day<% } %>
-      </div>
-    </div>
-    <%- obYearSvg({ label: s.label, bars: s.yearMissedHourBars, unit: 'missed calls', tone: 'missed' }) %>
+    <span class="muted" style="font-size:12px;">Every day since <%= baselineFrom %>, not the dates above. Each cell is the share of that hour's calls that went unanswered across the whole year.</span></div>
+  <div class="table-wrap"><table class="table" style="margin:0;">
+    <thead><tr><th style="min-width:110px;"></th><% hours.forEach(function(h){ %><th class="muted" style="text-align:center;font-size:11px;"><%= ('0'+h).slice(-2) %>:00</th><% }); %></tr></thead>
+    <tbody>
+      <% included.forEach(function(s){ if (!s.yearMissedByHour || !s.yearMissedByHour.length) return; %>
+      <tr>
+        <td style="font-weight:600;font-size:13px;white-space:nowrap;"><%= s.label %></td>
+        <% s.yearMissedByHour.forEach(function(c){ %>
+          <td title="<%= s.label %> &middot; <%= c.label %> &mdash; <%= c.pct == null ? 'only ' + c.total + ' calls all year, too few to judge' : c.pct + '% missed (' + c.missed + ' of ' + c.total + ' calls across ' + c.days + ' days)' %>"
+              style="text-align:center;background:<%= rateBg(c.pct) %>;color:<%= rateInk(c.pct) %>;font-size:12px;font-weight:600;min-width:34px;"><%= c.pct == null ? '' : c.pct + '%' %></td>
+        <% }); %>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <div style="display:flex;align-items:center;gap:6px;padding:10px 18px;font-size:11px;color:var(--muted);">
+    0% <% ['var(--surface-2)','var(--bad-bg)','var(--bad-line2)','var(--bad-soft)','var(--bad)','#7f1d1d'].forEach(function(c){ %><span style="width:18px;height:10px;background:<%= c %>;border:1px solid var(--line);border-radius:2px;display:inline-block;"></span><% }); %> 30%+ missed
+    <span style="color:var(--faint);margin-left:8px;">&middot; blank = too few calls all year to judge</span>
+  </div>
+  <% included.forEach(function(s){ if (!s.yearNoteHour) return; %>
+  <div style="display:flex;gap:10px;align-items:flex-start;padding:11px 18px;border-top:1px solid var(--line);">
+    <span style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);white-space:nowrap;padding-top:2px;flex:0 0 auto;padding-right:8px;">What it says</span>
+    <span style="font-size:13px;color:var(--muted);line-height:1.55;"><strong style="color:var(--ink);"><%= s.label %></strong> &mdash; <%- obs(s.yearNoteHour) %></span>
   </div>
   <% }); %>
 </div>

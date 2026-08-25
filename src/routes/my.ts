@@ -10,7 +10,7 @@ import { sendMail } from '../lib/mailer';
 import { buildOneBoard, parseOneBoardRange, parseSiteIdsParam, siteLogicsByIds } from '../lib/oneboard';
 import { oneBoardCsv, oneBoardPdfHtml, exportFilename } from '../lib/oneboard-export';
 import { curveSvg } from '../lib/oneboard-curve';
-import { yearBarSvg } from '../lib/oneboard-year';
+import { askInsights } from '../lib/insights-ask';
 import { buildWallboard, wallboardSites, WALLBOARD_MODULES, WALLBOARD_DEFAULT } from '../lib/wallboard';
 import { htmlToPdf } from '../lib/pdf';
 import * as fsx from 'fs';
@@ -781,7 +781,7 @@ router.get('/my/oneboard', need('insights'), async (req: Request, res: Response)
   const data = await buildOneBoard(c, { from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare, allowedSiteIds: (perms(req) as any).insightsSites, target: r.met });
   // curveSvg is handed to the view because an EJS partial cannot require() one. Same
   // function the PDF uses, so the take-away and the screen draw the same picture.
-  res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, ...r, obCurveSvg: curveSvg, obYearSvg: yearBarSvg });
+  res.render('my/oneboard', { active: 'oneboard', user: u, company, ...data, ...r, obCurveSvg: curveSvg });
 });
 
 // Take-aways — the same view as a polished PDF, and the data behind it as CSV.
@@ -845,6 +845,47 @@ router.get('/my/wallboard.json', need('insights'), async (req: Request, res: Res
   const data = await buildWallboard(c, siteId, (perms(req) as any).insightsSites);
   res.setHeader('Cache-Control', 'no-store');
   res.json(data);
+});
+
+// ── Ask Insights (customer) ─────────────────────────────────────────────────────
+// The staff twin of this lives at POST /insights/oneboard/ask and reads the customer from
+// `req.query.customer`. That MUST NOT be copied here: on a customer session the company is
+// whatever the login says it is, never what the URL asks for, or any customer could read
+// another customer's call data by editing the query string. Everything else about the board
+// — dates and site ticks — still comes from the query string, so the answer is only ever
+// about exactly what the asker has on screen, and the per-contact site layer is applied on
+// top via allowedSiteIds exactly as the GET does.
+router.post('/my/oneboard/ask', need('insights'), async (req: Request, res: Response) => {
+  const c = cid(req);
+  const question = String((req.body || {}).question || '').trim().slice(0, 400);
+  if (!question) { res.status(400).json({ ok: false, error: 'Ask a question first.' }); return; }
+  try {
+    const r = parseOneBoardRange(req.query as Record<string, any>);
+    const data = await buildOneBoard(c, {
+      from: r.from, to: r.to, siteIds: await oneboardSiteIds(req), compare: r.compare,
+      allowedSiteIds: (perms(req) as any).insightsSites, target: r.met,
+    });
+    if (data.state !== 'ok') {
+      res.status(400).json({ ok: false, error: 'Call analytics is not available for your account right now.' });
+      return;
+    }
+    if (!data.sites.some((s: any) => s.included && s.configured)) {
+      res.status(400).json({ ok: false, error: 'No configured sites are selected, so there is nothing to reason about. Tick a site and press Update.' });
+      return;
+    }
+    const out = await askInsights(data, r.from, r.to, question);
+    // Deliberately NOT returning cacheNote()/usage — what a prompt cost us is our business,
+    // not the customer's. The staff endpoint returns it; this one must not.
+    res.json({
+      ok: true,
+      headline: out.headline, answer: out.answer, working: out.working,
+      points: out.points, periodWarning: out.periodWarning,
+      period: { from: r.from, to: r.to },
+    });
+  } catch (e: any) {
+    console.error('[my/ask-insights] failed:', e?.message || e);
+    res.status(400).json({ ok: false, error: 'That question could not be answered just now.' });
+  }
 });
 
 // Save this user's site tick boxes as their layout. Scoped to their own users row; the
