@@ -370,6 +370,29 @@
   </div>
 </div>
 
+<!-- THE YEAR POOL. Same metric as the heatmap above, different pool: every day since
+     January rather than the dates picked at the top. It sits in its OWN panel and
+     changes nothing above it. -->
+<% if (typeof obYearSvg !== 'undefined' && obYearSvg && included.some(function(s){ return s.yearMissedHourBars && s.yearMissedHourBars.length; })) { %>
+<div class="card" style="padding:0;margin-top:16px;">
+  <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">Missed calls by hour &mdash; <%= obBaseName.replace(' average', '') %> so far</h2>
+    <span class="muted" style="font-size:12px;">Every day since <%= baselineFrom %>, not the dates above. Bar height is missed calls in that hour on an average day; hover for the year's total and what share of the hour's calls it is.</span></div>
+  <% included.forEach(function(s, si){ if (!s.yearMissedHourBars || !s.yearMissedHourBars.length) return; %>
+  <div style="padding:12px 18px 6px;<%= si ? 'border-top:1px solid var(--line);' : '' %>">
+    <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline;">
+      <div style="font-weight:700;font-size:13px;"><%= esc(s.label) %></div>
+      <div class="muted" style="font-size:12px;">
+        <% var yb = -1, yv = -1; s.yearMissedHourBars.forEach(function(b, i){ if (b.perDay > yv) { yv = b.perDay; yb = i; } }); %>
+        <strong style="color:var(--ink);"><%= s.year.days %></strong> days of history<% if (yb >= 0 && yv > 0) { %>
+        &middot; worst hour <strong style="color:var(--ink);"><%= hh(s.yearMissedHourBars[yb].key) %></strong> at <%= yv.toFixed(1) %> missed a day<% } %>
+      </div>
+    </div>
+    <%- obYearSvg({ label: s.label, bars: s.yearMissedHourBars, unit: 'missed calls', tone: 'missed' }) %>
+  </div>
+  <% }); %>
+</div>
+<% } %>
+
 <% } %>
 <% } %>
 

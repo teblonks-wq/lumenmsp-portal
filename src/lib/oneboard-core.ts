@@ -32,6 +32,28 @@ export function ldn(iso: string): { day: string; hour: number } {
   return { day: `${g('year')}-${g('month')}-${g('day')}`, hour: parseInt(g('hour'), 10) || 0 };
 }
 
+/**
+ * Normalise whatever Postgres hands back for a date column into 'YYYY-MM-DD'.
+ *
+ * node-pg parses a `date`/`timestamp` into a JavaScript **Date object**, not a string.
+ * `String(thatDate).slice(0, 10)` therefore yields "Thu Jan 01", not "2026-01-01" — and
+ * because every comparison in this module is a plain string compare, "2026-08-24" sorts
+ * BEFORE "Thu Jan 01" ('2' < 'T'). That silently convinced the baseline builder that its
+ * window ended before it began, so it returned "nothing to do" instantly, for months,
+ * without an error. (Found 2026-08-25. The same read exists in the board's
+ * compare-previous-period guard, which had been suppressing itself the same way.)
+ *
+ * Two hand-rolled date reads is how this happened. There is now one.
+ */
+export function asDay(v: any): string | null {
+  if (v == null) return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString().slice(0, 10);
+  const str = String(v);
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) return str.slice(0, 10);   // already a day, or an ISO timestamp
+  const d = new Date(str);
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
 export function addDays(iso: string, n: number): string {
   const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);

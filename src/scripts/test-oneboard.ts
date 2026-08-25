@@ -15,7 +15,7 @@
  *   S1–S3   the branch summary
  *   V1–V4   the drawing itself
  */
-import { baselineLabel, baselineWindow, dowIndex, ONEBOARD_HOURS } from '../lib/oneboard-core';
+import { asDay, baselineLabel, baselineWindow, dowIndex, ONEBOARD_HOURS } from '../lib/oneboard-core';
 import {
   baselineForRange, buildCurve, curveSvg, summariseCurve, verdictFor,
   CURVE_MIN_SAMPLE, CURVE_TARGET_DEFAULT,
@@ -58,6 +58,25 @@ console.log('\n── B: the baseline window ───────────�
   // mean over days that never existed is a smaller mean.
   const early = baselineWindow('2026-03-01');
   check('B6 the window never reaches behind the 2026 history floor', early.from === '2026-01-01', early.from);
+}
+
+console.log('\n── A: reading a date back out of Postgres ───────────────────────────');
+{
+  // THE 2026-08-25 OUTAGE, encoded. node-pg parses a `date` column into a JS Date, so
+  // String(v).slice(0,10) gives "Thu Jan 01" — and every window comparison in this
+  // module is a plain string compare, where "2026-08-24" < "Thu Jan 01" is TRUE
+  // because '2' sorts before 'T'. The baseline builder therefore decided its window
+  // ended before it began and returned "nothing to do", instantly and silently, for
+  // every customer. The board's compare-previous-period guard had the same read.
+  const pgDate = new Date('2026-01-01T00:00:00.000Z');   // exactly what the driver returns
+  check('A1 a Date from the driver becomes a real day string', asDay(pgDate) === '2026-01-01', String(asDay(pgDate)));
+  check('A2 …and NOT the naive slice that caused this', String(pgDate).slice(0, 10) === 'Thu Jan 01' && asDay(pgDate) !== 'Thu Jan 01');
+  check('A3 the broken form really does invert the comparison',
+    ('2026-08-24' < String(pgDate).slice(0, 10)) === true && ('2026-08-24' < (asDay(pgDate) as string)) === false);
+  check('A4 a plain day string passes through untouched', asDay('2026-03-07') === '2026-03-07');
+  check('A5 an ISO timestamp is trimmed to its day', asDay('2026-03-07T14:22:11.000Z') === '2026-03-07');
+  check('A6 null and rubbish give null, never a guess', asDay(null) === null && asDay(undefined) === null && asDay('not a date') === null);
+  check('A7 an invalid Date gives null', asDay(new Date('nope')) === null);
 }
 
 console.log('\n── W: a year weighted onto the dates on screen ───────────────────────');

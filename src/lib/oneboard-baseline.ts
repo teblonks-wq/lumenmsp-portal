@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { insightsPool } from '../db/pool';
 import { buildJourneys, type CallEventRow, type LogicConfig } from './insights-journeys';
 import {
-  addDays, dayList, dowIndex, ldn, logicFingerprint, siteLogicOf,
+  addDays, asDay, dayList, dowIndex, ldn, logicFingerprint, siteLogicOf,
   BASELINE_FLOOR, BASELINE_MIN_DAYS, BASELINE_WINDOW_DAYS, baselineLabel, baselineWindow, londonToday,
 } from './oneboard-core';
 
@@ -157,9 +157,15 @@ export async function refreshBaselineForCustomer(
   insCustomerId: number,
   opts: { window?: { from: string; to: string }; log?: boolean } = {}
 ): Promise<{ sites: number; days: number }> {
-  if (!insightsPool) return { sites: 0, days: 0 };
-  if (!(await ensureDayStatsTable())) return { sites: 0, days: 0 };
-  if (running.has(insCustomerId)) return { sites: 0, days: 0 };
+  // A scheduled job that decides to do nothing MUST say why it decided that. Returning
+  // {sites:0,days:0} in silence cost a whole afternoon of guessing (2026-08-25).
+  const bail = (why: string) => {
+    console.log(`[oneboard-baseline] customer ${insCustomerId}: nothing done — ${why}`);
+    return { sites: 0, days: 0 };
+  };
+  if (!insightsPool) return bail('INSIGHTS_DATABASE_URL is not set, so there is no insights pool');
+  if (!(await ensureDayStatsTable())) return bail('the oneboard_day_stats table could not be created or read');
+  if (running.has(insCustomerId)) return bail('a build for this customer is already running');
   running.add(insCustomerId);
   const started = Date.now();
   try {
@@ -170,20 +176,23 @@ export async function refreshBaselineForCustomer(
     const targets = siteRows
       .map((s: any) => ({ id: Number(s.id), label: s.site_label, logic: siteLogicOf(s), fp: logicFingerprint(s) }))
       .filter((s: any) => s.logic) as { id: number; label: string; logic: LogicConfig; fp: string }[];
-    if (!targets.length) return { sites: 0, days: 0 };
+    if (!targets.length) return bail(`none of this customer's ${siteRows.length} site(s) have call logic configured`);
 
     // Never compute days the customer has no history for at all.
+    // to_char, not ::date — belt and braces alongside asDay(), so this can never again
+    // depend on how the driver feels about date columns.
     const floorRow = (await insightsPool.query(
-      `SELECT MIN(event_datetime)::date AS floor, MAX(event_datetime)::date AS ceil FROM call_events
+      `SELECT to_char(MIN(event_datetime), 'YYYY-MM-DD') AS floor,
+              to_char(MAX(event_datetime), 'YYYY-MM-DD') AS ceil FROM call_events
         WHERE customer_id=$1 AND (source_file ILIKE 'ContactGroupDetail%' OR source_file = 'tollring-sync')`,
       [insCustomerId]
     )).rows[0];
-    const histFrom = floorRow?.floor ? String(floorRow.floor).slice(0, 10) : null;
-    const histTo = floorRow?.ceil ? String(floorRow.ceil).slice(0, 10) : null;
-    if (!histFrom || !histTo) return { sites: 0, days: 0 };
+    const histFrom = asDay(floorRow?.floor);
+    const histTo = asDay(floorRow?.ceil);
+    if (!histFrom || !histTo) return bail('this customer has no call history at all');
     const from = win.from > histFrom ? win.from : histFrom;
     const to = win.to < histTo ? win.to : histTo;
-    if (to < from) return { sites: 0, days: 0 };
+    if (to < from) return bail(`the window ends before it starts (${from} → ${to}; history ${histFrom} → ${histTo})`);
 
     const allDays = dayList(from, to, 400).map((d) => d.day);
     const tailFrom = addDays(to, -(REFRESH_TAIL_DAYS - 1));
@@ -208,7 +217,10 @@ export async function refreshBaselineForCustomer(
       const missing = new Set(allDays.filter((d) => !haveSet.has(d) || d >= tailFrom));
       if (missing.size) need.set(t.id, missing);
     }
-    if (!need.size) return { sites: targets.length, days: 0 };
+    if (!need.size) {
+      if (opts.log !== false) console.log(`[oneboard-baseline] customer ${insCustomerId}: already up to date (${allDays.length} days, ${targets.length} sites)`);
+      return { sites: targets.length, days: 0 };
+    }
 
     // Union of the days anyone needs, walked a week at a time. Rows are fetched ONCE per
     // week and re-filtered per site — a 5-site customer costs one query per week, not five.

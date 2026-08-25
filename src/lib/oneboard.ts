@@ -2,7 +2,7 @@ import { insightsPool } from '../db/pool';
 import { buildJourneys, type LogicConfig } from './insights-journeys';
 import {
   ONEBOARD_HOURS, DOW_LABELS, DOW_SHORT, dowIndex,
-  addDays, dayList, ldn, logicFingerprint, metricsOf, siteLogicOf,
+  addDays, asDay, dayList, ldn, logicFingerprint, metricsOf, siteLogicOf,
 } from './oneboard-core';
 import {
   BASELINE_MIN_DAYS, baselineLabel, baselineWindow, fetchRowsBetween,
@@ -12,6 +12,7 @@ import {
   baselineForRange, buildCurve, summariseCurve, CURVE_TARGET_DEFAULT,
   type CurveHour, type CurveSummary, type RangeBaseline,
 } from './oneboard-curve';
+import { yearSeries, yearMissedByHour, type YearBar, type YearSeries } from './oneboard-year';
 
 // ── OneBoard — "Dashboard for the whole company" ─────────────────────────────────
 // One customer-facing dashboard that brings a customer's SITES together WITHOUT
@@ -51,6 +52,10 @@ export interface OneBoardSite {
   baseline: RangeBaseline | null;   // null = not enough history yet, or cache not built
   curve: CurveHour[];               // one entry per business hour
   curveSummary: CurveSummary | null;
+  // The YEAR pool — the same metrics over every day since January, not the dates on
+  // screen. Null until the nightly cache has enough history for this site.
+  year: YearSeries | null;
+  yearMissedHourBars: YearBar[];
 }
 
 export interface OneBoardData {
@@ -187,11 +192,14 @@ export async function buildOneBoard(
     let compareNote: string | null = null;
     if (compare) {
       const floorRow = (await insightsPool.query(
-        `SELECT MIN(event_datetime)::date AS floor FROM call_events
+        `SELECT to_char(MIN(event_datetime), 'YYYY-MM-DD') AS floor FROM call_events
           WHERE customer_id = $1
             AND (source_file ILIKE 'ContactGroupDetail%' OR source_file = 'tollring-sync')`, [ins.id]
       )).rows[0];
-      const floor = floorRow?.floor ? String(floorRow.floor).slice(0, 10) : null;
+      // asDay(), not String().slice() — see the note on asDay in oneboard-core.ts. Read
+      // the wrong way, this guard compared "2026-08-10" against "Thu Jan 01" and so
+      // suppressed EVERY comparison from the day it shipped.
+      const floor = asDay(floorRow?.floor);
       if (floor && prevFrom < floor) {
         compare = false;
         compareNote = `Comparison unavailable: the previous period would start ${prevFrom}, but call history only begins ${floor}.`;
@@ -219,7 +227,7 @@ export async function buildOneBoard(
         sites.push({ id: Number(s.id), label: s.site_label, configured: !!logic, included, metrics: null, prev: null,
           daily: [], missedByHour: [], totalByHour: [],
           missedByDow: [], totalByDow: [], daysSeenByDow: [], missedByDowHour: [], totalByDowHour: [],
-          baseline: null, curve: [], curveSummary: null });
+          baseline: null, curve: [], curveSummary: null, year: null, yearMissedHourBars: [] });
         continue;
       }
       const journeys = buildJourneys(rows, logic);
@@ -257,6 +265,7 @@ export async function buildOneBoard(
       const stats = yearStats.get(Number(s.id));
       const baseline = stats && stats.daysCovered >= BASELINE_MIN_DAYS ? baselineForRange(stats, daysSeenByDow) : null;
       const curve = buildCurve({ totalByHour: heatAll, missedByHour: heat, days: days.length, baseline, target });
+      const year = stats && stats.daysCovered >= BASELINE_MIN_DAYS ? yearSeries(stats) : null;
 
       sites.push({
         id: Number(s.id), label: s.site_label, configured: true, included: true,
@@ -267,6 +276,7 @@ export async function buildOneBoard(
         totalByHour: heatAll,
         missedByDow, totalByDow, daysSeenByDow, missedByDowHour, totalByDowHour,
         baseline, curve, curveSummary: summariseCurve(curve),
+        year, yearMissedHourBars: year ? yearMissedByHour(year, ONEBOARD_HOURS) : [],
       });
     }
 
