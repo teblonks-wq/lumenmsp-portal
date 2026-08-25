@@ -18,7 +18,13 @@ router.get('/tasks', requireAuth, async (req: Request, res: Response) => {
 
   const where: string[] = [];
   const params: any[] = [];
-  if (scope === 'mine') { params.push(user.id); where.push('t.assigned_to_user_id = $' + params.length); }
+  // A company-scoped task (the leavers procedure) belongs to whoever picks it up. If "mine"
+  // only meant assigned_to_user_id, a task raised for ALL support staff would appear in
+  // nobody's list — which is the same as not raising it.
+  if (scope === 'mine') {
+    params.push(user.id);
+    where.push(`(t.assigned_to_user_id = $${params.length} OR (t.assignment_scope = 'company' AND t.assigned_to_user_id IS NULL))`);
+  }
   if (status && STATUSES.includes(status)) { params.push(status); where.push('t.status = $' + params.length); }
   else if (!status) where.push("t.status IN ('open','in_progress')");
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';

@@ -2873,6 +2873,42 @@ model DiaryEntry {
   @@map("diary_entries")
 }
 
+// ── Leavers ──────────────────────────────────────────────────────────────────────
+// Someone leaves at a stated time. At that moment the Portal cuts access itself — the
+// AD account is disabled through our own agent and the Microsoft sign-in is blocked and
+// its sessions revoked — and THEN raises one task for all support staff to work the rest
+// of the leavers procedure (shared mailbox, licences, kit, delegation).
+//
+// DELIBERATELY NOT AD's account-expiry field. Terry's rule, and it is the right one: a
+// date typed into a directory attribute is invisible, unauditable and silently does the
+// wrong thing if the clock or the replication is off. The Portal owns the schedule, so
+// there is a record of who scheduled it, what actually ran, and what came back.
+model LeaverPlan {
+  id           Int      @id @default(autoincrement())
+  customerId   Int      @map("customer_id")
+  contactId    Int?     @map("contact_id")       // customer_contacts, when we know them
+  displayName  String   @map("display_name")     // who is leaving, as people say it
+  upn          String?                            // Microsoft sign-in (user principal name)
+  samAccountName String? @map("sam_account_name") // on-prem AD account
+  effectiveAt  DateTime @map("effective_at")     // when access is cut. UTC in the column, per the estate rule.
+  disableAd    Boolean  @default(true)  @map("disable_ad")
+  blockM365    Boolean  @default(true)  @map("block_m365")
+  revokeSessions Boolean @default(true) @map("revoke_sessions")
+  notes        String?                            // manager's instructions, forwarding, who takes the mailbox
+  status       String   @default("scheduled")     // scheduled | done | partial | failed | cancelled
+  taskId       Int?     @map("task_id")           // the leavers-procedure task raised for support
+  adCommandId  Int?     @map("ad_command_id")     // the queued agent command, so its result can be read back
+  resultLog    String?  @map("result_log")        // what actually happened, step by step, in plain words
+  ranAt        DateTime? @map("ran_at")
+  createdBy    Int?     @map("created_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([customerId])
+  @@index([status, effectiveAt])
+  @@map("leaver_plans")
+}
+
 // ── Bookable services — the MS-Bookings-shaped front door ────────────────────────
 // What a customer may book from /my, and the rules that decide which slots are OFFERED.
 // Availability is computed from these plus the live diary and Outlook, so a slot on the

@@ -30,7 +30,7 @@
               <% } %>
             </td>
             <td><a class="row-link" href="/tasks/<%= t.id %>/edit"><%= t.title %></a><% if (t.description) { %><br><span class="muted" style="font-size:12px;"><%= t.description.length>70 ? t.description.slice(0,70)+'…' : t.description %></span><% } %></td>
-            <td class="muted"><%= t.assigned_name || '—' %></td>
+            <td class="muted"><% if (!t.assigned_to_user_id && t.assignment_scope === 'company') { %><span class="badge badge-primary" title="Raised for the whole support team — whoever picks it up">Everyone</span><% } else { %><%= t.assigned_name || '—' %><% } %></td>
             <td class="muted"><% if (t.related_customer_id) { %><a class="row-link" href="/customers/<%= t.related_customer_id %>"><%= t.customer_name %></a><% } else { %>—<% } %></td>
             <td><span class="badge <%= pbadge(t.priority) %>"><%= t.priority %></span></td>
             <td><span class="badge <%= sbadge(t.status) %>"><%= t.status.replace('_',' ') %></span></td>

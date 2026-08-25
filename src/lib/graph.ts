@@ -356,6 +356,49 @@ export async function graphListTenantUsers(tenant: string): Promise<GraphDirUser
   return out;
 }
 
+// ── Cutting someone's Microsoft access ──────────────────────────────────────────
+// Used by the leaver runner. These WRITE, so the app needs User.ReadWrite.All (Application)
+// consented in the customer's tenant — the reporting consent is read-only and will 403.
+// That is surfaced as a plain sentence rather than swallowed: a leaver reported as blocked
+// when they are not is worse than no automation at all.
+
+async function tenantGraph(tenant: string, method: string, path: string, body?: any): Promise<any> {
+  const token = await getGraphTokenForTenant(tenant);
+  const res = await fetch(GRAPH + path, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (res.status === 204) return null;
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = data?.error?.message || `HTTP ${res.status}`;
+    const err: any = new Error(res.status === 403
+      ? `Microsoft refused it (403): the Portal app needs User.ReadWrite.All with admin consent in this tenant. ${msg}`
+      : msg);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+/**
+ * Block a user's Microsoft sign-in AND confirm it took. The read-back is the point: a 200
+ * on the PATCH is not proof, and "the account is disabled" is a claim we only make when
+ * the directory says so.
+ */
+export async function graphBlockTenantUser(tenant: string, upn: string): Promise<{ blocked: boolean; displayName: string }> {
+  const id = encodeURIComponent(upn);
+  await tenantGraph(tenant, 'PATCH', `/users/${id}`, { accountEnabled: false });
+  const after = await tenantGraph(tenant, 'GET', `/users/${id}?$select=id,displayName,accountEnabled`);
+  return { blocked: after?.accountEnabled === false, displayName: after?.displayName || upn };
+}
+
+/** Kill every issued token, so an already-signed-in session dies rather than running to expiry. */
+export async function graphRevokeTenantSessions(tenant: string, upn: string): Promise<void> {
+  await tenantGraph(tenant, 'POST', `/users/${encodeURIComponent(upn)}/revokeSignInSessions`, {});
+}
+
 export interface GraphUser { id: string; displayName: string; email: string; enabled: boolean; }
 
 // Lists directory users who hold at least one assigned licence.

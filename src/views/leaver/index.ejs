@@ -1,0 +1,177 @@
+<%- include('../partials/header', { title: 'Leavers', user }) %>
+<%
+  function whenText(ep){ return new Date(ep*1000).toLocaleString('en-GB',{timeZone:'Europe/London',weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }
+  var isAdmin = user.role === 'admin';
+  var scheduled = plans.filter(function(p){ return p.status === 'scheduled'; });
+  var needHands = plans.filter(function(p){ return p.status === 'partial' || p.status === 'failed'; });
+  function pillFor(s){ return s==='done'?'ok':(s==='scheduled'?'info':(s==='cancelled'?'plain':'bad')); }
+%>
+<style>
+  .lv-card { background:var(--surface,#fff); border:1px solid var(--line); border-radius:12px; margin-bottom:12px; overflow:hidden; }
+  .lv-row { padding:12px 14px; border-bottom:1px solid var(--line); }
+  .lv-row:last-child { border-bottom:0; }
+  .lv-top { display:flex; justify-content:space-between; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  .lv-top .nm { font-weight:800; font-size:14px; }
+  .lv-meta { color:var(--muted); font-size:11.5px; margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; }
+  .lv-log { margin-top:8px; font-size:12px; background:var(--surface-2,#f8fafc); border:1px solid var(--line); border-radius:8px;
+            padding:8px 10px; white-space:pre-wrap; color:var(--ink); }
+  .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:1px 8px; border-radius:999px; }
+  .pill.ok { background:var(--tint-ok,#f0fdf4); color:var(--ok-fg,#15803d); }
+  .pill.bad { background:var(--tint-bad,#fef2f2); color:var(--bad-fg,#b91c1c); }
+  .pill.info { background:var(--tint-accent,#ecfeff); color:var(--accent,#0e7490); }
+  .pill.plain { background:var(--surface-2,#f1f5f9); color:var(--muted); }
+  .lv-form label { font-size:11.5px; font-weight:700; color:var(--muted); display:block; margin:10px 0 3px; }
+  .lv-form input[type=text], .lv-form input[type=datetime-local], .lv-form select, .lv-form textarea {
+    width:100%; font:inherit; font-size:12.5px; padding:6px 9px; border:1px solid var(--line-strong); border-radius:7px;
+    background:var(--card,#fff); color:var(--ink); box-sizing:border-box; }
+  .lv-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+  .lv-chk { display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; }
+  .lv-chk label { display:flex; align-items:center; gap:6px; margin:0; font-weight:600; color:var(--ink); font-size:12.5px; }
+  .lv-chk input { width:auto; }
+  .lv-two { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,340px); gap:16px; align-items:start; }
+  @media (max-width:1000px){ .lv-two { grid-template-columns:1fr; } }
+</style>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--bad-fg,#b91c1c),var(--warn-fg,#b45309));margin-bottom:14px;">
+  <p class="doc-kicker">Access cut at a stated time, then hands take over</p>
+  <h1>Leavers</h1>
+  <p class="doc-sub">At the moment you set, the Portal disables the AD account and blocks the Microsoft sign-in — then raises one leavers task for the whole support team. <strong>The schedule lives here, never in AD's account-expiry field</strong>: a date typed into a directory attribute is invisible, unauditable, and silently wrong if a clock or a replication is off.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div class="stat-band">
+  <span class="tile" style="display:block;"><span class="n info" style="display:block;"><%= scheduled.length %></span><span class="l" style="display:block;">scheduled</span></span>
+  <span class="tile" style="display:block;"><span class="n" style="display:block;color:var(--bad-fg,#b91c1c);"><%= needHands.length %></span><span class="l" style="display:block;">need hands</span></span>
+  <span class="tile acc-plain" style="display:block;"><span class="n" style="display:block;color:var(--muted);"><%= plans.length %></span><span class="l" style="display:block;">on record</span></span>
+</div>
+
+<div class="lv-two" style="margin-top:14px;">
+  <div>
+    <% if (!plans.length) { %>
+      <div class="lv-card"><div class="lv-row muted">Nobody scheduled. When someone hands their notice in, put the date in — the cut happens whether or not anyone is at a keyboard.</div></div>
+    <% } %>
+    <% plans.forEach(function(p){ %>
+      <div class="lv-card">
+        <div class="lv-row">
+          <div class="lv-top">
+            <span>
+              <span class="nm"><%= p.display_name %></span>
+              <span class="muted"> · <%= p.customer_name %></span>
+              <span class="pill <%= pillFor(p.status) %>"><%= p.status %></span>
+            </span>
+            <span style="display:flex;gap:8px;align-items:center;">
+              <% if (p.status === 'scheduled' && isAdmin) { %>
+                <form method="post" action="/leavers/<%= p.id %>/run" style="margin:0;" onsubmit="return confirm('Cut <%= p.display_name %>’s access NOW?');">
+                  <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+                  <button class="btn" type="submit" style="padding:2px 10px;font-size:12px;">Cut access now</button>
+                </form>
+                <form method="post" action="/leavers/<%= p.id %>/cancel" style="margin:0;" onsubmit="return confirm('Cancel this leaver? Nothing will be cut.');">
+                  <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+                  <button class="btn" type="submit" style="padding:2px 10px;font-size:12px;color:var(--bad-fg);">Cancel</button>
+                </form>
+              <% } %>
+              <% if (p.task_id) { %><a class="btn" href="/tasks?scope=all" style="padding:2px 10px;font-size:12px;">Task #<%= p.task_id %></a><% } %>
+            </span>
+          </div>
+          <div class="lv-meta">
+            <span><strong><%= p.status === 'scheduled' ? 'Cuts' : 'Cut' %> <%= whenText(Number(p.eff)) %></strong></span>
+            <% if (p.upn) { %><span>· <%= p.upn %></span><% } %>
+            <% if (p.sam_account_name) { %><span>· AD <%= p.sam_account_name %></span><% } %>
+            <% if (p.created_name) { %><span>· scheduled by <%= p.created_name %></span><% } %>
+          </div>
+          <% if (p.status === 'scheduled') { %>
+            <div class="lv-meta">
+              <% if (p.block_m365 && !p.entra_tenant_id) { %>
+                <span style="color:var(--bad-fg,#b91c1c);">⚠ <%= p.customer_name %> has no Entra tenant id on their record — the Microsoft block will not run.</span>
+              <% } %>
+              <% if (p.disable_ad && !p.ad_agent) { %>
+                <span style="color:var(--bad-fg,#b91c1c);">⚠ No AD agent enrolled for <%= p.customer_name %> — the AD disable has nothing to run on.</span>
+              <% } %>
+            </div>
+          <% } %>
+          <% if (p.result_log) { %><div class="lv-log"><%= p.result_log %></div><% } %>
+          <% if (p.notes) { %><div class="lv-meta" style="margin-top:6px;">Notes: <%= p.notes %></div><% } %>
+        </div>
+      </div>
+    <% }); %>
+  </div>
+
+  <div>
+    <% if (isAdmin) { %>
+    <div class="lv-card">
+      <div class="lv-row" style="background:var(--surface-2,#f8fafc);font-weight:800;font-size:13.5px;">Schedule a leaver</div>
+      <form method="post" action="/leavers" class="lv-form" style="padding:0 14px 14px;">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <label>Customer</label>
+        <select name="customer_id" id="lvCust" required>
+          <option value="">— pick —</option>
+          <% customers.forEach(function(c){ %><option value="<%= c.id %>" data-tenant="<%= c.entra_tenant_id ? '1' : '' %>"><%= c.name %><%= c.entra_tenant_id ? '' : ' (no Entra tenant on file)' %></option><% }); %>
+        </select>
+        <label>Who is leaving</label>
+        <select name="contact_id" id="lvContact"><option value="">— type the name below instead —</option></select>
+        <input type="text" name="display_name" id="lvName" placeholder="Their name" required style="margin-top:6px;">
+        <div class="lv-grid">
+          <div><label>Microsoft sign-in (UPN)</label><input type="text" name="upn" id="lvUpn" placeholder="name@theirdomain.co.uk"></div>
+          <div><label>AD username (sAMAccountName)</label><input type="text" name="sam" placeholder="jbloggs"></div>
+        </div>
+        <label>Cut access at</label>
+        <input type="datetime-local" name="effective_at" required>
+        <label>What to do at that moment</label>
+        <div class="lv-chk">
+          <label><input type="checkbox" name="disable_ad" value="1" checked> Disable the AD account</label>
+          <label><input type="checkbox" name="block_m365" value="1" checked> Block Microsoft sign-in</label>
+          <label><input type="checkbox" name="revoke_sessions" value="1" checked> Revoke live sessions</label>
+        </div>
+        <label>Notes for whoever picks up the task</label>
+        <textarea name="notes" rows="3" placeholder="Who takes the mailbox, where mail should forward, kit to collect…"></textarea>
+        <button class="btn btn-primary" type="submit" style="margin-top:14px;width:100%;">Schedule it</button>
+        <p class="muted" style="font-size:11px;margin:8px 0 0;">The Microsoft steps need <strong>User.ReadWrite.All</strong> with admin consent in that customer's tenant; the AD step needs an agent ticked as <strong>AD agent</strong> for them. Anything that cannot run is written into the task in plain words rather than reported as done.</p>
+      </form>
+    </div>
+    <% } %>
+
+    <div class="lv-card">
+      <div class="lv-row" style="background:var(--surface-2,#f8fafc);font-weight:800;font-size:13.5px;">The task that gets raised</div>
+      <div class="lv-row" style="font-size:12.5px;">
+        <p class="muted" style="margin:0 0 8px;">One task for the whole support team, raised the moment access is cut:</p>
+        <ol style="margin:0;padding-left:18px;line-height:1.55;">
+          <% checklist.forEach(function(c){ %><li><%= c %></li><% }); %>
+        </ol>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var cust = document.getElementById('lvCust');
+  var contact = document.getElementById('lvContact');
+  var name = document.getElementById('lvName');
+  var upn = document.getElementById('lvUpn');
+  if (!cust || !contact) return;
+  cust.addEventListener('change', function(){
+    contact.innerHTML = '<option value="">— type the name below instead —</option>';
+    if (!cust.value) return;
+    fetch('/leavers/contacts/' + cust.value).then(function(r){ return r.json(); }).then(function(d){
+      (d.contacts || []).forEach(function(c){
+        var o = document.createElement('option');
+        o.value = String(c.id); o.textContent = c.name + (c.email ? ' — ' + c.email : '');
+        o.setAttribute('data-name', c.name); o.setAttribute('data-email', c.email || '');
+        contact.appendChild(o);
+      });
+    }).catch(function(){});
+  });
+  // Picking a known contact fills the name and sign-in, but never overwrites something
+  // already typed — the person filling this in knows more than the contact record does.
+  contact.addEventListener('change', function(){
+    var o = contact.options[contact.selectedIndex];
+    if (!o || !o.getAttribute('data-name')) return;
+    if (!name.value) name.value = o.getAttribute('data-name');
+    if (!upn.value) upn.value = o.getAttribute('data-email');
+  });
+})();
+</script>
+
+<%- include('../partials/footer') %>

@@ -58,6 +58,7 @@ import patchingRoutes from './routes/patching';
 import diaryRoutes from './routes/diary';
 import thirdPartyRoutes from './routes/third-party';
 import bookingRoutes from './routes/booking';
+import leaverRoutes from './routes/leaver';
 import securityRoutes from './routes/security';
 import ceRoutes from './routes/ce';
 import softwareRoutes from './routes/software';
@@ -92,6 +93,7 @@ import reviewRoutes, { startReviewReminders } from './routes/reviews';
 import { startMailSync } from './lib/mailsync';
 import { startInvoiceInbox } from './lib/purchase-inbox';
 import { startPostponeSweep } from './lib/postpone-sweep';
+import { startLeaverSweep } from './lib/leaver';
 import { startBackupCron } from './lib/backup';
 import { startTeamsGraphCron } from './lib/teamsgraph';
 import { startGiacomSync } from './lib/giacom-sync';
@@ -418,6 +420,7 @@ app.use('/', patchingRoutes);    // Windows Update reporting across the estate
 app.use('/', diaryRoutes);       // The Diary — business scheduling (hard-block clash engine)
 app.use('/', thirdPartyRoutes); // Third parties — who a case is waiting on, and the chase board
 app.use('/', bookingRoutes);    // Customer bookings — /my/book + /diary/services
+app.use('/', leaverRoutes);     // Leavers — scheduled access cut + the support task
 app.use('/', securityRoutes);    // Endpoint Security — Bitdefender/GravityZone
 app.use('/', ceRoutes);          // Cyber Essentials assessment, actions and the end-of-life list
 app.use('/', softwareRoutes);    // Software across the estate: installed, behind, out of support
@@ -474,6 +477,7 @@ server.listen(config.PORT, () => {
   startMailSync();
   startInvoiceInbox();
   startPostponeSweep();
+  startLeaverSweep();
   startBackupCron();
   startTeamsGraphCron();
   startGiacomSync();
