@@ -415,6 +415,55 @@ async function ensureReviewSession(req: Request): Promise<number> {
   return ins.rows[0].id;
 }
 
+/**
+ * Remember which case the reviewer is on. Called every time a review case renders,
+ * so pulling away — a phone call, jumping into the full case screen, closing the tab —
+ * always leaves a bookmark behind.
+ */
+async function markReviewCase(req: Request, ticketId: number): Promise<void> {
+  const sess = req.session as any;
+  if (!sess.hdReviewId) return;
+  try {
+    await pool.query(`UPDATE helpdesk_reviews SET last_ticket_id=$2 WHERE id=$1 AND ended_at IS NULL`,
+      [sess.hdReviewId, ticketId]);
+  } catch (e: any) {
+    // A bookmark is a convenience, never a gate.
+    console.error('[review] bookmark failed:', e.message);
+  }
+}
+
+/**
+ * Where an interrupted review should pick up. The bookmarked case if it is still in
+ * the queue; the next one after it if it was resolved while we were away (never back
+ * to the top — that is the bug this fixes); the oldest case if there is no bookmark.
+ * Returns the id plus whether it was a genuine resume, so the page can say so.
+ */
+async function reviewResumeId(req: Request): Promise<{ id: number | null; resumed: boolean }> {
+  const sess = req.session as any;
+  const userId = req.session.user!.id;
+  let bookmark: number | null = null;
+  if (sess.hdReviewId) {
+    const row = (await pool.query(
+      `SELECT last_ticket_id FROM helpdesk_reviews
+        WHERE id=$1 AND user_id=$2 AND ended_at IS NULL AND started_at > NOW() - interval '4 hours'`,
+      [sess.hdReviewId, userId]).catch(() => ({ rows: [] as any[] }))).rows[0];
+    bookmark = row && row.last_ticket_id ? Number(row.last_ticket_id) : null;
+  }
+  if (bookmark) {
+    const t = (await pool.query(
+      `SELECT t.id, t.created_at, (${REVIEW_WHERE}) AS still_open
+         FROM inbox_tickets t WHERE t.id=$1 LIMIT 1`, [bookmark])).rows[0];
+    if (t && t.still_open) return { id: Number(t.id), resumed: true };
+    // Dealt with while we were away — carry on from where it sat in the queue.
+    if (t) {
+      const next = await reviewNextId(t.created_at, Number(t.id));
+      if (next) return { id: next, resumed: true };
+      return { id: null, resumed: true };
+    }
+  }
+  return { id: await reviewNextId(null, 0), resumed: false };
+}
+
 async function recordReviewItem(req: Request, ticketId: number, action: string, detail: string | null) {
   try {
     const reviewId = await ensureReviewSession(req);
@@ -468,11 +517,16 @@ async function composerContext(ticket: any) {
 }
 
 router.get('/tickets/review', requireAuth, async (req: Request, res: Response) => {
-  const first = await reviewNextId(null, 0);
-  if (!first) { res.redirect('/tickets?msg=' + encodeURIComponent('Nothing to review — no open cases.')); return; }
-  // Clicking Helpdesk Review is the official start: the record exists before the first case opens.
+  // Clicking Helpdesk Review is the official start: the record exists before the first
+  // case opens. ensureReviewSession reuses an open session (< 4h) — which is what makes
+  // the bookmark below meaningful, so it must run BEFORE we look one up.
   await ensureReviewSession(req);
-  res.redirect('/tickets/review/' + first);
+  const { id: first, resumed } = await reviewResumeId(req);
+  if (!first) {
+    const summary = resumed ? await closeReviewSession(req, 'completed') : '';
+    res.redirect('/tickets?msg=' + encodeURIComponent('Nothing to review — no open cases.' + summary)); return;
+  }
+  res.redirect('/tickets/review/' + first + (resumed ? '?msg=' + encodeURIComponent('Picked up where you left off.') : ''));
 });
 
 // End the review deliberately — stamped with its end time, kept in the history.
@@ -516,6 +570,8 @@ router.get('/tickets/review/:id', requireAuth, async (req: Request, res: Respons
   if (ticket.teams_conversation) { try { teamsChatId = JSON.parse(ticket.teams_conversation).chatId || ''; } catch { /* not JSON */ } }
   // The official review record this walk belongs to, plus what the full composer needs.
   const reviewId = await ensureReviewSession(req);
+  // Bookmark THIS case so an interrupted review resumes here rather than at the top.
+  await markReviewCase(req, id);
   const [sessQ, actQ, ctx] = await Promise.all([
     pool.query('SELECT hr.*, u.display_name AS reviewer_name FROM helpdesk_reviews hr LEFT JOIN users u ON u.id=hr.user_id WHERE hr.id=$1', [reviewId]),
     pool.query('SELECT COUNT(*)::int AS n FROM helpdesk_review_items WHERE review_id=$1', [reviewId]),

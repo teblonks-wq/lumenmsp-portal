@@ -554,6 +554,10 @@ model HelpdeskReview {
   startedAt DateTime  @default(now()) @map("started_at")
   endedAt   DateTime? @map("ended_at")
   outcome   String?   // completed | exited | abandoned
+  // Where this reviewer had got to. Pulling away mid-review (a phone call, a jump
+  // into the full case screen) and coming back must resume HERE, not restart at the
+  // oldest case — see /tickets/review.
+  lastTicketId Int?   @map("last_ticket_id")
 
   @@index([startedAt])
   @@map("helpdesk_reviews")
@@ -2808,8 +2812,21 @@ model DiaryEntry {
   startAt    DateTime? @map("start_at")  // timed entries; null = day-lane item
   endAt      DateTime? @map("end_at")
   dayKey     String?   @map("day_key")   // 'YYYY-MM-DD' for day-lane items and all-day time off
+  // DATE RANGE: inclusive last day of a day-lane entry. null = a single day. A week off
+  // is ONE row (day_key=Mon, end_day_key=Fri), not five — so cancelling it is one action
+  // and the clash engine blocks every day in the span.
+  endDayKey  String?   @map("end_day_key")
   bufferMins Int       @default(0) @map("buffer_mins") // onsite travel buffer, EACH side, counted by the clash check
   status     String    @default("booked") // booked | done | cancelled
+  // RECURRENCE: occurrences are MATERIALISED as real rows, never expanded at read time —
+  // the hard-block clash engine can only see what exists. series_id is the id of the
+  // first entry in the series and is set on that first entry too, so "the whole series"
+  // is one predicate. recurrence/recurrence_end are kept on every row for display.
+  seriesId      Int?    @map("series_id")
+  recurrence    String  @default("none") // none | daily | weekdays | weekly | fortnightly | monthly
+  recurrenceEnd String? @map("recurrence_end") // 'YYYY-MM-DD' inclusive last day of the series
+  // Colour override — a key from DIARY_COLOURS in lib/diary.ts. null = the kind's own colour.
+  colour     String?
   createdBy  Int?      @map("created_by")
   graphSync  Json?     @map("graph_sync") // { "<userId>": "<graph event id>", ... } — pushed M365 events
   createdAt  DateTime  @default(now()) @map("created_at")
@@ -2818,6 +2835,7 @@ model DiaryEntry {
   @@index([startAt])
   @@index([dayKey])
   @@index([customerId])
+  @@index([seriesId])
   @@map("diary_entries")
 }
 

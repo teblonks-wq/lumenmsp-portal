@@ -2,6 +2,7 @@
 <%
   function tmHM(ep){ return new Date(ep*1000).toLocaleTimeString('en-GB',{timeZone:'Europe/London',hour:'2-digit',minute:'2-digit'}); }
   function dayLabel(dk){ return new Date(dk+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}); }
+  function shortDay(dk){ return new Date(dk+'T12:00:00Z').toLocaleDateString('en-GB',{day:'numeric',month:'short'}); }
   var PEOPLE = people; var ME = user.id;
   function initials(n){ return String(n||'?').split(/\s+/).map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase(); }
 
@@ -9,18 +10,22 @@
   // support = remote work; onsite = onsite work. One pool, many lenses.
   function inLens(e){
     if (view === 'company') return true;
-    if (view === 'support') return e.kind === 'remote' || (e.feed === 'maintenance');
+    if (view === 'support') return e.kind === 'remote' || e.kind === 'meeting' || (e.feed === 'maintenance');
     if (view === 'onsite')  return e.kind === 'onsite';
     var uid = view === 'mine' ? ME : (view.charAt(0) === 'u' ? parseInt(view.slice(1), 10) : NaN);
     if (!isNaN(uid)) return e.people.some(function(p){ return p.id === uid; });
     return true;
   }
   var shown = entries.filter(inLens);
+  // A multi-day entry appears once per day it covers, so the counters de-duplicate by id —
+  // "a week off" must not read as five bookings.
+  function uniq(list){ var seen = {}; return list.filter(function(e){ if (seen[e.id]) return false; seen[e.id]=1; return true; }); }
+  var u = uniq(shown);
   var stats = {
-    booked: shown.filter(function(e){ return e.s != null && !e.feed && e.status==='booked'; }).length,
-    onsite: shown.filter(function(e){ return e.kind==='onsite' && e.status==='booked'; }).length,
-    daylane: shown.filter(function(e){ return e.s == null && e.kind!=='timeoff'; }).length,
-    off: shown.filter(function(e){ return e.kind==='timeoff'; }).length,
+    booked: u.filter(function(e){ return e.s != null && !e.feed && e.status==='booked'; }).length,
+    onsite: u.filter(function(e){ return e.kind==='onsite' && e.status==='booked'; }).length,
+    daylane: u.filter(function(e){ return e.s == null && e.kind!=='timeoff'; }).length,
+    off: u.filter(function(e){ return e.kind==='timeoff'; }).length,
   };
 %>
 <style>
@@ -30,14 +35,36 @@
   .dy-dhead { padding:8px 10px; font-size:12px; font-weight:700; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
   .dy-dhead .n { color:var(--muted); font-weight:600; }
   .dy-body { padding:8px; display:flex; flex-direction:column; gap:6px; }
-  .dy-card { border:1px solid var(--line); border-left:4px solid var(--muted); border-radius:8px; padding:6px 8px; font-size:12px; cursor:pointer; background:var(--card,#fff); }
-  .dy-card:hover { box-shadow:0 3px 10px rgba(15,23,42,.10); }
-  .dy-card .t { font-weight:700; line-height:1.25; }
+  /* COLOUR: every card carries its accent as --k and mixes it into the surface, so one
+     palette reads correctly in all three themes without a second set of dark values. */
+  .dy-card { --k:#64748b;
+             border:1px solid color-mix(in srgb, var(--k) 30%, var(--line));
+             border-left:5px solid var(--k); border-radius:8px; padding:6px 8px; font-size:12px; cursor:pointer;
+             background:color-mix(in srgb, var(--k) 9%, var(--surface,#fff));
+             transition:box-shadow .12s, transform .12s; }
+  .dy-card:hover { box-shadow:0 4px 14px color-mix(in srgb, var(--k) 32%, transparent); transform:translateY(-1px); }
+  .dy-card .t { font-weight:700; line-height:1.25; color:var(--ink); }
   .dy-card .m { color:var(--muted); font-size:11px; margin-top:2px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .dy-card .k { color:color-mix(in srgb, var(--k) 68%, var(--ink)); font-weight:700; }
   .dy-card.done { opacity:.55; } .dy-card.done .t { text-decoration:line-through; }
-  .dy-card.feed { border-style:dashed; cursor:default; background:var(--surface-2,#f8fafc); }
+  .dy-card.feed { --k:#94a3b8; border-style:dashed; cursor:default; background:var(--surface-2,#f8fafc); }
+  /* A date range is ONE entry drawn across its days — square the joins so it reads as a bar. */
+  .dy-card.span-mid, .dy-card.span-last { border-top-left-radius:3px; }
+  .dy-card.span-first, .dy-card.span-mid { border-bottom-right-radius:3px; }
+  .dy-card.cont { padding:4px 8px; background:color-mix(in srgb, var(--k) 15%, var(--surface,#fff)); }
+  .dy-card.cont .t { font-weight:600; font-size:11.5px; opacity:.85; }
   .dy-chip { display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%;
-             background:var(--tint-accent); color:var(--accent); font-size:10px; font-weight:800; }
+             background:color-mix(in srgb, var(--k) 24%, transparent); color:color-mix(in srgb, var(--k) 78%, var(--ink)); font-size:10px; font-weight:800; }
+  .dy-tag { display:inline-flex; align-items:center; gap:3px; font-size:10px; font-weight:700; padding:0 6px; border-radius:999px;
+            background:color-mix(in srgb, var(--k) 20%, transparent); color:color-mix(in srgb, var(--k) 78%, var(--ink)); }
+  .dy-day.weekend { background:var(--surface-2,#f8fafc); }
+  .dy-key { display:flex; gap:12px; flex-wrap:wrap; align-items:center; font-size:11.5px; color:var(--muted); margin-top:10px; }
+  .dy-key i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+  .dy-swatches { display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+  .dy-swatches button { width:26px; height:26px; border-radius:8px; border:2px solid transparent; cursor:pointer; padding:0; }
+  .dy-swatches button.on { border-color:var(--ink); }
+  .dy-swatches button[data-c=""] { background:repeating-linear-gradient(45deg,var(--line),var(--line) 4px,var(--surface,#fff) 4px,var(--surface,#fff) 8px); }
+  .dy-sub { font-size:11.5px; color:var(--muted); margin:4px 0 0; }
   .dy-lens { display:flex; gap:6px; flex-wrap:wrap; }
   .dy-lens a { padding:5px 12px; border-radius:999px; border:1px solid var(--line-strong); font-size:12.5px; text-decoration:none; color:var(--ink); }
   .dy-lens a.on { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
@@ -83,6 +110,10 @@
   <a href="?w=<%= monday %>&view=support" class="<%= view==='support'?'on':'' %>">Support</a>
   <a href="?w=<%= monday %>&view=onsite" class="<%= view==='onsite'?'on':'' %>">Onsite</a>
 </div>
+<div class="dy-key">
+  <% Object.keys(KINDS).forEach(function(k){ %><span><i style="background:<%= KINDS[k].accent %>"></i><%= KINDS[k].label %></span><% }); %>
+  <span style="opacity:.75;">· ↻ repeats · ⇥ spans days · dashed arrives on its own</span>
+</div>
 </div>
 
 <% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
@@ -96,33 +127,40 @@
 </div>
 
 <div class="dy-week">
-  <% days.forEach(function(dk){
+  <% days.forEach(function(dk, di){
        var dayItems = shown.filter(function(e){ return e.dayKey === dk; });
        var lane = dayItems.filter(function(e){ return e.s == null; });
        var timed = dayItems.filter(function(e){ return e.s != null; }).sort(function(a,b){ return a.s - b.s; });
   %>
-  <div class="dy-day <%= dk === today ? 'today' : '' %>">
+  <div class="dy-day <%= dk === today ? 'today' : '' %> <%= di >= 5 ? 'weekend' : '' %>">
     <div class="dy-dhead"><span><%= dayLabel(dk) %></span><span class="n"><%= (lane.length + timed.length) || '' %></span></div>
     <div class="dy-body">
-      <% lane.forEach(function(e){ %>
-        <div class="dy-card <%= e.status==='done'?'done':'' %> <%= e.feed?'feed':'' %>"
-             style="border-left-color:<%- KINDS[e.kind] ? KINDS[e.kind].accent : 'var(--muted)' %>;"
+      <% lane.forEach(function(e){
+           var isSpan = e.spanTotal > 1;
+           var isCont = isSpan && e.spanIndex > 0;
+           var spanCls = !isSpan ? '' : (e.spanIndex === 0 ? 'span-first' : (e.spanIndex === e.spanTotal - 1 ? 'span-last' : 'span-mid'));
+      %>
+        <div class="dy-card <%= e.status==='done'?'done':'' %> <%= e.feed?'feed':'' %> <%= spanCls %> <%= isCont?'cont':'' %>"
+             style="--k:<%= e.accent %>;"
              <% if (!e.feed) { %>data-e="<%= JSON.stringify(e) %>" onclick="dyOpen(this.getAttribute('data-e'))"<% } else if (e.link) { %>onclick="location.href='<%= e.link %>'"<% } %>>
-          <div class="t"><%= e.title %></div>
+          <div class="t"><%= e.title %><% if (isSpan) { %> <span class="dy-tag">⇥ <%= e.spanIndex+1 %>/<%= e.spanTotal %></span><% } %><% if (e.seriesId) { %> <span class="dy-tag" title="Part of a repeating series">↻</span><% } %></div>
+          <% if (!isCont) { %>
           <div class="m">
-            <span><%= KINDS[e.kind] ? KINDS[e.kind].label : e.kind %><%= e.feed === 'postponed' ? ' · postponed case' : '' %></span>
+            <span class="k"><%= KINDS[e.kind] ? KINDS[e.kind].label : e.kind %></span><%= e.feed === 'postponed' ? ' · postponed case' : '' %>
+            <% if (e.endDayKey) { %><span>· <%= shortDay(e.dayKey) %> → <%= shortDay(e.endDayKey) %></span><% } %>
             <% if (e.customerName) { %><span>· <%= e.customerName %></span><% } %>
             <% e.people.forEach(function(p){ %><span class="dy-chip" title="<%= p.name %>"><%= initials(p.name) %></span><% }); %>
           </div>
+          <% } %>
         </div>
       <% }); %>
       <% timed.forEach(function(e){ %>
         <div class="dy-card <%= e.status==='done'?'done':'' %> <%= e.feed?'feed':'' %>"
-             style="border-left-color:<%- KINDS[e.kind] ? KINDS[e.kind].accent : 'var(--muted)' %>;"
+             style="--k:<%= e.accent %>;"
              <% if (!e.feed) { %>data-e="<%= JSON.stringify(e) %>" onclick="dyOpen(this.getAttribute('data-e'))"<% } else if (e.link) { %>onclick="location.href='<%= e.link %>'"<% } %>>
-          <div class="t"><%= tmHM(e.s) %>–<%= tmHM(e.e) %> · <%= e.title %></div>
+          <div class="t"><%= tmHM(e.s) %>–<%= tmHM(e.e) %> · <%= e.title %><% if (e.seriesId) { %> <span class="dy-tag" title="Part of a repeating series">↻</span><% } %></div>
           <div class="m">
-            <span><%= KINDS[e.kind] ? KINDS[e.kind].label : e.kind %><%= e.feed === 'maintenance' ? ' · scheduled' : '' %></span>
+            <span class="k"><%= KINDS[e.kind] ? KINDS[e.kind].label : e.kind %></span><%= e.feed === 'maintenance' ? ' · scheduled' : '' %>
             <% if (e.customerName) { %><span>· <%= e.customerName %></span><% } %>
             <% if (e.bufferMins) { %><span>· +<%= e.bufferMins %>m travel</span><% } %>
             <% e.people.forEach(function(p){ %><span class="dy-chip" title="<%= p.name %>"><%= initials(p.name) %></span><% }); %>
@@ -165,6 +203,12 @@
       <% }); %>
     </div>
 
+    <label>Colour</label>
+    <div class="dy-swatches" id="dySwatch">
+      <button type="button" data-c="" title="Use this kind's own colour"></button>
+      <% Object.keys(COLOURS).forEach(function(c){ %><button type="button" data-c="<%= c %>" title="<%= COLOURS[c].label %>" style="background:<%= COLOURS[c].accent %>"></button><% }); %>
+    </div>
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
       <div>
         <label>Customer <span style="font-weight:400;">(optional)</span></label>
@@ -179,11 +223,22 @@
     </div>
 
     <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="dyTimed" checked style="width:auto;"> Timed booking</label>
-    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 0.8fr;gap:10px;" id="dyWhen">
-      <div><label>Date</label><input type="date" id="dyD"></div>
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 0.9fr;gap:10px;" id="dyWhen">
+      <div><label id="dyDLab">Date</label><input type="date" id="dyD"></div>
       <div id="dyWrapS"><label>Start</label><input type="time" id="dyS" value="09:00" step="300"></div>
       <div id="dyWrapE"><label>End</label><input type="time" id="dyE" value="10:00" step="300"></div>
       <div id="dyWrapB"><label>Travel ±min</label><input type="number" id="dyB" value="30" min="0" max="240" step="5"></div>
+      <div id="dyWrapD2"><label>Until (last day)</label><input type="date" id="dyD2"></div>
+    </div>
+    <p class="dy-sub" id="dyRangeHint" style="display:none;">Leave &ldquo;until&rdquo; blank for a single day. A range is <em>one</em> entry across those days — cancel it once, and every day inside it blocks bookings.</p>
+
+    <div id="dyRepeatWrap">
+      <label>Repeat</label>
+      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:10px;align-items:end;">
+        <select id="dyR"><% Object.keys(REPEATS).forEach(function(r){ %><option value="<%= r %>"><%= REPEATS[r] %></option><% }); %></select>
+        <div id="dyWrapRU" style="display:none;"><label>Repeat until</label><input type="date" id="dyRU"></div>
+      </div>
+      <p class="dy-sub" id="dyRHint" style="display:none;">Every date is clash-checked before it is booked. Any that are already spoken for get skipped and listed — the rest still go in.</p>
     </div>
 
     <label>Notes</label>
@@ -198,9 +253,10 @@
     <p class="dy-warn" id="dyErr" style="color:var(--bad-fg);"></p>
 
     <div style="display:flex;justify-content:space-between;gap:8px;margin-top:14px;">
-      <div id="dyExisting" style="display:none;gap:8px;">
+      <div id="dyExisting" style="display:none;gap:8px;flex-wrap:wrap;">
         <form method="post" id="dyDoneF" style="display:inline;"><input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>"><input type="hidden" name="status" value="done"><input type="hidden" name="back" value="/diary/week?w=<%= monday %>&view=<%= view %>"><button class="btn" type="submit">✓ Mark done</button></form>
         <form method="post" id="dyCancelF" style="display:inline;" onsubmit="return confirm('Cancel this entry? Its calendar copies are removed too.');"><input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>"><input type="hidden" name="status" value="cancelled"><input type="hidden" name="back" value="/diary/week?w=<%= monday %>&view=<%= view %>"><button class="btn" type="submit" style="color:var(--bad-fg);">Cancel entry</button></form>
+        <form method="post" id="dySeriesF" style="display:none;" onsubmit="return confirm('Cancel every FUTURE entry in this series? Past ones stay in the record.');"><input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>"><input type="hidden" name="status" value="cancelled"><input type="hidden" name="scope" value="series"><input type="hidden" name="back" value="/diary/week?w=<%= monday %>&view=<%= view %>"><button class="btn" type="submit" style="color:var(--bad-fg);">Cancel whole series ↻</button></form>
       </div>
       <div style="display:flex;gap:8px;margin-left:auto;">
         <button class="btn" type="button" onclick="dyClose()">Close</button>
@@ -212,9 +268,8 @@
 
 <script>
 (function(){
-  var KINDS = <%- JSON.stringify(Object.keys(KINDS)) %>;
-  var TIMED_DEFAULT = { onsite:true, remote:true, catchup:true, timeoff:false, promise:false, task:false };
-  var editId = null;
+  var TIMED_DEFAULT = { onsite:true, remote:true, catchup:true, meeting:true, timeoff:false, promise:false, task:false };
+  var editId = null, colour = '';
 
   function $(id){ return document.getElementById(id); }
   function kind(){ var b = document.querySelector('#dyKinds button.on'); return b ? b.getAttribute('data-k') : 'onsite'; }
@@ -225,16 +280,38 @@
     $('dyTimed').checked = !!TIMED_DEFAULT[k];
     syncTimed();
   }
+  function setColour(c){
+    colour = c || '';
+    document.querySelectorAll('#dySwatch button').forEach(function(b){ b.classList.toggle('on', (b.getAttribute('data-c')||'') === colour); });
+  }
   function syncTimed(){
     var t = $('dyTimed').checked;
     $('dyWrapS').style.display = t ? '' : 'none';
     $('dyWrapE').style.display = t ? '' : 'none';
     $('dyWrapB').style.display = t && kind()==='onsite' ? '' : 'none';
+    // Date RANGES are for all-day entries; a timed booking's span is its own start and end.
+    $('dyWrapD2').style.display = t ? 'none' : '';
+    $('dyRangeHint').style.display = t ? 'none' : 'block';
+    $('dyDLab').textContent = t ? 'Date' : 'First day';
   }
+  function syncRepeat(){
+    var on = $('dyR').value !== 'none';
+    $('dyWrapRU').style.display = on ? '' : 'none';
+    $('dyRHint').style.display = on ? 'block' : 'none';
+    if (on && !$('dyRU').value && $('dyD').value) {
+      var d = new Date($('dyD').value + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() + 3);
+      $('dyRU').value = d.toISOString().slice(0,10);
+    }
+  }
+  function dyMinusDays(dk, n){ var d = new Date(dk + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0,10); }
   document.querySelectorAll('#dyKinds button').forEach(function(b){
     b.addEventListener('click', function(){ setKind(b.getAttribute('data-k')); });
   });
+  document.querySelectorAll('#dySwatch button').forEach(function(b){
+    b.addEventListener('click', function(){ setColour(b.getAttribute('data-c')); });
+  });
   $('dyTimed').addEventListener('change', syncTimed);
+  $('dyR').addEventListener('change', syncRepeat);
 
   window.dyOpen = function(json){
     var e = json ? JSON.parse(json) : null;
@@ -242,6 +319,7 @@
     $('dyTitle').textContent = e ? 'Edit entry' : 'New diary entry';
     $('dyGo').textContent = e ? 'Save changes' : 'Book it';
     setKind(e ? e.kind : 'onsite');
+    setColour(e ? (e.colour || '') : '');
     $('dyT').value = e ? e.title : '';
     $('dyN').value = e && e.notes ? e.notes : '';
     $('dyC').value = e && e.customerId ? String(e.customerId) : '';
@@ -256,18 +334,27 @@
       $('dyD').value = e.dayKey;
       $('dyS').value = sd.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
       $('dyE').value = ed.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+      $('dyD2').value = '';
     } else {
       $('dyTimed').checked = e ? false : !!TIMED_DEFAULT[kind()];
-      $('dyD').value = e ? e.dayKey : today;
+      // Clicking any day of a span edits the WHOLE entry, so open on its real first day.
+      $('dyD').value = e ? (e.spanTotal > 1 ? dyMinusDays(e.dayKey, e.spanIndex) : e.dayKey) : today;
+      $('dyD2').value = e && e.endDayKey ? e.endDayKey : '';
     }
     $('dyB').value = e ? String(e.bufferMins || 0) : '30';
+    // Repeat is a CREATE-time choice — editing one occurrence must never silently rewrite
+    // the series, so the control is hidden and reset on an existing entry.
+    $('dyR').value = 'none'; $('dyRU').value = '';
+    $('dyRepeatWrap').style.display = e ? 'none' : '';
     $('dyBlock').style.display = 'none'; $('dyWarn').style.display='none'; $('dyErr').style.display='none';
     if (e) {
       $('dyExisting').style.display = 'flex';
       $('dyDoneF').action = '/diary/entries/' + e.id + '/status';
       $('dyCancelF').action = '/diary/entries/' + e.id + '/status';
+      $('dySeriesF').action = '/diary/entries/' + e.id + '/status';
+      $('dySeriesF').style.display = e.seriesId ? 'inline' : 'none';
     } else { $('dyExisting').style.display = 'none'; }
-    syncTimed();
+    syncTimed(); syncRepeat();
     $('dyOverlay').classList.add('on');
   };
   window.dyClose = function(){ $('dyOverlay').classList.remove('on'); };
@@ -281,6 +368,9 @@
       customer_id: $('dyC').value || null, ticket_id: $('dyTk').value || null,
       people: Array.prototype.slice.call(document.querySelectorAll('.dyP:checked')).map(function(c){ return c.value; }),
       buffer_mins: kind()==='onsite' && timed ? parseInt($('dyB').value||'0',10) : 0,
+      colour: colour || null,
+      recurrence: editId ? 'none' : $('dyR').value,
+      recurrence_end: (!editId && $('dyR').value !== 'none') ? ($('dyRU').value || null) : null,
       _csrf: csrf(),
     };
     if (timed) {
@@ -288,14 +378,31 @@
       body.start_epoch = Math.floor(new Date($('dyD').value + 'T' + $('dyS').value).getTime()/1000);
       body.end_epoch   = Math.floor(new Date($('dyD').value + 'T' + $('dyE').value).getTime()/1000);
     } else {
+      if (!$('dyD').value) { err('Pick the day.'); return; }
+      if ($('dyD2').value && $('dyD2').value < $('dyD').value) { err('The last day cannot be before the first.'); return; }
       body.day_key = $('dyD').value;
+      body.end_day_key = $('dyD2').value || null;
     }
+    if (body.recurrence !== 'none' && !body.recurrence_end) { err('Say what date the repeat should run until.'); return; }
     $('dyGo').disabled = true;
     fetch(editId ? '/diary/entries/' + editId : '/diary/entries', {
       method:'POST', headers:{'Content-Type':'application/json','x-csrf-token':csrf()}, body: JSON.stringify(body),
     }).then(function(r){ return r.json(); }).then(function(r){
       $('dyGo').disabled = false;
-      if (r.ok) { location.href = '/diary/week?w=<%= monday %>&view=<%= view %>&msg=' + encodeURIComponent('In the diary.' + (r.warning ? ' (' + r.warning + ')' : '')); return; }
+      if (r.ok) {
+        var msg = 'In the diary.';
+        if (r.series) {
+          msg = 'Booked ' + r.created + (r.created === 1 ? ' date.' : ' dates.');
+          if (r.skipped && r.skipped.length) {
+            msg += ' ' + r.skipped.length + ' skipped — already spoken for: '
+                 + r.skipped.slice(0,6).map(function(x){ return x.dayKey; }).join(', ')
+                 + (r.skipped.length > 6 ? ' …' : '') + '.';
+          }
+        }
+        if (r.warning) msg += ' (' + r.warning + ')';
+        location.href = '/diary/week?w=<%= monday %>&view=<%= view %>&msg=' + encodeURIComponent(msg);
+        return;
+      }
       if (r.blocked && r.clashes) {
         var list = $('dyBlockList'); list.innerHTML = '';
         r.clashes.forEach(function(c){
