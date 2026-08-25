@@ -1,0 +1,164 @@
+<%- include('header', { title: 'Book', company: (user && user.displayName) || '', user, active }) %>
+<%
+  function dayLabel(dk){ return new Date(dk+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}); }
+  function mins(n){ return n >= 60 ? (n/60 % 1 === 0 ? (n/60)+'h' : (n/60).toFixed(1)+'h') : n+' min'; }
+  var totalSlots = (days||[]).reduce(function(a,d){ return a + d.slots.length; }, 0);
+%>
+<style>
+  .bk-svc { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:14px; margin:18px 0; }
+  .bk-card { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; text-decoration:none; color:inherit; display:block; transition:box-shadow .12s, transform .12s; }
+  .bk-card:hover { box-shadow:0 6px 18px rgba(15,23,42,.10); transform:translateY(-1px); }
+  .bk-card.on { border-color:var(--accent,#0ea5b7); box-shadow:0 0 0 1px var(--accent,#0ea5b7); }
+  .bk-card h3 { margin:0 0 4px; font-size:15px; }
+  .bk-card p { margin:0; font-size:13px; color:#64748b; }
+  .bk-card .tag { display:inline-block; margin-top:9px; font-size:11px; font-weight:700; background:#f1f5f9; color:#475569; padding:2px 8px; border-radius:999px; }
+  .bk-week { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:8px; align-items:start; }
+  @media (max-width:900px){ .bk-week { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  .bk-day { border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#fff; }
+  .bk-day h4 { margin:0; padding:8px 10px; font-size:12px; border-bottom:1px solid var(--line); background:#f8fafc; }
+  .bk-day .list { padding:8px; display:flex; flex-direction:column; gap:6px; max-height:340px; overflow:auto; }
+  .bk-slot { width:100%; font:inherit; font-size:12.5px; font-weight:700; padding:7px 6px; border-radius:8px;
+             border:1px solid var(--accent,#0ea5b7); background:#fff; color:var(--accent,#0ea5b7); cursor:pointer; }
+  .bk-slot:hover { background:var(--accent,#0ea5b7); color:#fff; }
+  .bk-none { text-align:center; color:#94a3b8; font-size:11.5px; padding:16px 0; }
+  .bk-book { background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-top:16px; }
+  .bk-mine { background:#fff; border:1px solid var(--line); border-radius:12px; overflow:hidden; margin-top:22px; }
+  .bk-mine h2 { margin:0; padding:12px 16px; font-size:15px; border-bottom:1px solid var(--line); }
+  .bk-row { padding:12px 16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:center; }
+  .bk-row:last-child { border-bottom:0; }
+  .bk-overlay { display:none; position:fixed; inset:0; z-index:900; background:rgba(15,23,42,.45); align-items:flex-start; justify-content:center; padding:6vh 16px; }
+  .bk-overlay.on { display:flex; }
+  .bk-modal { background:#fff; border-radius:14px; width:min(520px,100%); padding:20px; box-shadow:0 24px 60px rgba(15,23,42,.28); }
+</style>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <h1>Book time with us</h1>
+    <p class="muted">Pick a time that suits you. Everything shown is genuinely free — book it and it is yours.</p>
+  </div>
+  <% if (service) { %><a class="btn ghost" href="/my/book">← All services</a><% } %>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<% if (!services.length) { %>
+  <div class="bk-book"><p style="margin:0;">There is nothing bookable on your account yet. Raise a ticket and we will sort it from there.</p></div>
+<% } else { %>
+
+<div class="bk-svc">
+  <% services.forEach(function(s){ %>
+    <a class="bk-card <%= service && service.id===s.id ? 'on' : '' %>" href="/my/book/<%= s.id %>">
+      <h3><%= s.name %></h3>
+      <% if (s.blurb) { %><p><%= s.blurb %></p><% } %>
+      <span class="tag"><%= mins(s.durationMins) %></span>
+      <% if (s.teamsMeeting) { %><span class="tag">Teams meeting</span><% } %>
+      <% if (s.kind === 'onsite') { %><span class="tag">At your site</span><% } %>
+    </a>
+  <% }); %>
+</div>
+
+<% if (service) { %>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:6px 0 12px;">
+    <h2 style="margin:0;font-size:16px;"><%= service.name %> — pick a time</h2>
+    <div style="display:flex;gap:8px;">
+      <a class="btn ghost" href="/my/book/<%= service.id %>?w=<%= prevW %>">‹ Earlier</a>
+      <a class="btn ghost" href="/my/book/<%= service.id %>">This week</a>
+      <a class="btn ghost" href="/my/book/<%= service.id %>?w=<%= nextW %>">Later ›</a>
+    </div>
+  </div>
+
+  <% if (outlookWarning) { %>
+    <div class="alert alert-error" style="margin-bottom:12px;">
+      We could not check our own calendars just now, so a time you pick may need moving. We will confirm either way.
+    </div>
+  <% } %>
+
+  <div class="bk-week">
+    <% days.forEach(function(d){ %>
+      <div class="bk-day">
+        <h4><%= dayLabel(d.dayKey) %></h4>
+        <div class="list">
+          <% if (d.slots.length) { %>
+            <% d.slots.forEach(function(s){ %>
+              <button type="button" class="bk-slot" onclick="bkPick(<%= s.start %>, '<%= s.label %>', '<%= dayLabel(d.dayKey) %>')"><%= s.label.split('–')[0] %></button>
+            <% }); %>
+          <% } else { %>
+            <div class="bk-none"><%= d.past ? '—' : (d.beyond ? 'not yet open' : 'nothing free') %></div>
+          <% } %>
+        </div>
+      </div>
+    <% }); %>
+  </div>
+  <% if (!totalSlots) { %>
+    <p class="muted" style="margin-top:12px;font-size:13px;">Nothing free that week — try <a href="/my/book/<%= service.id %>?w=<%= nextW %>">the week after</a>, or <a href="/my/tickets/new">raise a ticket</a> and we will find you a time.</p>
+  <% } %>
+<% } %>
+
+<% if (bookings.length) { %>
+  <div class="bk-mine">
+    <h2>Your bookings</h2>
+    <% bookings.forEach(function(b){ %>
+      <div class="bk-row">
+        <div>
+          <strong><%= b.serviceName %></strong> — <%= b.whenText %>
+          <div class="muted" style="font-size:12.5px;">with <%= b.staff || 'Lumen' %><% if (b.wantsTeams && !b.joinUrl) { %> · Teams link to follow<% } %></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <% if (b.joinUrl) { %><a class="btn btn-primary" href="<%= b.joinUrl %>" target="_blank" rel="noopener">Join Teams</a><% } %>
+          <form method="post" action="/my/book/<%= b.id %>/cancel" onsubmit="return confirm('Cancel this booking?');" style="margin:0;">
+            <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+            <button class="btn ghost" type="submit">Cancel</button>
+          </form>
+        </div>
+      </div>
+    <% }); %>
+  </div>
+<% } %>
+
+<% } %>
+
+<% if (service) { %>
+<div class="bk-overlay" id="bkOverlay">
+  <div class="bk-modal" role="dialog" aria-modal="true">
+    <h2 style="margin:0 0 4px;font-size:17px;">Confirm your booking</h2>
+    <p class="muted" style="margin:0 0 6px;font-size:13.5px;"><strong><%= service.name %></strong></p>
+    <p style="margin:0 0 12px;font-size:15px;font-weight:700;" id="bkWhen"></p>
+    <form method="post" action="/my/book/<%= service.id %>" id="bkForm">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <input type="hidden" name="start" id="bkStart">
+      <label>Your name</label>
+      <input name="name" value="<%= user.displayName || '' %>" required>
+      <label>Email for the confirmation</label>
+      <input name="email" type="email" value="<%= user.email || '' %>" required>
+      <label>Best phone number <span style="font-weight:400;color:#64748b;">(optional)</span></label>
+      <input name="phone">
+      <label>What do you need help with?</label>
+      <textarea name="notes" rows="3" placeholder="A line or two is plenty — it means we can prepare."></textarea>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+        <button class="btn ghost" type="button" onclick="bkClose()">Back</button>
+        <button class="btn btn-primary" type="submit" id="bkGo">Confirm booking</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+(function(){
+  var ov = document.getElementById('bkOverlay');
+  window.bkPick = function(start, label, day){
+    document.getElementById('bkStart').value = String(start);
+    document.getElementById('bkWhen').textContent = day + ', ' + label;
+    ov.classList.add('on');
+  };
+  window.bkClose = function(){ ov.classList.remove('on'); };
+  ov.addEventListener('click', function(e){ if (e.target === ov) bkClose(); });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') bkClose(); });
+  // One click only: a double submit is two bookings, and the second one fails ugly.
+  document.getElementById('bkForm').addEventListener('submit', function(){
+    var b = document.getElementById('bkGo'); b.disabled = true; b.textContent = 'Booking…';
+  });
+})();
+</script>
+<% } %>
+
+<%- include('footer', { active }) %>

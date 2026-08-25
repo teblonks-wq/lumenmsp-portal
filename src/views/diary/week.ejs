@@ -98,6 +98,7 @@
     <a class="btn" href="/diary/week?w=<%= prevW %>&view=<%= view %>">‹</a>
     <a class="btn" href="/diary/week?view=<%= view %>">This week</a>
     <a class="btn" href="/diary/week?w=<%= nextW %>&view=<%= view %>">›</a>
+    <% if (user.role === 'admin') { %><a class="btn" href="/diary/services" title="What customers can book into this diary from their portal">Bookable services</a><% } %>
     <button class="btn btn-primary" type="button" onclick="dyOpen(null)">+ New entry</button>
   </div>
 </div>

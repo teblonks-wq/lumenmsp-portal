@@ -83,9 +83,12 @@ export async function pushEntry(entryId: number): Promise<void> {
   if (!graphConfigured()) return;
   try {
     const er = await pool.query(
-      `SELECT e.*, EXTRACT(EPOCH FROM e.start_at)::bigint AS s, EXTRACT(EPOCH FROM e.end_at)::bigint AS en,
+      `SELECT e.*, bs.teams_meeting, EXTRACT(EPOCH FROM e.start_at)::bigint AS s, EXTRACT(EPOCH FROM e.end_at)::bigint AS en,
               c.name AS customer_name
-         FROM diary_entries e LEFT JOIN customers c ON c.id = e.customer_id WHERE e.id=$1`, [entryId]);
+         FROM diary_entries e
+         LEFT JOIN customers c ON c.id = e.customer_id
+         LEFT JOIN booking_services bs ON bs.id = e.booking_service_id
+        WHERE e.id=$1`, [entryId]);
     const e = er.rows[0];
     if (!e || e.status === 'cancelled') return;
     const timed = e.s != null && e.en != null;
@@ -107,14 +110,30 @@ export async function pushEntry(entryId: number): Promise<void> {
           start: { dateTime: localIso(Number(e.s)), timeZone: 'Europe/London' },
           end: { dateTime: localIso(Number(e.en)), timeZone: 'Europe/London' } };
 
+    // A service that says it needs Teams gets a real online meeting on the FIRST person's
+    // copy, and that join link is written back so the confirmation email and the customer's
+    // own bookings page can show it. Only the first copy asks for one: two people's calendars
+    // would otherwise produce two different meetings for one appointment.
+    const wantsTeams = !!e.teams_meeting && timed;
+    let joinUrl: string | null = e.online_meeting_url || null;
+
     for (const p of people) {
       try {
         const existing = sync[String(p.id)];
+        const first = people[0] && people[0].id === p.id;
+        // Ask for the online meeting only when creating the organiser's copy and we do not
+        // already hold a link — a PATCH that re-requests one can rebuild the meeting.
+        const thisPayload = (wantsTeams && first && !existing && !joinUrl)
+          ? { ...payload, isOnlineMeeting: true, onlineMeetingProvider: 'teamsForBusiness' }
+          : (wantsTeams && joinUrl && !existing
+              ? { ...payload, body: { contentType: 'text', content: (payload.body.content || '') + '\n\nJoin: ' + joinUrl } }
+              : payload);
         if (existing) {
-          await greq('PATCH', `/users/${encodeURIComponent(p.email)}/events/${encodeURIComponent(existing)}`, payload);
+          await greq('PATCH', `/users/${encodeURIComponent(p.email)}/events/${encodeURIComponent(existing)}`, thisPayload);
         } else {
-          const created = await greq('POST', `/users/${encodeURIComponent(p.email)}/events`, payload);
+          const created = await greq('POST', `/users/${encodeURIComponent(p.email)}/events`, thisPayload);
           if (created?.id) sync[String(p.id)] = String(created.id);
+          if (!joinUrl && created?.onlineMeeting?.joinUrl) joinUrl = String(created.onlineMeeting.joinUrl);
         }
       } catch (err: any) {
         if (err?.status === 404 && sync[String(p.id)]) {
@@ -132,7 +151,8 @@ export async function pushEntry(entryId: number): Promise<void> {
       if (em) await greq('DELETE', `/users/${encodeURIComponent(em.email)}/events/${encodeURIComponent(sync[uid])}`).catch(() => {});
       delete sync[uid];
     }
-    await pool.query(`UPDATE diary_entries SET graph_sync=$1 WHERE id=$2`, [JSON.stringify(sync), entryId]);
+    await pool.query(`UPDATE diary_entries SET graph_sync=$1, online_meeting_url=COALESCE($3, online_meeting_url) WHERE id=$2`,
+      [JSON.stringify(sync), entryId, joinUrl]);
   } catch (err: any) {
     console.error('[diary] Graph push failed:', err.message);
   }

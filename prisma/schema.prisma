@@ -2848,6 +2848,18 @@ model DiaryEntry {
   recurrenceEnd String? @map("recurrence_end") // 'YYYY-MM-DD' inclusive last day of the series
   // Colour override — a key from DIARY_COLOURS in lib/diary.ts. null = the kind's own colour.
   colour     String?
+  // ── Customer bookings ──────────────────────────────────────────────────────────
+  // A slot a CUSTOMER booked from /my. It is an ordinary diary entry — same pool, same
+  // hard block, same Outlook push — plus who booked it and how to join. Deliberately not
+  // a separate table: a booking the clash engine cannot see is a double-booking waiting
+  // to happen, which is the whole failure mode of a bolt-on booking system.
+  bookingServiceId Int?    @map("booking_service_id")
+  bookedByUserId   Int?    @map("booked_by_user_id")   // the customer login that booked it
+  bookedByName     String? @map("booked_by_name")
+  bookedByEmail    String? @map("booked_by_email")
+  bookedByPhone    String? @map("booked_by_phone")
+  onlineMeetingUrl String? @map("online_meeting_url")  // Teams join link, when the service needs one
+  cancelToken      String? @map("cancel_token")        // lets the booker cancel from the confirmation email
   createdBy  Int?      @map("created_by")
   graphSync  Json?     @map("graph_sync") // { "<userId>": "<graph event id>", ... } — pushed M365 events
   createdAt  DateTime  @default(now()) @map("created_at")
@@ -2857,7 +2869,40 @@ model DiaryEntry {
   @@index([dayKey])
   @@index([customerId])
   @@index([seriesId])
+  @@index([bookingServiceId])
   @@map("diary_entries")
+}
+
+// ── Bookable services — the MS-Bookings-shaped front door ────────────────────────
+// What a customer may book from /my, and the rules that decide which slots are OFFERED.
+// Availability is computed from these plus the live diary and Outlook, so a slot on the
+// page is a slot that is genuinely free; the write still goes through the diary's hard
+// block, so if two people click the same slot the second one is told it has gone rather
+// than quietly double-booking someone.
+model BookingService {
+  id            Int      @id @default(autoincrement())
+  name          String                                   // "Remote support session", "IT review meeting"
+  blurb         String?                                  // one line shown under the name
+  kind          String   @default("remote")              // a DIARY_KINDS key — what it becomes in the diary
+  durationMins  Int      @default(30) @map("duration_mins")
+  bufferMins    Int      @default(0) @map("buffer_mins") // travel each side (onsite)
+  slotStepMins  Int      @default(30) @map("slot_step_mins")
+  leadTimeHours Int      @default(4) @map("lead_time_hours")  // minimum notice
+  horizonDays   Int      @default(30) @map("horizon_days")    // how far ahead bookings open
+  windowStart   String   @default("09:00") @map("window_start") // Europe/London wall clock
+  windowEnd     String   @default("17:00") @map("window_end")
+  weekdays      Json?                                    // [1..5] Mon=1; null = Mon-Fri
+  staffIds      Json?    @map("staff_ids")               // who can take it; null/[] = anyone in the diary
+  maxPerDay     Int?     @map("max_per_day")             // cap customer bookings per day, so a day cannot be flooded
+  teamsMeeting  Boolean  @default(false) @map("teams_meeting") // create a Teams join link
+  itsmOnly      Boolean  @default(false) @map("itsm_only")     // offer only to Managed IT customers
+  colour        String?                                  // DIARY_COLOURS key for its diary cards
+  isActive      Boolean  @default(true) @map("is_active")
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("booking_services")
 }
 
 model DiaryEntryPerson {

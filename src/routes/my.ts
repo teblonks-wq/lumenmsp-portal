@@ -67,7 +67,10 @@ function ticketScope(p: any): { where: string; params: (n: number, c: number) =>
 }
 
 // Resolve the logged-in customer user's permissions from their key-contact role(s).
-async function attachPerms(req: Request, res: Response, next: NextFunction): Promise<void> {
+// Exported so any OTHER router serving a /my page (bookings) mounts the same permission
+// context. Without it the customer sidebar would silently lose half its links on those
+// pages — the nav is built from res.locals.perms.
+export async function attachPerms(req: Request, res: Response, next: NextFunction): Promise<void> {
   const u = req.session.user!;
   const c = Number(u.customerId);
   const contact = (await rows(

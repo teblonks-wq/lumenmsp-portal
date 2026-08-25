@@ -1,0 +1,138 @@
+<%- include('../partials/header', { title: 'Bookable services', user }) %>
+<%
+  var DAYS = [[1,'Mon'],[2,'Tue'],[3,'Wed'],[4,'Thu'],[5,'Fri'],[6,'Sat'],[7,'Sun']];
+  function mins(n){ return n >= 60 ? (n/60 % 1 === 0 ? (n/60)+'h' : n+' min') : n+' min'; }
+  var TIMED = Object.keys(KINDS).filter(function(k){ return KINDS[k].timed; });
+%>
+<style>
+  .bs-card { background:var(--surface,#fff); border:1px solid var(--line); border-radius:12px; margin-bottom:12px; overflow:hidden; }
+  .bs-head { padding:12px 14px; display:flex; justify-content:space-between; gap:12px; align-items:center; flex-wrap:wrap; }
+  .bs-head .nm { font-weight:800; font-size:14.5px; }
+  .bs-meta { color:var(--muted); font-size:12px; margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; }
+  .bs-form { display:none; padding:0 14px 14px; border-top:1px solid var(--line); }
+  .bs-form.on { display:block; }
+  .bs-form label { font-size:11.5px; font-weight:700; color:var(--muted); display:block; margin:10px 0 3px; }
+  .bs-form input[type=text], .bs-form input[type=number], .bs-form input[type=time], .bs-form select, .bs-form textarea {
+    width:100%; font:inherit; font-size:12.5px; padding:6px 9px; border:1px solid var(--line-strong); border-radius:7px;
+    background:var(--card,#fff); color:var(--ink); box-sizing:border-box; }
+  .bs-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+  .bs-chk { display:flex; gap:12px; flex-wrap:wrap; margin-top:4px; }
+  .bs-chk label { display:flex; align-items:center; gap:5px; margin:0; font-weight:600; color:var(--ink); font-size:12.5px; }
+  .bs-chk input { width:auto; }
+  .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; background:var(--surface-2,#f1f5f9); color:var(--muted); }
+  .pill.on { background:var(--tint-ok,#f0fdf4); color:var(--ok-fg,#15803d); }
+  .pill.off { background:var(--surface-2,#f1f5f9); color:var(--muted); }
+</style>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--accent),var(--violet));margin-bottom:14px;">
+  <p class="doc-kicker">What customers can put in your diary</p>
+  <h1>Bookable services</h1>
+  <p class="doc-sub">Customers see these under <strong>Book</strong> in their portal. Slots are worked out from your live diary and Outlook, so nothing is offered that would land on top of something you already have — and a booking becomes an ordinary diary entry, clash rules and all.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+  <a class="btn" href="/diary/week">← Back to the diary</a>
+  <button class="btn btn-primary" type="button" onclick="bsToggle('new')">+ New bookable service</button>
+</div>
+
+<%
+  function formFor(s, id, action, submitLabel) {
+%>
+<form method="post" action="<%= action %>" class="bs-form" id="bsF<%= id %>">
+  <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+  <div class="bs-grid">
+    <div style="grid-column:1/-1;"><label>Name — what the customer sees</label><input type="text" name="name" value="<%= s ? s.name : '' %>" required placeholder="e.g. Remote support session"></div>
+    <div style="grid-column:1/-1;"><label>One line under it</label><input type="text" name="blurb" value="<%= s && s.blurb ? s.blurb : '' %>" placeholder="e.g. A screen-share with an engineer to fix something now"></div>
+  </div>
+  <div class="bs-grid">
+    <div><label>Becomes a diary entry of kind</label>
+      <select name="kind"><% TIMED.forEach(function(k){ %><option value="<%= k %>" <%= s && s.kind===k?'selected':'' %>><%= KINDS[k].label %></option><% }); %></select></div>
+    <div><label>Length (minutes)</label><input type="number" name="duration_mins" min="10" max="480" step="5" value="<%= s ? s.durationMins : 30 %>"></div>
+    <div><label>Offer a slot every (minutes)</label><input type="number" name="slot_step_mins" min="5" max="240" step="5" value="<%= s ? s.slotStepMins : 30 %>"></div>
+    <div><label>Travel each side (onsite only)</label><input type="number" name="buffer_mins" min="0" max="240" step="5" value="<%= s ? s.bufferMins : 30 %>"></div>
+  </div>
+  <div class="bs-grid">
+    <div><label>Bookable from</label><input type="time" name="window_start" value="<%= s ? s.windowStart : '09:00' %>" step="900"></div>
+    <div><label>Bookable until</label><input type="time" name="window_end" value="<%= s ? s.windowEnd : '17:00' %>" step="900"></div>
+    <div><label>Minimum notice (hours)</label><input type="number" name="lead_time_hours" min="0" max="720" value="<%= s ? s.leadTimeHours : 4 %>"></div>
+    <div><label>Bookable how far ahead (days)</label><input type="number" name="horizon_days" min="1" max="365" value="<%= s ? s.horizonDays : 30 %>"></div>
+  </div>
+  <label>Days</label>
+  <div class="bs-chk">
+    <% DAYS.forEach(function(d){ %>
+      <label><input type="checkbox" name="weekdays" value="<%= d[0] %>" <%= (s ? s.weekdays.indexOf(d[0])>=0 : d[0]<=5) ? 'checked' : '' %>> <%= d[1] %></label>
+    <% }); %>
+  </div>
+  <label>Who can take it <span style="font-weight:400;">(none ticked = anyone in the diary)</span></label>
+  <div class="bs-chk">
+    <% people.forEach(function(p){ %>
+      <label><input type="checkbox" name="staff" value="<%= p.id %>" <%= s && s.staffIds.indexOf(p.id)>=0 ? 'checked' : '' %>> <%= p.name.split(' ')[0] %></label>
+    <% }); %>
+  </div>
+  <div class="bs-grid">
+    <div><label>Most per day <span style="font-weight:400;">(blank = no cap)</span></label><input type="number" name="max_per_day" min="1" max="50" value="<%= s && s.maxPerDay ? s.maxPerDay : '' %>"></div>
+    <div><label>Diary colour</label>
+      <select name="colour"><option value="">Kind's own colour</option><% Object.keys(COLOURS).forEach(function(c){ %><option value="<%= c %>" <%= s && s.colour===c?'selected':'' %>><%= COLOURS[c].label %></option><% }); %></select></div>
+    <div><label>Order on the page</label><input type="number" name="sort_order" min="0" max="999" value="<%= s ? s.sortOrder : 0 %>"></div>
+  </div>
+  <div class="bs-chk" style="margin-top:12px;">
+    <label><input type="checkbox" name="teams_meeting" value="1" <%= s && s.teamsMeeting ? 'checked' : '' %>> Create a Teams meeting and send the join link</label>
+    <label><input type="checkbox" name="itsm_only" value="1" <%= s && s.itsmOnly ? 'checked' : '' %>> Managed IT customers only</label>
+  </div>
+  <p class="muted" style="font-size:11.5px;margin:8px 0 0;">A Teams link needs the Portal app registration to hold <strong>Calendars.ReadWrite</strong> with admin consent. Without it the booking still confirms and the customer is told the link will follow — it is never promised and then missing.</p>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+    <button class="btn" type="button" onclick="bsToggle('<%= id %>', false)">Cancel</button>
+    <button class="btn btn-primary" type="submit"><%= submitLabel %></button>
+  </div>
+</form>
+<% } %>
+
+<div class="bs-card">
+  <div class="bs-head"><span class="nm">New bookable service</span></div>
+  <% formFor(null, 'new', '/diary/services', 'Make it bookable'); %>
+</div>
+
+<% if (!services.length) { %>
+  <p class="muted">Nothing is bookable yet. Two good first ones: a 30-minute <strong>Remote support session</strong>, and a 60-minute <strong>IT review meeting</strong> with the Teams box ticked.</p>
+<% } %>
+
+<% services.forEach(function(s){ %>
+  <div class="bs-card">
+    <div class="bs-head">
+      <div>
+        <span class="nm"><%= s.name %></span>
+        <span class="pill <%= s.isActive ? 'on' : 'off' %>"><%= s.isActive ? 'open' : 'closed' %></span>
+        <div class="bs-meta">
+          <span><%= KINDS[s.kind] ? KINDS[s.kind].label : s.kind %></span>
+          <span>· <%= mins(s.durationMins) %> every <%= s.slotStepMins %>m</span>
+          <span>· <%= s.windowStart %>–<%= s.windowEnd %></span>
+          <span>· <%= s.weekdays.map(function(d){ return DAYS[d-1][1]; }).join(' ') %></span>
+          <span>· <%= s.leadTimeHours %>h notice, <%= s.horizonDays %>d ahead</span>
+          <% if (s.maxPerDay) { %><span>· max <%= s.maxPerDay %>/day</span><% } %>
+          <% if (s.staffIds.length) { %><span>· <%= people.filter(function(p){ return s.staffIds.indexOf(p.id)>=0; }).map(function(p){ return p.name.split(' ')[0]; }).join(' & ') %></span><% } else { %><span>· anyone</span><% } %>
+          <% if (s.teamsMeeting) { %><span>· Teams</span><% } %>
+          <% if (s.itsmOnly) { %><span>· Managed IT only</span><% } %>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <form method="post" action="/diary/services/<%= s.id %>/active" style="margin:0;">
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+          <input type="hidden" name="active" value="<%= s.isActive ? '0' : '1' %>">
+          <button class="btn" type="submit" style="padding:2px 10px;font-size:12px;"><%= s.isActive ? 'Close to new bookings' : 'Open for bookings' %></button>
+        </form>
+        <button class="btn" type="button" style="padding:2px 10px;font-size:12px;" onclick="bsToggle('<%= s.id %>')">Edit</button>
+      </div>
+    </div>
+    <% formFor(s, String(s.id), '/diary/services/' + s.id, 'Save'); %>
+  </div>
+<% }); %>
+
+<script>
+  function bsToggle(id, on){ var f = document.getElementById('bsF' + id); if (!f) return;
+    f.classList.toggle('on', on !== false ? !f.classList.contains('on') : false); }
+</script>
+
+<%- include('../partials/footer') %>
