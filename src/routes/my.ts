@@ -71,6 +71,9 @@ function ticketScope(p: any): { where: string; params: (n: number, c: number) =>
 // context. Without it the customer sidebar would silently lose half its links on those
 // pages — the nav is built from res.locals.perms.
 export async function attachPerms(req: Request, res: Response, next: NextFunction): Promise<void> {
+  // /my is mounted by more than one router (bookings has its own), and this does half a
+  // dozen queries — do them once per request, not once per router that asks.
+  if ((req as any).perms) { res.locals.perms = (req as any).perms; next(); return; }
   const u = req.session.user!;
   const c = Number(u.customerId);
   const contact = (await rows(
