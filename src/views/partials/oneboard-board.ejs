@@ -75,6 +75,16 @@
   // Ink is literal too, for the same reason — var(--ink) is near-white in a dark theme
   // and would vanish on the pale reds.
   function rateInk(p){ var b = rateBand(p); return b < 0 ? 'var(--faint)' : b === 0 ? 'var(--muted)' : (b >= 5 ? '#ffffff' : '#7f1d1d'); }
+  // Call VOLUME is a neutral magnitude, so it takes the brand teal ramp, never the red one
+  // — red is reserved for missed. And unlike a rate, a volume has no absolute meaning
+  // across branches: 12 calls an hour is a quiet hour at Didcot and a busy one at Wantage,
+  // so each row is shaded against its OWN peak.
+  var VOL_STEPS = ['var(--surface-2)','#d7eef3','#a5dbe6','#5cb8ca','#1f8fa6','#0e6377'];
+  function volBand(v, peak){ if (v == null || !peak || v <= 0) return 0;
+    var i = Math.ceil((v / peak) * (VOL_STEPS.length - 1)); return Math.max(1, Math.min(VOL_STEPS.length - 1, i)); }
+  function volBg(v, peak){ return VOL_STEPS[volBand(v, peak)]; }
+  function volInk(v, peak){ return volBand(v, peak) >= 4 ? '#ffffff' : 'var(--ink)'; }
+  function avg1(v){ return v == null ? '' : (v >= 10 ? v.toFixed(0) : v.toFixed(1)); }
   // Observations arrive as plain text with **emphasis**; escape first, then bold.
   function obs(t){ return esc(t).replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--ink);">$1</strong>'); }
   function n1(v){ return (v >= 10) ? v.toFixed(0) : v.toFixed(1); }
@@ -475,6 +485,45 @@
   <div style="display:flex;gap:10px;align-items:flex-start;padding:11px 18px;border-top:1px solid var(--line);">
     <span style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);white-space:nowrap;padding-top:2px;flex:0 0 auto;padding-right:8px;">What it says</span>
     <span style="font-size:13px;color:var(--muted);line-height:1.55;"><strong style="color:var(--ink);"><%= s.label %></strong> &mdash; <%- obs(s.yearNoteDow) %></span>
+  </div>
+  <% }); %>
+</div>
+<% } %>
+
+<!-- THE YEAR POOL, AS A COUNT. Alex Cumiskey, 2026-08-26: "the average incoming calls per
+     hour per branch". The share-of-day percentage answers "when are we busiest"; a
+     percentage cannot be staffed against. This says how many calls actually arrive.
+     TEAL, not red: this is call volume, a neutral magnitude — the red ramp is reserved
+     for missed. See the colour scheme note. -->
+<% if (included.some(function(s){ return s.yearAvgByHour && s.yearAvgByHour.length; })) { %>
+<div class="card" style="padding:0;margin-top:16px;">
+  <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">Average incoming calls per hour &mdash; <%= obBaseName.replace(' average', '') %> so far</h2>
+    <span class="muted" style="font-size:12px;">Every day since <%= baselineFrom %>, not the dates above. Each cell is how many calls arrive in that hour on a typical open day &mdash; closed days are left out of the average, not averaged in.</span></div>
+  <div class="table-wrap"><table class="table" style="margin:0;">
+    <thead><tr><th style="min-width:110px;"></th><% hours.forEach(function(h){ %><th class="muted" style="text-align:center;font-size:11px;"><%= ('0'+h).slice(-2) %>:00</th><% }); %><th class="muted" style="text-align:center;font-size:11px;">Day</th></tr></thead>
+    <tbody>
+      <% included.forEach(function(s){ if (!s.yearAvgByHour || !s.yearAvgByHour.length) return;
+           var peak = 0; s.yearAvgByHour.forEach(function(c){ if (c.avg != null && c.avg > peak) peak = c.avg; });
+           var dayTotal = 0; s.yearAvgByHour.forEach(function(c){ if (c.avg != null) dayTotal += c.avg; }); %>
+      <tr>
+        <td style="font-weight:600;font-size:13px;white-space:nowrap;"><%= s.label %></td>
+        <% s.yearAvgByHour.forEach(function(c){ %>
+          <td title="<%= s.label %> &middot; <%= c.label %> &mdash; <%= c.avg == null ? 'closed' : (avg1(c.avg) + ' calls an hour on a typical day (' + c.total + ' calls across ' + c.days + ' open days)') %>"
+              style="text-align:center;background:<%= volBg(c.avg, peak) %>;color:<%= volInk(c.avg, peak) %>;font-size:12px;font-weight:600;min-width:34px;"><%= c.avg == null || c.avg === 0 ? '' : avg1(c.avg) %></td>
+        <% }); %>
+        <td style="text-align:center;font-size:12px;font-weight:700;border-left:1px solid var(--line);" title="Total calls on a typical open day"><%= avg1(dayTotal) %></td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <div style="display:flex;align-items:center;gap:6px;padding:10px 18px;font-size:11px;color:var(--muted);">
+    Quieter <% ['var(--surface-2)','#d7eef3','#a5dbe6','#5cb8ca','#1f8fa6','#0e6377'].forEach(function(c){ %><span style="width:16px;height:10px;background:<%= c %>;border:1px solid var(--line);border-radius:2px;display:inline-block;"></span><% }); %> Busier
+    <span style="color:var(--faint);margin-left:8px;">&middot; shaded against each branch's own busiest hour &middot; blank = closed or no calls</span>
+  </div>
+  <% included.forEach(function(s){ if (!s.yearNoteAvg) return; %>
+  <div style="display:flex;gap:10px;align-items:flex-start;padding:11px 18px;border-top:1px solid var(--line);">
+    <span style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);white-space:nowrap;padding-top:2px;flex:0 0 auto;padding-right:8px;">What it says</span>
+    <span style="font-size:13px;color:var(--muted);line-height:1.55;"><strong style="color:var(--ink);"><%= s.label %></strong> &mdash; <%- obs(s.yearNoteAvg) %></span>
   </div>
   <% }); %>
 </div>

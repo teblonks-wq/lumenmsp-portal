@@ -172,3 +172,57 @@ export function rateBand(pct: number | null): number {
   for (let i = 1; i < RATE_BANDS.length; i++) if (pct < RATE_BANDS[i]) return i;
   return RATE_BANDS.length;
 }
+
+// ── "How many calls do we actually get at 9am?" ───────────────────────────────────
+// Alex Cumiskey, 2026-08-26: "the average incoming calls per hour per branch … for all
+// calls since we have been on the new system."
+//
+// The share-of-day percentage above answers a different question ("when is our busiest
+// hour"), and a percentage cannot be staffed against. This one is a COUNT: on a typical
+// day, this many calls arrive in this hour.
+//
+// The denominator is the trap. Dividing by every day in the year would spread the week's
+// calls across the branch's closed Sundays and quietly understate every working hour —
+// the same mistake the baseline avoids by weighting per weekday. So the divisor is OPEN
+// days only: weekdays the branch actually took calls on across the year.
+
+export interface AvgCell {
+  key: string; label: string;
+  avg: number | null;      // calls per open day in this hour; null = never open in this hour
+  total: number;           // calls in this hour across the year
+  days: number;            // open days the average is over
+}
+
+/** Days the branch was open, judged by whether that weekday carried any calls all year.
+ *  A weekday with nothing across a whole year is a closed day, not a quiet one. */
+export function openDays(y: YearSeries): number {
+  let n = 0;
+  for (let d = 0; d < 7; d++) if ((y.dowTotal[d] || 0) > 0) n += y.dowDays[d] || 0;
+  return n;
+}
+
+/** Average incoming calls per hour, on a typical open day. */
+export function yearAvgCallsByHour(y: YearSeries, hours: number[]): AvgCell[] {
+  const days = openDays(y);
+  return hours.map((h) => ({
+    key: String(h), label: String(h).padStart(2, '0') + ':00',
+    avg: days > 0 && (y.hourTotal[h] || 0) > 0 ? (y.hourTotal[h] || 0) / days : (days > 0 ? 0 : null),
+    total: y.hourTotal[h] || 0, days,
+  }));
+}
+
+/** "Busiest at 09:00 with 14.2 calls an hour; the day averages 6.1 across 11 open hours." */
+export function observeAvgCallsByHour(cells: AvgCell[]): string {
+  const live = cells.filter((c) => c.avg != null && (c.total > 0));
+  if (!live.length) return 'No calls recorded in any hour across the year.';
+  let peak = live[0];
+  for (const c of live) if ((c.avg as number) > (peak.avg as number)) peak = c;
+  const totalCalls = live.reduce((n, c) => n + c.total, 0);
+  const days = live[0].days;
+  const perDay = days ? totalCalls / days : 0;
+  const mean = live.length ? perDay / live.length : 0;
+  const one = (n: number) => (n >= 10 ? n.toFixed(0) : n.toFixed(1));
+  return `**${peak.label}** is the busiest hour at **${one(peak.avg as number)} calls an hour** on a typical day. `
+    + `The branch takes ${one(perDay)} calls a day across ${live.length} open hour${live.length === 1 ? '' : 's'}, `
+    + `averaging ${one(mean)} an hour. Based on ${days} open day${days === 1 ? '' : 's'}.`;
+}

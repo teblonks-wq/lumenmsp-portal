@@ -14,6 +14,7 @@ import {
 } from './oneboard-curve';
 import {
   yearSeries, yearMissedRateByHour, yearMissedRateByDow, yearShareByHour,
+  yearAvgCallsByHour, observeAvgCallsByHour, type AvgCell,
   observeMissedByHour, observeMissedByDow, observeCallShare,
   type RateCell, type YearSeries,
 } from './oneboard-year';
@@ -64,6 +65,8 @@ export interface OneBoardSite {
   yearMissedByHour: RateCell[];
   yearMissedByDow: RateCell[];
   yearCallsByHour: RateCell[];
+  yearAvgByHour: AvgCell[];
+  yearNoteAvg: string;
   yearNoteHour: string;
   yearNoteDow: string;
   yearNoteCalls: string;
@@ -239,7 +242,7 @@ export async function buildOneBoard(
           daily: [], missedByHour: [], totalByHour: [],
           missedByDow: [], totalByDow: [], daysSeenByDow: [], missedByDowHour: [], totalByDowHour: [],
           baseline: null, curve: [], curveSummary: null, year: null,
-          yearMissedByHour: [], yearMissedByDow: [], yearCallsByHour: [],
+          yearMissedByHour: [], yearMissedByDow: [], yearCallsByHour: [], yearAvgByHour: [], yearNoteAvg: '',
           yearNoteHour: '', yearNoteDow: '', yearNoteCalls: '' });
         continue;
       }
@@ -282,8 +285,11 @@ export async function buildOneBoard(
       const yHour = year ? yearMissedRateByHour(year, ONEBOARD_HOURS) : [];
       const yDow = year ? yearMissedRateByDow(year) : [];
       const yCalls = year ? yearShareByHour(year, ONEBOARD_HOURS) : [];
+      // Alex Cumiskey's ask: the COUNT, not the share — a percentage cannot be staffed against.
+      const yAvg = year ? yearAvgCallsByHour(year, ONEBOARD_HOURS) : [];
       const yearPanels = {
         yearMissedByHour: yHour, yearMissedByDow: yDow, yearCallsByHour: yCalls,
+        yearAvgByHour: yAvg, yearNoteAvg: year ? observeAvgCallsByHour(yAvg) : '',
         yearNoteHour: year ? observeMissedByHour(yHour) : '',
         yearNoteDow: year ? observeMissedByDow(yDow) : '',
         yearNoteCalls: year ? observeCallShare(yCalls) : '',
