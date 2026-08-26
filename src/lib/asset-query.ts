@@ -44,6 +44,12 @@ export const ASSET_FIELDS: Record<string, FieldDef> = {
   last_user:     { label: 'Last user',     col: 'a.last_login_user', kind: 'text' },
   agent_version: { label: 'Agent version', col: 'agd.agent_version', kind: 'text', lookup: true },
   last_seen:     { label: 'Last seen',     col: 'a.last_seen_at',  kind: 'date' },
+  // Warranty. warranty_end as a date makes "everything out of cover before Christmas"
+  // a filter rather than a spreadsheet, which is the whole point of collecting it.
+  warranty_end:      { label: 'Warranty expiry',   col: 'a.warranty_end',      kind: 'date' },
+  warranty_provider: { label: 'Warranty provider', col: 'a.warranty_provider', kind: 'enum', lookup: true },
+  warranty_level:    { label: 'Warranty level',    col: 'a.warranty_level',    kind: 'text', lookup: true },
+  warranty_supplier: { label: 'Warranty supplier', col: 'a.warranty_supplier', kind: 'text', lookup: true },
   tag:           { label: 'Group',         col: '',                kind: 'tag' },
 };
 

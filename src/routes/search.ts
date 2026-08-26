@@ -55,9 +55,12 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
             AND (si.product_reference ILIKE $1 OR si.external_customer_id ILIKE $1)
           ORDER BY si.product_reference, si.customer_id LIMIT 10`, [like]),
       // Devices. Serial matters as much as hostname here — it is what someone reads off
-      // the sticker on the machine in front of them, and often all they have.
+      // the sticker on the machine in front of them, and often all they have. The friendly
+      // name matters for the opposite reason: it is what the CUSTOMER calls the machine
+      // on the phone ("the POD computer"), and nobody searching for that knows the
+      // hostname. Both find it.
       pool.query(
-        `SELECT a.id, a.hostname, a.serial_number, a.model, a.device_type, a.online_status,
+        `SELECT a.id, a.hostname, a.friendly_name, a.serial_number, a.model, a.device_type, a.online_status,
                 a.last_login_user, c.name AS customer_name,
                 (ad.id IS NOT NULL) AS has_agent
            FROM customer_assets a
@@ -70,8 +73,8 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
               LIMIT 1
            ) ad ON true
           WHERE a.customer_id IS NOT NULL
-            AND (a.hostname ILIKE $1 OR a.serial_number ILIKE $1 OR a.model ILIKE $1
-                 OR a.last_login_user ILIKE $1 OR c.name ILIKE $1)
+            AND (a.hostname ILIKE $1 OR a.friendly_name ILIKE $1 OR a.serial_number ILIKE $1
+                 OR a.model ILIKE $1 OR a.last_login_user ILIKE $1 OR c.name ILIKE $1)
           ORDER BY a.online_status DESC NULLS LAST, a.hostname LIMIT 8`, [like]),
     ]);
 
@@ -110,8 +113,11 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
     })) });
 
     if (ast.rows.length) groups.push({ type: 'Devices', icon: '💻', items: ast.rows.map((r) => ({
-      label: (r.hostname || r.serial_number || 'Device') + (r.has_agent ? ' ●' : ''),
-      sub: [r.customer_name, r.model, r.serial_number,
+      // Lead with the friendly name when there is one — it is the label the searcher
+      // most likely typed — and keep the hostname in the sub-line so the machine is still
+      // identifiable to whoever has to go and find it.
+      label: (r.friendly_name || r.hostname || r.serial_number || 'Device') + (r.has_agent ? ' ●' : ''),
+      sub: [r.customer_name, r.friendly_name && r.hostname ? r.hostname : null, r.model, r.serial_number,
             r.last_login_user, r.online_status ? 'Online' : null].filter(Boolean).join(' · '),
       url: '/assets/' + r.id,
     })) });

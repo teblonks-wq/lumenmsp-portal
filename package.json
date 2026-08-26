@@ -10,6 +10,7 @@
     "test:questionnaires": "tsx src/scripts/test-questionnaires.ts",
     "test:questionnaires-db": "tsx src/scripts/test-questionnaires-db.ts",
     "test:mcp-auth": "tsx src/scripts/test-mcp-auth.ts",
+    "test:warranty": "tsx src/scripts/test-warranty.ts",
     "oneboard-baseline": "node dist/scripts/oneboard-baseline-run.js",
     "build": "tsc",
     "start": "node dist/index.js",

@@ -61,7 +61,32 @@
   <div>
     <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="<%= back %>">← Back</a></p>
     <p class="doc-kicker">Device · <%= asset.device_type || 'Unknown type' %><% if (asset.customer_name) { %> · <%= asset.customer_name %><% } %></p>
-    <h1><%= asset.hostname || '(unnamed device)' %></h1>
+    <%
+      // The friendly name leads when there is one. This is NOT a rename: the hostname is
+      // still shown underneath and is still what the machine calls itself, what the agent
+      // reports and what every match in the Portal keys on. This is only what the
+      // CUSTOMER calls it — "Cholsey Rec Left" — which is what actually gets said on the
+      // phone and therefore what actually gets searched for.
+      var _title = asset.friendly_name || asset.hostname || '(unnamed device)';
+    %>
+    <h1 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span id="devTitle"><%= _title %></span>
+      <button type="button" class="btn" id="renameBtn" style="padding:2px 9px;font-size:12px;font-weight:600;"
+              title="Give this machine the name the customer uses for it. The hostname is not changed.">&#9998; Rename</button>
+    </h1>
+    <% if (asset.friendly_name && asset.hostname) { %>
+      <p class="muted" style="margin:2px 0 0;font-size:12.5px;" title="The machine's actual hostname — unchanged by the friendly name.">Hostname <span style="font-family:ui-monospace,Menlo,Consolas,monospace;"><%= asset.hostname %></span></p>
+    <% } %>
+    <form method="post" action="/assets/<%= asset.id %>/friendly-name" id="renameForm"
+          style="display:none;margin:8px 0 0;gap:6px;align-items:center;flex-wrap:wrap;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <input type="hidden" name="back" value="<%= back %>">
+      <input class="input" name="friendlyName" maxlength="120" style="font-size:13px;padding:5px 9px;min-width:260px;"
+             placeholder="e.g. Cholsey Rec Left" value="<%= asset.friendly_name || '' %>">
+      <button class="btn btn-primary" type="submit" style="padding:5px 12px;font-size:12px;">Save name</button>
+      <button class="btn" type="button" id="renameCancel" style="padding:5px 12px;font-size:12px;">Cancel</button>
+      <span class="muted" style="font-size:11.5px;flex-basis:100%;">Searchable everywhere. Clearing it puts the hostname back as the title — the machine itself is never renamed.</span>
+    </form>
     <p class="muted" style="margin:6px 0 0;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
       <% var _hw = (typeof onlineWindowSecs !== 'undefined' && onlineWindowSecs) ? onlineWindowSecs : 180;
          var _live = !!asset.agent_device_id && typeof agentInfo !== 'undefined' && agentInfo
@@ -410,6 +435,103 @@ function _ago(d) {
         csrfToken: (typeof csrfToken !== 'undefined' ? csrfToken : '') }) %><% } %>
 
   <section class="dev-tab-panel" data-key="hardware">
+    <%
+      // One place decides the colour of a warranty (lib/warranty.ts), so this page, the
+      // asset list and anything built later cannot disagree about the same machine.
+      var _w  = (typeof warranty !== 'undefined' && warranty) ? warranty : { state:'unknown', label:'Not known', entitlements:[], canCheck:false, providerName:null };
+      var _wc = _w.state === 'active' ? 'var(--ok)' : _w.state === 'expiring' ? 'var(--warn)' : _w.state === 'expired' ? 'var(--bad)' : 'var(--line-strong)';
+      var _wt = _w.state === 'active' ? 'var(--tint-ok, var(--surface-2))' : _w.state === 'expiring' ? 'var(--tint-warn)' : _w.state === 'expired' ? 'var(--tint-bad, var(--surface-2))' : 'var(--surface-2)';
+      function _wd(v){ return v ? new Date(v).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) : '—'; }
+    %>
+    <div class="card" id="warranty" style="background:<%= _wt %>;border-left:4px solid <%= _wc %>;margin:0 0 18px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+        <div style="min-width:260px;">
+          <p class="dev-subcard-title" style="margin:0 0 4px;">Warranty</p>
+          <p style="margin:0;font-size:19px;font-weight:700;color:<%= _wc %>;"><%= _w.label %></p>
+          <p class="muted" style="margin:4px 0 0;font-size:13px;">
+            <% if (asset.warranty_level) { %><span style="font-weight:600;color:var(--ink);"><%= asset.warranty_level %></span><br><% } %>
+            <% if (asset.warranty_end) { %>Cover <%= _wd(asset.warranty_start) %> &rarr; <strong><%= _wd(asset.warranty_end) %></strong><% } %>
+            <% if (asset.warranty_ship_date) { %><br>Shipped <%= _wd(asset.warranty_ship_date) %><% } %>
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <% if (_w.canCheck) { %>
+          <form method="post" action="/assets/<%= asset.id %>/warranty/refresh" style="margin:0;">
+            <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+            <input type="hidden" name="back" value="<%= back %>">
+            <button class="btn" type="submit" title="Ask <%= _w.providerName %> for this machine's warranty now, by serial number"<%= asset.warranty_locked ? ' disabled' : '' %>>&#8635; Check with <%= _w.providerName %></button>
+          </form>
+          <% } %>
+          <button type="button" class="btn" id="warrEditBtn">&#9998; <%= asset.warranty_end || asset.warranty_level ? 'Edit by hand' : 'Enter by hand' %></button>
+        </div>
+      </div>
+
+      <p class="muted" style="margin:12px 0 0;font-size:12px;">
+        <% if (asset.warranty_source === 'manual') { %>
+          Entered by hand<% if (asset.warranty_supplier) { %> · bought from <%= asset.warranty_supplier %><% } %>
+        <% } else if (asset.warranty_source) { %>
+          From <%= asset.warranty_provider || asset.warranty_source %><% if (asset.warranty_checked_at) { %> · checked <%= dt(asset.warranty_checked_at) %><% } %>
+        <% } else if (!_w.canCheck && !String(asset.serial_number || '').trim()) { %>
+          No serial number on this device, so there is nothing to look a warranty up by. Type it in if you have the paperwork.
+        <% } else if (!_w.canCheck) { %>
+          No warranty service is connected for <%= asset.manufacturer || 'this manufacturer' %> yet — add the credentials under
+          <a class="row-link" href="/settings/integrations#warranty">Settings &rarr; Integrations</a>, or type the warranty in.
+        <% } else { %>
+          Never checked. Press &ldquo;Check with <%= _w.providerName %>&rdquo;, or wait for tonight's sweep.
+        <% } %>
+        <% if (asset.warranty_locked) { %>
+          <span class="badge badge-sent" style="margin-left:6px;" title="A person entered this, so no automatic lookup will overwrite it">locked</span>
+        <% } %>
+      </p>
+      <% if (asset.warranty_notes) { %><p class="muted" style="margin:8px 0 0;font-size:12.5px;"><%= asset.warranty_notes %></p><% } %>
+      <% if (asset.warranty_error) { %>
+        <p style="margin:8px 0 0;font-size:12px;color:var(--bad-fg);" title="The last lookup did not produce an answer. A gap here should be visible, not silent.">&#9888; <%= asset.warranty_error %></p>
+      <% } %>
+
+      <% if ((_w.entitlements || []).length) { %>
+        <p class="dev-subcard-title" style="margin:16px 0 6px;">Entitlements</p>
+        <p class="muted" style="margin:0 0 8px;font-size:12px;">A machine normally carries several at once, with different end dates — this is where &ldquo;is the accidental-damage cover still live?&rdquo; gets answered.</p>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>Cover</th><th>Type</th><th>From</th><th>To</th></tr></thead>
+          <tbody>
+          <% _w.entitlements.forEach(function(e){ var _ee = e.end_date ? new Date(e.end_date) : null; var _dead = _ee && _ee.getTime() < Date.now(); %>
+            <tr<%= _dead ? ' style="opacity:.55;"' : '' %>>
+              <td style="font-weight:600;"><%= e.description || e.service_code || '—' %></td>
+              <td class="muted"><%= e.entitlement_type || '—' %></td>
+              <td class="muted" style="white-space:nowrap;"><%= _wd(e.start_date) %></td>
+              <td class="muted" style="white-space:nowrap;"><%= _wd(e.end_date) %><%= _dead ? ' (ended)' : '' %></td>
+            </tr>
+          <% }); %>
+          </tbody>
+        </table></div>
+      <% } %>
+
+      <form method="post" action="/assets/<%= asset.id %>/warranty" id="warrForm" style="display:none;margin:16px 0 0;padding:16px 0 0;border-top:1px solid var(--line);">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <input type="hidden" name="back" value="<%= back %>">
+        <p class="muted" style="margin:0 0 12px;font-size:12.5px;">Saving here <strong>locks</strong> the warranty: no automatic lookup will overwrite it. That is deliberate — if you have read the contract you know more than the manufacturer's database does about a second-hand machine or a third-party support deal.</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+          <div class="form-group"><label>Provider</label><input class="input" name="provider" maxlength="60" value="<%= asset.warranty_provider || '' %>" placeholder="Dell, HP, a third party…"></div>
+          <div class="form-group"><label>Level of cover</label><input class="input" name="level" maxlength="160" value="<%= asset.warranty_level || '' %>" placeholder="3Y Onsite Next Business Day"></div>
+          <div class="form-group"><label>Starts</label><input class="input" type="date" name="start" value="<%= asset.warranty_start ? new Date(asset.warranty_start).toISOString().slice(0,10) : '' %>"></div>
+          <div class="form-group"><label>Expires</label><input class="input" type="date" name="end" value="<%= asset.warranty_end ? new Date(asset.warranty_end).toISOString().slice(0,10) : '' %>"></div>
+          <div class="form-group"><label>Bought from</label><input class="input" name="supplier" maxlength="120" value="<%= asset.warranty_supplier || '' %>" placeholder="Supplier"></div>
+        </div>
+        <div class="form-group" style="margin-top:4px;"><label>Notes</label><input class="input" name="notes" maxlength="500" value="<%= asset.warranty_notes || '' %>" placeholder="Contract reference, what it does and does not cover…" style="width:100%;"></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+          <button class="btn btn-primary" type="submit">Save warranty</button>
+          <button class="btn" type="button" id="warrCancel">Cancel</button>
+        </div>
+      </form>
+      <% if (asset.warranty_locked) { %>
+      <form method="post" action="/assets/<%= asset.id %>/warranty/unlock" style="margin:10px 0 0;">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <input type="hidden" name="back" value="<%= back %>">
+        <button class="btn" type="submit" style="padding:3px 10px;font-size:12px;" title="Hand this machine back to the nightly lookup">Unlock &mdash; let automatic lookups update it again</button>
+      </form>
+      <% } %>
+    </div>
+
     <div class="dev-info-cols">
       <div>
         <div class="dev-field-row"><div class="k">Manufacturer / Model</div><div class="v"><%= fmt([asset.manufacturer, asset.model].filter(Boolean).join(' ') || null) %></div></div>
@@ -736,7 +858,38 @@ function _ago(d) {
     // straight to its tab - what we no longer do is restore whichever tab happened to be
     // open on the last visit, which made "go to a device" land somewhere different every time.
     var hash = (location.hash || '').replace('#', '');
-    show((hash && document.querySelector('.dev-tab-panel[data-key="' + hash + '"]')) ? hash : 'overview');
+    // #warranty is not a tab, it is a card INSIDE the Hardware tab — every warranty
+    // action redirects back to it, and without this the page would land on Overview and
+    // look like nothing happened.
+    if (hash === 'warranty') {
+      show('hardware');
+      setTimeout(function () {
+        var card = document.getElementById('warranty');
+        if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 60);
+    } else {
+      show((hash && document.querySelector('.dev-tab-panel[data-key="' + hash + '"]')) ? hash : 'overview');
+    }
+  })();
+</script>
+
+<script>
+  // Two inline editors, same shape: a button reveals the form, Cancel puts it back.
+  (function () {
+    function toggler(btnId, formId, cancelId, focusSel) {
+      var btn = document.getElementById(btnId), form = document.getElementById(formId);
+      if (!btn || !form) return;
+      btn.addEventListener('click', function () {
+        var open = form.style.display !== 'none';
+        form.style.display = open ? 'none' : 'flex';
+        if (formId === 'warrForm' && !open) form.style.display = 'block';
+        if (!open) { var f = form.querySelector(focusSel); if (f) { f.focus(); if (f.select) f.select(); } }
+      });
+      var cancel = cancelId && document.getElementById(cancelId);
+      if (cancel) cancel.addEventListener('click', function () { form.style.display = 'none'; });
+    }
+    toggler('renameBtn', 'renameForm', 'renameCancel', 'input[name=friendlyName]');
+    toggler('warrEditBtn', 'warrForm', 'warrCancel', 'input[name=provider]');
   })();
 </script>
 

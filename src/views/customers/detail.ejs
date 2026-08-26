@@ -844,16 +844,37 @@
       <h2>Assets <span class="muted">(<%= custAssets.length %>)</span></h2>
       <a class="btn" href="/assets?customer=<%= customer.id %>">Open in Assets →</a>
     </div>
-    <p class="muted" style="margin:8px 24px 0;font-size:13px;">Synced from Atera, read-only for now.</p>
+    <%
+      // "Unallocated" is a number worth seeing rather than counting by eye — a device
+      // nobody owns is the one nobody reports as broken, and the one still sitting in a
+      // drawer when the person who had it left.
+      var _unalloc = custAssets.filter(function(a){ return !a.assigned_name && !a.last_login_user; }).length;
+    %>
+    <p class="muted" style="margin:8px 24px 0;font-size:13px;">Synced from Atera, read-only for now.<% if (_unalloc) { %>
+      <span style="color:var(--warn-deep);font-weight:600;"> · <%= _unalloc %> with no known user</span><% } %></p>
     <div class="table-wrap">
       <table class="table">
-        <thead><tr><th></th><th>Hostname</th><th>Agent</th><th>Type</th><th>OS</th><th>Manufacturer / Model</th><th>Last seen</th><th></th></tr></thead>
+        <thead><tr><th></th><th>Device</th><th>User</th><th>Agent</th><th>Type</th><th>OS</th><th>Manufacturer / Model</th><th>Last seen</th><th></th></tr></thead>
         <tbody>
-          <% if (custAssets.length===0) { %><tr><td colspan="8"><div class="empty-state">No devices synced for this customer yet.</div></td></tr><% } %>
+          <% if (custAssets.length===0) { %><tr><td colspan="9"><div class="empty-state">No devices synced for this customer yet.</div></td></tr><% } %>
           <% custAssets.forEach(function(a){ %>
             <tr>
               <td><span title="<%= a.online_status ? 'Online' : 'Offline' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= a.online_status ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
-              <td><a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/customers/' + customer.id + '#assets') %>"><%= a.hostname || '(unnamed device)' %></a></td>
+              <td>
+                <a class="row-link" href="/assets/<%= a.id %>?back=<%= encodeURIComponent('/customers/' + customer.id + '#assets') %>"><%= a.friendly_name || a.hostname || '(unnamed device)' %></a>
+                <% if (a.friendly_name && a.hostname) { %><span class="muted" style="font-size:11px;display:block;"><%= a.hostname %></span><% } %>
+              </td>
+              <%
+                // Same rule as the estate list, deliberately: the ASSIGNED person is who
+                // the machine belongs to and is bold because it is a decision somebody
+                // made; the last signed-in user is greyed because it is only whoever
+                // happened to log on. They are not the same claim and must not look alike.
+              %>
+              <td class="muted" style="font-size:12px;" title="<%= a.assigned_name ? (a.assigned_name + ' (assigned)') : (a.last_login_user ? (a.last_login_user + ' (last signed in)') : 'Nobody assigned and nobody has signed in') %>">
+                <% if (a.assigned_name) { %><span style="font-weight:600;color:var(--ink);"><%= a.assigned_name %></span>
+                <% } else if (a.last_login_user) { %><%= String(a.last_login_user).split('\\').pop() %>
+                <% } else { %><span class="muted" style="opacity:.55;">unallocated</span><% } %>
+              </td>
               <td>
                 <% if (a.agent_installed) { %>
                   <span class="badge badge-active" title="LumenMSP Agent <%= a.agent_version || '' %><%= a.remote_ready ? ' · remote control ready' : ' · remote control not installed' %>">

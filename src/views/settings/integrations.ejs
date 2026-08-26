@@ -421,6 +421,83 @@ function filterIntg(q){
   </div>
 </details>
 
+<details class="intg" id="warranty">
+  <summary><span class="intg-left"><span class="chev"></span> Warranty services (Dell &middot; HP &middot; Lenovo)</span>
+    <%
+      var _wp = (typeof warranty !== 'undefined' && warranty) ? warranty : { providers: [], lastSweep: '' };
+      var _wOn = (_wp.providers || []).filter(function(p){ return p.configured; });
+    %>
+    <% if (_wOn.length) { %><span class="badge badge-sent"><%= _wOn.length %> connected</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>
+  </summary>
+  <div class="intg-body">
+    <p class="muted">Warranty is looked up <strong>by serial number</strong> and lands on each device's <strong>Hardware</strong> tab, with an expiry badge and a filter on the asset list. Each manufacturer is separate: connecting Dell does nothing for the HP machines, and a make with nothing connected is simply typed in by hand on the device page.</p>
+    <p class="muted" style="font-size:12.5px;">Anything entered by hand on a device is <strong>locked</strong> and is never overwritten by these services &mdash; if you have read the contract you know more than the manufacturer does about a second-hand machine or a third-party support deal.</p>
+
+    <div class="card" style="background:var(--surface-2);margin:0 0 16px;">
+      <p style="margin:0;font-size:13px;">
+        <strong>Nightly sweep</strong> runs at 03:40 &mdash; anything never checked, anything older than 30 days, and anything expiring within 90 days re-checked weekly.
+        <% if (_wp.lastSweep) { %><br><span class="muted">Last run <%= new Date(_wp.lastSweep).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) %><% if (_wp.lastSummary) { %> &mdash; <%= _wp.lastSummary %><% } %></span>
+        <% } else { %><br><span class="muted">Has not run yet.</span><% } %>
+      </p>
+      <p class="muted" style="margin:8px 0 0;font-size:12px;">The sweep does nothing at all until at least one provider below is connected, so leaving this section empty is safe.</p>
+    </div>
+
+    <form method="post" action="/settings/integrations/warranty" style="max-width:720px;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+
+      <p class="dev-subcard-title" style="font-size:13px;font-weight:700;margin:0 0 6px;">Dell TechDirect</p>
+      <p class="muted" style="font-size:12.5px;margin:0 0 10px;">An API key from <code>techdirect.dell.com</code> (Manage &rarr; APIs &rarr; Warranty). Batches 100 service tags per call, so a Dell-heavy site costs almost nothing to keep current.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:8px;">
+        <div class="form-group"><label>Client ID</label><input class="input" name="dell_client_id" value="<%= _wp.dellId || '' %>" style="font-family:monospace;" autocomplete="off"></div>
+        <div class="form-group"><label>Client secret</label><input class="input" type="password" name="dell_client_secret" placeholder="<%= (_wp.providers||[]).some(function(p){return p.key==='dell'&&p.configured;}) ? 'saved — leave blank to keep' : '' %>" style="font-family:monospace;" autocomplete="off"></div>
+        <div class="form-group"><label>Base URL <span class="muted">(optional)</span></label><input class="input" name="dell_base" value="<%= _wp.dellBase || '' %>" placeholder="https://apigtwb2c.us.dell.com" style="font-family:monospace;"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;margin-bottom:18px;"><input type="checkbox" name="dell_clear" value="1"> Clear the saved Dell secret</label>
+
+      <p class="dev-subcard-title" style="font-size:13px;font-weight:700;margin:0 0 6px;">HP</p>
+      <p class="muted" style="font-size:12.5px;margin:0 0 10px;">HP's Product Warranty API from <code>developers.hp.com</code>. It is a <em>job</em> API &mdash; serials go in, a job id comes back, results are collected a few seconds later &mdash; which is why an HP lookup takes longer than the others.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:8px;">
+        <div class="form-group"><label>API key</label><input class="input" name="hp_api_key" value="<%= _wp.hpKey || '' %>" style="font-family:monospace;" autocomplete="off"></div>
+        <div class="form-group"><label>API secret</label><input class="input" type="password" name="hp_api_secret" placeholder="<%= (_wp.providers||[]).some(function(p){return p.key==='hp'&&p.configured;}) ? 'saved — leave blank to keep' : '' %>" style="font-family:monospace;" autocomplete="off"></div>
+        <div class="form-group"><label>Base URL <span class="muted">(optional)</span></label><input class="input" name="hp_base" value="<%= _wp.hpBase || '' %>" placeholder="https://css.api.hp.com" style="font-family:monospace;"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;margin-bottom:18px;"><input type="checkbox" name="hp_clear" value="1"> Clear the saved HP secret</label>
+
+      <p class="dev-subcard-title" style="font-size:13px;font-weight:700;margin:0 0 6px;">Lenovo</p>
+      <p class="muted" style="font-size:12.5px;margin:0 0 10px;">A ClientID from your Lenovo partner manager. One machine per call, so the nightly sweep paces the Lenovo fleet rather than firing it all at once.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:8px;">
+        <div class="form-group"><label>ClientID</label><input class="input" type="password" name="lenovo_client_id" placeholder="<%= (_wp.providers||[]).some(function(p){return p.key==='lenovo'&&p.configured;}) ? 'saved — leave blank to keep' : '' %>" style="font-family:monospace;" autocomplete="off"></div>
+        <div class="form-group"><label>Base URL <span class="muted">(optional)</span></label><input class="input" name="lenovo_base" value="<%= _wp.lenovoBase || '' %>" placeholder="https://supportapi.lenovo.com" style="font-family:monospace;"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;margin-bottom:18px;"><input type="checkbox" name="lenovo_clear" value="1"> Clear the saved Lenovo ClientID</label>
+
+      <p class="dev-subcard-title" style="font-size:13px;font-weight:700;margin:0 0 6px;">Aggregator <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0;">(one key, every manufacturer)</span></p>
+      <p class="muted" style="font-size:12.5px;margin:0 0 10px;">A paid service such as ScalePad that covers all makes under one key. Used only as a <strong>fallback</strong>: a manufacturer's own answer always wins over a reseller of that answer. Leave blank unless we buy one.</p>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:8px;">
+        <div class="form-group"><label>Endpoint URL</label><input class="input" name="aggregator_base" value="<%= _wp.aggBase || '' %>" placeholder="https://…/warranty/lookup" style="font-family:monospace;"></div>
+        <div class="form-group"><label>API key</label><input class="input" type="password" name="aggregator_key" placeholder="<%= _wp.aggSet ? 'saved — leave blank to keep' : '' %>" style="font-family:monospace;" autocomplete="off"></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;margin-bottom:18px;"><input type="checkbox" name="aggregator_clear" value="1"> Clear the saved aggregator key</label>
+
+      <button class="btn btn-primary" type="submit">Save warranty settings</button>
+    </form>
+
+    <div class="card" style="background:var(--surface-2);margin:16px 0 0;max-width:720px;">
+      <p style="margin:0 0 8px;font-size:13px;"><strong>Test a provider</strong> &mdash; against a real serial from a machine of that make. None of these APIs has a ping endpoint, so a made-up serial cannot tell a bad key from an unknown machine.</p>
+      <form method="post" action="/settings/integrations/warranty/test" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <div class="form-group" style="margin:0;"><label>Provider</label>
+          <select class="input" name="provider">
+            <% (_wp.providers || []).forEach(function(p){ %><option value="<%= p.key %>"<%= p.configured ? '' : ' disabled' %>><%= p.label %><%= p.configured ? '' : ' — not configured' %></option><% }); %>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0;"><label>Serial number</label><input class="input" name="serial" placeholder="Service tag / serial" style="font-family:monospace;"></div>
+        <button class="btn" type="submit">Test</button>
+      </form>
+    </div>
+  </div>
+</details>
+
 <details class="intg">
   <summary><span class="intg-left"><span class="chev"></span> UniFi Site Manager</span>
     <% if (unifiKey) { %><span class="badge badge-sent">Configured</span><% } else { %><span class="badge badge-inactive">Not set</span><% } %>

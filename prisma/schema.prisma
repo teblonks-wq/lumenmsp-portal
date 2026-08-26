@@ -887,6 +887,26 @@ model CustomerAsset {
   // it and a mistake is reversible; filtered out of every list exactly like a merged row.
   archivedAt     DateTime? @map("archived_at")
   archivedReason String?   @map("archived_reason")
+  // ── Warranty ──────────────────────────────────────────────────────────────
+  // The HEADLINE warranty, denormalised onto the asset so a list can sort, filter and
+  // badge on it without touching the entitlements table. The detail (a machine often
+  // carries several concurrent entitlements — hardware support, accidental damage,
+  // battery) lives in asset_warranty_entitlements.
+  //
+  // warrantyLocked is the whole contract between a human and the vendor APIs: a person
+  // who types a warranty in has seen the paperwork, and no nightly job is allowed to
+  // overwrite that. Everything else is refreshable and disposable.
+  warrantyProvider  String?   @map("warranty_provider")   // dell | hp | lenovo | aggregator | <supplier name>
+  warrantyLevel     String?   @map("warranty_level")      // "ProSupport Plus NBD", "3Y Onsite"
+  warrantyStart     DateTime? @map("warranty_start")
+  warrantyEnd       DateTime? @map("warranty_end")        // the LATEST end date across entitlements
+  warrantyShipDate  DateTime? @map("warranty_ship_date")  // manufacturer ship date, where the vendor gives it
+  warrantySupplier  String?   @map("warranty_supplier")   // who we bought it from
+  warrantyNotes     String?   @map("warranty_notes")
+  warrantySource    String?   @map("warranty_source")     // manual | api:dell | api:hp | api:lenovo | api:aggregator
+  warrantyCheckedAt DateTime? @map("warranty_checked_at")
+  warrantyError     String?   @map("warranty_error")      // last lookup failure, shown so a silent gap is visible
+  warrantyLocked    Boolean   @default(false) @map("warranty_locked") // a human typed it — no API may overwrite
   raw            Json?     // full source payload, for fields not yet promoted to columns
   syncedAt       DateTime  @default(now()) @map("synced_at")
   createdAt      DateTime  @default(now()) @map("created_at")
@@ -901,7 +921,31 @@ model CustomerAsset {
   @@index([assignedContactId])
   @@index([agentDeviceId])
   @@index([mergedIntoId])
+  @@index([warrantyEnd])
   @@map("customer_assets")
+}
+
+// One warranty entitlement as a vendor reports it. A machine normally has SEVERAL running
+// at once (hardware support, accidental damage, battery, keep-your-drive), with different
+// end dates — collapsing them to one row on the asset would throw away the answer to
+// "is the ACCIDENTAL DAMAGE cover still live?", which is the question that gets asked.
+//
+// Rows are REPLACED wholesale per asset on each successful lookup, never merged: a vendor
+// dropping an entitlement is information, and a merge would keep a dead one alive forever.
+model AssetWarrantyEntitlement {
+  id            Int       @id @default(autoincrement())
+  assetId       Int       @map("asset_id")
+  serviceCode   String?   @map("service_code")        // vendor's own code, e.g. "PS4AM"
+  description   String?                               // "ProSupport Plus: Next Business Day Onsite"
+  entitlementType String? @map("entitlement_type")    // INITIAL | EXTENDED | ...
+  startDate     DateTime? @map("start_date")
+  endDate       DateTime? @map("end_date")
+  source        String?                               // api:dell | api:hp | api:lenovo | api:aggregator
+  collectedAt   DateTime  @default(now()) @map("collected_at")
+
+  @@index([assetId])
+  @@index([endDate])
+  @@map("asset_warranty_entitlements")
 }
 
 // Durable note against a comms CLI / ref (e.g. "line rental ceasing next month"). Kept in its own

@@ -610,12 +610,14 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
     // machines that exist; this says which of them we can actually do anything with.
     assets = (await pool.query(
       `SELECT a.*,
+              ac.full_name AS assigned_name,
               ad.id AS agent_device_id,
               (ad.id IS NOT NULL) AS agent_installed,
               ad.agent_version,
               (ad.mesh_node_id IS NOT NULL) AS remote_ready,
               EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at))::int AS agent_seen_secs
          FROM customer_assets a
+         LEFT JOIN customer_contacts ac ON ac.id = a.assigned_contact_id
          LEFT JOIN LATERAL (
               SELECT d.* FROM agent_devices d
                WHERE d.customer_id = a.customer_id AND d.revoked = false
@@ -624,7 +626,8 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
                ORDER BY (d.mesh_node_id IS NOT NULL) DESC, d.last_seen_at DESC NULLS LAST
                LIMIT 1) ad ON true
         WHERE a.customer_id = $1
-        ORDER BY a.hostname`, [customer.id])).rows;
+          AND a.merged_into_id IS NULL AND a.archived_at IS NULL
+        ORDER BY COALESCE(NULLIF(a.friendly_name,''), a.hostname)`, [customer.id])).rows;
     const { remoteUrlTemplate } = await import('../lib/asset-sync');
     remoteTemplate = await remoteUrlTemplate();
   } catch { /* not migrated yet */ }

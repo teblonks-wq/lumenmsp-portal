@@ -4,6 +4,7 @@ import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { config } from '../config';
 import { getGroup, getSetting, setSetting } from '../lib/settings';
+import { providerStatus as warrantyProviderStatus, probe as warrantyProbe, forgetWarrantyConfig, forgetTokens as forgetWarrantyTokens, type ProviderKey } from '../lib/warranty';
 import { CAPABILITIES, getCapability, capabilityApp, capabilityConsentUrl } from '../lib/graph-capabilities';
 import { QuickBooks } from '../lib/quickbooks';
 import { GoCardless, chargeDateFor } from '../lib/gocardless';
@@ -148,8 +149,26 @@ router.get('/settings/integrations', requireAuth, requireAdmin, async (req: Requ
     "SELECT id, name, entra_tenant_id FROM customers WHERE deleted_at IS NULL AND COALESCE(is_placeholder,false)=false AND entra_tenant_id IS NOT NULL AND TRIM(entra_tenant_id) <> '' ORDER BY name"
   )).rows;
 
+  // Warranty services. The screen shows WHICH are live rather than a single on/off,
+  // because "Dell answers, HP does not" is the normal state of this and the asset page
+  // says so per machine.
+  const wg = await getGroup('warranty');
+  const warranty = {
+    providers: await warrantyProviderStatus(),
+    dellId: wg.dell_client_id || '',
+    dellBase: wg.dell_base || '',
+    hpKey: wg.hp_api_key || '',
+    hpBase: wg.hp_base || '',
+    lenovoId: wg.lenovo_client_id || '',
+    lenovoBase: wg.lenovo_base || '',
+    aggBase: wg.aggregator_base || '',
+    aggSet: !!wg.aggregator_key,
+    lastSweep: wg.last_sweep || '',
+    lastSummary: wg.last_sweep_summary || '',
+  };
+
   res.render('settings/integrations', {
-    user: req.session.user!, capabilities, capCustomers,
+    user: req.session.user!, capabilities, capCustomers, warranty,
     qb: { hasCreds: qb.hasCredentials(), connected: qb.isConnected(), company: qbCompany, env: qb.environment },
     gc: { configured: gc.isConfigured(), env: gcCfg.environment || 'live' },
     teamsWebhook, languagetoolUrl, unifiKey, giacom, dws, atera, wa, teams, anthropic, buffer, pexels, msp360, acronis,
@@ -409,6 +428,56 @@ router.post('/settings/integrations/languagetool', requireAuth, requireAdmin, as
 router.post('/settings/integrations/unifi', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   await setSetting('unifi', 'api_key', ((req.body as any).unifi_api_key || '').trim() || null);
   res.redirect('/settings/integrations?msg=UniFi+API+key+saved');
+});
+
+// ── Warranty services (Dell / HP / Lenovo / aggregator) ──────────────────────────
+// A blank secret means LEAVE IT ALONE, not "clear it". The form renders secrets as empty
+// password boxes — never echoing a saved key back into a page — so a save that treated
+// blank as "delete" would wipe the credentials every time somebody edited the base URL
+// next to them. Clearing is explicit, via the tick.
+router.post('/settings/integrations/warranty', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body as any;
+  const t = (v: any) => String(v || '').trim();
+  const secret = async (key: string, value: string, clear: boolean) => {
+    if (clear) { await setSetting('warranty', key, null); return; }
+    if (value) await setSetting('warranty', key, value);
+  };
+  try {
+    await setSetting('warranty', 'dell_client_id', t(b.dell_client_id) || null);
+    await secret('dell_client_secret', t(b.dell_client_secret), !!b.dell_clear);
+    await setSetting('warranty', 'dell_base', t(b.dell_base) || null);
+
+    await setSetting('warranty', 'hp_api_key', t(b.hp_api_key) || null);
+    await secret('hp_api_secret', t(b.hp_api_secret), !!b.hp_clear);
+    await setSetting('warranty', 'hp_base', t(b.hp_base) || null);
+
+    await secret('lenovo_client_id', t(b.lenovo_client_id), !!b.lenovo_clear);
+    await setSetting('warranty', 'lenovo_base', t(b.lenovo_base) || null);
+
+    await setSetting('warranty', 'aggregator_base', t(b.aggregator_base) || null);
+    await secret('aggregator_key', t(b.aggregator_key), !!b.aggregator_clear);
+
+    // Both caches, or the page would keep saying "Configured" off the old credentials
+    // and the test button would keep using the token minted from them.
+    forgetWarrantyConfig();
+    forgetWarrantyTokens();
+    res.redirect('/settings/integrations?msg=' + encodeURIComponent('Warranty settings saved.') + '#warranty');
+  } catch (e: any) {
+    console.error('[integrations] warranty save failed:', e.message);
+    res.redirect('/settings/integrations?err=' + encodeURIComponent('Could not save the warranty settings.') + '#warranty');
+  }
+});
+
+// Prove a provider's credentials against a real serial. None of these APIs has a ping
+// endpoint, and a made-up serial is indistinguishable from a bad key — so the test asks
+// for one rather than pretending it can check on its own.
+router.post('/settings/integrations/warranty/test', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body as any;
+  const key = String(b.provider || '') as ProviderKey;
+  const serial = String(b.serial || '').trim();
+  if (!serial) { res.redirect('/settings/integrations?err=' + encodeURIComponent('Give it a real serial number to test with.') + '#warranty'); return; }
+  const r = await warrantyProbe(key, serial);
+  res.redirect('/settings/integrations?' + (r.ok ? 'msg=' : 'err=') + encodeURIComponent(r.message) + '#warranty');
 });
 
 // ── QuickBooks OAuth ─────────────────────────────────────────────────────────────

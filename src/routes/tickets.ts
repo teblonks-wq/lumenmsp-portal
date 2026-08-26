@@ -808,12 +808,12 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
       // Remote here means our own remote control, offered only when MeshCentral actually
       // has the machine. The old Atera deep-link is gone.
       requesterAssets = (await pool.query(
-        `SELECT a.id, a.hostname, a.device_type, a.online_status,
+        `SELECT a.id, a.hostname, a.friendly_name, a.device_type, a.online_status,
                 (ad.mesh_node_id IS NOT NULL) AS remote_ready
            FROM customer_assets a
            LEFT JOIN agent_devices ad ON ad.id = a.agent_device_id AND ad.revoked = false
-          WHERE a.assigned_contact_id=$1 AND a.merged_into_id IS NULL
-          ORDER BY a.hostname`, [r.rows[0].contact_id]
+          WHERE a.assigned_contact_id=$1 AND a.merged_into_id IS NULL AND a.archived_at IS NULL
+          ORDER BY COALESCE(NULLIF(a.friendly_name,''), a.hostname)`, [r.rows[0].contact_id]
       )).rows.map((d: any) => ({ ...d, remote_url: d.remote_ready ? `/assets/${d.id}/remote-mesh` : null }));
     } catch { /* assigned_contact_id ships in the same deploy as this code */ }
   }

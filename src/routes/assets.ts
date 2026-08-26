@@ -18,6 +18,7 @@ import { ASSET_FIELDS, ASSET_OPS, parseConditions, conditionsToSql } from '../li
 import { BITLOCKER_SCAN_SCRIPT, bitlockerSuspendScript, bitlockerForDevice, revealBitlockerKey } from '../lib/bitlocker';
 import { startScan, scansFor, scanInFlight, type ScanType } from '../lib/gravityzone-scan';
 import { requireVaultAccess, hasVaultAccess } from '../middleware/auth';
+import { refreshAsset as refreshWarranty, warrantyView, providerLabelFor, sweep as warrantySweep } from '../lib/warranty';
 
 const router = Router();
 
@@ -467,6 +468,89 @@ router.post('/assets/:id/friendly-name', requireAuth, async (req: Request, res: 
   }
 });
 
+// ── Warranty ────────────────────────────────────────────────────────────────────
+// Three ways in, one set of columns out (see lib/warranty.ts):
+//   • "Check now"  — ask the manufacturer, right now, for this one machine
+//   • "Save"       — a human types it off the paperwork, and LOCKS it against the API
+//   • "Unlock"     — hand the machine back to the nightly sweep
+//
+// The lock is the whole design. A person who has read the contract knows more than Dell's
+// database does about a second-hand machine or a third-party support deal, and a nightly
+// job quietly reverting them would make this feature worse than not having it.
+
+router.post('/assets/:id/warranty/refresh', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const back = safeBack(req.body.back, `/assets/${id}`);
+  try {
+    const msg = await refreshWarranty(id);
+    await logActivity(req.session.user!.id, 'asset_warranty_check', 'customer_assets', id, msg);
+    res.redirect(back + '?msg=' + encodeURIComponent(msg) + '#warranty');
+  } catch (e: any) {
+    console.error('[assets] warranty refresh failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not reach the warranty service.') + '#warranty');
+  }
+});
+
+router.post('/assets/:id/warranty', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const back = safeBack(req.body.back, `/assets/${id}`);
+  const b = req.body as any;
+  // An empty date must clear the column, not become Invalid Date. Anything unparseable is
+  // treated as "not given" rather than rejected — a half-remembered warranty is still
+  // worth more than a blank field, and the provider/level text carries the rest.
+  const date = (v: any) => {
+    const t = String(v || '').trim();
+    if (!t) return null;
+    const dt = new Date(t);
+    return isNaN(dt.getTime()) ? null : dt;
+  };
+  const txt = (v: any, n: number) => (String(v || '').trim().slice(0, n) || null);
+  try {
+    await pool.query(
+      `UPDATE customer_assets
+          SET warranty_provider=$2, warranty_level=$3, warranty_start=$4, warranty_end=$5,
+              warranty_supplier=$6, warranty_notes=$7,
+              warranty_source='manual', warranty_locked=true,
+              warranty_checked_at=NOW(), warranty_error=NULL, updated_at=NOW()
+        WHERE id=$1`,
+      [id, txt(b.provider, 60), txt(b.level, 160), date(b.start), date(b.end),
+       txt(b.supplier, 120), txt(b.notes, 500)]);
+    await logActivity(req.session.user!.id, 'asset_warranty_set', 'customer_assets', id,
+      `Warranty set by hand${b.end ? ' — cover to ' + String(b.end) : ''}`);
+    res.redirect(back + '?msg=' + encodeURIComponent('Warranty saved. It is locked, so no automatic lookup will overwrite it.') + '#warranty');
+  } catch (e: any) {
+    console.error('[assets] warranty save failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not save that warranty.') + '#warranty');
+  }
+});
+
+router.post('/assets/:id/warranty/unlock', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const back = safeBack(req.body.back, `/assets/${id}`);
+  try {
+    await pool.query('UPDATE customer_assets SET warranty_locked=false, updated_at=NOW() WHERE id=$1', [id]);
+    await logActivity(req.session.user!.id, 'asset_warranty_unlock', 'customer_assets', id,
+      'Warranty unlocked — automatic lookups may update it again');
+    res.redirect(back + '?msg=' + encodeURIComponent('Unlocked. The nightly lookup can update this warranty again.') + '#warranty');
+  } catch (e: any) {
+    res.redirect(back + '?err=' + encodeURIComponent('Could not unlock that warranty.') + '#warranty');
+  }
+});
+
+// Estate sweep on demand (admin). Deliberately capped and reported rather than silent —
+// a bulk vendor call that half-worked has to say so.
+router.post('/assets/warranty/sweep', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const back = safeBack(req.body.back, '/assets');
+  try {
+    const sum = await warrantySweep({ limit: 500 });
+    res.redirect(back + '?msg=' + encodeURIComponent(
+      `Warranty sweep: ${sum.checked} checked, ${sum.updated} updated, ${sum.failed} with no answer, ${sum.skipped} with no connected provider.`));
+  } catch (e: any) {
+    console.error('[assets] warranty sweep failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('The warranty sweep could not finish.'));
+  }
+});
+
 // ── Tags ────────────────────────────────────────────────────────────────────────
 // Add the CURRENT SELECTION to a tag, creating it if the name is new. This is the whole
 // workflow Terry described: filter to what you want, tick, name it. The filter is a way
@@ -619,6 +703,24 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   const contactOptions = row.customer_id
     ? (await pool.query('SELECT id, full_name FROM customer_contacts WHERE customer_id=$1 AND archived=false ORDER BY full_name', [row.customer_id])).rows
     : [];
+
+  // Warranty for the Hardware tab: the entitlement detail, plus who would answer for
+  // this machine if somebody pressed "check now" — so the page can offer the button or
+  // explain why there isn't one, rather than failing on the click.
+  let warrantyEntitlements: any[] = [];
+  try {
+    warrantyEntitlements = (await pool.query(
+      `SELECT service_code, description, entitlement_type, start_date, end_date, source
+         FROM asset_warranty_entitlements WHERE asset_id=$1
+        ORDER BY end_date DESC NULLS LAST, description`, [id])).rows;
+  } catch { /* table appears with the next prisma db push */ }
+  const warrantyProviderName = await providerLabelFor(row.manufacturer).catch(() => null);
+  const warranty = {
+    ...warrantyView(row.warranty_end),
+    entitlements: warrantyEntitlements,
+    providerName: warrantyProviderName,
+    canCheck: !!warrantyProviderName && !!String(row.serial_number || '').trim(),
+  };
 
   // Admin-only raw-payload viewer (?debug=1) — lets us see Atera's exact field names for a real
   // device without guessing, since pick() field-name candidates won't always match every Atera
@@ -831,7 +933,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     // this machine - not when Atera happens to know about it, which is what it used to key
     // on and is meaningless now Atera is on its way out.
     remoteUrl: mesh && mesh.hasNode ? `/assets/${id}/remote-mesh` : null,
-    back: safeBack(req.query.back, '/assets'), contactOptions,
+    back: safeBack(req.query.back, '/assets'), contactOptions, warranty,
     rawJson: showDebug ? JSON.stringify(row.raw, null, 2) : null,
     // Whether remote control is ready on this machine, and if not, which of the several
     // possible reasons it is — so the page can offer the install rather than a dead end.

@@ -85,6 +85,7 @@ import { startGraphConsentCheck } from './lib/graph-consent';
 import { startAzureBackupSync } from './lib/azure-backup';
 import { startAcronisSync } from './lib/acronis';
 import { startEolSync } from './lib/eol-sync';
+import { startWarrantySync } from './lib/warranty';
 import { startSecurityReconcile } from './lib/gravityzone-deploy';
 import { startScanPoller } from './lib/gravityzone-scan';
 import { initVaultKey } from './lib/vault';
@@ -524,6 +525,7 @@ server.listen(config.PORT, () => {
   startAzureBackupSync();   // Azure Backup: Recovery Services vaults per customer tenant (needs Reader RBAC per subscription)
   startAcronisSync();       // Acronis: per-tenant protected workloads + storage (linked like MSP360)
   startEolSync();           // End-of-life dates pulled nightly from endoflife.date
+  startWarrantySync();      // Warranty: nightly lookup against the manufacturers' services (no-op until a provider is configured)
   // Before anything that might need a secret. Never throws - see initVaultKey.
   initVaultKey().catch((e) => console.error('[vault] init failed:', e.message));
   // BitLocker scan commands are automatic and frequent, so they are the one thing that
