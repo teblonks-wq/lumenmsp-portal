@@ -1,3 +1,41 @@
+<style>
+  /* Push-the-update button. Only ever rendered when a newer build actually exists, so its
+     presence IS the message — an always-visible arrow would train people to ignore it. */
+  .agent-up { background:var(--accent); color:#fff; border:none; border-radius:5px;
+              cursor:pointer; font-size:12px; font-weight:700; line-height:1;
+              padding:3px 7px; vertical-align:middle; }
+  .agent-up:hover { background:var(--accent-deep, #0e6377); }
+</style>
+<%
+  // Disk space as a bar, not just a sentence. The agent already reports every volume's
+  // size and free space on the heartbeat, so this needs nothing new from the machine.
+  // Bars are ABSOLUTE, not scaled to the fullest drive: 90% full has to look the same on
+  // every disk or the picture flatters a machine that is about to run out of room.
+  function diskList(json){
+    if (!json) return [];
+    try {
+      var list = (typeof json === 'string') ? JSON.parse(json) : json;
+      if (!Array.isArray(list)) return [];
+      return list.map(function(d){
+        var total = Number(d && d.total_gb), free = Number(d && d.free_gb);
+        if (!isFinite(total) || total <= 0) return null;
+        if (!isFinite(free) || free < 0) free = 0;
+        var used = Math.max(0, total - free);
+        return { drive: String((d && d.drive) || '?').replace(/\\+$/, ''),
+                 total: total, free: free, used: used,
+                 pct: Math.min(100, Math.round(used / total * 100)) };
+      }).filter(Boolean);
+    } catch (e) { return []; }
+  }
+  // Colour on what is LEFT, not on what is used: 10GB free matters on a 128GB disk and on
+  // a 2TB one, and a percentage alone would call the second one healthy.
+  function diskColour(d){
+    if (d.free < 5 || d.pct >= 95) return 'var(--bad)';
+    if (d.free < 20 || d.pct >= 85) return 'var(--warn)';
+    return 'var(--accent)';
+  }
+  function gb(n){ return (n >= 100 ? Math.round(n) : n.toFixed(1)) + ' GB'; }
+%>
 <%- include('../partials/header', { title: asset.hostname || 'Device', user }) %>
 <% function fmt(v){ return (v===null || v===undefined || v==='') ? '—' : v; } %>
 <% function dt(v){ return v ? new Date(v).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; } %>
@@ -146,7 +184,7 @@
     <% } %>
   </div>
   <div class="ds">
-    <div class="n" style="font-size:15px;line-height:1.5;">v<%= _ai.agent_version || '?' %><% if (typeof latestAgentVersion !== 'undefined' && latestAgentVersion && _ai.agent_version && _ai.agent_version !== latestAgentVersion) { %> <span class="badge badge-inactive" style="font-size:10px;">update due</span><% } %></div>
+    <div class="n" style="font-size:15px;line-height:1.5;">v<%= _ai.agent_version || '?' %><% if (typeof latestAgentVersion !== 'undefined' && latestAgentVersion && _ai.agent_version && _ai.agent_version !== latestAgentVersion) { %> <span class="badge badge-inactive" style="font-size:10px;">update due</span><% } %><% if (user.role === 'admin' && typeof latestAgentVersion !== 'undefined' && latestAgentVersion && _ai && _ai.agent_version && _ai.agent_version !== latestAgentVersion) { %><form method="post" action="/agents/<%= _ai.id %>/update-now" style="display:inline;margin:0 0 0 6px;"><input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>"><button class="agent-up" type="submit" title="Push v<%= latestAgentVersion %> to this machine now">&#8593;</button></form><% } %></div>
     <div class="l">LumenMSP agent</div>
   </div>
 </div>
@@ -276,7 +314,26 @@ function _ago(d) {
         <div class="dev-field-row"><div class="k">Local IP address(es)</div><div class="v"><%= fmt(asset.ip_addresses) %></div></div>
         <div class="dev-field-row"><div class="k">MAC address</div><div class="v"><%= fmt(asset.mac_address) %></div></div>
         <div class="dev-field-row"><div class="k">Signed-in user</div><div class="v"><%= fmt(asset.last_login_user) %></div></div>
-        <div class="dev-field-row"><div class="k">Disks</div><div class="v"><%= fmt(asset.disk_info) %></div></div>
+        <div class="dev-field-row"><div class="k">Disks</div><div class="v">
+          <% var _dl = diskList(agentInfo && agentInfo.disk_info); %>
+          <% if (!_dl.length) { %><%= fmt(asset.disk_info) %><% } else { %>
+            <% _dl.forEach(function(d){ var c = diskColour(d); %>
+              <div style="margin:0 0 9px;max-width:340px;">
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+                  <span style="font-weight:600;"><%= d.drive %></span>
+                  <span class="muted"><%= d.pct %>% of <%= gb(d.total) %></span>
+                </div>
+                <div style="height:8px;border-radius:4px;background:var(--surface-3);overflow:hidden;">
+                  <div style="width:<%= d.pct %>%;height:100%;background:<%= c %>;"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:3px;" class="muted">
+                  <span><%= gb(d.used) %> used</span>
+                  <span style="color:<%= d.free < 20 ? c : 'inherit' %>;font-weight:<%= d.free < 20 ? '600' : '400' %>;"><%= gb(d.free) %> free</span>
+                </div>
+              </div>
+            <% }); %>
+          <% } %>
+        </div></div>
         <div class="dev-field-row"><div class="k">Last seen</div><div class="v"><%= dt(asset.last_seen_at) %></div></div>
         <div class="dev-field-row"><div class="k">Last reboot</div><div class="v"><%= dt(asset.last_reboot_at) %></div></div>
         <div class="dev-field-row"><div class="k">Date added</div><div class="v"><%= dt(asset.added_at) %></div></div>
@@ -295,7 +352,7 @@ function _ago(d) {
             <%= agOnline ? 'Online' : 'Offline' %>
           </span>
         </div></div>
-        <div class="dev-field-row"><div class="k">Agent version</div><div class="v"><strong><%= agentInfo.agent_version ? 'v' + agentInfo.agent_version : '—' %></strong><% if (typeof latestAgentVersion !== 'undefined' && latestAgentVersion && agentInfo.agent_version && agentInfo.agent_version !== latestAgentVersion) { %> <span class="badge badge-inactive" title="Self-updates to v<%= latestAgentVersion %> within 6 hours">update due</span><% } %></div></div>
+        <div class="dev-field-row"><div class="k">Agent version</div><div class="v"><strong><%= agentInfo.agent_version ? 'v' + agentInfo.agent_version : '—' %></strong><% if (typeof latestAgentVersion !== 'undefined' && latestAgentVersion && agentInfo.agent_version && agentInfo.agent_version !== latestAgentVersion) { %> <span class="badge badge-inactive" title="Self-updates to v<%= latestAgentVersion %> within 6 hours">update due</span><% } %><% if (user.role === 'admin' && typeof latestAgentVersion !== 'undefined' && latestAgentVersion && agentInfo && agentInfo.agent_version && agentInfo.agent_version !== latestAgentVersion) { %><form method="post" action="/agents/<%= agentInfo.id %>/update-now" style="display:inline;margin:0 0 0 6px;"><input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>"><button class="agent-up" type="submit" title="Push v<%= latestAgentVersion %> to this machine now">&#8593;</button></form><% } %></div></div>
         <div class="dev-field-row"><div class="k">Last check-in</div><div class="v"><%= dt(agentInfo.last_seen_at) %></div></div>
         <div class="dev-field-row"><div class="k">&nbsp;</div><div class="v"><a class="row-link" href="/agents">Manage agents &rarr;</a></div></div>
       </div>
@@ -359,7 +416,26 @@ function _ago(d) {
         <div class="dev-field-row"><div class="k">Serial number</div><div class="v"><%= fmt(asset.serial_number) %></div></div>
         <div class="dev-field-row"><div class="k">Processor</div><div class="v"><%= fmt(asset.cpu) %></div></div>
         <div class="dev-field-row"><div class="k">RAM</div><div class="v"><%= asset.ram_gb ? asset.ram_gb + ' GB' : '—' %></div></div>
-        <div class="dev-field-row"><div class="k">Disk</div><div class="v"><%= fmt(asset.disk_info) %></div></div>
+        <div class="dev-field-row"><div class="k">Disk</div><div class="v">
+          <% var _dl = diskList(agentInfo && agentInfo.disk_info); %>
+          <% if (!_dl.length) { %><%= fmt(asset.disk_info) %><% } else { %>
+            <% _dl.forEach(function(d){ var c = diskColour(d); %>
+              <div style="margin:0 0 9px;max-width:340px;">
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+                  <span style="font-weight:600;"><%= d.drive %></span>
+                  <span class="muted"><%= d.pct %>% of <%= gb(d.total) %></span>
+                </div>
+                <div style="height:8px;border-radius:4px;background:var(--surface-3);overflow:hidden;">
+                  <div style="width:<%= d.pct %>%;height:100%;background:<%= c %>;"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:3px;" class="muted">
+                  <span><%= gb(d.used) %> used</span>
+                  <span style="color:<%= d.free < 20 ? c : 'inherit' %>;font-weight:<%= d.free < 20 ? '600' : '400' %>;"><%= gb(d.free) %> free</span>
+                </div>
+              </div>
+            <% }); %>
+          <% } %>
+        </div></div>
       </div>
     </div>
   </section>
@@ -465,6 +541,100 @@ function _ago(d) {
         <% } %>
       </p>
     <% } %>
+
+    <h4 style="margin:22px 0 8px;">BitLocker</h4>
+    <% var _bl = (typeof bitlocker !== 'undefined') ? bitlocker : []; %>
+    <% var _blVault = (typeof canVaultKeys !== 'undefined' && canVaultKeys); %>
+    <p class="muted" style="font-size:12.5px;margin:0 0 10px;line-height:1.55;">
+      Recovery keys are held here so they can be read out to whoever is standing at the machine.
+      A PC sitting at the BitLocker recovery screen has no operating system running, so nothing —
+      here or in any other tool — can reach it remotely.
+      Keys are stored encrypted; every reveal and copy is written to the activity log.
+    </p>
+    <% if (!agentInfo) { %>
+      <p class="muted" style="font-size:13px;">BitLocker needs the LumenMSP Agent on this machine.</p>
+    <% } else if (!_bl.length) { %>
+      <p class="muted" style="font-size:13px;">
+        Nothing collected yet.
+        <% if (user.role === 'admin') { %>
+        <form method="post" action="/assets/<%= asset.id %>/bitlocker-refresh" style="display:inline;">
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+          <button class="btn" type="submit" style="padding:2px 10px;font-size:12px;">Ask the device now</button>
+        </form>
+        <% } %>
+      </p>
+    <% } else { %>
+      <div class="table-wrap"><table class="table">
+        <thead><tr><th style="width:90px;">Drive</th><th>Protection</th><th>Recovery key</th><th>Collected</th><th></th></tr></thead>
+        <tbody>
+        <% _bl.forEach(function (v) { %>
+          <tr>
+            <td style="font-weight:600;"><%= v.mount_point %>
+              <% if (v.volume_type) { %><div class="muted" style="font-size:11.5px;"><%= v.volume_type === 'OperatingSystem' ? 'System drive' : v.volume_type %></div><% } %>
+            </td>
+            <td>
+              <% var _on = String(v.protection_status||'').toLowerCase() === 'on';
+                 var _c = _on ? 'var(--ok)' : 'var(--warn-fg)'; %>
+              <span style="display:inline-flex;align-items:center;gap:6px;font-weight:600;color:<%= _c %>;">
+                <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= _c %>;"></span>
+                <%= v.protection_status || 'Unknown' %>
+              </span>
+              <div class="muted" style="font-size:11.5px;"><%= v.encryption_method || '' %><% if (v.lock_status) { %> &middot; <%= v.lock_status %><% } %></div>
+            </td>
+            <td>
+              <% if (!v.has_key) { %>
+                <span style="color:var(--bad-fg);font-weight:600;">No key held</span>
+                <div class="muted" style="font-size:11.5px;">Nothing to read out if this drive locks.</div>
+              <% } else if (_blVault) { %>
+                <span style="display:inline-flex;align-items:center;gap:6px;">
+                  <span class="bl-key" data-shown="0">&bull;&bull;&bull;&bull;&bull;&bull;-&bull;&bull;&bull;&bull;&bull;&bull;</span>
+                  <button type="button" class="bl-mini" title="Reveal" onclick="blReveal(<%= v.id %>,this)">&#128065;</button>
+                  <button type="button" class="bl-mini" title="Copy key" onclick="blCopy(<%= v.id %>,this)">&#8865;</button>
+                </span>
+              <% } else { %>
+                <span class="muted" title="Vault access required">&bull;&bull;&bull;&bull;&bull;&bull; &#128274;</span>
+              <% } %>
+            </td>
+            <td class="muted" style="white-space:nowrap;font-size:12px;"><%= v.collected_at %></td>
+            <td style="white-space:nowrap;">
+              <% if (user.role === 'admin' && String(v.protection_status||'').toLowerCase() === 'on') { %>
+              <form method="post" action="/assets/<%= asset.id %>/bitlocker-suspend" style="display:inline;margin:0;"
+                    onsubmit="return confirm('Suspend BitLocker on <%= v.mount_point %> for one reboot? Protection resumes by itself.');">
+                <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+                <input type="hidden" name="mount" value="<%= v.mount_point %>">
+                <button class="btn" type="submit" style="padding:2px 10px;font-size:12px;" title="Before a BIOS or firmware update, so the machine does not drop into a recovery prompt">Suspend 1 reboot</button>
+              </form>
+              <% } %>
+            </td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+      <% if (user.role === 'admin') { %>
+      <p class="muted" style="font-size:12px;margin:10px 0 0;">
+        <form method="post" action="/assets/<%= asset.id %>/bitlocker-refresh" style="display:inline;">
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+          <button class="btn" type="submit" style="padding:2px 10px;font-size:12px;">Refresh from device</button>
+        </form>
+      </p>
+      <% } %>
+    <% } %>
+    <style>
+      .bl-mini { background:none;border:1px solid var(--line);border-radius:5px;cursor:pointer;font-size:13px;padding:1px 6px;line-height:1.4; }
+      .bl-mini:hover { border-color:var(--accent); }
+      .bl-key { font-family:monospace;font-size:13px;letter-spacing:.3px; }
+    </style>
+    <script>
+      function blReveal(id, btn){ var span = btn.closest('span').querySelector('.bl-key');
+        if (span.dataset.shown === '1'){ span.textContent = '••••••-••••••'; span.dataset.shown = '0'; return; }
+        fetch('/bitlocker/'+id+'/key?action=reveal').then(function(r){ return r.json(); }).then(function(d){
+          if (d.secret != null){ span.textContent = d.secret; span.dataset.shown = '1'; } else { alert(d.error || 'Could not reveal'); }
+        }).catch(function(){ alert('Could not reveal'); }); }
+      function blCopy(id, btn){ fetch('/bitlocker/'+id+'/key?action=copy').then(function(r){ return r.json(); }).then(function(d){
+          if (d.secret != null){ navigator.clipboard.writeText(d.secret).then(function(){ var o = btn.textContent; btn.textContent = '✓'; setTimeout(function(){ btn.textContent = o; }, 900); }); }
+          else { alert(d.error || 'Could not copy'); }
+        }).catch(function(){ alert('Could not copy'); }); }
+    </script>
   </section>
 
   <section class="dev-tab-panel" data-key="os">

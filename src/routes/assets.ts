@@ -15,6 +15,8 @@ import { powerWhenText } from '../lib/device-power';
 import { deviceSecurity, deployLog, REQUIRED_EXCLUSIONS } from '../lib/gravityzone-deploy';
 import { customerEnabled } from '../lib/gravityzone';
 import { ASSET_FIELDS, ASSET_OPS, parseConditions, conditionsToSql } from '../lib/asset-query';
+import { BITLOCKER_SCAN_SCRIPT, bitlockerSuspendScript, bitlockerForDevice, revealBitlockerKey } from '../lib/bitlocker';
+import { requireVaultAccess, hasVaultAccess } from '../middleware/auth';
 
 const router = Router();
 
@@ -166,6 +168,8 @@ router.get('/assets', requireAuth, async (req: Request, res: Response) => {
 
   res.render('assets/list', {
     user: req.session.user!, rows: shown, unmatchedCount, duplicateCount, types, customers, backupState,
+    // So the list can offer the same push-the-update arrow the device page has.
+    latestAgentVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
     allTags, f: { make: fMake, model: fModel, cpu: fCpu, ip: fIp, domain: fDomain,
                   rammin: fRamMin, rammax: fRamMax, tag: fTag },
     conds, condJoin, assetFields: ASSET_FIELDS, assetOps: ASSET_OPS,
@@ -749,6 +753,9 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
 
   // ── Security tab: what the agent reported about AV / anti-spyware / firewall ──
   const security = agentInfo ? deriveSecurity(agentInfo) : null;
+  // BitLocker volumes for the Security tab. Metadata only - whether a key exists, never
+  // the key itself; that is fetched on an explicit reveal through the vault-gated route.
+  const bitlocker = agentInfo ? await bitlockerForDevice(agentInfo.id).catch(() => []) : [];
 
   // ── Bitdefender, on the machine's OWN page ───────────────────────────────────
   // Terry, 18 Aug: "i need to be able to deploy via the asset - still after asking
@@ -812,6 +819,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
 
   res.render('assets/detail', {
     user: req.session.user!, asset: row, agentInfo, gpo, security, patches, patchMeta, agentScripts,
+    bitlocker, canVaultKeys: await hasVaultAccess(req.session.user!),
     bd, bdGate, bdLog, bdLogError, requiredExclusions: REQUIRED_EXCLUSIONS,
     trackCommandId: parseInt(String(req.query.cmd || ''), 10) || null,
     latestAgentVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
@@ -1504,5 +1512,86 @@ function deriveSecurity(agentInfo: any): any {
     stale: ageSecs != null && ageSecs > 2 * 86400,
   };
 }
+
+
+// ── BitLocker ─────────────────────────────────────────────────────────────────────
+// Ask the machine for its volumes and recovery keys. Rides on shell.powershell so this
+// could ship without an agent rollout; the result hook in agent-api spots our marker,
+// stores the keys encrypted and REDACTS the command output.
+router.post('/assets/:id/bitlocker-refresh', requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const back = '/assets/' + id;
+  const a = (await pool.query(
+    `SELECT ca.agent_device_id, ca.hostname, EXTRACT(EPOCH FROM (NOW() - d.last_seen_at))::int AS seen_secs
+       FROM customer_assets ca
+       LEFT JOIN agent_devices d ON d.id = ca.agent_device_id AND NOT COALESCE(d.revoked,false)
+      WHERE ca.id=$1`, [id])).rows[0];
+  if (!a?.agent_device_id) {
+    res.redirect(back + '?err=' + encodeURIComponent('This machine has no LumenMSP agent, so there is nothing to ask.') + '#security');
+    return;
+  }
+  // Never stack these up: a second request cannot make an offline machine answer sooner.
+  const pending = (await pool.query(
+    `SELECT id FROM agent_commands
+      WHERE device_id=$1 AND kind='shell.powershell' AND status IN ('queued','running')
+        AND payload::text LIKE '%Get-BitLockerVolume%' ORDER BY id DESC LIMIT 1`, [a.agent_device_id])).rows[0];
+  if (pending) {
+    res.redirect(back + '?msg=' + encodeURIComponent('Already asked - it runs at the next check-in.') + '#security');
+    return;
+  }
+  await pool.query(
+    `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
+     VALUES ($1,'shell.powershell',$2,'queued',$3)`,
+    [a.agent_device_id, JSON.stringify({ script: BITLOCKER_SCAN_SCRIPT, run_as: 'system' }), req.session.user!.id]);
+  wakeAgent(a.agent_device_id);
+  await logActivity(req.session.user!.id, 'bitlocker_refresh', 'customer_assets', id,
+    `Asked ${a.hostname} for its BitLocker volumes and recovery keys`);
+  const offline = a.seen_secs == null || Number(a.seen_secs) > 900;
+  res.redirect(back + '?msg=' + encodeURIComponent(offline
+    ? 'Asked. This machine looks offline, so it will answer when it next checks in.'
+    : 'Asked. The keys appear here within a minute - reload the page.') + '#security');
+});
+
+// Suspend protection for one reboot — the pre-firmware-update button. Reversible, and
+// protection resumes by itself. There is deliberately NO "unlock the OS drive": a machine
+// at a recovery prompt has no OS, no agent and no network, so no RMM can reach it.
+router.post('/assets/:id/bitlocker-suspend', requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const back = '/assets/' + id;
+  const mount = String(req.body.mount || '').trim().slice(0, 20);
+  if (!/^[A-Za-z]:$/.test(mount)) {
+    res.redirect(back + '?err=' + encodeURIComponent('That is not a drive letter.') + '#security'); return;
+  }
+  const a = (await pool.query(
+    'SELECT agent_device_id, hostname FROM customer_assets WHERE id=$1', [id])).rows[0];
+  if (!a?.agent_device_id) {
+    res.redirect(back + '?err=' + encodeURIComponent('This machine has no LumenMSP agent.') + '#security'); return;
+  }
+  await pool.query(
+    `INSERT INTO agent_commands (device_id, kind, payload, status, requested_by)
+     VALUES ($1,'shell.powershell',$2,'queued',$3)`,
+    [a.agent_device_id, JSON.stringify({ script: bitlockerSuspendScript(mount), run_as: 'system' }), req.session.user!.id]);
+  wakeAgent(a.agent_device_id);
+  await logActivity(req.session.user!.id, 'bitlocker_suspend', 'customer_assets', id,
+    `Suspended BitLocker on ${a.hostname} ${mount} for one reboot`);
+  res.redirect(back + '?msg=' + encodeURIComponent(
+    `Suspending BitLocker on ${mount} for one reboot. Protection comes back by itself.`) + '#security');
+});
+
+// The only place a recovery key is decrypted. Vault-gated and logged, exactly like a
+// password: this is the most sensitive thing the Portal holds.
+router.get('/bitlocker/:rowId/key', requireVaultAccess, async (req: Request, res: Response) => {
+  const rowId = parseInt(String(req.params.rowId), 10);
+  const action = String(req.query.action || 'reveal') === 'copy' ? 'copy' : 'reveal';
+  let found;
+  try { found = await revealBitlockerKey(rowId); }
+  catch { res.status(500).json({ error: 'Could not decrypt - check VAULT_KEY.' }); return; }
+  if (!found) { res.status(404).json({ error: 'No key held for that volume' }); return; }
+  const host = (await pool.query(
+    'SELECT hostname FROM agent_devices WHERE id=$1', [found.deviceId])).rows[0]?.hostname || 'device';
+  await logActivity(req.session.user!.id, action === 'copy' ? 'copied' : 'revealed', 'bitlocker', rowId,
+    `${action === 'copy' ? 'Copied' : 'Revealed'} the BitLocker recovery key for ${host} ${found.mount}`);
+  res.json({ secret: found.key });
+});
 
 export default router;

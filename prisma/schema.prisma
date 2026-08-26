@@ -547,7 +547,40 @@ model AgentDevice {
 
   @@index([customerId])
   @@index([hostname])
+  bitlockerKeys AssetBitlockerKey[]
+
   @@map("agent_devices")
+}
+
+// BitLocker recovery keys, per volume, per agent device.
+//
+// Stored rather than fetched on demand for one reason: a machine at the BitLocker
+// recovery screen has no OS, so no agent, so no network — nothing can ask it anything.
+// The key has to already be here before that happens or the feature is useless at the
+// only moment it matters.
+//
+// Because it is stored, it is the most sensitive row in the Portal: recovery_key_encrypted
+// is an AES-256-GCM blob from lib/vault, decrypted only behind requireVaultAccess, and
+// every reveal is written to the activity log.
+model AssetBitlockerKey {
+  id                   Int       @id @default(autoincrement())
+  deviceId             Int       @map("device_id")           // -> agent_devices.id (the thing that reports)
+  mountPoint           String    @map("mount_point")         // "C:"
+  keyProtectorId       String    @map("key_protector_id")    // "" when the volume has no recovery password at all
+  protectionStatus     String?   @map("protection_status")   // On | Off | Unknown
+  lockStatus           String?   @map("lock_status")         // Locked | Unlocked
+  encryptionMethod     String?   @map("encryption_method")
+  volumeType           String?   @map("volume_type")         // OperatingSystem | Data
+  recoveryKeyEncrypted String?   @map("recovery_key_encrypted")
+  collectedAt          DateTime  @default(now()) @map("collected_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  device AgentDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, mountPoint, keyProtectorId])
+  @@index([deviceId])
+  @@map("asset_bitlocker_keys")
 }
 
 // Remote-tool command queue (Portal asset Tools tab -> agent). The agent long-polls for

@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
 import { pool } from '../db/pool';
+import { looksLikeBitlockerScan, ingestBitlockerScan } from '../lib/bitlocker';
 import { getSetting, setSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
 import { vaultConfigured, encryptSecret, decryptSecret } from '../lib/vault';
@@ -1028,6 +1029,23 @@ router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request
     }
     if (r.rows[0].kind === 'server.facts') {
       ingestServerFacts(id).catch((err: any) => console.error('[servers] ingest failed:', err.message));
+    }
+    // A BitLocker scan rides on shell.powershell so it could ship without an agent
+    // rollout, so it is identified by a marker in its own output rather than by kind.
+    // The output is REPLACED with a summary the moment it is ingested: recovery keys
+    // must not sit in agent_commands.output in the clear, where the console history
+    // would happily show them to anyone who can read a command log.
+    if (r.rows[0].kind === 'shell.powershell' && looksLikeBitlockerScan(output)) {
+      ingestBitlockerScan(d.id, output)
+        .then(async (kept) => {
+          await pool.query('UPDATE agent_commands SET output=$1 WHERE id=$2',
+            [`BitLocker scan stored - ${kept} recovery key(s) kept. Output redacted.`, id]);
+        })
+        .catch(async (err: any) => {
+          console.error('[bitlocker] ingest failed:', err.message);
+          await pool.query('UPDATE agent_commands SET output=$1 WHERE id=$2',
+            ['BitLocker scan could not be stored. Output redacted.', id]).catch(() => {});
+        });
     }
     if (r.rows[0].kind === 'gpo.inventory') {
       ingestGpoInventory(id).catch((err: any) => console.error('[gpo] ingest failed:', err.message));
