@@ -118,6 +118,7 @@ model Customer {
   credentials CustomerCredential[]
   credits     CustomerCredit[]
   assets      CustomerAsset[]
+  licences    CustomerLicence[]
 
   @@index([status])
   @@index([deletedAt])
@@ -191,6 +192,51 @@ model CustomerCredential {
 
   @@index([customerId])
   @@map("customer_credentials")
+}
+
+// ── Software licences ─────────────────────────────────────────────────────────────
+// What software this customer has bought, which machine it went on, and the key. The
+// key is treated exactly like a vault password: AES-256-GCM at rest via lib/vault, only
+// decrypted on an explicit reveal/copy, and every reveal is written to the activity log.
+// A licence may name a real asset OR just a free-text machine name — plenty of licences
+// live on things we do not manage (a cloud app, a customer's own server), and refusing
+// to record those would make the list a lie by omission.
+model CustomerLicence {
+  id            Int       @id @default(autoincrement())
+  customerId    Int       @map("customer_id")
+  assetId       Int?      @map("asset_id")      // → customer_assets.id when the machine is one we hold
+  deviceName    String?   @map("device_name")   // free text, used when assetId is null
+  licenceType   String?   @map("licence_type")  // free text on the row, chosen from licence_types
+  keyEncrypted  String?   @map("key_encrypted") // AES-256-GCM blob (iv:tag:ciphertext, base64)
+  url           String?
+  installedOn   DateTime? @map("installed_on") @db.Date
+  note          String?
+  createdBy     Int?      @map("created_by")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+  deletedByUserId Int?    @map("deleted_by_user_id")
+
+  customer Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  asset    CustomerAsset? @relation(fields: [assetId], references: [id])
+
+  @@index([customerId])
+  @@index([assetId])
+  @@map("customer_licences")
+}
+
+// The Licence Type dropdown. A lookup table rather than a hard-coded list so a new
+// product can be added from the form itself without a deploy. Names are unique and
+// retired by `active=false`, never deleted — a licence row stores the NAME, so deleting
+// a type would leave old rows pointing at nothing.
+model LicenceType {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  active    Boolean  @default(true)
+  createdBy Int?     @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("licence_types")
 }
 
 // Per-customer documents — uploaded files with a title + description, shown on the customer card
@@ -809,6 +855,7 @@ model CustomerAsset {
   updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
 
   customer Customer? @relation(fields: [customerId], references: [id])
+  licences CustomerLicence[]
 
   @@unique([sourceSystem, externalId])
   @@index([customerId])

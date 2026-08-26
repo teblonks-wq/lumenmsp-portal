@@ -142,6 +142,7 @@
   <button type="button" data-tab="invoices">Invoices (<%= invoices.length %>)</button>
   <button type="button" data-tab="contracts">Contracts (<%= contracts.length %>)</button>
   <button type="button" data-tab="assets">Assets (<%= (typeof assets!=='undefined'?assets:[]).length %>)</button>
+  <button type="button" data-tab="licences">Licences (<%= (typeof licences!=='undefined'?licences:[]).length %>)</button>
   <button type="button" data-tab="onboarding">Onboarding</button>
   <button type="button" data-tab="review">Account Review</button>
   <% if (typeof canVault!=='undefined' && canVault) { %><button type="button" data-tab="passwords">Passwords (<%= (typeof credentials!=='undefined'?credentials:[]).length %>)</button><% } %>
@@ -1377,6 +1378,162 @@
   .pw-secret { font-family:monospace;font-size:1em; }
 </style>
 <% } %>
+
+<% var licList     = (typeof licences!=='undefined' ? licences : []);
+   var licTypes    = (typeof licenceTypes!=='undefined' ? licenceTypes : []);
+   var licAssets   = (typeof licenceAssets!=='undefined' ? licenceAssets : []);
+   var licCanVault = (typeof canVault!=='undefined' && canVault); %>
+<!-- ═══ Licences ═══ -->
+<!-- What this customer has bought, which machine it went on, and the key. The key is a
+     secret and is handled exactly like a vault password: encrypted at rest, masked here,
+     unmasked only through the vault-gated route, every reveal logged. The rest of the row
+     is ordinary staff data, so the list itself is open to any staff user. -->
+<section class="tab-panel" data-key="licences" id="licences">
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:20px 24px 0;">
+      <h2>Licences <span class="muted">(<%= licList.length %>)</span></h2>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input class="input lic-filter" placeholder="Filter…" style="max-width:200px;padding:5px 10px;">
+        <button class="btn btn-primary" type="button" onclick="licOpen()">+ Add licence</button>
+      </div>
+    </div>
+    <p class="muted" style="padding:2px 24px 0;font-size:12px;">
+      Keys are stored encrypted (AES-256) and every reveal and copy is recorded in the activity log.
+      <% if (!licCanVault) { %><strong>You do not have vault access, so keys stay masked.</strong><% } %>
+    </p>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Device</th><th>Licence type</th><th>Licence key</th><th>URL</th><th>Date installed</th><th></th></tr></thead>
+        <tbody>
+          <% if (!licList.length) { %><tr><td colspan="6"><div class="empty-state">No licences recorded yet.</div></td></tr><% } %>
+          <% licList.forEach(function(l){ %>
+            <tr data-id="<%= l.id %>"
+                data-asset_id="<%= l.asset_id || '' %>" data-device_name="<%= l.device_name || '' %>"
+                data-licence_type="<%= l.licence_type || '' %>" data-url="<%= l.url || '' %>"
+                data-installed_on="<%= l.installed_on || '' %>" data-note="<%= l.note || '' %>">
+              <td>
+                <% if (l.asset_label) { %>
+                  <a class="row-link" href="/assets/<%= l.asset_id %>"><%= l.asset_label %></a>
+                <% } else if (l.device_name) { %>
+                  <%= l.device_name %>
+                <% } else { %><span class="muted">—</span><% } %>
+                <% if (l.note) { %><br><span class="muted" style="font-size:12px;"><%= l.note %></span><% } %>
+              </td>
+              <td><% if (l.licence_type) { %><span class="badge badge-inactive"><%= l.licence_type %></span><% } else { %><span class="muted">—</span><% } %></td>
+              <td>
+                <% if (l.has_key) { %>
+                  <% if (licCanVault) { %>
+                  <span style="display:inline-flex;align-items:center;gap:6px;">
+                    <span class="lic-key" data-shown="0">••••••••</span>
+                    <button type="button" class="lic-mini" title="Reveal" onclick="licReveal(<%= l.id %>,this)">👁</button>
+                    <button type="button" class="lic-mini" title="Copy key" onclick="licCopy(<%= l.id %>,this)">⧉</button>
+                  </span>
+                  <% } else { %><span class="muted" title="Vault access required">•••••••• 🔒</span><% } %>
+                <% } else { %><span class="muted">—</span><% } %>
+              </td>
+              <td><% if (l.url) { %><a class="row-link" href="<%= /^https?:/.test(l.url) ? l.url : ('https://' + l.url) %>" target="_blank" rel="noopener"><%= l.url %></a><% } else { %><span class="muted">—</span><% } %></td>
+              <td class="muted" style="white-space:nowrap;"><%= l.installed_on || '—' %></td>
+              <td class="row-actions" style="white-space:nowrap;">
+                <button type="button" class="row-link" style="background:none;border:none;cursor:pointer;" onclick="licEdit(this)">Edit</button>
+                <form method="post" action="/licences/<%= l.id %>/delete" style="display:inline;margin:0;" onsubmit="return confirm('Delete this licence?');"><button type="submit" class="row-link" style="background:none;border:none;cursor:pointer;color:var(--bad-fg);">Delete</button></form>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Add/edit drawer -->
+  <div id="lic-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:1000;">
+    <div style="position:absolute;top:0;right:0;bottom:0;width:min(460px,94vw);background:var(--surface);box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow:auto;padding:24px 28px;">
+      <h2 id="lic-modal-title" style="margin:0 0 16px;">New licence</h2>
+      <form id="lic-form" method="post" action="">
+        <div class="form-group"><label>Device</label>
+          <select class="input" name="asset_id" id="lic-asset_id" onchange="licDeviceSync()">
+            <option value="">— not one of our machines —</option>
+            <% licAssets.forEach(function(a){ %><option value="<%= a.id %>"><%= a.label %></option><% }); %>
+          </select>
+          <input class="input" name="device_name" id="lic-device_name" placeholder="Or type a machine / service name" style="margin-top:6px;">
+          <span class="muted" style="font-size:12px;">Pick one of this customer's machines, or type a name for anything we don't hold (a cloud app, their own server).</span>
+        </div>
+        <div class="form-group"><label>Licence type</label>
+          <select class="input" name="licence_type" id="lic-licence_type" onchange="licTypeSync()">
+            <option value="">Please select</option>
+            <% licTypes.forEach(function(t){ %><option value="<%= t %>"><%= t %></option><% }); %>
+            <option value="__new">+ Add a new type…</option>
+          </select>
+          <input class="input" name="new_licence_type" id="lic-new_licence_type" placeholder="Name the new licence type" style="margin-top:6px;display:none;">
+        </div>
+        <div class="form-group"><label>Licence key</label>
+          <div style="display:flex;gap:6px;">
+            <input class="input" type="password" name="licence_key" id="lic-licence_key" style="flex:1;" autocomplete="off">
+            <button type="button" class="btn" onclick="licToggleField()">👁</button>
+          </div>
+          <span class="muted" id="lic-edit-hint" style="font-size:12px;display:none;">Leave blank to keep the current key.</span>
+        </div>
+        <div class="form-group"><label>URL</label><input class="input" name="url" id="lic-url" placeholder="https://…"></div>
+        <div class="form-group"><label>Date installed</label><input class="input" type="date" name="installed_on" id="lic-installed_on"></div>
+        <div class="form-group"><label>Note</label><textarea class="input" name="note" id="lic-note" rows="3"></textarea></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+          <button type="button" class="btn" onclick="licClose()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+<style>
+  /* Own class, not .pw-mini: that one is defined inside the vault-gated Passwords block
+     and would not exist for a staff user without vault access. */
+  .lic-mini { background:none;border:1px solid var(--line);border-radius:5px;cursor:pointer;font-size:13px;padding:1px 6px;line-height:1.4; }
+  .lic-mini:hover { border-color:var(--accent); }
+  .lic-key { font-family:monospace; }
+</style>
+
+<script>
+  var LIC_ADD_ACTION = '/customers/<%= customer.id %>/licences';
+  function licEl(k){ return document.getElementById('lic-'+k); }
+  // A licence is on a real asset OR on a typed name, never both — whichever the user
+  // touched last is the one that counts, so the other box clears itself.
+  function licDeviceSync(){ if (licEl('asset_id').value) licEl('device_name').value = ''; }
+  function licTypeSync(){ var n = licEl('licence_type').value === '__new';
+    licEl('new_licence_type').style.display = n ? 'block' : 'none';
+    if (n) { licEl('new_licence_type').focus(); } else { licEl('new_licence_type').value = ''; } }
+  function licOpen(){ var f = document.getElementById('lic-form'); f.reset(); f.action = LIC_ADD_ACTION;
+    document.getElementById('lic-modal-title').textContent = 'New licence';
+    licEl('edit-hint').style.display = 'none'; licTypeSync();
+    document.getElementById('lic-modal').style.display = 'block'; }
+  function licClose(){ document.getElementById('lic-modal').style.display = 'none'; }
+  function licEdit(btn){ var tr = btn.closest('tr'); var f = document.getElementById('lic-form');
+    f.action = '/licences/' + tr.dataset.id + '/edit';
+    document.getElementById('lic-modal-title').textContent = 'Edit licence';
+    ['device_name','url','installed_on','note'].forEach(function(k){ licEl(k).value = tr.dataset[k] || ''; });
+    licEl('asset_id').value = tr.dataset.asset_id || '';
+    // A type that was retired since this row was written is no longer in the dropdown;
+    // fall back to the new-type box pre-filled with it so saving does not silently blank it.
+    var t = tr.dataset.licence_type || '';
+    var sel = licEl('licence_type');
+    if (t && !Array.prototype.some.call(sel.options, function(o){ return o.value === t; })) {
+      sel.value = '__new'; licTypeSync(); licEl('new_licence_type').value = t;
+    } else { sel.value = t; licTypeSync(); }
+    licEl('licence_key').value = '';
+    licEl('edit-hint').style.display = 'block';
+    document.getElementById('lic-modal').style.display = 'block'; }
+  function licToggleField(){ var p = licEl('licence_key'); p.type = p.type === 'password' ? 'text' : 'password'; }
+  function licReveal(id, btn){ var span = btn.closest('span').querySelector('.lic-key');
+    if (span.dataset.shown === '1'){ span.textContent = '••••••••'; span.dataset.shown = '0'; return; }
+    fetch('/licences/'+id+'/key?action=reveal').then(function(r){ return r.json(); }).then(function(d){
+      if (d.secret != null){ span.textContent = d.secret; span.dataset.shown = '1'; } else { alert(d.error || 'Could not reveal'); }
+    }).catch(function(){ alert('Could not reveal'); }); }
+  function licCopy(id, btn){ fetch('/licences/'+id+'/key?action=copy').then(function(r){ return r.json(); }).then(function(d){
+      if (d.secret != null){ navigator.clipboard.writeText(d.secret).then(function(){ var o = btn.textContent; btn.textContent = '✓'; setTimeout(function(){ btn.textContent = o; }, 900); }); }
+      else { alert(d.error || 'Could not copy'); }
+    }).catch(function(){ alert('Could not copy'); }); }
+  document.querySelector('.lic-filter') && document.querySelector('.lic-filter').addEventListener('input', function(){
+    var q = this.value.toLowerCase(); this.closest('.card').querySelectorAll('tbody tr').forEach(function(tr){ tr.style.display = (!q || tr.textContent.toLowerCase().indexOf(q) >= 0) ? '' : 'none'; }); });
+  document.getElementById('lic-modal') && document.getElementById('lic-modal').addEventListener('click', function(e){ if (e.target === this) licClose(); });
+</script>
 
 <!-- ═══ Integrations ═══ -->
 <section class="tab-panel" data-key="integrations">

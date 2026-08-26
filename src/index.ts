@@ -40,6 +40,7 @@ import { ensurePushTables } from './lib/webpush';
 import selfRegisteredRoutes from './routes/self-registered';
 import { ensureSignupColumns } from './lib/self-signup';
 import credentialRoutes from './routes/credentials';
+import licenceRoutes from './routes/licences';
 import ateraRoutes from './routes/atera';
 import assetRoutes from './routes/assets';
 import webhookRoutes from './routes/webhooks';
@@ -411,6 +412,7 @@ app.use('/', purchaseRoutes);
 app.use('/', mobileRoutes);
 app.use('/', myRoutes);           // customer portal (/my) — requireCustomer-guarded inside
 app.use('/', credentialRoutes);
+app.use('/', licenceRoutes);      // per-customer software licences (key is vault-encrypted)
 app.use('/', ateraRoutes);
 app.use('/', assetRoutes);
 app.use('/', agentToolsRoutes);  // remote tools on the asset page (admin-only)

@@ -466,6 +466,30 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
     `SELECT id, name, login_url, username, domain, category, extra_value, note, (secret_encrypted IS NOT NULL) AS has_secret, updated_at
        FROM customer_credentials WHERE customer_id=$1 AND deleted_at IS NULL ORDER BY name`, [id]
   )).rows : [];
+  // Software licences. Metadata only — the key is never sent to the page, just whether
+  // one exists; it is fetched on an explicit reveal through the vault-gated route.
+  // Any staff user sees the list; only vault users can unmask a key.
+  const licences = (await pool.query(
+    `SELECT l.id, l.asset_id, l.device_name, l.licence_type, l.url, l.note,
+            to_char(l.installed_on, 'YYYY-MM-DD') AS installed_on,
+            (l.key_encrypted IS NOT NULL) AS has_key,
+            COALESCE(a.friendly_name, a.hostname) AS asset_label
+       FROM customer_licences l
+       LEFT JOIN customer_assets a ON a.id = l.asset_id
+      WHERE l.customer_id=$1 AND l.deleted_at IS NULL
+      ORDER BY l.licence_type NULLS LAST, COALESCE(a.friendly_name, a.hostname, l.device_name)`, [id]
+  )).rows;
+  const licenceTypes = (await pool.query(
+    'SELECT name FROM licence_types WHERE active ORDER BY name'
+  )).rows.map((r: any) => r.name);
+  // The device picker: this customer's live machines only (merged/archived rows are not
+  // real devices and would just be noise in a dropdown).
+  const licenceAssets = (await pool.query(
+    `SELECT id, COALESCE(friendly_name, hostname, 'Device #' || id) AS label
+       FROM customer_assets
+      WHERE customer_id=$1 AND merged_into_id IS NULL AND archived_at IS NULL
+      ORDER BY 2`, [id]
+  )).rows;
   const creditBalance = Number((await pool.query(
     "SELECT COALESCE(SUM(amount),0) AS s FROM customer_credits WHERE customer_id=$1 AND status='open'", [id]
   )).rows[0].s);
@@ -661,6 +685,7 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
     assets, subs, remoteTemplate, backupView, backupCompanies, backupCustNames, health, graphConsentUrl,
     quotes: quotesRes.rows, invoices: invoicesRes.rows, contracts: contractsRes.rows,
     serviceItems: serviceItemsRes.rows, lead, credentials, canVault, creditBalance, documents,
+    licences, licenceTypes, licenceAssets,
     comms, commsTo: primaryEmail, graphClientId: config.GRAPH_CLIENT_ID,
     reviewItems: reviewRes.rows, callHistory, callMarkupPct, commsTotals, commsClis, commsPkg, commsHandsets,
     callMarkups: await getCallMarkups(id), callTypes: CALL_TYPES, commsCallPeriod,
