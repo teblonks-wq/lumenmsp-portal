@@ -27,6 +27,7 @@ export const CHANGELOG: ChangelogEntry[] = [
         'Silent by design, and they stay until dismissed, so a rollout that finished while you were out is still on the screen when you get back.',
       ] },
       { area: 'Fixes', items: [
+        'BitLocker recovery keys now actually store. Every scan across the estate was running correctly and being thrown away at the last step: the reader took everything from the first bracket to the end of the output, and anything printed after the result made it unreadable. It now finds its own block and ignores whatever surrounds it. Collection catches up by itself — nothing was lost, because nothing had been stored.',
         'BitLocker now says WHY there is nothing to show. "Nothing collected yet" covered five different situations — no master key, never asked, waiting on the machine, the scan failed, or the answer could not be stored — and only one of those is a matter of waiting. Each now reads differently, and an empty screen no longer looks like a machine with nothing to report.',
         'Fixed: a machine whose BitLocker scan could not be stored was re-asked on every check-in, for ever. The guard that was meant to stop that could never see a finished attempt.',
       ] },

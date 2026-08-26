@@ -12,6 +12,7 @@
     "test:mcp-auth": "tsx src/scripts/test-mcp-auth.ts",
     "test:warranty": "tsx src/scripts/test-warranty.ts",
     "test:device-ask": "tsx src/scripts/test-device-ask.ts",
+    "test:bitlocker": "tsx src/scripts/test-bitlocker.ts",
     "oneboard-baseline": "node dist/scripts/oneboard-baseline-run.js",
     "build": "tsc",
     "start": "node dist/index.js",

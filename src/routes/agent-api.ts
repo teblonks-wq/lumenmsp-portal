@@ -1084,8 +1084,13 @@ router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request
         })
         .catch(async (err: any) => {
           console.error('[bitlocker] ingest failed:', err.message);
+          // Name the reason. "could not be stored" on its own sent the whole estate's
+          // BitLocker into a silent hole for a day: the screen said nothing, and the only
+          // trace was a console line nobody was watching. The message is ours, not the
+          // machine's, so it carries no key.
           await pool.query('UPDATE agent_commands SET output=$1 WHERE id=$2',
-            ['BitLocker scan could not be stored. Output redacted.', id]).catch(() => {});
+            [('BitLocker scan could not be stored: ' + String(err.message || 'unknown error')).slice(0, 300)
+              + ' Output redacted.', id]).catch(() => {});
         });
     }
     if (r.rows[0].kind === 'gpo.inventory') {

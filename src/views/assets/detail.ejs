@@ -764,10 +764,12 @@ function _ago(d) {
           <p style="margin:0;font-size:13.5px;font-weight:600;color:var(--warn-deep);">
             &#9888; The machine answered<%= _bs.at ? ' at ' + _bs.at : '' %>, but the key could not be stored.
           </p>
+          <% if (_bs.detail) { %>
+            <p class="muted" style="margin:6px 0 0;font-size:12.5px;font-family:ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere;"><%= _bs.detail %></p>
+          <% } %>
           <p class="muted" style="margin:6px 0 0;font-size:12.5px;line-height:1.55;">
-            Almost always the master key: check <code>[vault]</code> and <code>[bitlocker]</code> in the
-            Portal's log. The key itself was redacted and never written down, so nothing leaked &mdash;
-            but nothing was kept either.
+            The key itself was redacted and never written down, so nothing leaked &mdash; but nothing
+            was kept either. <code>[bitlocker]</code> in the Portal's log has the same reason.
           </p>
         <% } else if (_bs.state === 'scan-failed') { %>
           <p style="margin:0;font-size:13.5px;font-weight:600;color:var(--warn-deep);">

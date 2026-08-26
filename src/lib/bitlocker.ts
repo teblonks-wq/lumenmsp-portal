@@ -62,6 +62,53 @@ export function looksLikeBitlockerScan(output: string | null | undefined): boole
   return !!output && output.indexOf(BITLOCKER_MARKER) >= 0;
 }
 
+/**
+ * Pull OUR json object out of whatever the machine actually printed.
+ *
+ * The original did `JSON.parse(output.slice(output.indexOf('{')))` — first brace to end of
+ * string — and it failed on the whole estate with "Unexpected non-whitespace character
+ * after JSON". Two reasons, and the naive slice loses to both:
+ *
+ *  • **Junk BEFORE the json.** `$ErrorActionPreference = 'Continue'` puts PowerShell error
+ *    records on the same stream as the output, and an error record ECHOES THE OFFENDING
+ *    LINE — several lines of this very script end in `{`. So `indexOf('{')` happily locked
+ *    on to a brace inside an error message and tried to parse the error as json.
+ *  • **Junk AFTER the json.** Anything printed after the final `ConvertTo-Json` — a warning,
+ *    a stray blank object, the agent's own trailer — makes a slice-to-end parse throw even
+ *    though the object itself is perfectly good.
+ *
+ * So: anchor on the marker (which IS our first key), walk BACK to the brace that opens the
+ * object it sits in, then walk FORWARD counting braces — respecting string literals and
+ * escapes, because a Windows path or a volume label can contain either. Parse exactly that
+ * span and nothing else.
+ *
+ * Returns null when there is no marker or no balanced object, and never throws.
+ */
+export function parseBitlockerPayload(output: string | null | undefined): any | null {
+  const text = String(output || '');
+  const marker = text.indexOf(BITLOCKER_MARKER);
+  if (marker < 0) return null;
+
+  // Back up to the '{' that opens the object the marker lives in.
+  let start = -1;
+  for (let i = marker; i >= 0; i--) { if (text[i] === '{') { start = i; break; } }
+  if (start < 0) return null;
+
+  let depth = 0, inStr = false, esc = false, end = -1;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (esc) { esc = false; continue; }
+    if (c === '\\' && inStr) { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) { end = i; break; } }
+  }
+  if (end < 0) return null;                       // truncated output — better null than a throw
+
+  try { return JSON.parse(text.slice(start, end + 1)); } catch { return null; }
+}
+
 /** Volumes for the device page. Never returns a key — only whether one exists. */
 export async function bitlockerForDevice(deviceId: number): Promise<BitlockerVolumeRow[]> {
   const r = await pool.query(
@@ -94,7 +141,13 @@ export async function revealBitlockerKey(rowId: number): Promise<{ key: string; 
  *  with no TPM, no BitLocker, or an old build is normal, and one bad volume should cost
  *  that volume rather than the whole scan. */
 export const BITLOCKER_SCAN_SCRIPT = [
-  "$ErrorActionPreference = 'Continue'",
+  // SilentlyContinue, not Continue. Both keep going after a bad volume — which is the point,
+  // since a machine with no TPM is normal — but Continue also PRINTS the error record onto
+  // the same stream as the json, and an error record quotes the offending script line. Several
+  // lines of this script end in '{', which is how the parser used to end up trying to read a
+  // PowerShell error as json. The output of this script is machine-read and then redacted;
+  // there is no human who benefits from error text being in it.
+  "$ErrorActionPreference = 'SilentlyContinue'",
   '$vols = @()',
   'try {',
   '  foreach ($v in @(Get-BitLockerVolume -ErrorAction Stop)) {',
@@ -135,10 +188,9 @@ export function bitlockerSuspendScript(mount: string): string {
  */
 export async function ingestBitlockerScan(deviceId: number, output: string): Promise<number> {
   if (!vaultConfigured()) throw new Error('vault key not configured - refusing to store recovery keys in the clear');
-  const start = output.indexOf('{');
-  if (start < 0) return 0;
-  const parsed = JSON.parse(output.slice(start));
-  if (!parsed || parsed.marker !== BITLOCKER_MARKER) return 0;
+  const parsed = parseBitlockerPayload(output);
+  if (!parsed) throw new Error('the scan output could not be read — no complete BitLocker block in it');
+  if (parsed.marker !== BITLOCKER_MARKER) return 0;
   const volumes: any[] = Array.isArray(parsed.volumes) ? parsed.volumes : [];
   const seen: string[] = [];
   let kept = 0;
@@ -228,7 +280,7 @@ export type BitlockerState =
   | { state: 'no-vault' }
   | { state: 'waiting'; since: string | null }
   | { state: 'scan-failed'; detail: string | null; at: string | null }
-  | { state: 'store-failed'; at: string | null }
+  | { state: 'store-failed'; at: string | null; detail: string | null }
   | { state: 'never-asked' };
 
 export async function bitlockerState(deviceId: number | null, hasRows: boolean): Promise<BitlockerState> {
@@ -251,7 +303,11 @@ export async function bitlockerState(deviceId: number | null, hasRows: boolean):
     if (!r) return { state: 'never-asked' };
     if (r.status === 'queued' || r.status === 'running') return { state: 'waiting', since: r.requested };
     if (String(r.output || '').startsWith('BitLocker scan could not be stored')) {
-      return { state: 'store-failed', at: r.finished };
+      // The stored line carries the reason after a colon. Safe to show: output carrying the
+      // marker is redacted at ingest, and this sentence is written by us, not by the machine.
+      const why = String(r.output).replace(/^BitLocker scan could not be stored:?\s*/i, '')
+        .replace(/\s*Output redacted\.?$/i, '').trim();
+      return { state: 'store-failed', at: r.finished, detail: why || null };
     }
     if (r.status === 'failed' || Number(r.exit_code) !== 0 || !looksLikeBitlockerScan(r.output)) {
       // Safe to show: output carrying our marker is REDACTED at ingest, so anything still
