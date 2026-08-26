@@ -20,6 +20,8 @@ import { aiTicketCategoryEnabled } from '../lib/ai-compose';
 import { ensureReplyTemplates, listReplyTemplates, saveReplyTemplate, deleteReplyTemplate } from '../lib/reply-templates';
 import { syncBookingsTemplates } from '../lib/bookings';
 import { config } from '../config';
+import { maybeInviteCaseFeedback } from '../lib/questionnaires';
+import { pollBlockHtml, pollBlockText } from '../lib/questionnaire-email';
 
 const router = Router();
 
@@ -124,7 +126,34 @@ function statusMsgText(status: string, name: string, ticketNumber: string, agent
 
 // Send a customer status update on the case's ORIGIN channel: WhatsApp/Teams cases get it on that
 // channel; everything else falls back to the status email. Records the outbound on the case + log.
+// The one-click case feedback block, for a case that has just been resolved. Returns '' for
+// every reason not to ask (no contact, muted, asked recently, this case already asked), so
+// the caller never has to know the rules — see lib/questionnaires.maybeInviteCaseFeedback.
+async function caseFeedbackBlock(ticketId: number, status: string): Promise<{ html: string; text: string }> {
+  if (status !== 'resolved') return { html: '', text: '' };
+  try {
+    const inv = await maybeInviteCaseFeedback(ticketId);
+    if (!inv) return { html: '', text: '' };
+    const q = inv.questions.find((x) => x.type === 'rating') || inv.questions[0];
+    if (!q) return { html: '', text: '' };
+    return {
+      html: pollBlockHtml(inv.token, q, {
+        heading: 'How did we do?',
+        footnote: 'One click, nothing to fill in. Your answer is linked to your name so we can come back to you about it.',
+        moreLabel: 'add a comment',
+      }),
+      text: pollBlockText(inv.token, q, 'How did we do? One click:'),
+    };
+  } catch (e: any) {
+    // Feedback is a nicety; the resolution message is not. A failure here must never stop
+    // the customer being told their case is closed.
+    console.error('[case-feedback] could not raise an invite for ticket ' + ticketId + ':', e.message);
+    return { html: '', text: '' };
+  }
+}
+
 async function notifyTicketStatus(ticketId: number, status: string, agentName: string): Promise<void> {
+  const fb = await caseFeedbackBlock(ticketId, status);
   const t = (await pool.query(
     `SELECT t.source, t.ticket_number, t.teams_conversation, cc.full_name, cc.email
        FROM inbox_tickets t LEFT JOIN customer_contacts cc ON cc.id = t.contact_id WHERE t.id=$1`, [ticketId]
@@ -140,7 +169,7 @@ async function notifyTicketStatus(ticketId: number, status: string, agentName: s
   if (t.source === 'whatsapp') {
     const lm = (await pool.query("SELECT from_email FROM inbox_messages WHERE ticket_id=$1 AND channel='whatsapp' AND message_direction='inbound' AND from_email IS NOT NULL ORDER BY received_at DESC LIMIT 1", [ticketId])).rows[0];
     const num = lm?.from_email || '';
-    const text = statusMsgText(status, name, tn, agentName);
+    const text = statusMsgText(status, name, tn, agentName) + fb.text;
     if (!num) { await logChannel({ channel: 'whatsapp', direction: 'outbound', status: 'failed', ticketId, preview: text, error: 'No WhatsApp number on case' }); return; }
     const r = await sendWhatsAppText(num, text);
     if (r.ok) await recordNote('whatsapp', text);
@@ -148,12 +177,12 @@ async function notifyTicketStatus(ticketId: number, status: string, agentName: s
     // WhatsApp refused (e.g. outside the 24h window) → fall back to the status email.
     if (!r.ok) {
       const rcpt = await ticketRecipient(ticketId);
-      if (rcpt) { try { await sendTicketStatusEmail(status, rcpt.email, rcpt.name, rcpt.ticketNumber, agentName, rcpt.subject); } catch (e) { console.error('WhatsApp status fallback email failed:', e); } }
+      if (rcpt) { try { await sendTicketStatusEmail(status, rcpt.email, rcpt.name, rcpt.ticketNumber, agentName, rcpt.subject, fb.html); } catch (e) { console.error('WhatsApp status fallback email failed:', e); } }
     }
     return;
   }
   if (t.source === 'teams') {
-    const text = statusMsgText(status, name, tn, agentName);
+    const text = statusMsgText(status, name, tn, agentName) + fb.text;
     const r = await sendTeamsBest(t.teams_conversation || null, text, t.email || null);
     // Only record the message on the case if it actually went out — recording failed sends
     // made cases show updates the customer never received (audit 21 Jul 2026).
@@ -162,13 +191,13 @@ async function notifyTicketStatus(ticketId: number, status: string, agentName: s
     // Teams down → make sure the customer still hears: fall back to the status email.
     if (!r.ok) {
       const rcpt = await ticketRecipient(ticketId);
-      if (rcpt) { try { await sendTicketStatusEmail(status, rcpt.email, rcpt.name, rcpt.ticketNumber, agentName, rcpt.subject); } catch (e) { console.error('Teams status fallback email failed:', e); } }
+      if (rcpt) { try { await sendTicketStatusEmail(status, rcpt.email, rcpt.name, rcpt.ticketNumber, agentName, rcpt.subject, fb.html); } catch (e) { console.error('Teams status fallback email failed:', e); } }
     }
     return;
   }
   // Email-origin (or manual) cases → status email as before.
   const rcpt = await ticketRecipient(ticketId);
-  if (rcpt) await sendTicketStatusEmail(status, rcpt.email, rcpt.name, rcpt.ticketNumber, agentName, rcpt.subject);
+  if (rcpt) await sendTicketStatusEmail(status, rcpt.email, rcpt.name, rcpt.ticketNumber, agentName, rcpt.subject, fb.html);
 }
 
 const DEPARTMENTS = ['support', 'sales', 'repair_center', 'comms', 'quotes', 'invoices', 'leads', 'general'];
@@ -1631,6 +1660,9 @@ router.post('/tickets/:id/convert-to-lead', requireAuth, async (req: Request, re
     leadId = lr.rows[0].id;
   }
   await pool.query("UPDATE inbox_tickets SET status='resolved', closed_at=NOW(), updated_at=NOW() WHERE id=$1", [id]);
+  // Auto-resolve does not go through notifyTicketStatus, so ask here as well. The invite is
+  // idempotent per case, so a case that later gets both treatments is still only asked once.
+  maybeInviteCaseFeedback(id).catch(() => {});
   await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1,$2,'system_log',$3)`,
     [id, user.id, `Transferred to sales as lead #${leadId} by ${user.displayName}`]);
   await logActivity(user.id, 'created', 'lead', leadId, `Lead created from ticket ${ticket.ticket_number}`);
@@ -1651,6 +1683,9 @@ router.post('/tickets/:id/convert-to-quote', requireAuth, async (req: Request, r
     [ticket.customer_id, id, qn, ticket.subject?.slice(0, 180) || ('Quote from ' + ticket.ticket_number), user.id]
   );
   await pool.query("UPDATE inbox_tickets SET status='resolved', closed_at=NOW(), updated_at=NOW() WHERE id=$1", [id]);
+  // Auto-resolve does not go through notifyTicketStatus, so ask here as well. The invite is
+  // idempotent per case, so a case that later gets both treatments is still only asked once.
+  maybeInviteCaseFeedback(id).catch(() => {});
   await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1,$2,'system_log',$3)`,
     [id, user.id, `Transferred to a draft quote (${qn}) by ${user.displayName}`]);
   res.redirect('/quotes/' + q.rows[0].id + '/edit');

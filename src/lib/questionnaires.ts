@@ -133,8 +133,10 @@ export async function loadVersion(versionId: number): Promise<LoadedVersion | nu
 export async function listQuestionnaires(): Promise<any[]> {
   const { rows } = await pool.query(
     `SELECT q.*, v.version AS current_version, v.mode, v.closes_at,
-            (SELECT COUNT(*)::int FROM questionnaire_invites i WHERE i.version_id = q.current_version_id) AS invited,
-            (SELECT COUNT(*)::int FROM questionnaire_responses r WHERE r.version_id = q.current_version_id) AS responded,
+            (SELECT COUNT(*)::int FROM questionnaire_invites i WHERE i.version_id = q.current_version_id AND i.is_test=false) AS invited,
+            (SELECT COUNT(*)::int FROM questionnaire_responses r
+               JOIN questionnaire_invites ri ON ri.id = r.invite_id
+              WHERE r.version_id = q.current_version_id AND ri.is_test=false) AS responded,
             (SELECT COUNT(*)::int FROM questionnaire_versions vv WHERE vv.questionnaire_id = q.id) AS versions
      FROM questionnaires q
      LEFT JOIN questionnaire_versions v ON v.id = q.current_version_id
@@ -143,10 +145,23 @@ export async function listQuestionnaires(): Promise<any[]> {
   return rows;
 }
 
+// Poll-mode questionnaires available to attach to a campaign. Only the CURRENT version of
+// each is offered: attaching an old one would ask a question we have since rewritten.
+export async function pollsForAttaching(): Promise<{ versionId: number; title: string; key: string; version: number }[]> {
+  const { rows } = await pool.query(
+    `SELECT v.id AS version_id, v.title, q.key, v.version
+       FROM questionnaires q JOIN questionnaire_versions v ON v.id = q.current_version_id
+      WHERE q.status='active' AND v.mode='poll' AND q.kind <> 'case_feedback'
+        AND (v.closes_at IS NULL OR v.closes_at > now())
+      ORDER BY q.updated_at DESC`);
+  return rows.map((r: any) => ({ versionId: r.version_id, title: r.title, key: r.key, version: r.version }));
+}
+
 // ── Invites ───────────────────────────────────────────────────────────────────
 
 export interface InviteInput {
   versionId: number;
+  isTest?: boolean;
   contactId?: number | null;
   customerId?: number | null;
   email?: string | null;
@@ -166,12 +181,13 @@ export async function createInvite(input: InviteInput): Promise<{ id: number; to
   }
   const token = crypto.randomBytes(24).toString('hex');
   const { rows } = await pool.query(
-    `INSERT INTO questionnaire_invites (version_id, campaign_id, ticket_id, contact_id, customer_id, email, full_name, customer_name, token)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    `INSERT INTO questionnaire_invites (version_id, campaign_id, ticket_id, contact_id, customer_id, email, full_name, customer_name, token, is_test)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      ON CONFLICT (ticket_id) DO NOTHING
      RETURNING id, token`,
     [input.versionId, input.campaignId ?? null, input.ticketId ?? null, input.contactId ?? null,
-     input.customerId ?? null, input.email ?? null, input.fullName ?? null, input.customerName ?? null, token]
+     input.customerId ?? null, input.email ?? null, input.fullName ?? null, input.customerName ?? null,
+     token, input.isTest === true]
   );
   if (rows.length) return { id: rows[0].id, token: rows[0].token, fresh: true };
   // Lost a race on the same case — take the row that won.
@@ -287,7 +303,25 @@ export async function recordAnswers(
   const rating = staged.find((s) => (s.q.type === 'rating' || s.q.type === 'nps') && s.a)?.a?.num ?? null;
   const comment = staged.find((s) => s.q.type === 'long_text' && s.a)?.a?.text
     ?? staged.find((s) => s.q.type === 'short_text' && s.a)?.a?.text ?? null;
-  if (rating !== null) await pool.query('UPDATE questionnaire_responses SET rating=$2 WHERE id=$1', [responseId, Math.round(rating)]);
+  if (rating !== null) {
+    const before = ctx.response?.rating ?? null;
+    await pool.query('UPDATE questionnaire_responses SET rating=$2 WHERE id=$1', [responseId, Math.round(rating)]);
+    // A poor score that nobody reads is worse than no feedback at all: it teaches the
+    // customer that we asked out of politeness. Alerted once, on the way IN, not on every
+    // later edit of the same response.
+    if (version.kind === 'case_feedback' && before === null && Math.round(rating) <= 2) {
+      const who = [invite.full_name, invite.customer_name].filter(Boolean).join(' at ') || 'A customer';
+      // Imported lazily: notifications pulls in the mobile Pulse feed and the mailer, and
+      // this module is reached from tickets.ts. A top-level import here is an import cycle
+      // waiting to happen, and it drags half the app into the test harness.
+      // Fire and forget: the customer must not wait on our own Teams notification.
+      import('./notifications')
+        .then((m) => m.alertGroup('support', `${Math.round(rating)}-star feedback from ${who}`,
+          invite.ticket_id ? 'On a case that was just closed — worth a look before they raise it themselves.' : 'Case feedback.',
+          '/marketing/case-feedback?rating=' + Math.round(rating)))
+        .catch(() => {});
+    }
+  }
   if (comment !== null) await pool.query('UPDATE questionnaire_responses SET comment=$2 WHERE id=$1', [responseId, comment]);
 
   const done = version.questions.filter((q) => q.type !== 'heading' && q.required).every((q) => have.has(q.key))
@@ -334,16 +368,20 @@ export async function resultsFor(versionId: number, customerId?: number | null):
   const custWhere = customerId ? ' AND customer_id=$2' : '';
   const args: any[] = customerId ? [versionId, customerId] : [versionId];
 
-  const inv = await pool.query(`SELECT COUNT(*)::int n FROM questionnaire_invites WHERE version_id=$1${custWhere}`, args);
+  const inv = await pool.query(
+    `SELECT COUNT(*)::int n FROM questionnaire_invites WHERE version_id=$1 AND is_test=false${custWhere}`, args);
   const res = await pool.query(
-    `SELECT COUNT(*)::int n, COUNT(completed_at)::int done FROM questionnaire_responses WHERE version_id=$1${custWhere}`, args);
+    `SELECT COUNT(*)::int n, COUNT(r.completed_at)::int done
+       FROM questionnaire_responses r JOIN questionnaire_invites i ON i.id = r.invite_id
+      WHERE r.version_id=$1 AND i.is_test=false${customerId ? ' AND r.customer_id=$2' : ''}`, args);
 
   const ans = await pool.query(
     `SELECT qq.key, a.value_text, a.value_num, a.value_json
        FROM questionnaire_answers a
        JOIN questionnaire_questions qq ON qq.id = a.question_id
        JOIN questionnaire_responses r ON r.id = a.response_id
-      WHERE r.version_id=$1${customerId ? ' AND r.customer_id=$2' : ''}
+       JOIN questionnaire_invites i ON i.id = r.invite_id
+      WHERE r.version_id=$1 AND i.is_test=false${customerId ? ' AND r.customer_id=$2' : ''}
       ORDER BY a.id DESC`, args);
 
   const byKey = new Map<string, { text: string | null; num: number | null; json: string[] | null }[]>();
@@ -367,7 +405,7 @@ export async function resultsFor(versionId: number, customerId?: number | null):
             ROUND(AVG(r.rating)::numeric, 2) AS avg_rating
        FROM questionnaire_invites i
        LEFT JOIN questionnaire_responses r ON r.invite_id = i.id
-      WHERE i.version_id=$1
+      WHERE i.version_id=$1 AND i.is_test=false
       GROUP BY i.customer_id, i.customer_name
       ORDER BY customer_name ASC`, [versionId]);
 
@@ -375,7 +413,7 @@ export async function resultsFor(versionId: number, customerId?: number | null):
     `SELECT i.email, i.full_name, i.customer_name, i.sent_at
        FROM questionnaire_invites i
        LEFT JOIN questionnaire_responses r ON r.invite_id = i.id
-      WHERE i.version_id=$1 AND r.id IS NULL
+      WHERE i.version_id=$1 AND i.is_test=false AND r.id IS NULL
       ORDER BY i.customer_name ASC, i.full_name ASC`, [versionId]);
 
   const invited = inv.rows[0].n, responded = res.rows[0].n;
@@ -400,7 +438,7 @@ export async function resultsCsv(versionId: number): Promise<string> {
   const { rows } = await pool.query(
     `SELECT r.id, r.submitted_at, r.completed_at, i.customer_name, i.full_name, i.email, r.ticket_id
        FROM questionnaire_responses r LEFT JOIN questionnaire_invites i ON i.id = r.invite_id
-      WHERE r.version_id=$1 ORDER BY r.submitted_at ASC`, [versionId]);
+      WHERE r.version_id=$1 AND COALESCE(i.is_test,false)=false ORDER BY r.submitted_at ASC`, [versionId]);
   const ans = await pool.query(
     `SELECT a.response_id, qq.key, a.value_text
        FROM questionnaire_answers a JOIN questionnaire_questions qq ON qq.id=a.question_id

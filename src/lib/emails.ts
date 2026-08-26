@@ -132,6 +132,7 @@ export function renderTemplate(tpl: string, vars: Record<string, string>): strin
 // template if present. No-op if the status isn't a system-sent one or there's no recipient.
 export async function sendTicketStatusEmail(
   status: string, toEmail: string | null, toName: string, ticketNumber: string, fromName?: string, caseSubject?: string,
+  extraHtml?: string,
 ): Promise<void> {
   const def = STATUS_EMAILS.find((s) => s.status === status);
   if (!def || !toEmail) return;
@@ -140,7 +141,12 @@ export async function sendTicketStatusEmail(
   const vars = { name: toName || 'there', ticket: ticketNumber || '', subject: (caseSubject || '').trim() };
   // Tidy any "[TICKET]: " trailing separator if the case has no subject.
   const subjectLine = renderTemplate(def.subject, vars).replace(/:\s*$/, '');
-  await sendMail({ to: toEmail, subject: subjectLine, html: renderTemplate(tpl, vars), signatureName: fromName, autoSubmitted: true });
+  // `extraHtml` is appended AFTER the rendered template — currently the one-click case
+  // feedback block. Deliberately not merged into the template itself: the templates are
+  // editable in Admin, and a feature that only works while nobody edits the template is a
+  // feature that breaks silently.
+  const html = renderTemplate(tpl, vars) + (extraHtml || '');
+  await sendMail({ to: toEmail, subject: subjectLine, html, signatureName: fromName, autoSubmitted: true });
 }
 
 

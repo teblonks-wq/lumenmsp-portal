@@ -81,9 +81,12 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
 
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 
-// Slugs are the join between the JSON and the database, and they end up in URLs, so they
-// are kept boring: lowercase, digits, hyphens.
-const SLUG = /^[a-z0-9][a-z0-9-]{0,63}$/;
+// Slugs are the join between the JSON and the database, and they end up in URLs, form field
+// names and filenames, so they are kept boring: lowercase, digits, hyphens and underscores.
+// Underscores are here on purpose — the stock kind is `case_feedback`, and anyone hand-writing
+// a spec will reach for `job_title` before `job-title`. Rejecting them made the built-in
+// case-feedback questionnaire fail to import, which the DB suite caught (2026-08-26).
+const SLUG = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 function optional(where: string, v: unknown, max: number): string | null {
   if (v === undefined || v === null) return null;

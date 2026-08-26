@@ -54,6 +54,25 @@
         </div>
         <div id="mmEditor" style="background:var(--surface);min-height:260px;"></div>
       </div>
+      <%# Attach a one-click poll. The options become links in the email, so the answer is
+          one click and never a form — and the token in each link means the answer arrives
+          already attributed to the person and their company. %>
+      <div style="border:1px solid var(--line);border-radius:10px;padding:12px 14px;">
+        <label class="muted" style="display:block;font-size:13px;margin-bottom:6px;">📋 <strong>Attach a poll</strong> — one question, answered by clicking a link in the email</label>
+        <select class="input" id="mmPoll" style="width:100%;max-width:460px;">
+          <option value="">No poll</option>
+          <% polls.forEach(function (p) { %>
+            <option value="<%= p.versionId %>" <%= (campaign && campaign.questionnaire_version_id === p.versionId) ? 'selected' : '' %>><%= p.title %> (v<%= p.version %>)</option>
+          <% }); %>
+        </select>
+        <p class="muted" style="font-size:12px;margin:8px 0 0;">
+          <% if (!polls.length) { %>
+            No polls imported yet — <a class="row-link" href="/marketing/questionnaires/import">import one</a> with <code>"mode": "poll"</code>.
+          <% } else { %>
+            It appears under your message and above the signature. Each recipient gets their own link, so every answer is tied to who gave it — <a class="row-link" href="/marketing/questionnaires">see the results</a> as they come in.
+          <% } %>
+        </p>
+      </div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
         <button class="btn" id="mmSaveDraft" onclick="saveCampaign(false)">💾 Save draft</button>
         <button class="btn btn-primary" id="mmSave" onclick="saveCampaign(true)">Save &amp; review →</button>
@@ -283,6 +302,7 @@
       bodyHtml: quill.root.innerHTML,
       statusFilter: document.getElementById('mmStatusFilter').value,
       excludeEmails: excluded.join(','),
+      questionnaireVersionId: document.getElementById('mmPoll').value || '',
     };
     var msg = { set: function (t, c) {
       ['mmMsg', 'mmMsgTop'].forEach(function (id) {

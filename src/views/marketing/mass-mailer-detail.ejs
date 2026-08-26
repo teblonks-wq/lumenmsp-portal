@@ -40,6 +40,33 @@
 <% if (notice) { %><div class="card" style="border-left:4px solid var(--green-bright);margin-bottom:16px;padding:12px 16px;"><%= notice %></div><% } %>
 <div class="card" id="mmActionMsg" style="display:none;border-left:4px solid var(--blue);margin-bottom:16px;padding:12px 16px;"></div>
 
+<% if (poll && pollResults) { %>
+  <div class="card" style="margin-bottom:16px;padding:16px 20px;">
+    <div style="display:flex;justify-content:space-between;gap:14px;align-items:baseline;flex-wrap:wrap;">
+      <h2 style="margin:0;font-size:16px;">📋 <%= poll.title %></h2>
+      <a class="row-link" href="/marketing/questionnaires/<%= poll.questionnaireId %>">Full results →</a>
+    </div>
+    <% var pr = pollResults.questions.filter(function (x) { return x.type !== 'heading'; })[0]; %>
+    <p class="muted" style="margin:6px 0 12px;font-size:13px;">
+      <%= pollResults.responded %> of <%= pollResults.invited %> answered (<%= pollResults.responseRate %>%)<% if (pr && pr.average !== null) { %> · average <strong><%= pr.average %></strong><% } %>
+    </p>
+    <% if (pr && pr.answered) { %>
+      <div style="display:grid;gap:6px;max-width:620px;">
+        <% pr.tally.forEach(function (t) { %>
+          <div style="display:grid;grid-template-columns:minmax(80px,1fr) 3fr auto;gap:10px;align-items:center;">
+            <span style="font-size:13px;"><%= t.label %></span>
+            <span style="background:var(--surface-2,#f1f5f9);border-radius:6px;height:16px;overflow:hidden;">
+              <span style="display:block;height:100%;width:<%= t.pct %>%;background:var(--accent);border-radius:6px;"></span></span>
+            <span class="muted" style="font-size:12px;white-space:nowrap;"><%= t.count %> · <%= t.pct %>%</span>
+          </div>
+        <% }); %>
+      </div>
+    <% } else { %>
+      <p class="muted" style="margin:0;font-size:13px;">No answers yet.</p>
+    <% } %>
+  </div>
+<% } %>
+
 <div style="display:grid;grid-template-columns:minmax(380px,1fr) minmax(380px,1fr);gap:16px;align-items:start;">
 
   <div class="card" style="padding:20px 22px;">
@@ -47,6 +74,17 @@
     <p class="muted" style="font-size:12px;margin:0 0 12px;">Merge fields show as placeholders here and are filled in per recipient. The company signature and a per-recipient unsubscribe line are appended automatically — exactly as shown below.</p>
     <div style="border:1px solid var(--line);border-radius:8px;padding:18px 20px;background:var(--surface);font-size:14px;line-height:1.6;overflow:auto;max-height:520px;">
       <%- campaign.body_html %>
+      <% if (poll) { var pq = poll.questions.find(function (x) { return x.type !== 'heading'; }); %>
+        <div style="background:var(--surface-2,#f8fafc);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:24px 0 0;">
+          <p style="margin:0 0 12px;font-weight:600;"><%= pq ? pq.label : poll.title %></p>
+          <div>
+            <% (pollOptions || []).forEach(function (o) { %>
+              <span style="display:inline-block;margin:0 6px 8px 0;padding:9px 15px;border:1px solid var(--line-strong,#cbd5e1);border-radius:8px;font-weight:600;font-size:14px;"><%= o.label %></span>
+            <% }); %>
+          </div>
+          <p class="muted" style="margin:10px 0 0;font-size:12px;">Each recipient's buttons carry their own link, so answers arrive attributed.</p>
+        </div>
+      <% } %>
       <%- signatureHtml %>
       <p style="margin:28px 0 0;padding-top:14px;border-top:1px solid var(--line);color:var(--faint);font-size:12px;">You're receiving this because you're a contact of Lumen IT Solutions. <span style="text-decoration:underline;">Unsubscribe</span> from these updates.</p>
     </div>

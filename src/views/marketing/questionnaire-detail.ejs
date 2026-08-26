@@ -1,0 +1,141 @@
+<%- include('../partials/header', { title: q.title, user }) %>
+<%
+  function pct(n, d) { return d ? Math.round((n / d) * 1000) / 10 : 0; }
+  var v = results ? results.version : null;
+%>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing/questionnaires">← Questionnaires</a></p>
+    <h1 style="margin:0;"><%= q.title %></h1>
+    <p class="muted" style="margin:4px 0 0;">
+      <code><%= q.key %></code>
+      <% if (v) { %> · v<%= v.version %> · <%= v.mode === 'poll' ? 'one-click poll' : 'form' %>
+        <% if (v.closesAt) { %> · closes <%= new Date(v.closesAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) %><% } %>
+      <% } %>
+    </p>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a class="btn" href="/marketing/questionnaires/<%= q.id %>/spec.json?version=<%= versionId %>">⤓ JSON</a>
+    <a class="btn" href="/marketing/questionnaires/<%= q.id %>/results.csv?version=<%= versionId %>">⤓ CSV</a>
+  </div>
+</div>
+
+<% if (notice) { %><div class="card" style="border-left:4px solid var(--green-bright);margin-bottom:16px;padding:12px 16px;"><%= notice %></div><% } %>
+
+<% if (versions.length > 1) { %>
+  <div class="card" style="margin-bottom:16px;padding:12px 16px;">
+    <span class="muted" style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;">Version</span>
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+      <% versions.forEach(function (ver) { %>
+        <a class="btn <%= ver.id === versionId ? 'btn-primary' : '' %>" style="font-size:12px;padding:4px 12px;"
+           href="/marketing/questionnaires/<%= q.id %>?version=<%= ver.id %>">v<%= ver.version %></a>
+      <% }); %>
+    </div>
+    <p class="muted" style="margin:10px 0 0;font-size:12.5px;">Each import freezes a version. Answers stay attached to the version the person was actually asked, so editing a question later never rewrites what anyone said.</p>
+  </div>
+<% } %>
+
+<% if (!results) { %>
+  <div class="card"><div class="empty-state">This questionnaire has no published version yet.</div></div>
+<% } else { %>
+
+  <div class="stat-band">
+    <div class="tile"><div class="n"><%= results.invited %></div><div class="l">Invited</div></div>
+    <div class="tile"><div class="n info"><%= results.responded %></div><div class="l">Answered</div></div>
+    <div class="tile"><div class="n"><%= results.responseRate %><small>%</small></div><div class="l">Response rate</div></div>
+    <div class="tile"><div class="n"><%= results.completed %></div><div class="l">Completed</div></div>
+    <% if (results.nps !== null) { %>
+      <div class="tile"><div class="n <%= results.nps >= 30 ? 'good' : (results.nps >= 0 ? 'warn' : 'bad') %>"><%= results.nps %></div><div class="l">NPS</div></div>
+    <% } %>
+  </div>
+
+  <% if (!results.responded) { %>
+    <div class="card"><div class="empty-state">No answers yet.<% if (!results.invited) { %> Nobody has been invited — attach this to a Mass Mailer campaign to send it.<% } %></div></div>
+  <% } else { %>
+
+    <% results.questions.forEach(function (qr) { if (qr.type === 'heading') { %>
+      <h2 style="font-size:17px;margin:26px 0 10px;"><%= qr.label %></h2>
+    <% return; } %>
+      <div class="card" style="margin-bottom:14px;">
+        <div style="display:flex;justify-content:space-between;gap:14px;align-items:baseline;flex-wrap:wrap;">
+          <h3 style="font-size:15.5px;margin:0;"><%= qr.label %></h3>
+          <span class="muted" style="font-size:12.5px;white-space:nowrap;">
+            <%= qr.answered %> answered<% if (qr.average !== null) { %> · average <strong><%= qr.average %></strong><% } %>
+          </span>
+        </div>
+
+        <% if (qr.type === 'short_text' || qr.type === 'long_text') { %>
+          <% if (!qr.texts.length) { %>
+            <p class="muted" style="margin:12px 0 0;">Nothing written yet.</p>
+          <% } else { %>
+            <div style="margin:12px 0 0;display:grid;gap:8px;">
+              <% qr.texts.slice(0, 50).forEach(function (t) { %>
+                <blockquote style="margin:0;padding:10px 14px;background:var(--bg,#f8fafc);border-left:3px solid var(--line-strong,#cbd5e1);border-radius:0 8px 8px 0;font-size:14px;line-height:1.55;white-space:pre-wrap;"><%= t %></blockquote>
+              <% }); %>
+            </div>
+            <% if (qr.texts.length > 50) { %><p class="muted" style="margin:10px 0 0;font-size:12.5px;">Showing the 50 most recent of <%= qr.texts.length %> — the CSV has them all.</p><% } %>
+          <% } %>
+        <% } else { %>
+          <div style="margin:14px 0 0;display:grid;gap:7px;">
+            <% qr.tally.forEach(function (t) { %>
+              <div style="display:grid;grid-template-columns:minmax(90px,1fr) 3fr auto;gap:10px;align-items:center;">
+                <span style="font-size:13.5px;"><%= t.label %></span>
+                <span style="background:var(--bg,#f1f5f9);border-radius:6px;height:18px;overflow:hidden;">
+                  <span style="display:block;height:100%;width:<%= t.pct %>%;background:var(--accent);border-radius:6px;"></span>
+                </span>
+                <span class="muted" style="font-size:12.5px;white-space:nowrap;font-variant-numeric:tabular-nums;"><%= t.count %> · <%= t.pct %>%</span>
+              </div>
+            <% }); %>
+          </div>
+        <% } %>
+      </div>
+    <% }); %>
+
+    <div class="card" style="padding:0;margin-top:20px;">
+      <div class="card-header" style="padding:14px 18px;"><strong>By customer</strong>
+        <span class="muted" style="font-size:12.5px;"> — who answered, and how they scored</span></div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Customer</th><th style="text-align:center;">Invited</th><th style="text-align:center;">Answered</th><th style="text-align:center;">Rate</th><th style="text-align:center;">Avg rating</th></tr></thead>
+          <tbody>
+            <% results.byCustomer.forEach(function (c) { %>
+              <tr>
+                <td><%= c.customerName %></td>
+                <td style="text-align:center;"><%= c.invited %></td>
+                <td style="text-align:center;"><%= c.responded %></td>
+                <td style="text-align:center;"><%= pct(c.responded, c.invited) %>%</td>
+                <td style="text-align:center;"><%= c.avgRating === null ? '—' : c.avgRating %></td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <% if (results.outstanding.length) { %>
+      <div class="card" style="padding:0;margin-top:16px;">
+        <div class="card-header" style="padding:14px 18px;"><strong>Not yet answered</strong>
+          <span class="muted" style="font-size:12.5px;"> — <%= results.outstanding.length %> invited who have not come back</span></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Name</th><th>Email</th><th>Customer</th><th>Sent</th></tr></thead>
+            <tbody>
+              <% results.outstanding.slice(0, 200).forEach(function (o) { %>
+                <tr>
+                  <td><%= o.fullName || '—' %></td>
+                  <td class="muted"><%= o.email || '—' %></td>
+                  <td><%= o.customerName || '—' %></td>
+                  <td class="muted"><%= o.sentAt ? new Date(o.sentAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '—' %></td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <% } %>
+
+  <% } %>
+<% } %>
+
+<%- include('../partials/footer') %>

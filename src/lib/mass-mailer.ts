@@ -3,6 +3,8 @@ import { pool } from '../db/pool';
 import { config } from '../config';
 import { sendMail } from './mailer';
 import { getSignatureHtml } from './signature';
+import { createInvite, markInviteSent, loadVersion } from './questionnaires';
+import { pollBlockHtml } from './questionnaire-email';
 
 // ── Mass Mailer (Marketing → Mass Mailer) ──────────────────────────────────────
 // Bulk email to customer contacts whose address is on their customer's DEFAULT
@@ -112,6 +114,10 @@ export interface CampaignInput {
   statusFilter: 'active' | 'all';
   excludeEmails: string[];   // unticked in the compose UI
   createdBy: number;
+  // Attached one-click poll — a FROZEN questionnaire version (lib/questionnaires). The
+  // question and its option links are appended under the signature at send time, with a
+  // token minted per recipient, so the answer knows who gave it.
+  questionnaireVersionId?: number | null;
 }
 
 // Create a draft campaign + snapshot its recipient list.
@@ -121,10 +127,11 @@ export async function createCampaign(input: CampaignInput): Promise<number> {
   );
   if (!list.length) throw new Error('No recipients match — check customers have a default domain set and contacts use it.');
   const c = await pool.query(
-    `INSERT INTO mail_campaigns (name, subject, body_html, status, audience, created_by)
-     VALUES ($1,$2,$3,'draft',$4,$5) RETURNING id`,
+    `INSERT INTO mail_campaigns (name, subject, body_html, status, audience, created_by, questionnaire_version_id)
+     VALUES ($1,$2,$3,'draft',$4,$5,$6) RETURNING id`,
     [input.name, input.subject, input.bodyHtml,
-     JSON.stringify({ statusFilter: input.statusFilter, excluded: input.excludeEmails.length }), input.createdBy]
+     JSON.stringify({ statusFilter: input.statusFilter, excluded: input.excludeEmails.length }), input.createdBy,
+     input.questionnaireVersionId ?? null]
   );
   const campaignId: number = c.rows[0].id;
   for (const r of list) {
@@ -144,9 +151,10 @@ export async function updateDraft(campaignId: number, input: CampaignInput): Pro
   if (cur.rows[0].status !== 'draft') throw new Error('Only drafts can be edited.');
   await pool.query(
     `UPDATE mail_campaigns SET name=$1, subject=$2, body_html=$3,
-       audience=$4, updated_at=now() WHERE id=$5`,
+       audience=$4, questionnaire_version_id=$5, updated_at=now() WHERE id=$6`,
     [input.name, input.subject, input.bodyHtml,
-     JSON.stringify({ statusFilter: input.statusFilter, excluded: input.excludeEmails.length }), campaignId]
+     JSON.stringify({ statusFilter: input.statusFilter, excluded: input.excludeEmails.length }),
+     input.questionnaireVersionId ?? null, campaignId]
   );
   await pool.query('DELETE FROM mail_campaign_recipients WHERE campaign_id=$1', [campaignId]);
   const list = (await audience(input.statusFilter)).filter(
@@ -219,11 +227,43 @@ export async function campaignSignatureHtml(): Promise<string> {
   try { return await getSignatureHtml(MAIL_SIGNATURE_NAME); } catch { return ''; }
 }
 
+// The attached poll, rendered for ONE recipient. Each gets their own token, which is what
+// makes the answer attributable without asking. A poll whose version has vanished silently
+// renders nothing rather than breaking the campaign — a missing question is a lost data
+// point; a thrown error is a stalled send to 299 people.
+async function pollBlockFor(
+  campaign: { id: number; questionnaire_version_id: number | null },
+  r: { contact_id?: number | null; customer_id?: number | null; email?: string | null; full_name?: string | null; customer_name?: string | null },
+  isTest = false,
+): Promise<string> {
+  if (!campaign.questionnaire_version_id) return '';
+  try {
+    const version = await loadVersion(campaign.questionnaire_version_id);
+    if (!version) return '';
+    const q = version.questions.find((x) => x.type !== 'heading');
+    if (!q) return '';
+    const inv = await createInvite({
+      versionId: version.versionId, campaignId: campaign.id, isTest,
+      contactId: r.contact_id ?? null, customerId: r.customer_id ?? null,
+      email: r.email ?? null, fullName: r.full_name ?? null, customerName: r.customer_name ?? null,
+    });
+    await markInviteSent(inv.id);
+    return pollBlockHtml(inv.token, q, { heading: version.title !== q.label ? q.label : null });
+  } catch (e: any) {
+    console.error(`[mass-mailer] poll block failed for campaign ${campaign.id}:`, e.message);
+    return '';
+  }
+}
+
 export async function sendTest(campaignId: number, toEmail: string, toName: string): Promise<void> {
   const c = await pool.query('SELECT * FROM mail_campaigns WHERE id=$1', [campaignId]);
   if (!c.rows.length) throw new Error('Campaign not found');
   const camp = c.rows[0];
+  // A test send gets a REAL, clickable poll token so the whole path can be walked — but
+  // flagged is_test, so trying your own campaign does not inflate its response rate.
+  const poll = await pollBlockFor(camp, { email: toEmail, full_name: toName, customer_name: 'Example Company Ltd' }, true);
   const html = mergeFields(camp.body_html, { full_name: toName, customer_name: 'Example Company Ltd' })
+    + poll
     + (await campaignSignatureHtml())
     + unsubFooter(config.APP_URL + '/unsubscribe/test');
   await sendMail({ to: toEmail, subject: '[TEST] ' + camp.subject, html, from: camp.from_email || undefined });
@@ -252,7 +292,7 @@ function runLoop(campaignId: number): void {
     try {
       for (;;) {
         // Stop if paused/deleted since the last send.
-        const st = await pool.query('SELECT status, subject, body_html, from_email FROM mail_campaigns WHERE id=$1', [campaignId]);
+        const st = await pool.query('SELECT id, status, subject, body_html, from_email, questionnaire_version_id FROM mail_campaigns WHERE id=$1', [campaignId]);
         if (!st.rows.length || st.rows[0].status !== 'sending') return;
         const camp = st.rows[0];
 
@@ -279,7 +319,10 @@ function runLoop(campaignId: number): void {
 
         try {
           const token = r.contact_id ? await unsubTokenFor(r.contact_id) : 'unknown';
+          // Body -> poll -> signature -> unsubscribe. The poll sits above the signature so
+          // it reads as part of the message rather than as footer furniture.
           const html = mergeFields(camp.body_html, r)
+            + (await pollBlockFor(camp, r))
             + (await campaignSignatureHtml())
             + unsubFooter(config.APP_URL + '/unsubscribe/' + token);
           await sendMail({ to: r.email, subject: camp.subject, html, from: camp.from_email || undefined });

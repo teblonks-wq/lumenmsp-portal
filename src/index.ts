@@ -68,6 +68,7 @@ import gpoRoutes from './routes/gpo';
 import commandRoutes from './routes/commands';
 import mcpRoutes from './routes/mcp';
 import marketingRoutes from './routes/marketing';
+import questionnaireRoutes from './routes/questionnaires';
 import networkRoutes from './routes/network';
 import n3twrxRoutes from './routes/n3twrx';
 import erecyclingRoutes from './routes/erecycling';
@@ -438,6 +439,7 @@ app.use('/', bookkeeperRoutes);   // Read-only external bookkeeper expenses port
 app.use('/', softphoneRoutes);
 app.use('/', chatRoutes);
 app.use('/', marketingRoutes);
+app.use('/', questionnaireRoutes); // Marketing -> Questionnaires + Case Feedback, the public /q/:token pages, and the website testimonial feed
 app.use('/', networkRoutes);
 app.use('/', n3twrxRoutes);
 app.use('/', erecyclingRoutes);

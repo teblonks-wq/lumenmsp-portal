@@ -335,6 +335,11 @@ model Contact {
   marketingOptOut   Boolean   @default(false) @map("marketing_opt_out") // excluded from all Mass Mailer sends
   marketingOptOutAt DateTime? @map("marketing_opt_out_at")
   unsubToken        String?   @unique @map("unsub_token") // public unsubscribe-link token
+  // Case-feedback suppression. DELIBERATELY SEPARATE from marketingOptOut: asking how a
+  // support case went is service, not marketing, so muting one must not mute the other.
+  feedbackOptOut    Boolean   @default(false) @map("feedback_opt_out")
+  feedbackOptOutAt  DateTime? @map("feedback_opt_out_at")
+  lastFeedbackAskAt DateTime? @map("last_feedback_ask_at") // rate-limit: five closures in a day are not five emails
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
 
@@ -910,11 +915,35 @@ model McpCallLog {
   error      String?                             // error text when ok=false
   durationMs Int?     @map("duration_ms")
   ip         String?
+  principal  String?                             // WHICH token made the call — "Owner (env token)" or an mcp_tokens label
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@index([createdAt])
   @@index([tool])
+  @@index([principal])
   @@map("mcp_call_log")
+}
+
+// A delegated MCP token — one per person, so the connector is no longer a single shared
+// secret. The token itself is NEVER stored, only its sha256: a lost token is re-issued,
+// not recovered. canWrite defaults false and the admin screen offers no way to set it
+// true, so a delegated token can only ever reach read tools (see routes/mcp.ts).
+model McpToken {
+  id         Int       @id @default(autoincrement())
+  label      String                                    // who this is for — stamped on every call in mcp_call_log
+  tokenHash  String    @unique @map("token_hash")       // sha256 hex of the token
+  prefix     String                                    // first 8 chars, so a row can be matched to a URL on sight
+  canWrite   Boolean   @default(false) @map("can_write")
+  note       String?
+  createdBy  String?   @map("created_by")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  lastIp     String?   @map("last_ip")
+  callCount  Int       @default(0) @map("call_count")
+  revokedAt  DateTime? @map("revoked_at")
+  revokedBy  String?   @map("revoked_by")
+
+  @@map("mcp_tokens")
 }
 
 model CommsLineNote {
@@ -2430,6 +2459,10 @@ model MailCampaign {
   fromEmail  String?   @map("from_email")              // send-as mailbox; null = GRAPH_SEND_FROM default
   status     String    @default("draft")               // draft | sending | paused | sent | failed
   audience   Json?                                     // filters used to build the list (for the record)
+  // Attached one-click poll: the FROZEN questionnaire version this campaign asks. Pinned to
+  // a version, not a questionnaire, so re-importing the questions later cannot change what
+  // the people who already answered were asked.
+  questionnaireVersionId Int? @map("questionnaire_version_id")
   createdBy  Int?      @map("created_by")
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at")
@@ -3257,4 +3290,144 @@ model PulseEvent {
 
   @@index([resolvedAt, expiresAt, rank])
   @@map("pulse_events")
+}
+
+// ── Questionnaires, polls and case feedback (Marketing) ────────────────────────
+// A questionnaire is a first-class object; the Mass Mailer is one DISTRIBUTOR of it.
+//
+// Two rules the shape enforces:
+//  • The imported JSON is the AUTHORING format, not the storage format. Import validates
+//    it, then MATERIALISES questions and answers as rows. Answers buried in a JSON blob
+//    can never be reported on in SQL — this is the same call the diary made on recurrence.
+//  • Import creates a VERSION and an invite pins version_id, so editing a question after
+//    forty people have answered cannot change what those forty were asked.
+//
+// questionnaire_invites.campaign_id is NULLABLE on purpose: that is what lets a case
+// close, or a customer page, raise an invite without inventing a campaign.
+
+model Questionnaire {
+  id               Int      @id @default(autoincrement())
+  key              String   @unique                       // stable slug from the JSON, e.g. "systems-review-2026"
+  title            String
+  kind             String   @default("general")           // general | case_feedback | systems
+  status           String   @default("active")            // active | archived
+  currentVersionId Int?     @map("current_version_id")
+  createdBy        Int?     @map("created_by")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@index([kind])
+  @@map("questionnaires")
+}
+
+model QuestionnaireVersion {
+  id              Int       @id @default(autoincrement())
+  questionnaireId Int       @map("questionnaire_id")
+  version         Int
+  title           String
+  intro           String?
+  mode            String    @default("form")              // form | poll
+  thankYou        String?   @map("thank_you")
+  closesAt        DateTime? @map("closes_at")
+  spec            Json                                     // the imported JSON verbatim, for re-export
+  publishedAt     DateTime  @default(now()) @map("published_at")
+
+  @@unique([questionnaireId, version])
+  @@map("questionnaire_versions")
+}
+
+model QuestionnaireQuestion {
+  id         Int     @id @default(autoincrement())
+  versionId  Int     @map("version_id")
+  ord        Int
+  key        String
+  type       String                                        // single|multi|rating|nps|yes_no|short_text|long_text|heading
+  label      String
+  helpText   String? @map("help_text")
+  required   Boolean @default(false)
+  scale      Int?                                          // rating: 1..scale
+  options    Json?                                         // [{value,label}] for single/multi
+  allowOther Boolean @default(false) @map("allow_other")
+
+  @@unique([versionId, key])
+  @@index([versionId, ord])
+  @@map("questionnaire_questions")
+}
+
+model QuestionnaireInvite {
+  id           Int       @id @default(autoincrement())
+  versionId    Int       @map("version_id")
+  campaignId   Int?      @map("campaign_id")               // NULL for case feedback and customer-page sends
+  ticketId     Int?      @unique @map("ticket_id")         // case feedback: ONE invite per case, forever
+  contactId    Int?      @map("contact_id")
+  customerId   Int?      @map("customer_id")
+  email        String?
+  fullName     String?   @map("full_name")
+  customerName String?   @map("customer_name")
+  token        String    @unique                            // the public /q/:token link
+  sentAt       DateTime? @map("sent_at")
+  openedAt     DateTime? @map("opened_at")
+  completedAt  DateTime? @map("completed_at")
+  // A "send me a test" invite. Real and clickable, so a test send can be followed all the
+  // way through, but excluded from every count — otherwise testing a campaign quietly
+  // inflates its own response rate.
+  isTest       Boolean   @default(false) @map("is_test")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([versionId])
+  @@index([campaignId])
+  @@index([customerId])
+  @@map("questionnaire_invites")
+}
+
+model QuestionnaireResponse {
+  id          Int       @id @default(autoincrement())
+  versionId   Int       @map("version_id")
+  inviteId    Int?      @unique @map("invite_id")          // one response per invite
+  contactId   Int?      @map("contact_id")
+  customerId  Int?      @map("customer_id")
+  ticketId    Int?      @map("ticket_id")
+  assignedUserId Int?   @map("assigned_user_id")           // case feedback: the engineer who owned the case
+  submittedAt DateTime  @default(now()) @map("submitted_at")
+  completedAt DateTime? @map("completed_at")               // set when the last required question is in
+
+  // Case-feedback denormalisation. The rating and comment are ALSO stored as answer rows;
+  // these copies exist so scoring by engineer and by customer is one cheap query.
+  rating         Int?
+  comment        String?
+  // Website publication. TWO gates: publishConsent is the CUSTOMER'S tick (a five-star
+  // rating is not consent) and publishState 'approved' is a human at Lumen pressing approve.
+  // publishText/publishName record exactly what was published, so a withdrawal can be
+  // honoured and evidenced.
+  publishConsent Boolean   @default(false) @map("publish_consent")
+  publishState   String    @default("none") @map("publish_state") // none | pending | approved | withdrawn
+  publishName    String?   @map("publish_name")
+  publishText    String?   @map("publish_text")
+  publishedAt    DateTime? @map("published_at")
+  approvedBy     Int?      @map("approved_by")
+  actioned       Boolean   @default(false)                 // someone has dealt with it
+  actionedBy     Int?      @map("actioned_by")
+  actionedAt     DateTime? @map("actioned_at")
+
+  @@index([versionId])
+  @@index([customerId])
+  @@index([assignedUserId])
+  @@index([publishState])
+  @@index([submittedAt])
+  @@map("questionnaire_responses")
+}
+
+model QuestionnaireAnswer {
+  id         Int      @id @default(autoincrement())
+  responseId Int      @map("response_id")
+  questionId Int      @map("question_id")
+  valueText  String?  @map("value_text")                   // free text, or the chosen option's value
+  valueNum   Float?   @map("value_num")                    // rating / nps / yes_no as 1|0
+  valueJson  Json?    @map("value_json")                   // multi-select: array of chosen values
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([responseId, questionId])
+  @@index([questionId])
+  @@map("questionnaire_answers")
 }

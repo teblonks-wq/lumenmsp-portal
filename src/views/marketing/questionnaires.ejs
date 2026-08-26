@@ -1,52 +1,55 @@
 <%- include('../partials/header', { title: 'Questionnaires', user }) %>
 
-<div class="page-header">
-  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">← Marketing</a></p>
-  <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-    <div>
-      <h1 style="margin:0;">Questionnaires &amp; Polls</h1>
-      <p class="muted" style="margin:4px 0 0;">Write them off-portal as JSON, import here, then attach a poll to a campaign or send a questionnaire to a customer.</p>
-    </div>
-    <a class="btn" href="/marketing/questionnaires/import">📥 Import JSON</a>
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">← Marketing</a></p>
+    <h1 style="margin:0;">📋 Questionnaires &amp; Polls</h1>
+    <p class="muted" style="margin:4px 0 0;">Write them off-portal as JSON, import here, then attach a poll to a campaign. Every answer is tied to the person who gave it.</p>
   </div>
+  <a class="btn btn-primary" href="/marketing/questionnaires/import">📥 Import JSON</a>
 </div>
 
-<% if (notice) { %><div class="flash ok"><%= notice %></div><% } %>
+<% if (notice) { %><div class="card" style="border-left:4px solid var(--green-bright);margin-bottom:16px;padding:12px 16px;"><%= notice %></div><% } %>
 
-<% if (!items.length) { %>
-  <div class="panel" style="text-align:center;padding:44px 24px;">
-    <p style="font-size:16px;font-weight:600;margin:0 0 6px;">Nothing imported yet</p>
-    <p class="muted" style="margin:0 0 18px;">Ask Claude for a <code>lits.questionnaire/1</code> file, then paste it into the importer.</p>
-    <a class="btn" href="/marketing/questionnaires/import">Import your first questionnaire</a>
-  </div>
-<% } else { %>
-  <div class="panel table-lift">
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
     <table class="table">
       <thead>
         <tr>
-          <th>Questionnaire</th><th>Mode</th><th>Version</th>
-          <th class="num">Invited</th><th class="num">Answered</th><th class="num">Rate</th><th>Closes</th>
+          <th>Questionnaire</th>
+          <th>Mode</th>
+          <th>Version</th>
+          <th style="text-align:center;">Invited</th>
+          <th style="text-align:center;">Answered</th>
+          <th style="text-align:center;">Rate</th>
+          <th>Closes</th>
         </tr>
       </thead>
       <tbody>
-      <% items.forEach(function (it) {
-           var rate = it.invited ? Math.round((it.responded / it.invited) * 100) : null; %>
-        <tr>
-          <td>
-            <a class="row-link" href="/marketing/questionnaires/<%= it.id %>"><strong><%= it.title %></strong></a>
-            <div class="muted" style="font-size:12px;"><code><%= it.key %></code><% if (it.kind !== 'general') { %> · <%= it.kind.replace('_', ' ') %><% } %></div>
-          </td>
-          <td><span class="pill <%= it.mode === 'poll' ? 'pill-teal' : '' %>"><%= it.mode === 'poll' ? 'One-click poll' : 'Form' %></span></td>
-          <td>v<%= it.current_version %><% if (it.versions > 1) { %> <span class="muted">of <%= it.versions %></span><% } %></td>
-          <td class="num"><%= it.invited %></td>
-          <td class="num"><%= it.responded %></td>
-          <td class="num"><%= rate === null ? '—' : rate + '%' %></td>
-          <td><%= it.closes_at ? new Date(it.closes_at).toISOString().slice(0, 10) : '—' %></td>
-        </tr>
-      <% }); %>
+        <% if (!items.length) { %>
+          <tr><td colspan="7"><div class="empty-state">Nothing imported yet — ask Claude for a <code>lits.questionnaire/1</code> file and paste it into the importer.</div></td></tr>
+        <% } %>
+        <% items.forEach(function (it) {
+             var rate = it.invited ? Math.round((it.responded / it.invited) * 100) : null; %>
+          <tr>
+            <td>
+              <a class="row-link" href="/marketing/questionnaires/<%= it.id %>"><strong><%= it.title %></strong></a>
+              <div class="muted" style="font-size:12px;"><code><%= it.key %></code><% if (it.kind !== 'general') { %> · <%= it.kind.replace('_', ' ') %><% } %></div>
+            </td>
+            <td>
+              <% if (it.mode === 'poll') { %><span class="badge badge-primary">One-click poll</span>
+              <% } else { %><span class="badge badge-inactive">Form</span><% } %>
+            </td>
+            <td>v<%= it.current_version %><% if (it.versions > 1) { %> <span class="muted">of <%= it.versions %></span><% } %></td>
+            <td style="text-align:center;"><%= it.invited %></td>
+            <td style="text-align:center;"><%= it.responded %></td>
+            <td style="text-align:center;"><%= rate === null ? '—' : rate + '%' %></td>
+            <td class="muted"><%= it.closes_at ? new Date(it.closes_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—' %></td>
+          </tr>
+        <% }); %>
       </tbody>
     </table>
   </div>
-<% } %>
+</div>
 
 <%- include('../partials/footer') %>

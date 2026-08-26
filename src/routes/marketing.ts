@@ -12,6 +12,8 @@ import {
 } from '../lib/mass-mailer';
 import { aiMassMailEmail, aiImproveEmailHtml } from '../lib/ai-compose';
 import { pool } from '../db/pool';
+import { pollsForAttaching, loadVersion, resultsFor } from '../lib/questionnaires';
+import { answerOptions } from '../lib/questionnaire-spec';
 
 const router = Router();
 
@@ -161,7 +163,10 @@ router.get('/marketing/mass-mailer', requireAdmin, async (req: Request, res: Res
 
 // Compose (new) / edit draft — same form.
 router.get('/marketing/mass-mailer/new', requireAdmin, async (req: Request, res: Response) => {
-  res.render('marketing/mass-mailer-form', { user: req.session.user!, campaign: null, aiReady: await aiComposeConfigured() });
+  res.render('marketing/mass-mailer-form', {
+    user: req.session.user!, campaign: null, aiReady: await aiComposeConfigured(),
+    polls: await pollsForAttaching().catch(() => []),
+  });
 });
 
 router.get('/marketing/mass-mailer/:id/edit', requireAdmin, async (req: Request, res: Response) => {
@@ -169,7 +174,10 @@ router.get('/marketing/mass-mailer/:id/edit', requireAdmin, async (req: Request,
   const { rows } = await pool.query('SELECT * FROM mail_campaigns WHERE id=$1', [id]);
   if (!rows.length) { res.status(404).render('error', { message: 'Campaign not found.' }); return; }
   if (rows[0].status !== 'draft') { res.redirect('/marketing/mass-mailer/' + id); return; }
-  res.render('marketing/mass-mailer-form', { user: req.session.user!, campaign: rows[0], aiReady: await aiComposeConfigured() });
+  res.render('marketing/mass-mailer-form', {
+    user: req.session.user!, campaign: rows[0], aiReady: await aiComposeConfigured(),
+    polls: await pollsForAttaching().catch(() => []),
+  });
 });
 
 // Live audience preview for the compose page.
@@ -201,6 +209,7 @@ const parseCampaignBody = (req: Request) => ({
   statusFilter: (req.body.statusFilter === 'all' ? 'all' : 'active') as 'active' | 'all',
   excludeEmails: String(req.body.excludeEmails || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
   createdBy: req.session.user!.id,
+  questionnaireVersionId: parseInt(String(req.body.questionnaireVersionId || ''), 10) || null,
 });
 
 router.post('/marketing/mass-mailer', requireAdmin, async (req: Request, res: Response) => {
@@ -230,9 +239,15 @@ router.get('/marketing/mass-mailer/:id', requireAdmin, async (req: Request, res:
   if (!rows.length) { res.status(404).render('error', { message: 'Campaign not found.' }); return; }
   const rec = await pool.query(
     `SELECT * FROM mail_campaign_recipients WHERE campaign_id=$1 ORDER BY customer_name ASC, full_name ASC`, [id]);
+  const vid = rows[0].questionnaire_version_id;
+  const pollVersion = vid ? await loadVersion(vid).catch(() => null) : null;
+  const pollQuestion = pollVersion ? pollVersion.questions.find((x) => x.type !== 'heading') : null;
   res.render('marketing/mass-mailer-detail', {
     user: req.session.user!, campaign: rows[0], recipients: rec.rows, notice: req.query.msg || null,
     signatureHtml: await campaignSignatureHtml(),
+    poll: pollVersion,
+    pollOptions: pollQuestion ? answerOptions(pollQuestion) : [],
+    pollResults: vid ? await resultsFor(vid).catch(() => null) : null,
   });
 });
 

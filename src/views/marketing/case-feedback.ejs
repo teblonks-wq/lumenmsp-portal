@@ -1,0 +1,191 @@
+<%- include('../partials/header', { title: 'Case Feedback', user }) %>
+<%
+  var withRating = rows.filter(function (r) { return r.rating !== null && r.rating !== undefined; });
+  var avg = withRating.length
+    ? Math.round((withRating.reduce(function (s, r) { return s + Number(r.rating); }, 0) / withRating.length) * 100) / 100 : null;
+  var low = rows.filter(function (r) { return r.rating !== null && Number(r.rating) <= 2; }).length;
+  var awaiting = rows.filter(function (r) { return r.publish_consent && r.publish_state === 'pending'; }).length;
+  var live = rows.filter(function (r) { return r.publish_state === 'approved'; }).length;
+  function stars(n) { return n === null || n === undefined ? '—' : '★'.repeat(Number(n)) + '☆'.repeat(Math.max(0, 5 - Number(n))); }
+  function ratingClass(n) { return n === null ? '' : (Number(n) >= 4 ? 'good' : (Number(n) === 3 ? 'warn' : 'bad')); }
+%>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">← Marketing</a></p>
+    <h1 style="margin:0;">⭐ Case Feedback</h1>
+    <p class="muted" style="margin:4px 0 0;">Asked once per case when it closes, at most once a week per person. Nothing reaches the website without the customer's tick <em>and</em> your approval.</p>
+  </div>
+  <a class="btn" href="/marketing/case-feedback.csv?<%= new URLSearchParams(q).toString() %>">⤓ CSV</a>
+</div>
+
+<% if (notice) { %><div class="card" style="border-left:4px solid var(--green-bright);margin-bottom:16px;padding:12px 16px;"><%= notice %></div><% } %>
+
+<div class="stat-band">
+  <div class="tile"><div class="n"><%= rows.length %></div><div class="l">Responses</div></div>
+  <div class="tile"><div class="n <%= avg === null ? '' : (avg >= 4 ? 'good' : (avg >= 3 ? 'warn' : 'bad')) %>"><%= avg === null ? '—' : avg %></div><div class="l">Average rating</div></div>
+  <div class="tile"><div class="n <%= low ? 'bad' : '' %>"><%= low %></div><div class="l">1–2 star</div></div>
+  <div class="tile"><div class="n <%= awaiting ? 'info' : '' %>"><%= awaiting %></div><div class="l">Consented, awaiting you</div></div>
+  <div class="tile"><div class="n good"><%= live %></div><div class="l">Live on the website</div></div>
+</div>
+
+<form method="get" action="/marketing/case-feedback" class="card" style="margin-bottom:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;align-items:end;">
+  <label style="display:block;"><span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">From</span>
+    <input class="input" type="date" name="from" value="<%= f.from || '' %>" style="width:100%;margin-top:4px;"></label>
+  <label style="display:block;"><span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">To</span>
+    <input class="input" type="date" name="to" value="<%= f.to || '' %>" style="width:100%;margin-top:4px;"></label>
+  <label style="display:block;"><span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Rating</span>
+    <select class="input" name="rating" style="width:100%;margin-top:4px;">
+      <option value="">Any</option>
+      <% [5,4,3,2,1].forEach(function (n) { %><option value="<%= n %>" <%= f.rating === n ? 'selected' : '' %>><%= n %> star</option><% }); %>
+    </select></label>
+  <label style="display:block;"><span class="muted" style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;">Engineer</span>
+    <select class="input" name="engineer" style="width:100%;margin-top:4px;">
+      <option value="">Anyone</option>
+      <% engineers.forEach(function (e) { %><option value="<%= e.id %>" <%= f.engineerId === e.id ? 'selected' : '' %>><%= e.display_name %></option><% }); %>
+    </select></label>
+  <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;">
+    <label style="font-size:13px;"><input type="checkbox" name="comment" value="1" <%= f.hasComment ? 'checked' : '' %>> Has comment</label>
+    <label style="font-size:13px;"><input type="checkbox" name="consent" value="1" <%= f.consented ? 'checked' : '' %>> Consented</label>
+    <label style="font-size:13px;"><input type="checkbox" name="unactioned" value="1" <%= f.unactioned ? 'checked' : '' %>> Unactioned</label>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <button type="submit" class="btn btn-primary">Filter</button>
+    <a class="btn" href="/marketing/case-feedback">Clear</a>
+  </div>
+</form>
+
+<div class="card-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:18px;">
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:13px 18px;"><strong>By engineer</strong></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Engineer</th><th style="text-align:center;">Responses</th><th style="text-align:center;">Average</th><th style="text-align:center;">1–2★</th></tr></thead>
+      <tbody>
+        <% if (!scores.byEngineer.length) { %><tr><td colspan="4"><div class="empty-state">No rated cases in this period.</div></td></tr><% } %>
+        <% scores.byEngineer.forEach(function (s) { %>
+          <tr><td><%= s.name %></td><td style="text-align:center;"><%= s.responses %></td>
+            <td style="text-align:center;"><strong><%= s.average === null ? '—' : s.average %></strong></td>
+            <td style="text-align:center;"><%= s.low || '—' %></td></tr>
+        <% }); %>
+      </tbody></table></div>
+  </div>
+  <div class="card" style="padding:0;">
+    <div class="card-header" style="padding:13px 18px;"><strong>By customer</strong></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Customer</th><th style="text-align:center;">Responses</th><th style="text-align:center;">Average</th><th style="text-align:center;">1–2★</th></tr></thead>
+      <tbody>
+        <% if (!scores.byCustomer.length) { %><tr><td colspan="4"><div class="empty-state">No rated cases in this period.</div></td></tr><% } %>
+        <% scores.byCustomer.forEach(function (s) { %>
+          <tr><td><%= s.name %></td><td style="text-align:center;"><%= s.responses %></td>
+            <td style="text-align:center;"><strong><%= s.average === null ? '—' : s.average %></strong></td>
+            <td style="text-align:center;"><%= s.low || '—' %></td></tr>
+        <% }); %>
+      </tbody></table></div>
+  </div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:14px 18px;"><strong>Every response</strong>
+    <span class="muted" style="font-size:12.5px;"> — newest first, capped at 500</span></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>Date</th><th>Rating</th><th>Comment</th><th>Customer</th><th>Case</th><th>Engineer</th><th>Website</th><th></th></tr>
+      </thead>
+      <tbody>
+        <% if (!rows.length) { %>
+          <tr><td colspan="8"><div class="empty-state">No feedback yet. It starts arriving as soon as cases close.</div></td></tr>
+        <% } %>
+        <% rows.forEach(function (r) { %>
+          <tr id="fb-<%= r.id %>" style="<%= r.actioned ? 'opacity:.62;' : '' %>">
+            <td class="muted" style="white-space:nowrap;"><%= new Date(r.submitted_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) %></td>
+            <td style="white-space:nowrap;"><span class="<%= ratingClass(r.rating) %>" style="font-size:14px;letter-spacing:1px;"><%= stars(r.rating) %></span></td>
+            <td style="max-width:380px;">
+              <% if (r.comment) { %><span style="font-size:13.5px;line-height:1.5;"><%= r.comment %></span>
+              <% } else { %><span class="muted">—</span><% } %>
+            </td>
+            <td><%= r.customer_name || '—' %><div class="muted" style="font-size:12px;"><%= r.full_name || '' %></div></td>
+            <td><% if (r.ticket_id) { %><a class="row-link" href="/tickets/<%= r.ticket_id %>"><%= r.ticket_number || r.ticket_id %></a><% } else { %><span class="muted">—</span><% } %></td>
+            <td class="muted"><%= r.engineer || '—' %></td>
+            <td style="white-space:nowrap;">
+              <% if (r.publish_state === 'approved') { %><span class="badge badge-sent">Live</span>
+              <% } else if (r.publish_state === 'withdrawn') { %><span class="badge badge-inactive">Withdrawn</span>
+              <% } else if (r.publish_consent) { %><span class="badge badge-primary">Consented</span>
+              <% } else { %><span class="muted" title="The customer did not tick the box — a good rating is not consent.">No consent</span><% } %>
+            </td>
+            <td style="text-align:right;white-space:nowrap;">
+              <% if (r.publish_consent && r.comment && r.publish_state !== 'approved') { %>
+                <button class="btn" style="font-size:12px;padding:4px 10px;" data-approve="<%= r.id %>">Approve →</button>
+              <% } else if (r.publish_state === 'approved') { %>
+                <button class="btn" style="font-size:12px;padding:4px 10px;" data-withdraw="<%= r.id %>">Withdraw</button>
+              <% } %>
+              <button class="btn" style="font-size:12px;padding:4px 10px;" data-actioned="<%= r.id %>" data-on="<%= r.actioned ? '1' : '0' %>"><%= r.actioned ? 'Reopen' : 'Done' %></button>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Approve for the website. Attribution is CHOSEN here and stored, and the text is
+     saved exactly as published so a later withdrawal can be honoured and evidenced. -->
+<div id="approve-box" style="display:none;position:fixed;inset:0;background:rgba(2,6,23,.55);z-index:200;align-items:center;justify-content:center;padding:20px;">
+  <div class="card" style="max-width:560px;width:100%;">
+    <h2 style="font-size:18px;margin:0 0 6px;">Publish this on the website</h2>
+    <p class="muted" style="margin:0 0 16px;font-size:13.5px;">This customer has ticked the box. Choose how they are named, check the words, and approve — it goes live on the site's next build.</p>
+    <blockquote id="ap-quote" style="margin:0 0 14px;padding:12px 15px;background:var(--bg,#f8fafc);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;font-size:14px;line-height:1.55;white-space:pre-wrap;"></blockquote>
+    <label style="display:block;font-size:13px;font-weight:600;margin:0 0 6px;">Shown as</label>
+    <select class="input" id="ap-attr" style="width:100%;margin:0 0 14px;">
+      <option value="partial" selected>Role and company — "A customer, Larkmead"</option>
+      <option value="full">Name and company — "Jane Smith, Larkmead"</option>
+      <option value="anonymous">Anonymous — "A Lumen customer"</option>
+    </select>
+    <p class="muted" style="margin:0 0 16px;font-size:12.5px;">Their words go up as they wrote them. A tidied quote is a fabricated quote — if it needs changing, ask them.</p>
+    <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <button class="btn" id="ap-cancel">Cancel</button>
+      <button class="btn btn-primary" id="ap-go">Approve &amp; publish</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  function post(url, body) {
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+      .then(function (r) { return r.json(); });
+  }
+  document.querySelectorAll('[data-actioned]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var on = b.getAttribute('data-on') === '1';
+      post('/marketing/case-feedback/' + b.getAttribute('data-actioned') + '/actioned', { actioned: on ? '0' : '1' })
+        .then(function (r) { if (r.ok) location.reload(); else alert(r.error || 'Could not save'); });
+    });
+  });
+  document.querySelectorAll('[data-withdraw]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (!confirm('Take this quote off the website? It disappears on the next site build.')) return;
+      post('/marketing/case-feedback/' + b.getAttribute('data-withdraw') + '/withdraw')
+        .then(function (r) { if (r.ok) location.reload(); else alert(r.error || 'Could not withdraw'); });
+    });
+  });
+  var box = document.getElementById('approve-box'), current = null;
+  document.querySelectorAll('[data-approve]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      current = b.getAttribute('data-approve');
+      var row = document.getElementById('fb-' + current);
+      document.getElementById('ap-quote').textContent = row.querySelectorAll('td')[2].innerText.trim();
+      box.style.display = 'flex';
+    });
+  });
+  document.getElementById('ap-cancel').addEventListener('click', function () { box.style.display = 'none'; });
+  document.getElementById('ap-go').addEventListener('click', function () {
+    post('/marketing/case-feedback/' + current + '/approve', {
+      attribution: document.getElementById('ap-attr').value,
+      text: document.getElementById('ap-quote').textContent,
+    }).then(function (r) { if (r.ok) location.reload(); else alert(r.error || 'Could not approve'); });
+  });
+})();
+</script>
+
+<%- include('../partials/footer') %>
