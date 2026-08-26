@@ -1,0 +1,63 @@
+<%- include('../partials/header', { title: 'Import questionnaire', user }) %>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing/questionnaires">← Questionnaires</a></p>
+  <h1 style="margin:0;">Import a questionnaire</h1>
+  <p class="muted" style="margin:4px 0 0;">Paste a <code>lits.questionnaire/1</code> file. Importing the same <code>key</code> again adds a new version and leaves the answers already collected against the old one alone.</p>
+</div>
+
+<% if (error) { %>
+  <div class="flash err" style="white-space:pre-wrap;"><strong>That file was not accepted:</strong><br><%= error %></div>
+<% } %>
+
+<form method="post" action="/marketing/questionnaires/import">
+  <div class="panel">
+    <label for="json" style="display:block;font-weight:600;margin:0 0 8px;">Questionnaire JSON</label>
+    <textarea id="json" name="json" rows="20" spellcheck="false"
+      style="width:100%;box-sizing:border-box;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;line-height:1.5;padding:12px;border:1px solid var(--line);border-radius:8px;"><%= json %></textarea>
+    <div style="display:flex;gap:10px;align-items:center;margin:14px 0 0;flex-wrap:wrap;">
+      <button type="submit" class="btn">Import</button>
+      <button type="button" class="btn btn-ghost" id="example">Paste an example</button>
+      <label class="btn btn-ghost" style="margin:0;">Load a .json file<input type="file" id="file" accept=".json,application/json" style="display:none;"></label>
+      <span class="muted" style="font-size:13px;">Nothing is sent to anyone until you attach it to a campaign.</span>
+    </div>
+  </div>
+</form>
+
+<div class="panel" style="margin-top:18px;">
+  <h2 style="font-size:16px;margin:0 0 10px;">The format</h2>
+  <p class="muted" style="margin:0 0 12px;">Question types: <code>single</code>, <code>multi</code>, <code>rating</code>, <code>nps</code>, <code>yes_no</code>, <code>short_text</code>, <code>long_text</code>, <code>heading</code>.
+  A <code>"mode": "poll"</code> file asks exactly one question and is answered by clicking a link in the email — everything else is a form on a page.</p>
+  <pre id="sample" style="margin:0;padding:14px;background:var(--panel-2, #f8fafc);border:1px solid var(--line);border-radius:8px;overflow-x:auto;font-size:12.5px;line-height:1.55;">{
+  "schema": "lits.questionnaire/1",
+  "key": "systems-review-2026",
+  "title": "Your systems — 6 questions",
+  "intro": "Honest answers help us fix the right thing. Takes about a minute.",
+  "mode": "form",
+  "closesAt": "2026-09-30",
+  "thankYou": "Thanks — this goes straight into your IT Review.",
+  "questions": [
+    { "key": "speed",   "type": "rating",    "scale": 5, "label": "How fast does your PC feel day to day?", "required": true },
+    { "key": "when",    "type": "multi",     "label": "When is it worst?", "options": ["First thing", "Mid-morning", "After lunch", "End of day", "No pattern"] },
+    { "key": "what",    "type": "multi",     "label": "What is slow?", "options": ["Logging in", "Opening files", "Email", "Line-of-business app", "Printing", "Internet"], "other": true },
+    { "key": "where",   "type": "single",    "label": "Where do you mostly work?", "options": ["In the office", "At home", "Both"] },
+    { "key": "blocked", "type": "yes_no",    "label": "Has it stopped you doing your job in the last month?" },
+    { "key": "comment", "type": "long_text", "label": "Anything else we should know?" }
+  ]
+}</pre>
+</div>
+
+<script>
+  document.getElementById('example').addEventListener('click', function () {
+    document.getElementById('json').value = document.getElementById('sample').textContent;
+  });
+  document.getElementById('file').addEventListener('change', function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    var r = new FileReader();
+    r.onload = function () { document.getElementById('json').value = String(r.result || ''); };
+    r.readAsText(f);
+  });
+</script>
+
+<%- include('../partials/footer') %>

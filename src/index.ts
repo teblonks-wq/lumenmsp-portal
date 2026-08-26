@@ -524,6 +524,15 @@ server.listen(config.PORT, () => {
   startEolSync();           // End-of-life dates pulled nightly from endoflife.date
   // Before anything that might need a secret. Never throws - see initVaultKey.
   initVaultKey().catch((e) => console.error('[vault] init failed:', e.message));
+  // BitLocker scan commands are automatic and frequent, so they are the one thing that
+  // grows without bound — agent_commands has never been pruned. Daily, and only rows this
+  // feature created.
+  setInterval(() => {
+    import('./lib/bitlocker')
+      .then((m) => m.pruneBitlockerCommands())
+      .then((n) => { if (n) console.log('[bitlocker] pruned %d old scan command(s)', n); })
+      .catch((e: any) => console.error('[bitlocker] prune failed:', e.message));
+  }, 24 * 60 * 60 * 1000);
   startScanPoller();       // on-demand Bitdefender scans: pending -> running -> finished
   startSecurityReconcile(); // Bitdefender deployments: move queued -> installed -> protected, and
                             // chase a fresh security reading from any machine whose installer has

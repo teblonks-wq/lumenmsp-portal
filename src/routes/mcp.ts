@@ -3,6 +3,10 @@ import crypto from 'crypto';
 import { pool } from '../db/pool';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { customerSubscriptions, subscriptionsOverview } from '../lib/ms-subscriptions';
+import { logActivity } from '../lib/activity';
+import {
+  Principal, resolvePrincipal, touchToken, mayCall, issueToken, revokeToken,
+} from '../lib/mcp-auth';
 
 // ── Claude MCP connector (read-only) ──────────────────────────────────────────
 // A minimal, dependency-free Model Context Protocol server over Streamable HTTP,
@@ -32,24 +36,18 @@ const router = Router();
 
 // ── Audit — every MCP call is logged (Terry, 2026-08-14: "we need to log everything").
 // Fire-and-forget: a logging failure must NEVER break or slow the actual call.
-function auditCall(row: { method: string; tool: string | null; args: any; ok: boolean; error: string | null; durationMs: number; ip: string | null }): void {
+function auditCall(row: { method: string; tool: string | null; args: any; ok: boolean; error: string | null; durationMs: number; ip: string | null; principal: string | null }): void {
   pool.query(
-    `INSERT INTO mcp_call_log (method, tool, args, ok, error, duration_ms, ip)
-     VALUES ($1,$2,$3::jsonb,$4,$5,$6,$7)`,
+    `INSERT INTO mcp_call_log (method, tool, args, ok, error, duration_ms, ip, principal)
+     VALUES ($1,$2,$3::jsonb,$4,$5,$6,$7,$8)`,
     [row.method, row.tool, row.args != null ? JSON.stringify(row.args) : null, row.ok,
-     row.error ? String(row.error).slice(0, 500) : null, row.durationMs, row.ip]
+     row.error ? String(row.error).slice(0, 500) : null, row.durationMs, row.ip, row.principal]
   ).catch((e) => console.error('[mcp] audit log failed:', e.message));
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
-function tokenOk(supplied: unknown): boolean {
-  const secret = (process.env.MCP_TOKEN || '').trim();
-  if (!secret || typeof supplied !== 'string' || !supplied) return false;
-  // Hash both sides so timingSafeEqual gets equal-length buffers.
-  const a = crypto.createHash('sha256').update(String(supplied)).digest();
-  const b = crypto.createHash('sha256').update(secret).digest();
-  return crypto.timingSafeEqual(a, b);
-}
+// Named, revocable principals live in lib/mcp-auth.ts — the module doc there explains
+// the owner-token vs delegated-token split and why a delegated token is read-only.
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 const clampLimit = (v: any, def = 20, max = 50): number => {
@@ -132,6 +130,10 @@ interface Tool {
   description: string;
   inputSchema: any;
   run: (args: any) => Promise<any>;
+  // Every tool below is a SELECT with a LIMIT — this flag is here so that the day a
+  // write tool IS added, it must opt in explicitly, and a delegated (read-only) token
+  // will neither see it in tools/list nor be able to call it. Absent = read-only.
+  writes?: true;
 }
 
 const TOOLS: Tool[] = [
@@ -665,7 +667,11 @@ const rpcErr = (id: any, code: number, message: string) => ({ jsonrpc: '2.0' as 
 
 const SUPPORTED_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 
-async function handleRpc(msg: any, ctx: { ip: string | null }): Promise<any | null> {
+// What this principal is allowed to see. A read-only token is not shown write tools at
+// all — an AI client cannot try what it was never told exists.
+const visibleTools = (p: Principal): Tool[] => TOOLS.filter((t) => mayCall(p, t.writes));
+
+async function handleRpc(msg: any, ctx: { ip: string | null; principal: Principal }): Promise<any | null> {
   const id = msg && msg.id !== undefined ? msg.id : undefined;
   const method = msg && typeof msg.method === 'string' ? msg.method : '';
   if (!msg || msg.jsonrpc !== '2.0' || !method) {
@@ -682,27 +688,33 @@ async function handleRpc(msg: any, ctx: { ip: string | null }): Promise<any | nu
           capabilities: { tools: {} },
           serverInfo: { name: 'LumenMSP Portal', version: '1.0.0' },
           instructions:
-            'Read-only access to the LumenMSP Portal (Lumen IT Solutions): customers, contacts, helpdesk tickets, invoices and billing state. All money values are GBP. Nothing here can modify Portal data. Start with the search tool when you only have a name or number.',
+            `Read-only access to the LumenMSP Portal (Lumen IT Solutions): customers, contacts, helpdesk tickets, invoices and billing state. All money values are GBP. Nothing here can modify Portal data. Start with the search tool when you only have a name or number. You are connected as: ${ctx.principal.label}. Every call you make is recorded in the Portal's MCP audit log against that name.`,
         });
       }
       case 'ping':
         return rpcOk(id, {});
       case 'tools/list':
-        return rpcOk(id, { tools: TOOLS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
+        return rpcOk(id, { tools: visibleTools(ctx.principal).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
       case 'tools/call': {
         const name = String(msg.params?.name || '');
         const args = msg.params?.arguments || {};
         const tool = TOOLS.find((t) => t.name === name);
-        if (!tool) { auditCall({ method, tool: name, args, ok: false, error: 'unknown tool', durationMs: 0, ip: ctx.ip }); return rpcErr(id, -32602, `Unknown tool: ${name}`); }
+        if (!tool) { auditCall({ method, tool: name, args, ok: false, error: 'unknown tool', durationMs: 0, ip: ctx.ip, principal: ctx.principal.label }); return rpcErr(id, -32602, `Unknown tool: ${name}`); }
+        // The read-only guarantee, enforced at the door rather than trusted to the tool
+        // bodies. Today no tool sets writes:true, so this can only ever fire in future.
+        if (!mayCall(ctx.principal, tool.writes)) {
+          auditCall({ method, tool: name, args, ok: false, error: 'refused — read-only token cannot call a write tool', durationMs: 0, ip: ctx.ip, principal: ctx.principal.label });
+          return rpcErr(id, -32000, `Tool "${name}" changes Portal data and this token is read-only.`);
+        }
         const started = Date.now();
         try {
           const result = await tool.run(args);
           // A tool may hand back { error } for a soft failure (no customer found etc.) — record that too.
           const soft = result && typeof result === 'object' && 'error' in result ? String((result as any).error) : null;
-          auditCall({ method, tool: name, args, ok: !soft, error: soft, durationMs: Date.now() - started, ip: ctx.ip });
+          auditCall({ method, tool: name, args, ok: !soft, error: soft, durationMs: Date.now() - started, ip: ctx.ip, principal: ctx.principal.label });
           return rpcOk(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], isError: false });
         } catch (e: any) {
-          auditCall({ method, tool: name, args, ok: false, error: e?.message || String(e), durationMs: Date.now() - started, ip: ctx.ip });
+          auditCall({ method, tool: name, args, ok: false, error: e?.message || String(e), durationMs: Date.now() - started, ip: ctx.ip, principal: ctx.principal.label });
           // Tool-level failure → isError result (not a protocol error), per spec.
           return rpcOk(id, { content: [{ type: 'text', text: `Tool error: ${e?.message || e}` }], isError: true });
         }
@@ -724,23 +736,25 @@ async function handleRpc(msg: any, ctx: { ip: string | null }): Promise<any | nu
 
 // ── HTTP endpoint ─────────────────────────────────────────────────────────────
 router.post('/mcp/:token', async (req: Request, res: Response) => {
-  if (!tokenOk(req.params.token)) {
+  const ip = String(req.ip || req.headers['x-forwarded-for'] || '').replace(/^::ffff:/, '').split(',')[0].trim() || null;
+  const principal = await resolvePrincipal(req.params.token);
+  if (!principal) {
     res.status(401).json(rpcErr(null, -32000, 'Unauthorized'));
     return;
   }
+  touchToken(principal.tokenId, ip);
   const body = req.body;
   const isBatch = Array.isArray(body);
   const msgs: any[] = isBatch ? body : [body];
-  const ip = String(req.ip || req.headers['x-forwarded-for'] || '').replace(/^::ffff:/, '').split(',')[0].trim() || null;
-  const responses = (await Promise.all(msgs.map((m) => handleRpc(m, { ip })))).filter((r) => r !== null);
+  const responses = (await Promise.all(msgs.map((m) => handleRpc(m, { ip, principal })))).filter((r) => r !== null);
   if (!responses.length) { res.status(202).end(); return; } // notifications only
   res.status(200).json(isBatch ? responses : responses[0]);
 });
 
 // Streamable HTTP allows a server to refuse the SSE stream — 405 tells the client
 // to stick to plain POST request/response, which is all this stateless server needs.
-router.all('/mcp/:token', (req: Request, res: Response) => {
-  if (!tokenOk(req.params.token)) { res.status(401).json(rpcErr(null, -32000, 'Unauthorized')); return; }
+router.all('/mcp/:token', async (req: Request, res: Response) => {
+  if (!(await resolvePrincipal(req.params.token))) { res.status(401).json(rpcErr(null, -32000, 'Unauthorized')); return; }
   res.status(405).set('Allow', 'POST').json(rpcErr(null, -32000, 'Method not allowed — POST only'));
 });
 
@@ -748,14 +762,68 @@ router.all('/mcp/:token', (req: Request, res: Response) => {
 // Separate from the token endpoint above: this is Terry reading what the connector did.
 router.get('/mcp-log', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const tool = String(req.query.tool || '').trim() || null;
+  const who = String(req.query.who || '').trim() || null;
   const rows = (await pool.query(
-    `SELECT id, method, tool, args, ok, error, duration_ms, ip, created_at
-       FROM mcp_call_log WHERE ($1::text IS NULL OR tool=$1)
-      ORDER BY created_at DESC LIMIT 300`, [tool])).rows;
+    `SELECT id, method, tool, args, ok, error, duration_ms, ip, principal, created_at
+       FROM mcp_call_log
+      WHERE ($1::text IS NULL OR tool=$1) AND ($2::text IS NULL OR principal=$2)
+      ORDER BY created_at DESC LIMIT 300`, [tool, who])).rows;
   const tools = (await pool.query(
     `SELECT tool, COUNT(*)::int n, MAX(created_at) last FROM mcp_call_log
       WHERE tool IS NOT NULL GROUP BY tool ORDER BY n DESC`)).rows;
-  res.render('mcp-log', { user: req.session.user!, rows, tools, tool });
+  // Who has been using the connector. Calls logged before per-user tokens existed have
+  // principal NULL — shown as "unattributed" rather than quietly folded into anyone.
+  const people = (await pool.query(
+    `SELECT COALESCE(principal, '(unattributed)') AS principal, COUNT(*)::int n, MAX(created_at) last
+       FROM mcp_call_log GROUP BY 1 ORDER BY n DESC`)).rows;
+  res.render('mcp-log', { user: req.session.user!, rows, tools, tool, people, who });
+});
+
+// ── Delegated tokens — issue, review, revoke (admin only, session-guarded) ─────
+// The screen behind giving someone else the connector. Issuing shows the full URL
+// exactly once, because only its hash is kept.
+router.get('/mcp-tokens', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const rows = (await pool.query(
+    `SELECT t.id, t.label, t.prefix, t.can_write, t.note, t.created_by, t.created_at,
+            t.last_used_at, t.last_ip, t.call_count, t.revoked_at, t.revoked_by,
+            (SELECT COUNT(*)::int FROM mcp_call_log l WHERE l.principal = t.label) AS logged_calls
+       FROM mcp_tokens t
+      ORDER BY (t.revoked_at IS NOT NULL), t.created_at DESC`)).rows;
+  const sess = req.session as any;
+  const issued = sess.mcpIssued || null;   // shown once, then gone for good
+  if (sess.mcpIssued) delete sess.mcpIssued;
+  res.render('mcp-tokens', {
+    user: req.session.user!,
+    rows,
+    issued,
+    base: `${req.protocol}://${req.get('host')}`,
+    envTokenSet: !!(process.env.MCP_TOKEN || '').trim(),
+    notice: req.query.msg || null,
+    err: req.query.err || null,
+  });
+});
+
+router.post('/mcp-tokens', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const label = String(req.body.label || '').trim().slice(0, 80);
+  const note = String(req.body.note || '').trim().slice(0, 300) || null;
+  if (!label) { res.redirect('/mcp-tokens?err=' + encodeURIComponent('Give the token a name — it is what appears against every call in the log.')); return; }
+  const issued = await issueToken(label, note, req.session.user!.displayName || req.session.user!.email);
+  if (!issued.ok) { res.redirect('/mcp-tokens?err=' + encodeURIComponent(issued.error)); return; }
+  await logActivity(req.session.user!.id, 'created', 'mcp_tokens', issued.id, `Issued a read-only MCP connector token for "${label}"`).catch(() => {});
+  // Shown once on the next render, then dropped — only the hash is kept.
+  (req.session as any).mcpIssued = { label, url: `${req.protocol}://${req.get('host')}/mcp/${issued.token}` };
+  req.session.save(() => res.redirect('/mcp-tokens'));
+});
+
+router.post('/mcp-tokens/:id/revoke', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.redirect('/mcp-tokens?err=' + encodeURIComponent('Unknown token.')); return; }
+  const label = await revokeToken(id, req.session.user!.displayName || req.session.user!.email);
+  if (!label) { res.redirect('/mcp-tokens?err=' + encodeURIComponent('That token was already revoked.')); return; }
+  await logActivity(req.session.user!.id, 'updated', 'mcp_tokens', id, `Revoked the MCP connector token for "${label}"`).catch(() => {});
+  // Takes effect on the very next call: resolvePrincipal filters on revoked_at IS NULL
+  // and there is no cache in front of it.
+  res.redirect('/mcp-tokens?msg=' + encodeURIComponent(`Revoked "${label}" — that URL stops working immediately.`));
 });
 
 export default router;

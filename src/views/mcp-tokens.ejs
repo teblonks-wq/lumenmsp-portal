@@ -1,0 +1,84 @@
+<%- include('partials/header', { title: 'MCP connector access', user }) %>
+<%
+function ago(d){ if(!d) return ''; var s=Math.floor((Date.now()-new Date(d))/1000); if(s<60)return s+'s'; var m=Math.floor(s/60); if(m<60)return m+'m'; var h=Math.floor(m/60); if(h<24)return h+'h'; return Math.floor(h/24)+'d'; }
+function on(d){ if(!d) return ''; var x=new Date(d); return x.toLocaleDateString('en-GB')+' '+x.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); }
+%>
+<div class="page-header"><h1 style="margin:0;">MCP connector access</h1>
+  <p class="muted" style="margin:4px 0 0;">Who can point Claude at the Portal. Every token issued here is <strong>read-only</strong> &mdash; it can look at anything in the estate and change nothing. Every call it makes is recorded against its name in the <a href="/mcp-log">MCP call log</a>.</p>
+</div>
+
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert alert-success"><%= notice %></div><% } %>
+<% if (typeof err !== 'undefined' && err) { %><div class="alert alert-error"><%= err %></div><% } %>
+
+<% if (issued) { %>
+<div class="card" style="border:2px solid var(--accent);margin-bottom:18px;">
+  <h2 style="margin:0 0 6px;">Token for <%= issued.label %> &mdash; copy it now</h2>
+  <p class="muted" style="margin:0 0 12px;">This is the only time it will ever be shown. The Portal stores a hash, not the token, so it cannot be looked up again &mdash; if it goes missing, revoke the row and issue a new one. <strong>Treat the whole URL as a password.</strong></p>
+  <div style="display:flex;gap:8px;align-items:stretch;">
+    <input class="input" id="issued-url" readonly value="<%= issued.url %>" style="flex:1;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;" onclick="this.select();">
+    <button class="btn btn-primary" type="button" onclick="var i=document.getElementById('issued-url');i.select();navigator.clipboard.writeText(i.value);this.textContent='Copied';">Copy</button>
+  </div>
+  <p class="muted" style="margin:12px 0 0;font-size:13px;">Send it over something private (not email to a shared mailbox). In Claude, they add it under <em>Settings &rarr; Connectors &rarr; Add custom connector</em> and paste this as the server URL.</p>
+</div>
+<% } %>
+
+<div class="card" style="margin-bottom:18px;">
+  <h2 style="margin:0 0 10px;">Issue a token</h2>
+  <form method="post" action="/mcp-tokens" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+    <div class="form-group" style="flex:1;min-width:220px;">
+      <label>Who is it for *</label>
+      <input class="input" name="label" required maxlength="80" placeholder="e.g. Andy Smith" style="width:100%;">
+    </div>
+    <div class="form-group" style="flex:2;min-width:260px;">
+      <label>Note <span class="muted">(optional)</span></label>
+      <input class="input" name="note" maxlength="300" placeholder="What they need it for" style="width:100%;">
+    </div>
+    <button class="btn btn-primary" type="submit" style="height:38px;">Issue read-only token</button>
+  </form>
+  <p class="muted" style="margin:12px 0 0;font-size:13px;">The name is the identity: it is stamped on every call this token makes. Two live tokens cannot share a name.</p>
+</div>
+
+<div class="card">
+  <h2 style="margin:0 0 10px;">Issued tokens</h2>
+  <% if (!rows.length) { %>
+    <div class="empty-state">No tokens issued yet. Your own connection uses the <code>MCP_TOKEN</code> in the server <code>.env</code><% if (!envTokenSet) { %> &mdash; which is currently <strong>not set</strong>, so the connector is switched off<% } %>.</div>
+  <% } else { %>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Who</th><th>Access</th><th>Token</th><th>Last used</th><th>Calls</th><th>Issued</th><th></th></tr></thead>
+    <tbody>
+      <% rows.forEach(function(r){ var dead = !!r.revoked_at; %>
+      <tr style="<%= dead ? 'opacity:.55;' : '' %>">
+        <td>
+          <strong><%= r.label %></strong>
+          <% if (dead) { %><span class="muted"> &mdash; revoked <%= on(r.revoked_at) %><%= r.revoked_by ? ' by ' + r.revoked_by : '' %></span><% } %>
+          <% if (r.note) { %><div class="muted" style="font-size:12px;"><%= r.note %></div><% } %>
+        </td>
+        <td><% if (r.can_write) { %><span style="color:var(--bad-fg);font-weight:600;">Read + write</span><% } else { %><span style="color:var(--ok);">Read only</span><% } %></td>
+        <td class="muted" style="font-family:ui-monospace,Consolas,monospace;font-size:12px;"><%= r.prefix %>&hellip;</td>
+        <td class="muted" style="font-size:12px;white-space:nowrap;">
+          <% if (r.last_used_at) { %><span title="<%= on(r.last_used_at) %>"><%= ago(r.last_used_at) %> ago</span><% if (r.last_ip) { %><div style="font-size:11px;"><%= r.last_ip %></div><% } %><% } else { %>never<% } %>
+        </td>
+        <td class="muted" style="font-size:12px;">
+          <% if (r.logged_calls) { %><a href="/mcp-log?who=<%= encodeURIComponent(r.label) %>"><%= r.logged_calls %></a><% } else { %><%= r.call_count || 0 %><% } %>
+        </td>
+        <td class="muted" style="font-size:12px;white-space:nowrap;" title="<%= r.created_by || '' %>"><%= on(r.created_at) %></td>
+        <td style="text-align:right;">
+          <% if (!dead) { %>
+          <form method="post" action="/mcp-tokens/<%= r.id %>/revoke" style="display:inline;" onsubmit="return confirm('Revoke the token for <%= r.label %>? Their Claude connector stops working on the next call.');">
+            <button class="btn" type="submit">Revoke</button>
+          </form>
+          <% } %>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <% } %>
+</div>
+
+<div class="card" style="margin-top:18px;">
+  <h2 style="margin:0 0 8px;">What a token holder can and cannot do</h2>
+  <p class="muted" style="margin:0 0 10px;">The connector is read-only <em>by construction</em>, not by permission: every tool it exposes is a SELECT with a row limit, and there is no code path in it that can insert, update or delete. A token issued here is additionally flagged <code>can_write = false</code>, so if a write tool is ever added it will be invisible and unreachable to these tokens.</p>
+  <p class="muted" style="margin:0;"><strong>Do note what read means:</strong> the full estate &mdash; customers, contacts, helpdesk cases and their message bodies, contracts, subscriptions, invoices, outstanding debt and whole-business turnover. There is no per-customer or per-module narrowing yet. Give one to someone you would show the books to.</p>
+</div>
+<%- include('partials/footer') %>

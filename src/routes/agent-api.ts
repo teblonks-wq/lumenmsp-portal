@@ -622,6 +622,15 @@ router.post('/agent/api/heartbeat', requireDevice, async (req: Request, res: Res
       await catchUpBitdefender(d.id);
     } catch { /* never let this break a heartbeat */ }
 
+    // BitLocker, on the same principle but on a clock. A machine with no reading is due
+    // immediately, so it converges on this very check-in; after that it re-reads on the
+    // interval, because Windows rotates a protector once it has been used and a key that
+    // is quietly out of date is worse than no key — somebody reads it out and it fails.
+    try {
+      const { maybeQueueBitlockerScan } = await import('../lib/bitlocker');
+      await maybeQueueBitlockerScan(d.id);
+    } catch { /* never let this break a heartbeat */ }
+
     res.json({ ok: true, public_ip: clientIp(req), config: await deviceConfig(d.customer_id, d.update_ring ?? 2) });
   } catch (e: any) {
     console.error('[agent] heartbeat failed:', e.message);

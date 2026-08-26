@@ -1,5 +1,6 @@
 import { pool } from '../db/pool';
 import { encryptSecret, decryptSecret, vaultConfigured } from './vault';
+import { getSetting } from './settings';
 
 // ── BitLocker recovery keys ───────────────────────────────────────────────────────
 // The honest shape of this feature: a machine sitting at the BitLocker recovery screen
@@ -176,4 +177,79 @@ export async function ingestBitlockerScan(deviceId: number, output: string): Pro
     throw e;
   } finally { client.release(); }
   return kept;
+}
+
+// ── Keeping the key current ───────────────────────────────────────────────────────
+// A recovery key is not static. Windows rotates a protector after it has been used, so
+// a key captured once and never refreshed can quietly become the WRONG number — and a
+// wrong key read out over the phone is worse than no key at all, because somebody acts
+// on it. That is the whole reason for re-scanning rather than collecting once.
+//
+// Two states, one rule: a device with no reading at all is always due, so it converges
+// on the very next check-in; after that it re-reads on the interval. A machine with no
+// BitLocker still gets rows (protection Off, no key), so it ages on the same clock
+// instead of being asked forever.
+const DEFAULT_REFRESH_MINUTES = 15;
+// Due when there is no reading at all, or the newest one has aged past the interval —
+// and in either case only if we have not just asked. $2 = interval minutes,
+// $3 = attempt guard minutes.
+const BL_DUE_SQL = `
+  SELECT (
+    (SELECT MAX(collected_at) FROM asset_bitlocker_keys WHERE device_id = $1) IS NULL
+    OR (SELECT MAX(collected_at) FROM asset_bitlocker_keys WHERE device_id = $1)
+         < NOW() - ($2 || ' minutes')::interval
+  ) AND NOT EXISTS (
+    SELECT 1 FROM agent_commands
+     WHERE device_id = $1 AND kind = 'shell.powershell'
+       AND (status IN ('queued','running') OR requested_at > NOW() - ($3 || ' minutes')::interval)
+       AND payload::text LIKE '%Get-BitLockerVolume%'
+  ) AS due`;
+
+
+/** Do not queue another scan within this of the last ATTEMPT, whatever became of it.
+ *  Without it, a machine where the scan cannot run is asked again every heartbeat for
+ *  the rest of its life. */
+const ATTEMPT_GUARD_MINUTES = 5;
+
+export async function bitlockerRefreshMinutes(): Promise<number> {
+  const raw = await getSetting('bitlocker', 'refresh_minutes').catch(() => null);
+  const n = parseInt(String(raw ?? ''), 10);
+  return Number.isFinite(n) && n >= 5 ? n : DEFAULT_REFRESH_MINUTES;
+}
+
+/**
+ * Called on every heartbeat. Queues a scan only when one is actually due, so the common
+ * case is two cheap reads and nothing else.
+ *
+ * Returns true if a scan was queued — for logging, not for control flow.
+ */
+export async function maybeQueueBitlockerScan(deviceId: number): Promise<boolean> {
+  if (!vaultConfigured()) return false;   // nowhere safe to put a key, so do not fetch one
+  const mins = await bitlockerRefreshMinutes();
+  const due = (await pool.query(BL_DUE_SQL, [deviceId, mins, ATTEMPT_GUARD_MINUTES])).rows[0];
+  if (!due || !due.due) return false;
+  await pool.query(
+    `INSERT INTO agent_commands (device_id, kind, payload, status)
+     VALUES ($1,'shell.powershell',$2,'queued')`,
+    [deviceId, JSON.stringify({ script: BITLOCKER_SCAN_SCRIPT, run_as: 'system' })]);
+  return true;
+}
+
+/**
+ * These scans are automatic and frequent, so their command rows are the one thing on this
+ * machine that grows without bound — agent_commands has never been pruned. A finished
+ * BitLocker scan is worth nothing after a week: the keys live in asset_bitlocker_keys, and
+ * the command row is only ever an audit trail of the fetch.
+ *
+ * Matched on the redacted output this feature writes, so it can only ever delete rows
+ * this feature created — never somebody's real PowerShell history.
+ */
+export async function pruneBitlockerCommands(): Promise<number> {
+  const r = await pool.query(
+    `DELETE FROM agent_commands
+      WHERE kind='shell.powershell'
+        AND requested_by IS NULL
+        AND output LIKE 'BitLocker scan%'
+        AND finished_at < NOW() - INTERVAL '7 days'`);
+  return r.rowCount || 0;
 }
