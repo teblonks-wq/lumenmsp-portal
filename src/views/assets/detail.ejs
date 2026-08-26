@@ -542,6 +542,63 @@ function _ago(d) {
       </p>
     <% } %>
 
+    <h4 style="margin:22px 0 8px;">Bitdefender scans</h4>
+    <% var _sc = (typeof bdScans !== 'undefined') ? bdScans : []; %>
+    <% var _running = _sc.some(function(s){ return !s.finished_at && s.status_code != null; }); %>
+    <% if (!bd || !bd.deviceId && !bd.assetId) { %>
+      <p class="muted" style="font-size:13px;">No Bitdefender record for this machine yet.</p>
+    <% } else { %>
+      <% if (user.role === 'admin') { %>
+      <div style="display:flex;gap:8px;align-items:center;margin:0 0 10px;flex-wrap:wrap;">
+        <% ['quick','full'].forEach(function(t){ %>
+        <form method="post" action="/assets/<%= asset.id %>/bd-scan" style="display:inline;margin:0;"
+              <% if (t === 'full') { %>onsubmit="return confirm('A full scan reads every file and can take hours, and the machine will feel slower while it runs. Start it?');"<% } %>>
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+          <input type="hidden" name="type" value="<%= t %>">
+          <button class="btn<%= t === 'quick' ? ' btn-primary' : '' %>" type="submit" style="padding:4px 12px;font-size:12.5px;" <%= _running ? 'disabled' : '' %>>
+            <%= t === 'quick' ? 'Quick scan now' : 'Full scan' %>
+          </button>
+        </form>
+        <% }); %>
+        <% if (_running) { %><span class="muted" style="font-size:12px;">A scan is already running — status refreshes every few minutes.</span><% } %>
+      </div>
+      <% } %>
+      <% if (!_sc.length) { %>
+        <p class="muted" style="font-size:13px;">No scans have been started from the Portal yet. Scheduled scans set in GravityZone are not listed here.</p>
+      <% } else { %>
+        <div class="table-wrap"><table class="table">
+          <thead><tr><th>Started</th><th>Type</th><th>Status</th><th>Found</th><th>Asked by</th></tr></thead>
+          <tbody>
+          <% _sc.forEach(function (s) { %>
+            <tr>
+              <td class="muted" style="white-space:nowrap;font-size:12.5px;"><%= s.requested_at %></td>
+              <td style="text-transform:capitalize;"><%= s.scan_type %></td>
+              <td>
+                <% var _c = s.status_code == null ? 'var(--bad-fg)' : (s.status_code === 3 ? 'var(--ok)' : 'var(--warn-fg)'); %>
+                <span style="display:inline-flex;align-items:center;gap:6px;font-weight:600;color:<%= _c %>;">
+                  <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= _c %>;"></span>
+                  <%= s.status_label %>
+                </span>
+                <% if (s.detail) { %><div class="muted" style="font-size:11.5px;"><%= s.detail %></div><% } %>
+                <% if (s.finished_at) { %><div class="muted" style="font-size:11.5px;">finished <%= s.finished_at %></div><% } %>
+              </td>
+              <td>
+                <% if (s.status_code !== 3) { %><span class="muted">&mdash;</span>
+                <% } else if (!s.found) { %><span style="color:var(--ok);font-weight:600;">Clean</span>
+                <% } else { %><span style="color:var(--bad-fg);font-weight:600;"><%= s.found %> detection<%= s.found === 1 ? '' : 's' %></span><% } %>
+              </td>
+              <td class="muted" style="font-size:12.5px;"><%= s.requested_by_name || 'Portal' %></td>
+            </tr>
+          <% }); %>
+          </tbody>
+        </table></div>
+        <p class="muted" style="font-size:11.5px;margin:8px 0 0;line-height:1.5;">
+          &ldquo;Found&rdquo; counts detections Bitdefender recorded on this machine while the scan ran.
+          Our own MeshAgent trips Hyper Detect and is deliberately not counted.
+        </p>
+      <% } %>
+    <% } %>
+
     <h4 style="margin:22px 0 8px;">BitLocker</h4>
     <% var _bl = (typeof bitlocker !== 'undefined') ? bitlocker : []; %>
     <% var _blVault = (typeof canVaultKeys !== 'undefined' && canVaultKeys); %>

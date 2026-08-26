@@ -16,6 +16,7 @@ import { deviceSecurity, deployLog, REQUIRED_EXCLUSIONS } from '../lib/gravityzo
 import { customerEnabled } from '../lib/gravityzone';
 import { ASSET_FIELDS, ASSET_OPS, parseConditions, conditionsToSql } from '../lib/asset-query';
 import { BITLOCKER_SCAN_SCRIPT, bitlockerSuspendScript, bitlockerForDevice, revealBitlockerKey } from '../lib/bitlocker';
+import { startScan, scansFor, scanInFlight, type ScanType } from '../lib/gravityzone-scan';
 import { requireVaultAccess, hasVaultAccess } from '../middleware/auth';
 
 const router = Router();
@@ -756,6 +757,8 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   // BitLocker volumes for the Security tab. Metadata only - whether a key exists, never
   // the key itself; that is fetched on an explicit reveal through the vault-gated route.
   const bitlocker = agentInfo ? await bitlockerForDevice(agentInfo.id).catch(() => []) : [];
+  // Bitdefender scan history for this machine (empty when BD has never seen it).
+  const bdScans = await scansFor(id).catch(() => []);
 
   // ── Bitdefender, on the machine's OWN page ───────────────────────────────────
   // Terry, 18 Aug: "i need to be able to deploy via the asset - still after asking
@@ -819,7 +822,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
 
   res.render('assets/detail', {
     user: req.session.user!, asset: row, agentInfo, gpo, security, patches, patchMeta, agentScripts,
-    bitlocker, canVaultKeys: await hasVaultAccess(req.session.user!),
+    bitlocker, canVaultKeys: await hasVaultAccess(req.session.user!), bdScans,
     bd, bdGate, bdLog, bdLogError, requiredExclusions: REQUIRED_EXCLUSIONS,
     trackCommandId: parseInt(String(req.query.cmd || ''), 10) || null,
     latestAgentVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
@@ -1592,6 +1595,22 @@ router.get('/bitlocker/:rowId/key', requireVaultAccess, async (req: Request, res
   await logActivity(req.session.user!.id, action === 'copy' ? 'copied' : 'revealed', 'bitlocker', rowId,
     `${action === 'copy' ? 'Copied' : 'Revealed'} the BitLocker recovery key for ${host} ${found.mount}`);
   res.json({ secret: found.key });
+});
+
+
+// ── Bitdefender: scan now ─────────────────────────────────────────────────────────
+router.post('/assets/:id/bd-scan', requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const back = '/assets/' + id;
+  const type = String(req.body.type || 'quick') === 'full' ? 'full' : 'quick';
+  if (await scanInFlight(id)) {
+    res.redirect(back + '?msg=' + encodeURIComponent('A scan is already running on this machine.') + '#security');
+    return;
+  }
+  const r = await startScan(id, type as ScanType, req.session.user!.id);
+  if (!r.ok) { res.redirect(back + '?err=' + encodeURIComponent(r.error || 'Could not start the scan.') + '#security'); return; }
+  res.redirect(back + '?msg=' + encodeURIComponent(
+    `${type === 'full' ? 'Full' : 'Quick'} scan sent to Bitdefender. A full scan can take a while; the status here updates every few minutes.`) + '#security');
 });
 
 export default router;

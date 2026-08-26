@@ -85,6 +85,7 @@ import { startAzureBackupSync } from './lib/azure-backup';
 import { startAcronisSync } from './lib/acronis';
 import { startEolSync } from './lib/eol-sync';
 import { startSecurityReconcile } from './lib/gravityzone-deploy';
+import { startScanPoller } from './lib/gravityzone-scan';
 import { initVaultKey } from './lib/vault';
 import { startGravityZoneSync, startAteraImport, startSecurityFreshnessSweep , startNetworkPolling } from './lib/auto-sync';
 import { resumeMassMailer } from './lib/mass-mailer';
@@ -523,6 +524,7 @@ server.listen(config.PORT, () => {
   startEolSync();           // End-of-life dates pulled nightly from endoflife.date
   // Before anything that might need a secret. Never throws - see initVaultKey.
   initVaultKey().catch((e) => console.error('[vault] init failed:', e.message));
+  startScanPoller();       // on-demand Bitdefender scans: pending -> running -> finished
   startSecurityReconcile(); // Bitdefender deployments: move queued -> installed -> protected, and
                             // chase a fresh security reading from any machine whose installer has
                             // finished. Previously reconcile() was never called at all.

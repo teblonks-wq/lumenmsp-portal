@@ -176,3 +176,19 @@ export async function scanInFlight(assetId: number): Promise<boolean> {
         AND requested_at > NOW() - INTERVAL '6 hours' LIMIT 1`, [assetId]);
   return r.rows.length > 0;
 }
+
+/** Poll GravityZone for the scans we are waiting on. Five minutes, not two: a scan takes
+ *  minutes to hours, and the task-list endpoint is rate-limited — polling it harder would
+ *  buy nothing and risk the rest of the integration. Nothing runs at boot, so a deploy
+ *  restart does not race the first sync. */
+export function startScanPoller(): void {
+  const EVERY_MS = 5 * 60 * 1000;
+  const tick = async () => {
+    try {
+      const n = await refreshScanTasks();
+      if (n) console.log('[gz] scan poller: %d task(s) updated', n);
+    } catch (e: any) { console.error('[gz] scan poller failed:', e.message); }
+  };
+  setTimeout(tick, 60_000);
+  setInterval(tick, EVERY_MS);
+}
