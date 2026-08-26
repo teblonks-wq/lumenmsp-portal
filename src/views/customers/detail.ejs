@@ -6,6 +6,14 @@
   .cust-tabs button { background:none; border:none; padding:10px 16px; font-size:14px; font-weight:600; color:var(--muted); cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; }
   .cust-tabs button:hover { color:var(--ink); }
   .cust-tabs button.active { color:var(--accent); border-bottom-color:var(--accent); }
+  /* The group dot stays its own colour on the active tab — the teal underline says
+     "open", the dot says "what kind of thing this is", and they answer different questions. */
+  .tab-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:7px; vertical-align:middle; position:relative; top:-1px; }
+  .cust-tabs button:not(.active) .tab-dot { opacity:.65; }
+  .cust-tabs button:hover .tab-dot { opacity:1; }
+  .tab-key { margin-left:auto; align-self:center; padding:0 4px 0 16px; font-size:11px; color:var(--faint); white-space:nowrap; }
+  .tab-key .tab-dot { margin-left:10px; margin-right:4px; width:6px; height:6px; }
+  @media (max-width: 900px) { .tab-key { display:none; } }
   .tab-panel { display:none; }
   .tab-panel.active { display:block; }
 </style>
@@ -131,23 +139,54 @@
   }
   </script>
   <% } %>
+<%
+  // ── The tab strip ───────────────────────────────────────────────────────────────
+  // Overview is pinned first because it is where every visit starts; everything after
+  // it is alphabetical, so a tab is found by name rather than by remembering where it
+  // was put. The GROUP is carried by a coloured dot instead of by position — with
+  // fifteen tabs, grouping them by order would fight the alphabet, and the alphabet is
+  // what makes one findable.
+  //
+  // Colours come from the existing token set only ([[lumenmsp-colour-scheme]] — never a
+  // new teal). Teal stays reserved for "this tab is open", so no group may claim it.
+  var TAB_GROUPS = {
+    money:    { label: 'Money',    colour: 'var(--ok)'    },  // #16a34a
+    it:       { label: 'IT',       colour: 'var(--blue)'  },  // #2563eb
+    info:     { label: 'Info',     colour: 'var(--faint)' },  // slate
+    settings: { label: 'Settings', colour: 'var(--warn)'  },  // #d97706
+  };
+  var n = function(v){ return (typeof v !== 'undefined' && v) ? v.length : 0; };
+  var custTabs = [
+    { key:'contacts',     label:'Contacts',        group:'info',     count: n(typeof contacts!=='undefined' && contacts) },
+    { key:'sites',        label:'Sites & Domains', group:'info'     },
+    { key:'composer',     label:'Composer',        group:'info'     },
+    { key:'cloud',        label:'IT & Cloud',      group:'it'       },
+    { key:'comms',        label:'Comms',           group:'it'       },
+    { key:'quotes',       label:'Quotes',          group:'money',    count: n(typeof quotes!=='undefined' && quotes) },
+    { key:'invoices',     label:'Invoices',        group:'money',    count: n(typeof invoices!=='undefined' && invoices) },
+    { key:'contracts',    label:'Contracts',       group:'money',    count: n(typeof contracts!=='undefined' && contracts) },
+    { key:'assets',       label:'Assets',          group:'it',       count: n(typeof assets!=='undefined' && assets) },
+    { key:'licences',     label:'Licences',        group:'it',       count: n(typeof licences!=='undefined' && licences) },
+    { key:'onboarding',   label:'Onboarding',      group:'info'     },
+    { key:'review',       label:'Account Review',  group:'info'     },
+    { key:'documents',    label:'Documents',       group:'info',     count: n(typeof documents!=='undefined' && documents) },
+    { key:'integrations', label:'Integrations',    group:'settings' }
+  ];
+  // Passwords only exists for vault users, so it joins the list rather than being
+  // written into it — otherwise the alphabet would have a hole in it for everyone else.
+  if (typeof canVault !== 'undefined' && canVault) {
+    custTabs.push({ key:'passwords', label:'Passwords', group:'it', count: n(typeof credentials!=='undefined' && credentials) });
+  }
+  custTabs.sort(function(a, b){ return a.label.localeCompare(b.label, 'en', { sensitivity:'base' }); });
+%>
 <nav class="cust-tabs">
   <button type="button" data-tab="overview">Overview</button>
-  <button type="button" data-tab="contacts">Contacts (<%= contacts.length %>)</button>
-  <button type="button" data-tab="sites">Sites &amp; Domains</button>
-  <button type="button" data-tab="composer">Composer</button>
-  <button type="button" data-tab="cloud">IT &amp; Cloud</button>
-  <button type="button" data-tab="comms">Comms</button>
-  <button type="button" data-tab="quotes">Quotes (<%= quotes.length %>)</button>
-  <button type="button" data-tab="invoices">Invoices (<%= invoices.length %>)</button>
-  <button type="button" data-tab="contracts">Contracts (<%= contracts.length %>)</button>
-  <button type="button" data-tab="assets">Assets (<%= (typeof assets!=='undefined'?assets:[]).length %>)</button>
-  <button type="button" data-tab="licences">Licences (<%= (typeof licences!=='undefined'?licences:[]).length %>)</button>
-  <button type="button" data-tab="onboarding">Onboarding</button>
-  <button type="button" data-tab="review">Account Review</button>
-  <% if (typeof canVault!=='undefined' && canVault) { %><button type="button" data-tab="passwords">Passwords (<%= (typeof credentials!=='undefined'?credentials:[]).length %>)</button><% } %>
-  <button type="button" data-tab="documents">Documents (<%= (typeof documents!=='undefined'?documents:[]).length %>)</button>
-  <button type="button" data-tab="integrations">Integrations</button>
+  <% custTabs.forEach(function(t){ var g = TAB_GROUPS[t.group]; %>
+    <button type="button" data-tab="<%= t.key %>" title="<%= g.label %>"><span class="tab-dot" style="background:<%= g.colour %>;"></span><%= t.label %><% if (typeof t.count !== 'undefined') { %> (<%= t.count %>)<% } %></button>
+  <% }); %>
+  <span class="tab-key">
+    <% Object.keys(TAB_GROUPS).forEach(function(k){ var g = TAB_GROUPS[k]; %><span class="tab-dot" style="background:<%= g.colour %>;"></span><%= g.label %><% }); %>
+  </span>
 </nav>
 
 <!-- ═══ Overview ═══ -->
