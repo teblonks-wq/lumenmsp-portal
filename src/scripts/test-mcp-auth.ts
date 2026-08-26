@@ -161,8 +161,26 @@ async function main(): Promise<void> {
   check('W4 a write tool is not even ADVERTISED to a read-only token',
     visible.length === 1 && visible[0] === 'list_tickets', visible.join(','));
   check('W5 the owner still sees it', TOOLS.filter((t) => mayCall(ownerP, (t as any).writes)).length === 2);
-  // Belt and braces: nothing in the shipped tool set declares writes today.
-  check('W5b every shipped tool is a read tool', true);
+  // Belt and braces, read off the SHIPPED tool set rather than asserted from memory:
+  // the day someone adds a write tool, this line is the one that notices.
+  const fs2 = await import('fs');
+  const routePath = process.env.MCP_ROUTE_PATH || 'src/routes/mcp.ts';
+  if (!fs2.existsSync(routePath)) {
+    check('W5b every shipped tool is a read tool', false, `cannot read ${routePath}`);
+  } else {
+    const route = fs2.readFileSync(routePath, 'utf8');
+    const toolNames = [...route.matchAll(/^    name: '([a-z_]+)',$/gm)].map((m) => m[1]);
+    const writeTools = [...route.matchAll(/^    writes: true,$/gm)].length;
+    check('W5b the shipped tool set was found at all', toolNames.length >= 12, `${toolNames.length} tools`);
+    check('W5c no shipped tool declares writes today', writeTools === 0, `${writeTools} write tool(s)`);
+    // The guard is only worth anything if it is actually wired into BOTH gates.
+    check('W5d the write guard is wired into tools/call and tools/list',
+      /if \(!mayCall\(ctx\.principal, tool\.writes\)\)/.test(route) && /TOOLS\.filter\(\(t\) => mayCall\(p, t\.writes\)\)/.test(route));
+    // And the connector must not have kept a second, unguarded way in.
+    check('W5e there is no path left that skips resolvePrincipal',
+      !/tokenOk\(/.test(route) && (route.match(/router\.(post|all)\('\/mcp\/:token'/g) || []).length === 2 &&
+      (route.match(/resolvePrincipal\(req\.params\.token\)/g) || []).length === 2);
+  }
 
   // ── L: the audit log carries WHO ────────────────────────────────────────────
   console.log('\nL — audit attribution');
