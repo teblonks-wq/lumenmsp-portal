@@ -1,6 +1,6 @@
 // App version + changelog. Bump APP_VERSION and prepend a new CHANGELOG entry on each release.
 // Minor work accumulates under the current version; ship a new MAJOR (v2, v3…) after a big batch.
-export const APP_VERSION = 'v4.0';
+export const APP_VERSION = 'v4.4';
 
 export interface ChangelogGroup { area: string; items: string[]; }
 export interface ChangelogEntry {
@@ -11,6 +11,120 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: 'v4.4',
+    date: '2026-08-26',
+    title: 'Ask Portal on any device, and the estate tells you when something lands',
+    groups: [
+      { area: 'Ask Portal — NEW (any device page)', items: [
+        'A button on every device that reads what the Portal actually holds about that machine — the security reading and how old it is, patch position, endpoint-protection state, encryption status, the last Windows event-log pull, every remote command ever run on it — and answers a question about it.',
+        'It reads that customer\'s case history too, with cases naming the machine sorted first, so "has this happened before?" is a question with an answer. Attach a specific case and its whole thread is read, so you can ask whether this is the same fault.',
+        'Findings you keep are saved against the machine AND the customer, and are read back as evidence by every later question about that machine or any of that customer\'s machines. They are searchable from the master search. The second engineer to look at a machine starts where the first one finished.',
+        'It is honest about what it does not know: every piece of evidence carries its age, "never collected" is reported as unknown rather than healthy, and an endpoint Bitdefender has not confirmed is never described as protected.',
+      ] },
+      { area: 'Estate notifications', items: [
+        'A card in the top right when a new machine enrols or Bitdefender lands on one — naming the machine and the customer, dismissed with an X. Onboarding thirty machines gives you one card that counts up, not thirty to clear.',
+        'Silent by design, and they stay until dismissed, so a rollout that finished while you were out is still on the screen when you get back.',
+      ] },
+      { area: 'Fixes', items: [
+        'BitLocker now says WHY there is nothing to show. "Nothing collected yet" covered five different situations — no master key, never asked, waiting on the machine, the scan failed, or the answer could not be stored — and only one of those is a matter of waiting. Each now reads differently, and an empty screen no longer looks like a machine with nothing to report.',
+        'Fixed: a machine whose BitLocker scan could not be stored was re-asked on every check-in, for ever. The guard that was meant to stop that could never see a finished attempt.',
+      ] },
+      { area: 'Housekeeping', items: [
+        'A backfill script for the third-party register: flags suppliers already used on a parked case, proposes the usual carriers and vendors for approval, and turns contacts marked as third party into register entries. Dry run by default.',
+      ] },
+    ],
+  },
+  {
+    version: 'v4.3',
+    date: '2026-08-26',
+    title: 'The Diary grows up, third parties get names, customers can book you, and leavers are cut off on time',
+    groups: [
+      { area: 'The Diary', items: [
+        'A week off is ONE entry that blocks every day inside it, rather than five entries somebody has to remember to make.',
+        'Recurring entries — daily, weekdays, weekly, fortnightly, monthly, with a repeat-until date. Each occurrence is a real entry, so the clash check sees them all.',
+        'Per-entry colour, an "IT meeting" kind, weekend shading and a legend.',
+      ] },
+      { area: 'Third parties — NEW (/third-parties)', items: [
+        '"Awaiting 3rd party" now names who: the organisation, their reference for it, and the day we said we would go back at them.',
+        'That chase date beats the blanket 24-hour timer — the case comes back at 09:00 on the chase day, not tomorrow regardless of who we are waiting on.',
+        'A board of everything currently sitting with someone else, oldest first, with overdue chases and the ones nobody has named surfaced at the top rather than hidden.',
+      ] },
+      { area: 'Customer bookings — NEW (/my/book)', items: [
+        'Customers book time with you from their own portal. Slots come from the live diary and from Outlook, and the booking goes through the diary\'s own clash check — a booking IS a diary entry, not a request sitting in a second list.',
+      ] },
+      { area: 'Leavers — NEW (/leavers)', items: [
+        'Cut a leaver\'s access at a stated time — AD account disabled through our own agent, Microsoft 365 sign-in blocked, sessions revoked — then one task raised for the human tidy-up. The Portal owns the schedule; nothing depends on Active Directory\'s own expiry field.',
+      ] },
+      { area: 'Questionnaires, polls and feedback — NEW (Marketing)', items: [
+        'Import a questionnaire, send it, and read the results. Re-importing the same one makes a new version and leaves earlier answers alone.',
+        'Polls attach to a Mass Mailer campaign as one-click links, and each recipient\'s link is their own, so answers arrive already attributed.',
+        'Every closed case asks the customer how it went — once per case, at most once a week per person — scored by engineer and by customer. A poor score raises an alert.',
+      ] },
+      { area: 'Devices', items: [
+        'BitLocker recovery keys on the Security tab, collected from the machine while it is healthy and stored encrypted — because a PC sitting at the recovery screen has no operating system, so nothing here or in any other tool can reach it. Suspend protection for one reboot before a BIOS or firmware update, so it does not drop into recovery in the first place.',
+        'Warranty on the Hardware tab: cover, dates, the entitlements behind it and where the answer came from — filled in by hand today, and from the manufacturers once their API accounts are approved. Anything typed in by hand is locked and never overwritten automatically.',
+        'Rename a device to the name the customer actually uses. It is searchable everywhere and the real hostname is never touched.',
+        'The customer\'s Assets tab gained a User column and a count of machines nobody owns.',
+      ] },
+      { area: 'Insights', items: [
+        'A year-to-date average weighted by weekday, so a month holding five Mondays stops inventing a Monday problem, and a "meeting demand through the day" curve with an answer-rate target.',
+      ] },
+    ],
+  },
+  {
+    version: 'v4.2',
+    date: '2026-08-20',
+    title: 'The estate keeps itself current, the asset list becomes a tool, and timestamps stop lying',
+    groups: [
+      { area: 'Assets', items: [
+        'Friendly names, groups and a real query builder on the asset list — every field already collected, now filterable, with the results selectable for bulk work.',
+        'An endpoint-protection shield on each row, so an unprotected machine is visible from the list rather than one page in.',
+        'Software inventory gained an Update button next to Uninstall.',
+      ] },
+      { area: 'RMM plumbing', items: [
+        'Updating every agent at once no longer freezes the Portal — two separate bugs, neither of them capacity.',
+        'Deployment reconciliation was written but called by nothing; it now runs on a timer, so a finished install stops reading as "installing".',
+        'Interactive actions wake the agent immediately instead of waiting for its next check-in.',
+      ] },
+      { area: 'Correctness', items: [
+        'Timestamps read back an hour out during British Summer Time — fixed at the database driver, in both directions, rather than compensated for page by page.',
+        'Windows Security Center lists registrations, not installations: a removed product could report itself as active. The agent now corroborates against what is actually on disk.',
+        'Case navigation no longer clips the last item in each group.',
+      ] },
+      { area: 'Access and intake', items: [
+        'Public self-registration on the login page, landing on a holding company until somebody links the person to a real customer.',
+        'Website leads now raise an alert — they had been arriving silently.',
+        'Replying on a case names the channel it will actually go out on, and a failure prints the real reason instead of a guess.',
+      ] },
+    ],
+  },
+  {
+    version: 'v4.1',
+    date: '2026-08-16',
+    title: 'The Portal becomes master of the RMM record — plus the Manage menu, safe Group Policy deletion and Ask Claude across every case',
+    groups: [
+      { area: 'RMM', items: [
+        'The Portal is now the master record for every managed machine. Atera is an importer and nothing more; online status comes from our own agent only.',
+        'A Manage menu on the device page collecting the remote tools into one place, and a Security tab showing what is actually protecting the machine.',
+        'Scheduled restarts and shutdowns from the device page, with a warning to whoever is signed in.',
+      ] },
+      { area: 'Group Policy', items: [
+        'Group Policy lives on the domain controller\'s own device page. Deleting a policy takes a backup first, refuses the protected ones, and can be restored — and "unreadable" is never reported as "empty".',
+      ] },
+      { area: 'Ask Claude', items: [
+        'Ask a question across every case ever raised — searching message bodies and engineers\' notes, not just subjects — and get a counted, cited answer.',
+        'Ask Insights on the OneBoard answers staffing questions from the call data.',
+      ] },
+      { area: 'Money', items: [
+        'A Finance Agent on the invoice page for billing queries — live payment checks, credits, sibling invoices and the case thread in one answer.',
+      ] },
+      { area: 'Look & feel', items: [
+        'Shared page furniture — stat bands, document heroes, lifted tables and filter panels — so new pages inherit the same shape instead of reinventing it.',
+        'Cyber Essentials gained scan history and a score-over-time trend per customer.',
+      ] },
+    ],
+  },
   {
     version: 'v4.0',
     date: '2026-08-06',

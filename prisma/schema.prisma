@@ -948,6 +948,34 @@ model AssetWarrantyEntitlement {
   @@map("asset_warranty_entitlements")
 }
 
+// "Ask Portal" findings — the logic file.
+//
+// Every answer an engineer chooses to keep is a row here, and every future Ask on the same
+// machine (and on that customer's other machines) reads them back in as evidence. That is
+// the whole point of the feature: the second person to look at a machine starts where the
+// first one finished instead of from nothing.
+//
+// The QUESTION is stored as well as the answer. Without it a finding is unreadable six
+// months later — "the NIC is dropping under load" means something quite different if the
+// question was about Teams calls than if it was about a backup failing.
+model DeviceFinding {
+  id         Int      @id @default(autoincrement())
+  assetId    Int      @map("asset_id")            // customer_assets.id — the machine
+  customerId Int?     @map("customer_id")         // denormalised so a customer-wide read needs no join
+  deviceId   Int?     @map("device_id")           // agent_devices.id at the time, if any
+  question   String
+  summary    String?                              // the headline, used in lists and in future corpora
+  answer     String
+  ticketId   Int?     @map("ticket_id")           // the case that was attached as context
+  userId     Int?     @map("user_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([assetId])
+  @@index([customerId])
+  @@index([createdAt])
+  @@map("device_findings")
+}
+
 // Durable note against a comms CLI / ref (e.g. "line rental ceasing next month"). Kept in its own
 // table because service_items are wiped & re-imported, so a note on the line itself would be lost.
 model McpCallLog {

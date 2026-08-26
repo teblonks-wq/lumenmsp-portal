@@ -15,10 +15,12 @@ import { powerWhenText } from '../lib/device-power';
 import { deviceSecurity, deployLog, REQUIRED_EXCLUSIONS } from '../lib/gravityzone-deploy';
 import { customerEnabled } from '../lib/gravityzone';
 import { ASSET_FIELDS, ASSET_OPS, parseConditions, conditionsToSql } from '../lib/asset-query';
-import { BITLOCKER_SCAN_SCRIPT, bitlockerSuspendScript, bitlockerForDevice, revealBitlockerKey } from '../lib/bitlocker';
+import { BITLOCKER_SCAN_SCRIPT, bitlockerSuspendScript, bitlockerForDevice, revealBitlockerKey, bitlockerState } from '../lib/bitlocker';
+import { vaultConfigured } from '../lib/vault';
 import { startScan, scansFor, scanInFlight, type ScanType } from '../lib/gravityzone-scan';
 import { requireVaultAccess, hasVaultAccess } from '../middleware/auth';
 import { refreshAsset as refreshWarranty, warrantyView, providerLabelFor, sweep as warrantySweep } from '../lib/warranty';
+import { askDevice, saveFinding, listFindings, deleteFinding } from '../lib/device-ask';
 
 const router = Router();
 
@@ -551,6 +553,79 @@ router.post('/assets/warranty/sweep', requireAuth, requireAdmin, async (req: Req
   }
 });
 
+// ── Ask Portal ──────────────────────────────────────────────────────────────────
+// The device-page analyst. Reads everything the Portal holds about ONE machine — security
+// reading, patch position, Bitdefender state, the last event-log pull, every remote action
+// taken on it, the customer's case history and any findings saved before — and answers a
+// question over it. lib/device-ask.ts assembles the evidence; this is only the plumbing.
+//
+// Deliberately requireAuth, not requireAdmin: this exists to make a first-line engineer
+// faster, and gating it to admins would defeat the point. It is read-only — it queues
+// nothing on the machine and changes nothing.
+
+router.post('/assets/:id/ask.json', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const question = String((req.body || {}).question || '').trim().slice(0, 1000);
+  const ticketId = parseInt(String((req.body || {}).ticketId || ''), 10) || null;
+  if (!question) { res.json({ ok: false, error: 'Ask it something.' }); return; }
+  try {
+    const r = await askDevice(id, question, { ticketId });
+    await logActivity(req.session.user!.id, 'asset_ask', 'customer_assets', id, `Asked the Portal: ${question.slice(0, 120)}`);
+    res.json({ ok: true, ...r });
+  } catch (e: any) {
+    console.error('[assets] ask failed:', e.message);
+    // The Claude-not-configured message is written for a human and is worth passing through
+    // verbatim; anything else could carry vendor detail, so it is generalised.
+    const msg = /not configured/i.test(e.message) ? e.message : 'That did not work. Try again, or narrow the question.';
+    res.json({ ok: false, error: msg });
+  }
+});
+
+// Keep an answer. This is the logic file — see the DeviceFinding model.
+router.post('/assets/:id/findings', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const b = req.body || {};
+  try {
+    const a = (await pool.query('SELECT customer_id, agent_device_id FROM customer_assets WHERE id=$1', [id])).rows[0];
+    if (!a) { res.json({ ok: false, error: 'Device not found.' }); return; }
+    const fid = await saveFinding({
+      assetId: id,
+      customerId: a.customer_id || null,
+      deviceId: a.agent_device_id || null,
+      question: String(b.question || '').slice(0, 1000),
+      headline: String(b.headline || '').slice(0, 1000),
+      answer: String(b.answer || '').slice(0, 20000),
+      ticketId: parseInt(String(b.ticketId || ''), 10) || null,
+      userId: req.session.user!.id,
+    });
+    await logActivity(req.session.user!.id, 'asset_finding_saved', 'customer_assets', id,
+      String(b.headline || b.question || 'Saved a finding').slice(0, 160));
+    res.json({ ok: true, id: fid, findings: await listFindings(id) });
+  } catch (e: any) {
+    console.error('[assets] save finding failed:', e.message);
+    res.json({ ok: false, error: 'Could not save that.' });
+  }
+});
+
+router.get('/assets/:id/findings.json', requireAuth, async (req: Request, res: Response) => {
+  res.json({ items: await listFindings(parseInt(String(req.params.id), 10)) });
+});
+
+// Removing a finding is admin-only and audited: a saved finding becomes evidence in every
+// future answer about this machine, so quietly deleting one changes what the Portal will
+// conclude tomorrow.
+router.post('/assets/:id/findings/:fid/delete', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const fid = parseInt(String(req.params.fid), 10);
+  try {
+    await deleteFinding(fid);
+    await logActivity(req.session.user!.id, 'asset_finding_deleted', 'customer_assets', id, `Deleted finding #${fid}`);
+    res.json({ ok: true, findings: await listFindings(id) });
+  } catch (e: any) {
+    res.json({ ok: false, error: 'Could not delete that.' });
+  }
+});
+
 // ── Tags ────────────────────────────────────────────────────────────────────────
 // Add the CURRENT SELECTION to a tag, creating it if the name is new. This is the whole
 // workflow Terry described: filter to what you want, tick, name it. The filter is a way
@@ -703,6 +778,20 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   const contactOptions = row.customer_id
     ? (await pool.query('SELECT id, full_name FROM customer_contacts WHERE customer_id=$1 AND archived=false ORDER BY full_name', [row.customer_id])).rows
     : [];
+
+  // Ask Portal: what has already been worked out about this machine, and the customer's
+  // cases so one can be attached to a question as context.
+  const findings = await listFindings(id, 50);
+  let askCases: any[] = [];
+  try {
+    if (row.customer_id) {
+      askCases = (await pool.query(
+        `SELECT id, ticket_number, subject, status, created_at
+           FROM inbox_tickets
+          WHERE customer_id = $1 AND deleted_at IS NULL AND is_spam = false
+          ORDER BY created_at DESC LIMIT 60`, [row.customer_id])).rows;
+    }
+  } catch { /* cosmetic — never block the device page */ }
 
   // Warranty for the Hardware tab: the entitlement detail, plus who would answer for
   // this machine if somebody pressed "check now" — so the page can offer the button or
@@ -859,6 +948,11 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
   // BitLocker volumes for the Security tab. Metadata only - whether a key exists, never
   // the key itself; that is fetched on an explicit reveal through the vault-gated route.
   const bitlocker = agentInfo ? await bitlockerForDevice(agentInfo.id).catch(() => []) : [];
+  // WHY it is empty, when it is empty — see bitlockerState. One message for five causes
+  // was the actual bug: four of them need somebody to act, and "nothing collected yet"
+  // reads like none of them do.
+  const blState = await bitlockerState(agentInfo ? agentInfo.id : null, bitlocker.length > 0)
+    .catch(() => ({ state: 'never-asked' as const }));
   // Bitdefender scan history for this machine (empty when BD has never seen it).
   const bdScans = await scansFor(id).catch(() => []);
 
@@ -924,7 +1018,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
 
   res.render('assets/detail', {
     user: req.session.user!, asset: row, agentInfo, gpo, security, patches, patchMeta, agentScripts,
-    bitlocker, canVaultKeys: await hasVaultAccess(req.session.user!), bdScans,
+    bitlocker, blState, canVaultKeys: await hasVaultAccess(req.session.user!), bdScans,
     bd, bdGate, bdLog, bdLogError, requiredExclusions: REQUIRED_EXCLUSIONS,
     trackCommandId: parseInt(String(req.query.cmd || ''), 10) || null,
     latestAgentVersion: agentHostedVersion() || (await getSetting('agent', 'latest_version')) || '',
@@ -933,7 +1027,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     // this machine - not when Atera happens to know about it, which is what it used to key
     // on and is meaningless now Atera is on its way out.
     remoteUrl: mesh && mesh.hasNode ? `/assets/${id}/remote-mesh` : null,
-    back: safeBack(req.query.back, '/assets'), contactOptions, warranty,
+    back: safeBack(req.query.back, '/assets'), contactOptions, warranty, findings, askCases,
     rawJson: showDebug ? JSON.stringify(row.raw, null, 2) : null,
     // Whether remote control is ready on this machine, and if not, which of the several
     // possible reasons it is — so the page can offer the install rather than a dead end.
@@ -1633,6 +1727,15 @@ router.post('/assets/:id/bitlocker-refresh', requireAdmin, async (req: Request, 
       WHERE ca.id=$1`, [id])).rows[0];
   if (!a?.agent_device_id) {
     res.redirect(back + '?err=' + encodeURIComponent('This machine has no LumenMSP agent, so there is nothing to ask.') + '#security');
+    return;
+  }
+  // Refuse rather than ask. Without a master key the answer cannot be stored, so queuing
+  // the scan would send a recovery key across the wire, redact it, and leave the screen
+  // exactly as empty as before — while telling the operator it had been "asked".
+  if (!vaultConfigured()) {
+    res.redirect(back + '?err=' + encodeURIComponent(
+      'No master key is configured, so a recovery key could not be stored even if the machine answered. '
+      + 'Set AZURE_KEYVAULT_URL (preferred) or VAULT_KEY in the server .env and restart the Portal.') + '#security');
     return;
   }
   // Never stack these up: a second request cannot make an offline machine answer sooner.

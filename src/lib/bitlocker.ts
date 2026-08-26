@@ -202,9 +202,68 @@ const BL_DUE_SQL = `
     SELECT 1 FROM agent_commands
      WHERE device_id = $1 AND kind = 'shell.powershell'
        AND (status IN ('queued','running') OR requested_at > NOW() - ($3 || ' minutes')::interval)
-       AND payload::text LIKE '%Get-BitLockerVolume%'
+       AND (payload::text LIKE '%Get-BitLockerVolume%' OR payload::text LIKE '%bitlocker_scan%')
   ) AS due`;
+// The second pattern is load-bearing. `payload` is set to NULL the instant a command
+// finishes (a reset password must not linger), so the original clause could only ever match
+// a scan that was still QUEUED OR RUNNING — a finished attempt matched nothing. Combined
+// with "a device with no reading at all is always due", a machine whose scan cannot be
+// stored was re-asked on EVERY heartbeat, for ever, which is the exact failure this guard
+// was written to prevent. agent-api now leaves `{"bitlocker_scan":true}` behind in place of
+// the cleared payload so a finished attempt is still recognisable without keeping a secret.
 
+
+/**
+ * WHY there is nothing to show — so the screen can say it.
+ *
+ * "Nothing collected yet" covered five completely different situations: no master key so a
+ * key could never be stored, never asked, asked and waiting on an offline machine, the scan
+ * ran and failed on the machine, and the scan ran but could not be stored. Only one of them
+ * is a matter of waiting, and the other four need somebody to do something — so a single
+ * message that reads like "give it a minute" is the wrong answer four times out of five.
+ */
+export type BitlockerState =
+  | { state: 'ok' }
+  | { state: 'no-agent' }
+  | { state: 'no-vault' }
+  | { state: 'waiting'; since: string | null }
+  | { state: 'scan-failed'; detail: string | null; at: string | null }
+  | { state: 'store-failed'; at: string | null }
+  | { state: 'never-asked' };
+
+export async function bitlockerState(deviceId: number | null, hasRows: boolean): Promise<BitlockerState> {
+  if (!deviceId) return { state: 'no-agent' };
+  if (hasRows) return { state: 'ok' };
+  // No master key means maybeQueueBitlockerScan never even asks — silently. That is the
+  // most likely reason for a screen that has been empty since the day it shipped.
+  if (!vaultConfigured()) return { state: 'no-vault' };
+  try {
+    const r = (await pool.query(
+      `SELECT status, exit_code, output,
+              to_char(requested_at, 'YYYY-MM-DD HH24:MI') AS requested,
+              to_char(finished_at,  'YYYY-MM-DD HH24:MI') AS finished
+         FROM agent_commands
+        WHERE device_id = $1 AND kind = 'shell.powershell'
+          AND (payload::text LIKE '%Get-BitLockerVolume%'
+               OR payload::text LIKE '%bitlocker_scan%'
+               OR output LIKE 'BitLocker scan%')
+        ORDER BY id DESC LIMIT 1`, [deviceId])).rows[0];
+    if (!r) return { state: 'never-asked' };
+    if (r.status === 'queued' || r.status === 'running') return { state: 'waiting', since: r.requested };
+    if (String(r.output || '').startsWith('BitLocker scan could not be stored')) {
+      return { state: 'store-failed', at: r.finished };
+    }
+    if (r.status === 'failed' || Number(r.exit_code) !== 0 || !looksLikeBitlockerScan(r.output)) {
+      // Safe to show: output carrying our marker is REDACTED at ingest, so anything still
+      // holding raw text here is an error message, never a recovery key. First line only.
+      const detail = String(r.output || '').split('\n')[0].trim().slice(0, 300) || null;
+      return { state: 'scan-failed', detail, at: r.finished };
+    }
+    return { state: 'never-asked' };
+  } catch {
+    return { state: 'never-asked' };
+  }
+}
 
 /** Do not queue another scan within this of the last ATTEMPT, whatever became of it.
  *  Without it, a machine where the scan cannot run is asked again every heartbeat for

@@ -107,6 +107,8 @@
     </p>
   </div>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+    <button type="button" class="btn btn-primary" onclick="if(window.lmAskPortal) window.lmAskPortal();"
+            title="Read this machine's logs, security state and this customer's case history, and ask a question about it">&#128269; Ask Portal</button>
     <% if (remoteUrl) { %><a class="btn btn-remote" target="_blank" rel="noopener" href="/assets/<%= asset.id %>/remote-mesh">🖥 Remote control</a><% } %>
     <%
       // Reinstall remote control, for a machine MeshCentral still HAS a node for.
@@ -316,6 +318,8 @@ function _ago(d) {
   </p>
 </div>
 <% } %>
+
+<%- include('_ask') %>
 
 <div class="card">
   <nav class="dev-tabs">
@@ -733,15 +737,63 @@ function _ago(d) {
     <% if (!agentInfo) { %>
       <p class="muted" style="font-size:13px;">BitLocker needs the LumenMSP Agent on this machine.</p>
     <% } else if (!_bl.length) { %>
-      <p class="muted" style="font-size:13px;">
-        Nothing collected yet.
-        <% if (user.role === 'admin') { %>
-        <form method="post" action="/assets/<%= asset.id %>/bitlocker-refresh" style="display:inline;">
-          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
-          <button class="btn" type="submit" style="padding:2px 10px;font-size:12px;">Ask the device now</button>
-        </form>
+      <%
+        // "Nothing collected yet" was one message for five different situations, only ONE
+        // of which is a matter of waiting. Say which it is, and whether it needs somebody.
+        var _bs = (typeof blState !== 'undefined' && blState) ? blState : { state: 'never-asked' };
+        var _needsYou = ['no-vault', 'scan-failed', 'store-failed'].indexOf(_bs.state) >= 0;
+      %>
+      <div style="border:1px solid <%= _needsYou ? 'var(--warn-line)' : 'var(--line)' %>;
+                  background:<%= _needsYou ? 'var(--tint-warn)' : 'var(--surface-2)' %>;
+                  border-radius:10px;padding:13px 15px;">
+        <% if (_bs.state === 'no-vault') { %>
+          <p style="margin:0;font-size:13.5px;font-weight:600;color:var(--warn-deep);">
+            &#9888; No master key is configured, so BitLocker is switched off across the whole estate.
+          </p>
+          <p class="muted" style="margin:6px 0 0;font-size:12.5px;line-height:1.55;">
+            A recovery key can only be stored encrypted, so with no key to encrypt it the Portal
+            never even asks a machine &mdash; which is why this has been empty on every device rather
+            than just this one. Set <code>AZURE_KEYVAULT_URL</code> (preferred) or <code>VAULT_KEY</code>
+            in the server <code>.env</code> and restart the Portal; collection then catches up by itself
+            at the next check-in. Nothing has been lost.
+          </p>
+        <% } else if (_bs.state === 'waiting') { %>
+          <p style="margin:0;font-size:13.5px;">Asked<%= _bs.since ? ' at ' + _bs.since : '' %> &mdash; waiting for the machine to answer.</p>
+          <p class="muted" style="margin:6px 0 0;font-size:12.5px;">An online machine answers in about a minute. One that is off answers when it next checks in.</p>
+        <% } else if (_bs.state === 'store-failed') { %>
+          <p style="margin:0;font-size:13.5px;font-weight:600;color:var(--warn-deep);">
+            &#9888; The machine answered<%= _bs.at ? ' at ' + _bs.at : '' %>, but the key could not be stored.
+          </p>
+          <p class="muted" style="margin:6px 0 0;font-size:12.5px;line-height:1.55;">
+            Almost always the master key: check <code>[vault]</code> and <code>[bitlocker]</code> in the
+            Portal's log. The key itself was redacted and never written down, so nothing leaked &mdash;
+            but nothing was kept either.
+          </p>
+        <% } else if (_bs.state === 'scan-failed') { %>
+          <p style="margin:0;font-size:13.5px;font-weight:600;color:var(--warn-deep);">
+            &#9888; The scan ran on the machine<%= _bs.at ? ' at ' + _bs.at : '' %> and did not come back with anything usable.
+          </p>
+          <% if (_bs.detail) { %>
+            <p class="muted" style="margin:6px 0 0;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere;"><%= _bs.detail %></p>
+          <% } %>
+          <p class="muted" style="margin:6px 0 0;font-size:12.5px;line-height:1.55;">
+            Usually a machine with no TPM or no BitLocker at all, or a scan that could not run with
+            enough rights to read the protector. Both are worth knowing &mdash; neither means the disk is safe.
+          </p>
+        <% } else { %>
+          <p style="margin:0;font-size:13.5px;">This machine has not been asked yet.</p>
+          <p class="muted" style="margin:6px 0 0;font-size:12.5px;">
+            Collection happens on the machine's own check-in. Nothing here means <strong>we have not looked</strong>
+            &mdash; it does not mean the disk is unencrypted.
+          </p>
         <% } %>
-      </p>
+        <% if (user.role === 'admin' && _bs.state !== 'no-vault') { %>
+          <form method="post" action="/assets/<%= asset.id %>/bitlocker-refresh" style="margin:10px 0 0;">
+            <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+            <button class="btn" type="submit" style="padding:3px 12px;font-size:12px;">Ask the device now</button>
+          </form>
+        <% } %>
+      </div>
     <% } else { %>
       <div class="table-wrap"><table class="table">
         <thead><tr><th style="width:90px;">Drive</th><th>Protection</th><th>Recovery key</th><th>Collected</th><th></th></tr></thead>

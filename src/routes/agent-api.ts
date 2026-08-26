@@ -1049,8 +1049,16 @@ router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request
     const output = String(b.output ?? '').slice(0, OUTPUT_LIMITS[kind] ?? OUTPUT_LIMIT_DEFAULT);
 
     // payload=NULL on completion: a reset password must not sit in the database after use.
+    //
+    // EXCEPT for a BitLocker scan, which leaves a secret-free marker behind instead. The
+    // "have we just asked this machine" guard in lib/bitlocker.ts reads the payload, and
+    // clearing it entirely made a FINISHED attempt invisible to that guard — so a machine
+    // whose scan could not be stored was re-asked on every single heartbeat. The CASE reads
+    // the OLD payload, which is what an UPDATE's right-hand side sees.
     const r = await pool.query(
-      `UPDATE agent_commands SET status=$1, exit_code=$2, output=$3, finished_at=NOW(), payload=NULL
+      `UPDATE agent_commands SET status=$1, exit_code=$2, output=$3, finished_at=NOW(),
+              payload = CASE WHEN payload::text LIKE '%Get-BitLockerVolume%'
+                             THEN '{"bitlocker_scan":true}'::jsonb ELSE NULL END
         WHERE id=$4 AND device_id=$5 RETURNING kind`,
       [exitCode === 0 ? 'done' : 'failed', exitCode, output, id, d.id]);
     if (!r.rows.length) { res.status(404).json({ ok: false, error: 'unknown command' }); return; }

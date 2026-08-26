@@ -1,0 +1,221 @@
+<%
+  // Ask Portal — the device-page analyst panel.
+  //
+  // Deliberately NOT a lightbox. The answer is something an engineer reads while looking at
+  // the tabs underneath it and then acts on; a modal that has to be dismissed to see the
+  // machine again fights the way the page is actually used.
+  var _fx = (typeof findings !== 'undefined' && findings) ? findings : [];
+  var _ac = (typeof askCases !== 'undefined' && askCases) ? askCases : [];
+  var _label = asset.friendly_name || asset.hostname || 'this machine';
+%>
+<div class="card" id="askPanel" style="display:none;border-left:4px solid var(--accent);">
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+    <div style="min-width:260px;">
+      <h2 style="margin:0;">Ask Portal</h2>
+      <p class="muted" style="margin:4px 0 0;font-size:13px;max-width:640px;">
+        Reads this machine's security reading, patch position, endpoint-protection state, encryption,
+        the last event-log pull, everything we have done to it remotely, <strong><%= asset.customer_name || 'the customer' %></strong>'s
+        case history, and anything worked out here before. Then answers the question.
+      </p>
+    </div>
+    <button type="button" class="btn" id="askClose" style="padding:4px 12px;font-size:12px;">Close</button>
+  </div>
+
+  <div style="margin-top:16px;">
+    <textarea class="input" id="askQ" rows="2" maxlength="1000"
+      placeholder="e.g. Why does this machine keep dropping off the network?"
+      style="width:100%;font-size:14px;resize:vertical;"></textarea>
+
+    <%
+      // Starters, not a menu. They exist because a blank box gets a vague question and a
+      // vague question gets a vague answer - each of these is one an engineer actually asks.
+      var _starters = [
+        ['What is wrong with this machine?', 'Anything in the evidence that needs attention'],
+        ['Is this machine actually protected?', 'Endpoint security, encryption, patch position'],
+        ['Has this happened before?', 'Checks the customer’s case history for the same fault'],
+        ['What do the event logs show?', 'Reads the last event-log pull'],
+        ['Is this machine due for replacement?', 'Age, spec, warranty, fault history']
+      ];
+    %>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;">
+      <% _starters.forEach(function(sx){ %>
+        <button type="button" class="btn js-ask-starter" data-q="<%= sx[0] %>" title="<%= sx[1] %>"
+                style="padding:4px 10px;font-size:12px;"><%= sx[0] %></button>
+      <% }); %>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:12px;">
+      <div class="form-group" style="margin:0;min-width:260px;flex:1;">
+        <label style="font-size:12px;">Attach a case for context <span class="muted">(optional)</span></label>
+        <select class="input" id="askCase" style="font-size:13px;">
+          <option value="">— none —</option>
+          <% _ac.forEach(function(t){ %>
+            <option value="<%= t.id %>"><%= t.ticket_number %> · <%= (t.subject || '(no subject)').slice(0,70) %><%= (t.subject||'').length > 70 ? '…' : '' %></option>
+          <% }); %>
+        </select>
+        <span class="muted" style="font-size:11.5px;">The whole thread is read, so you can ask "is this the same fault?"</span>
+      </div>
+      <button type="button" class="btn btn-primary" id="askGo" style="padding:9px 20px;">Ask</button>
+    </div>
+
+    <% if (!_ac.length && asset.customer_id) { %>
+      <p class="muted" style="font-size:12px;margin:8px 0 0;">No cases on record for this customer yet.</p>
+    <% } %>
+  </div>
+
+  <div id="askAnswer" style="display:none;margin-top:18px;padding-top:16px;border-top:1px solid var(--line);"></div>
+
+  <div id="askHistory" style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line);<%= _fx.length ? '' : 'display:none;' %>">
+    <p class="dev-subcard-title" style="margin:0 0 4px;">What we already know about <%= _label %></p>
+    <p class="muted" style="margin:0 0 10px;font-size:12px;">
+      Saved findings. Every one of these is read back in as evidence the next time anybody asks about this
+      machine — or about another machine at this customer.
+    </p>
+    <div id="askHistoryList"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var panel = document.getElementById('askPanel');
+  if (!panel) return;
+  var qEl = document.getElementById('askQ');
+  var caseEl = document.getElementById('askCase');
+  var go = document.getElementById('askGo');
+  var out = document.getElementById('askAnswer');
+  var hist = document.getElementById('askHistory');
+  var histList = document.getElementById('askHistoryList');
+  var ASSET = <%= asset.id %>;
+  var IS_ADMIN = <%= user.role === 'admin' ? 'true' : 'false' %>;
+  var last = null;                      // the answer currently on screen, for Save
+
+  function csrf() { var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
+  function el(tag, css, text) { var e = document.createElement(tag); if (css) e.style.cssText = css; if (text != null) e.textContent = text; return e; }
+  function post(url, body) {
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() }, body: JSON.stringify(body || {}) })
+      .then(function (r) { return r.json(); });
+  }
+
+  window.lmAskPortal = function () {
+    panel.style.display = '';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    qEl.focus();
+  };
+  document.getElementById('askClose').onclick = function () { panel.style.display = 'none'; };
+
+  Array.prototype.forEach.call(document.querySelectorAll('.js-ask-starter'), function (b) {
+    b.onclick = function () { qEl.value = b.getAttribute('data-q'); qEl.focus(); };
+  });
+  // Ctrl/Cmd+Enter sends, because the box is a textarea and Enter has to keep making lines.
+  qEl.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); go.click(); }
+  });
+
+  go.onclick = function () {
+    var q = (qEl.value || '').trim();
+    if (!q) { qEl.focus(); return; }
+    var was = go.textContent;
+    go.disabled = true; go.textContent = 'Reading…';
+    out.style.display = '';
+    out.innerHTML = '';
+    out.appendChild(el('p', 'margin:0;color:var(--muted);font-size:13px;',
+      'Reading the machine, the case history and everything saved before. Ten seconds or so.'));
+
+    post('/assets/' + ASSET + '/ask.json', { question: q, ticketId: caseEl.value || null })
+      .then(function (d) {
+        go.disabled = false; go.textContent = was;
+        out.innerHTML = '';
+        if (!d.ok) { out.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', d.error || 'That did not work.')); return; }
+        last = { question: q, headline: d.headline || '', answer: d.answer || '', ticketId: caseEl.value || null };
+
+        if (d.headline) out.appendChild(el('p', 'margin:0 0 12px;font-size:17px;font-weight:700;line-height:1.35;', d.headline));
+        String(d.answer || '').split(/\n+/).forEach(function (para) {
+          if (para.trim()) out.appendChild(el('p', 'margin:0 0 9px;font-size:13.5px;line-height:1.6;', para.trim()));
+        });
+
+        if (d.actions && d.actions.length) {
+          var wrap = el('div', 'margin-top:14px;border-top:1px solid var(--line);padding-top:12px;');
+          wrap.appendChild(el('p', 'margin:0 0 7px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;font-weight:700;color:var(--muted);', 'Worth doing'));
+          var ul = el('ul', 'margin:0;padding-left:18px;font-size:13.5px;line-height:1.6;');
+          d.actions.forEach(function (a) { ul.appendChild(el('li', null, a)); });
+          wrap.appendChild(ul);
+          out.appendChild(wrap);
+        }
+
+        // What the answer was actually built on, and how old it was. The answer is only as
+        // good as this line, so it is shown rather than buried.
+        if (d.evidence && d.evidence.length) {
+          var ev = el('p', 'margin:14px 0 0;font-size:11.5px;color:var(--muted);line-height:1.6;',
+            'Based on: ' + d.evidence.join(' · '));
+          out.appendChild(ev);
+        }
+
+        var bar = el('div', 'display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;');
+        var save = el('button', 'padding:7px 16px;font-size:13px;', 'Save this to the machine’s record');
+        save.type = 'button'; save.className = 'btn btn-primary';
+        save.onclick = function () {
+          save.disabled = true; save.textContent = 'Saving…';
+          post('/assets/' + ASSET + '/findings', last).then(function (r) {
+            if (!r.ok) { save.disabled = false; save.textContent = 'Save failed — try again'; return; }
+            save.textContent = 'Saved';
+            renderHistory(r.findings || []);
+          });
+        };
+        bar.appendChild(save);
+        out.appendChild(bar);
+      })
+      .catch(function () {
+        go.disabled = false; go.textContent = was;
+        out.innerHTML = '';
+        out.appendChild(el('p', 'margin:0;color:var(--bad-fg);font-size:13px;', 'The Portal could not be reached. Try again.'));
+      });
+  };
+
+  function renderHistory(items) {
+    histList.innerHTML = '';
+    if (!items.length) { hist.style.display = 'none'; return; }
+    hist.style.display = '';
+    items.forEach(function (f) {
+      var row = el('div', 'padding:10px 0;border-bottom:1px solid var(--surface-3);');
+      var when = f.created_at ? new Date(f.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+      var meta = el('div', 'font-size:11.5px;color:var(--muted);margin-bottom:3px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;');
+      meta.appendChild(el('span', null, when + (f.author ? ' · ' + f.author : '')));
+      if (f.ticket_number) {
+        var a = el('a', 'color:var(--accent);text-decoration:none;font-weight:600;', 'case ' + f.ticket_number);
+        a.href = '/tickets/' + f.ticket_id;
+        meta.appendChild(a);
+      }
+      if (IS_ADMIN) {
+        var del = el('button', 'margin-left:auto;background:none;border:none;color:var(--muted);font-size:11.5px;cursor:pointer;text-decoration:underline;', 'remove');
+        del.type = 'button';
+        del.onclick = function () {
+          if (!confirm('Remove this finding?\n\nIt is read back into every future answer about this machine, so removing it changes what the Portal will conclude.')) return;
+          post('/assets/' + ASSET + '/findings/' + f.id + '/delete', {}).then(function (r) { if (r.ok) renderHistory(r.findings || []); });
+        };
+        meta.appendChild(del);
+      }
+      row.appendChild(meta);
+      row.appendChild(el('div', 'font-size:13px;font-weight:600;line-height:1.45;', f.summary || (f.answer || '').slice(0, 160)));
+      row.appendChild(el('div', 'font-size:12px;color:var(--muted);margin-top:2px;', 'Asked: ' + f.question));
+
+      // The full answer is one click away rather than always open - a page of history is
+      // for scanning, and five expanded answers is not scannable.
+      if (f.answer) {
+        var more = el('button', 'background:none;border:none;color:var(--accent);font-size:12px;cursor:pointer;padding:4px 0 0;', 'Show the full answer');
+        more.type = 'button';
+        var body = el('div', 'display:none;font-size:13px;line-height:1.6;margin-top:7px;white-space:pre-wrap;', f.answer);
+        more.onclick = function () {
+          var open = body.style.display !== 'none';
+          body.style.display = open ? 'none' : '';
+          more.textContent = open ? 'Show the full answer' : 'Hide';
+        };
+        row.appendChild(more);
+        row.appendChild(body);
+      }
+      histList.appendChild(row);
+    });
+  }
+
+  renderHistory(<%- JSON.stringify(_fx) %>);
+})();
+</script>

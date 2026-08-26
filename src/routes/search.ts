@@ -10,7 +10,7 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
   if (q.length < 2) return { q, groups: [] };
   const like = '%' + q + '%';
   try {
-    const [cust, cont, tick, quo, inv, svc, ast] = await Promise.all([
+    const [cust, cont, tick, quo, inv, svc, ast, find] = await Promise.all([
       pool.query(
         `SELECT id, name, account_number, status, email
            FROM customers
@@ -76,6 +76,18 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
             AND (a.hostname ILIKE $1 OR a.friendly_name ILIKE $1 OR a.serial_number ILIKE $1
                  OR a.model ILIKE $1 OR a.last_login_user ILIKE $1 OR c.name ILIKE $1)
           ORDER BY a.online_status DESC NULLS LAST, a.hostname LIMIT 8`, [like]),
+      // Ask Portal findings — the logic file. Searchable on purpose: the whole reason for
+      // saving a finding is that somebody who does not know it exists can still find it.
+      // Wrapped so a database that has not had the table pushed yet still searches.
+      pool.query(
+        `SELECT f.id, f.asset_id, f.question, f.summary, f.answer, f.created_at,
+                a.hostname, a.friendly_name, c.name AS customer_name
+           FROM device_findings f
+           JOIN customer_assets a ON a.id = f.asset_id
+           LEFT JOIN customers c ON c.id = f.customer_id
+          WHERE f.question ILIKE $1 OR f.summary ILIKE $1 OR f.answer ILIKE $1
+                OR a.hostname ILIKE $1 OR a.friendly_name ILIKE $1 OR c.name ILIKE $1
+          ORDER BY f.created_at DESC LIMIT 8`, [like]).catch(() => ({ rows: [] })),
     ]);
 
     const money = (v: any) => '£' + (Number(v) || 0).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
@@ -110,6 +122,12 @@ async function runSearch(q: string): Promise<{ q: string; groups: any[]; error?:
       label: r.invoice_number + ' — ' + (r.title || ''),
       sub: [r.customer_name, r.status, money(r.total)].filter(Boolean).join(' · '),
       url: '/invoices/' + r.id,
+    })) });
+
+    if (find.rows.length) groups.push({ type: 'Device findings', icon: '🔎', items: find.rows.map((r: any) => ({
+      label: String(r.summary || r.question || 'Finding').slice(0, 110),
+      sub: [r.friendly_name || r.hostname, r.customer_name, fmtDate(r.created_at)].filter(Boolean).join(' · '),
+      url: '/assets/' + r.asset_id,
     })) });
 
     if (ast.rows.length) groups.push({ type: 'Devices', icon: '💻', items: ast.rows.map((r) => ({
