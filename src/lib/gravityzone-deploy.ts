@@ -337,7 +337,12 @@ export async function catchUpBitdefender(deviceId: number): Promise<void> {
     if (r.state === 'excluded') return;                    // held back on purpose
     if (r.state === 'protected' || r.state === 'installed') return;
     if (Number(r.attempts) >= 3) return;                   // read the failures, do not repeat them
-    if (!(await customerEnabled(Number(r.customer_id)))) return;
+    // customerEnabled returns { ok, reason } — an OBJECT, which is always truthy. Written
+    // as `if (!(await customerEnabled(...)))` this guard could never fire, so every
+    // heartbeat from a machine at a customer who was never enabled fell through to
+    // queueDeploy. queueDeploy re-checks the gate properly so nothing was ever installed
+    // where it should not have been, but the check here read as done when it was not.
+    if (!(await customerEnabled(Number(r.customer_id))).ok) return;
     await queueDeploy(deviceId, null);
   } catch (e: any) {
     console.error('[gz] catch-up failed for device %s: %s', deviceId, e.message);

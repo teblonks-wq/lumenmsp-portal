@@ -545,6 +545,21 @@ router.post('/agent/api/enroll', async (req: Request, res: Response) => {
     // remote-control button - within seconds of the agent landing.
     await syncAssetFromAgent(deviceId);
 
+    // Bitdefender rides along too, for the same reason remote access does: a machine that
+    // arrives unprotected is one somebody has to remember to go back to, and nobody does.
+    // AFTER syncAssetFromAgent, because the catch-up looks the machine up through its
+    // customer_assets row - running it first would find nothing and quietly do nothing.
+    //
+    // It is gated, not automatic: catchUpBitdefender only proceeds when the customer has
+    // been ENABLED, which is a human mapping both a GravityZone company and an install
+    // package. A customer nobody signed off never gets an install, because enabling them
+    // is where someone takes responsibility for stripping the incumbent AV off their
+    // machines.
+    try {
+      const { catchUpBitdefender } = await import('../lib/gravityzone-deploy');
+      await catchUpBitdefender(deviceId);
+    } catch (e: any) { console.error('[gz] enrol hook:', e.message); }
+
     res.status(existing ? 200 : 201).json({ ok: true, device_id: deviceId, device_token: token, customer: cust.rows[0].name, config: await deviceConfig(customerId, 2) });
   } catch (e: any) {
     console.error('[agent] enroll failed:', e.message);
