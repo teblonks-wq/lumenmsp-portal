@@ -2,6 +2,7 @@ import { pool } from '../db/pool';
 import { rpc, gzConfigured, findKeyPath, atPath, customerEnabled, isOwnToolDetection } from './gravityzone';
 import { logActivity } from './activity';
 import { wakeAgent } from '../routes/agent-api';
+import { toastEndpointSecurity } from './staff-toast';
 
 // ─────────────────────────────────────────────────────────────────────────────────
 // Deploying Bitdefender — through OUR OWN agent, no Atera anywhere.
@@ -591,6 +592,7 @@ export async function reconcile(): Promise<ReconcileResult> {
   const out: ReconcileResult = { checked: 0, installed: 0, protectedCount: 0, failed: 0, stillWaiting: 0 };
   const rows = (await pool.query(
     `SELECT dep.device_id, dep.state, dep.command_id, d.security_json, d.hostname,
+            d.customer_id, cu.name AS customer_name,
             EXTRACT(EPOCH FROM (NOW() - d.security_at)) AS security_age_secs,
             c.status AS cmd_status, c.exit_code, c.output,
             (SELECT MAX(se.synced_at) FROM security_endpoints se
@@ -598,6 +600,7 @@ export async function reconcile(): Promise<ReconcileResult> {
              WHERE a.agent_device_id = dep.device_id) AS gz_seen
        FROM security_deployments dep
        JOIN agent_devices d ON d.id = dep.device_id
+       LEFT JOIN customers cu ON cu.id = d.customer_id
        LEFT JOIN agent_commands c ON c.id = dep.command_id
       WHERE dep.state IN ('queued','running','installed','failed')`)).rows;
 
@@ -628,19 +631,34 @@ export async function reconcile(): Promise<ReconcileResult> {
     }
 
     if (bd && gzSeen) {
+      // Only on the TRANSITION into protected. reconcile runs on a timer over every
+      // unsettled row, so toasting on the state rather than the change would re-pop the
+      // same card every sweep until the row settles.
+      const becameProtected = r.state !== 'protected';
       await upsertDeployment(Number(r.device_id), null, {
         state: 'protected', avAfter: names.join(', '), agentSeenAt: new Date(), gzSeenAt: gzSeen,
         lastError: null, settled: true,
       });
+      if (becameProtected) {
+        toastEndpointSecurity({ hostname: r.hostname, customerId: r.customer_id, customerName: r.customer_name, confirmed: true });
+      }
       out.protectedCount++;
       continue;
     }
     if (bd) {
       // Our side agrees; GravityZone has not caught up. That is a normal few minutes,
       // NOT a success — enrolment can genuinely fail after a clean local install.
+      //
+      // Terry asked to be told at this point rather than waiting for GravityZone, so the
+      // card fires here — but it says "installed", not "protected", and the machine only
+      // gains its tick when the branch above runs. Same transition-only rule as there.
+      const becameInstalled = r.state !== 'installed' && r.state !== 'protected';
       await upsertDeployment(Number(r.device_id), null, {
         state: 'installed', avAfter: names.join(', '), agentSeenAt: new Date(), lastError: null,
       });
+      if (becameInstalled) {
+        toastEndpointSecurity({ hostname: r.hostname, customerId: r.customer_id, customerName: r.customer_name, confirmed: false });
+      }
       out.installed++;
       continue;
     }

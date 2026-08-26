@@ -1,0 +1,20 @@
+<!doctype html><meta charset="utf-8"><title>Estate toast harness</title><body>
+<!-- Fixture for ops/[C] test-estate-toasts.js. Loads the real call-widget.js with the
+     WebSocket stubbed, so the message handler can be driven without a server. -->
+<script>
+  // Stub the socket before the widget loads: we drive handle() ourselves.
+  window.__sent = [];
+  window.WebSocket = function () {
+    this.readyState = 1; this.send = function (d) { window.__sent.push(d); }; this.close = function () {};
+    window.__ws = this;
+  };
+  window.WebSocket.OPEN = 1;
+  // The widget probes for a mic/session on load in some paths; keep fetch harmless.
+  window.fetch = function () { return Promise.resolve({ json: function () { return Promise.resolve([]); } }); };
+</script>
+<script src="../static/js/call-widget.js"></script>
+<script>
+  // The message handler lives inside the IIFE. Drive it exactly as the socket would.
+  window.__deliver = function (msg) { if (window.__ws && window.__ws.onmessage) window.__ws.onmessage({ data: JSON.stringify(msg) }); };
+</script>
+</body>

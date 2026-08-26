@@ -545,6 +545,15 @@ router.post('/agent/api/enroll', async (req: Request, res: Response) => {
     // remote-control button - within seconds of the agent landing.
     await syncAssetFromAgent(deviceId);
 
+    // Tell whoever is at a screen. NEW machines only: a machine coming back after a
+    // rebuild re-enrols, and calling that "new device enrolled" would train people to
+    // ignore the card on the day it actually matters. Fires AFTER syncAssetFromAgent so
+    // that clicking through to /assets finds the machine already there.
+    if (!existing) {
+      const { toastDeviceEnrolled } = await import('../lib/staff-toast');
+      toastDeviceEnrolled({ hostname, customerId, customerName: cust.rows[0].name });
+    }
+
     // Bitdefender rides along too, for the same reason remote access does: a machine that
     // arrives unprotected is one somebody has to remember to go back to, and nobody does.
     // AFTER syncAssetFromAgent, because the catch-up looks the machine up through its

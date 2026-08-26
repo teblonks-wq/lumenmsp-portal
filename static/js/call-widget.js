@@ -273,7 +273,151 @@
       netAlert(m);
     } else if (m.type === 'wa') {
       waAlert(m);
+    } else if (m.type === 'estate') {
+      estateToast(m);
     }
+  }
+
+  // ── Estate toasts: new device enrolled / Bitdefender installed ───────────────
+  //
+  // Top-right, dismissed with the X, and they say BOTH the machine and the customer -
+  // "a device enrolled" answers neither of the two questions anybody asks next.
+  //
+  // COLLAPSED PER CUSTOMER, which is the whole reason this is not four lines. Onboarding a
+  // customer enrols thirty or forty machines in a few minutes; forty separate cards is not
+  // a notification, it is a wall to clear before you can use the screen. So there is one
+  // card per customer per kind and it counts up, listing the machines inside it.
+  //
+  // Deliberately silent: no chime. These are good news, and good news that makes a noise
+  // forty times during a rollout stops being good news.
+  //
+  // They stay until dismissed rather than fading, so a rollout that finished while you were
+  // making tea is still on the screen when you come back. The per-customer collapse is what
+  // makes that safe; the cap below is the backstop for a very busy day.
+  var estateCards = {};                 // key -> { el, host, list, machines }
+  var ESTATE_MAX = 4;
+
+  function estateStack() {
+    var st = document.getElementById('lmEstateToasts');
+    if (!st) {
+      st = document.createElement('div');
+      st.id = 'lmEstateToasts';
+      // Below the call/chat toasts on purpose: a ringing phone or an unclaimed website
+      // chat is someone waiting, and must never be covered by a machine reporting in.
+      st.style.cssText = 'position:fixed;right:24px;top:24px;z-index:2147483500;display:flex;'
+        + 'flex-direction:column;gap:10px;align-items:flex-end;pointer-events:none;';
+      document.body.appendChild(st);
+    }
+    return st;
+  }
+
+  function estateDismiss(key) {
+    var c = estateCards[key];
+    if (!c) return;
+    try { c.el.remove(); } catch (e) {}
+    delete estateCards[key];
+  }
+
+  // machines is an ordered map of hostname -> confirmed(bool), so a machine that later gets
+  // confirmed by GravityZone gains a tick inside the card it is already listed in rather
+  // than producing a second card saying almost the same thing.
+  function estateRender(c, kind) {
+    var names = Object.keys(c.machines);
+    var n = names.length;
+    var anyPending = kind === 'endpoint' && names.some(function (h) { return !c.machines[h]; });
+    var title = kind === 'enrolled'
+      ? '\uD83D\uDDA5\uFE0F ' + (n > 1 ? n + ' devices enrolled' : 'New device enrolled')
+      : '\uD83D\uDEE1\uFE0F Bitdefender installed' + (n > 1 ? ' \u00D7' + n : '');
+    c.host.innerHTML = '';
+
+    var h = document.createElement('div');
+    h.style.cssText = 'display:flex;align-items:flex-start;gap:8px;';
+    var ttl = document.createElement('div');
+    ttl.style.cssText = 'font-weight:700;font-size:14px;flex:1;';
+    ttl.textContent = title;
+    var x = document.createElement('button');
+    x.setAttribute('aria-label', 'Dismiss');
+    x.textContent = '\u00D7';
+    x.style.cssText = 'background:none;border:none;color:#94a3b8;font-size:20px;line-height:1;'
+      + 'cursor:pointer;padding:0 2px;margin:-2px -4px 0 0;';
+    x.onclick = function (e) { e.stopPropagation(); estateDismiss(c.key); };
+    h.appendChild(ttl); h.appendChild(x);
+    c.host.appendChild(h);
+
+    // The customer, always, on its own line - it is half the answer.
+    var cust = document.createElement('div');
+    cust.style.cssText = 'font-size:13px;color:#cbd5e1;font-weight:600;margin-top:2px;'
+      + 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    cust.textContent = c.customer;
+    c.host.appendChild(cust);
+
+    // The machines. Only the last few are listed by name - past that the count is the
+    // useful fact and a list of thirty hostnames is just noise in a small card.
+    var show = names.slice(-4);
+    var machines = document.createElement('div');
+    machines.style.cssText = 'font-size:12.5px;color:#94a3b8;margin-top:6px;line-height:1.5;';
+    show.forEach(function (hn) {
+      var row = document.createElement('div');
+      row.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      row.textContent = (kind === 'endpoint' ? (c.machines[hn] ? '\u2713 ' : '\u00B7 ') : '\u00B7 ') + hn;
+      if (kind === 'endpoint' && c.machines[hn]) row.style.color = '#4ade80';
+      machines.appendChild(row);
+    });
+    if (n > show.length) {
+      var more = document.createElement('div');
+      more.style.cssText = 'color:#64748b;';
+      more.textContent = '+' + (n - show.length) + ' more';
+      machines.appendChild(more);
+    }
+    c.host.appendChild(machines);
+
+    // Says out loud what the weaker signal actually means. The install reporting success
+    // and the endpoint never enrolling is a real failure mode, not a hypothetical one.
+    if (anyPending) {
+      var note = document.createElement('div');
+      note.style.cssText = 'font-size:11.5px;color:#64748b;margin-top:7px;';
+      note.textContent = 'On the machine \u2014 awaiting GravityZone enrolment';
+      c.host.appendChild(note);
+    }
+  }
+
+  function estateToast(m) {
+    var kind = m.kind === 'endpoint' ? 'endpoint' : 'enrolled';
+    var customer = m.customer || 'unknown customer';
+    var host = m.hostname || 'unnamed machine';
+    // One card per customer per kind. A missing customerId falls back to the name so two
+    // different customers can never merge into one card.
+    var key = kind + ':' + (m.customerId != null ? m.customerId : customer);
+    var c = estateCards[key];
+
+    if (!c) {
+      var el = document.createElement('div');
+      el.style.cssText = 'width:320px;background:#0f172a;color:#fff;border-radius:14px;'
+        + 'box-shadow:0 14px 40px rgba(2,6,23,.5);border:1px solid #1e293b;border-left:5px solid '
+        + (kind === 'enrolled' ? '#38bdf8' : '#22c55e') + ';padding:14px 16px;cursor:pointer;'
+        + 'pointer-events:auto;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;';
+      var inner = document.createElement('div');
+      el.appendChild(inner);
+      c = estateCards[key] = { key: key, el: el, host: inner, customer: customer, machines: {}, kind: kind };
+      // One machine goes straight to it; several go to the customer's own asset list,
+      // which is the screen you actually want when a rollout has just landed.
+      el.onclick = function () {
+        var names = Object.keys(c.machines);
+        if (names.length === 1) location.href = '/assets?q=' + encodeURIComponent(names[0]);
+        else if (m.customerId != null) location.href = '/customers/' + m.customerId + '#assets';
+        else location.href = '/assets';
+      };
+      var st = estateStack();
+      st.appendChild(el);
+      // Backstop for a day busy across many customers at once.
+      var keys = Object.keys(estateCards);
+      while (keys.length > ESTATE_MAX) estateDismiss(keys.shift());
+    }
+
+    // Re-assert rather than only setting when absent: a confirmed message must be able to
+    // upgrade a machine already listed as pending.
+    if (!(host in c.machines) || m.confirmed) c.machines[host] = !!m.confirmed;
+    estateRender(c, kind);
   }
 
   // Louder triple-chime + green pop-up for an inbound WhatsApp message, so it's not missed.
