@@ -3140,6 +3140,36 @@ model SecurityDetection {
   @@map("security_detections")
 }
 
+// One "Scan now" on one machine.
+//
+// GravityZone's createScanTask answers true rather than a task id, so the only durable
+// handle on a task is its NAME — generated here, unique per scan, stored BEFORE the API
+// call so a scan GravityZone accepted can never be missing from the history. The poller
+// matches tasks back by that name.
+//
+// What a scan FOUND is not stored here: detections already arrive through the normal
+// sync into security_detections, and the history joins them by time window. The task
+// says the scan ran; the detections say what it found, and conflating the two would
+// invent findings on a scan that simply has not reported yet.
+model SecurityScanTask {
+  id            Int       @id @default(autoincrement())
+  assetId       Int       @map("asset_id")
+  endpointGzId  String    @map("endpoint_gz_id")
+  taskName      String    @unique @map("task_name")
+  scanType      String    @map("scan_type")        // quick | full
+  statusCode    Int?      @map("status_code")      // 1 pending · 2 running · 3 finished · null = failed to start
+  detail        String?
+  requestedBy   Int?      @map("requested_by")
+  requestedAt   DateTime  @default(now()) @map("requested_at")
+  startedAt     DateTime? @map("started_at")
+  finishedAt    DateTime? @map("finished_at")
+  lastCheckedAt DateTime? @map("last_checked_at")
+
+  @@index([assetId])
+  @@index([endpointGzId])
+  @@map("security_scan_tasks")
+}
+
 // One Bitdefender installation package per customer, with its download links cached.
 // The links are what our agent is actually pointed at, so they are resolved server side
 // and stored here — never accepted from a browser, exactly like agent_packages.
