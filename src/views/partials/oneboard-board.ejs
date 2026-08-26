@@ -61,10 +61,20 @@
   // A RATE gets absolute bands, not a scale-to-the-max ramp: 30% missed must look the
   // same in January as in August and on every branch. Scaling to the worst cell present
   // makes a good year look exactly as alarming as a bad one.
-  var RATE_STEPS = ['var(--surface-2)','var(--bad-bg)','var(--bad-line2)','var(--bad-soft)','var(--bad)','#7f1d1d'];
-  function rateBand(p){ if (p == null) return -1; if (p <= 0) return 0; if (p < 5) return 1; if (p < 10) return 2; if (p < 20) return 3; if (p < 30) return 4; return 5; }
+  // TEN steps of 4 points each, not five uneven ones. The old ramp put everything from
+  // 20% to 29% in a single colour, which is exactly where this data lives — 21% and 26%
+  // came out identical on screen. Every 4 points is now a visible step.
+  // Literal hex, not tokens: the --bad-* tokens are re-pitched per theme and stop being
+  // monotonic in the dark ones, so a token ramp can render 26% lighter than 21%.
+  var RATE_STEPS = ['var(--surface-2)','#fee2e2','#fecaca','#fca5a5','#f87171','#ef4444','#dc2626','#b91c1c','#991b1b','#7f1d1d'];
+  var RATE_EDGES = [4, 8, 12, 16, 20, 24, 28, 32];   // upper edges of steps 1..8; 32+ is the last
+  function rateBand(p){ if (p == null) return -1; if (p <= 0) return 0;
+    for (var i = 0; i < RATE_EDGES.length; i++) if (p < RATE_EDGES[i]) return i + 1;
+    return RATE_STEPS.length - 1; }
   function rateBg(p){ var b = rateBand(p); return b < 0 ? 'var(--surface)' : RATE_STEPS[b]; }
-  function rateInk(p){ var b = rateBand(p); return b < 0 ? 'var(--faint)' : (b >= 4 ? '#ffffff' : 'var(--ink)'); }
+  // Ink is literal too, for the same reason — var(--ink) is near-white in a dark theme
+  // and would vanish on the pale reds.
+  function rateInk(p){ var b = rateBand(p); return b < 0 ? 'var(--faint)' : b === 0 ? 'var(--muted)' : (b >= 5 ? '#ffffff' : '#7f1d1d'); }
   // Observations arrive as plain text with **emphasis**; escape first, then bold.
   function obs(t){ return esc(t).replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--ink);">$1</strong>'); }
   function n1(v){ return (v >= 10) ? v.toFixed(0) : v.toFixed(1); }
@@ -267,6 +277,24 @@
 </script>
 <% } %>
 
+<%
+  // Day-by-day rows stop being readable long before they stop being generated: a quarter
+  // is ninety-odd rows nobody scrolls. Past a month the panel hides itself and points at
+  // the panels that DO answer a long range — the weekday and hour pools below.
+  // The range length, taken from the rows the table would draw — `days` is internal to
+  // buildOneBoard and never reaches the view, so reading it here would silently make the
+  // count 0 and hide the panel on EVERY range.
+  var obDailyDays = (included[0] && included[0].daily) ? included[0].daily.length : 0;
+  var obDailyMax  = 30;
+  var obShowDaily = obDailyDays > 0 && obDailyDays <= obDailyMax;
+%>
+<% if (!obShowDaily && obDailyDays > obDailyMax) { %>
+<div class="card" style="padding:13px 18px;margin-bottom:16px;display:flex;gap:10px;align-items:baseline;">
+  <span style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);white-space:nowrap;">Daily calls</span>
+  <span style="font-size:13px;color:var(--muted);line-height:1.55;">Hidden — these dates cover <strong style="color:var(--ink);"><%= obDailyDays %> days</strong>, and a day-by-day table past <%= obDailyMax %> is unreadable. Pick a month or less to see it. The weekday and hour panels below cover the whole range.</span>
+</div>
+<% } %>
+<% if (obShowDaily) { %>
 <div class="card" style="padding:0;margin-bottom:16px;">
   <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">Daily calls — answered v missed</h2></div>
   <div class="table-wrap"><table class="table" style="margin:0;">
@@ -295,6 +323,7 @@
     </tbody>
   </table></div>
 </div>
+<% } %>
 
 <!-- Compiled heatmap: missed calls per hour per branch -->
 <div class="card" style="padding:0;">
@@ -401,7 +430,7 @@
     </tbody>
   </table></div>
   <div style="display:flex;align-items:center;gap:6px;padding:10px 18px;font-size:11px;color:var(--muted);">
-    0% <% ['var(--surface-2)','var(--bad-bg)','var(--bad-line2)','var(--bad-soft)','var(--bad)','#7f1d1d'].forEach(function(c){ %><span style="width:18px;height:10px;background:<%= c %>;border:1px solid var(--line);border-radius:2px;display:inline-block;"></span><% }); %> 30%+ missed
+    0% <% ['var(--surface-2)','#fee2e2','#fecaca','#fca5a5','#f87171','#ef4444','#dc2626','#b91c1c','#991b1b','#7f1d1d'].forEach(function(c){ %><span style="width:14px;height:10px;background:<%= c %>;border:1px solid var(--line);border-radius:2px;display:inline-block;"></span><% }); %> 32%+ missed <span style="color:var(--faint);">&middot; one step every 4 points</span>
     <span style="color:var(--faint);margin-left:8px;">&middot; blank = too few calls all year to judge</span>
   </div>
   <% included.forEach(function(s){ if (!s.yearNoteHour) return; %>
@@ -439,7 +468,7 @@
     </tbody>
   </table></div>
   <div style="display:flex;align-items:center;gap:6px;padding:10px 18px;font-size:11px;color:var(--muted);">
-    0% <% ['var(--surface-2)','var(--bad-bg)','var(--bad-line2)','var(--bad-soft)','var(--bad)','#7f1d1d'].forEach(function(c){ %><span style="width:18px;height:10px;background:<%= c %>;border:1px solid var(--line);border-radius:2px;display:inline-block;"></span><% }); %> 30%+ missed
+    0% <% ['var(--surface-2)','#fee2e2','#fecaca','#fca5a5','#f87171','#ef4444','#dc2626','#b91c1c','#991b1b','#7f1d1d'].forEach(function(c){ %><span style="width:14px;height:10px;background:<%= c %>;border:1px solid var(--line);border-radius:2px;display:inline-block;"></span><% }); %> 32%+ missed <span style="color:var(--faint);">&middot; one step every 4 points</span>
     <span style="color:var(--faint);margin-left:8px;">&middot; blank = too few calls all year to judge &middot; &ndash; = no calls all year</span>
   </div>
   <% included.forEach(function(s){ if (!s.yearNoteDow) return; %>

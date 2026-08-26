@@ -160,7 +160,11 @@ export function observeCallShare(cells: RateCell[]): string {
 // cell here" makes a good year look as alarming as a bad one; 30% missed should be the
 // same colour in January as in August, and on every branch.
 
-export const RATE_BANDS = [0, 5, 10, 20, 30];   // upper edges: <5, <10, <20, <30, 30+
+// TEN steps of four points each. The first cut of this used five uneven bands and put
+// everything from 20% to 29% in one colour — which is precisely where this data sits, so
+// 21% and 26% rendered identically and the screen said "these hours are the same" when
+// they are not. Keep these edges in step with RATE_STEPS/RATE_EDGES in oneboard-board.ejs.
+export const RATE_BANDS = [0, 4, 8, 12, 16, 20, 24, 28, 32];   // upper edges; 32+ is the last band
 
 export function rateBand(pct: number | null): number {
   if (pct == null) return -1;               // not judged
