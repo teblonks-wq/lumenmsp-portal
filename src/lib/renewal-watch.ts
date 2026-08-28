@@ -58,12 +58,29 @@ export interface Radar {
 const num = (v: any): number => (v == null ? 0 : Number(v));
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/**
+ * Whole days between two instants, counted in EUROPE/LONDON CALENDAR DAYS.
+ *
+ * Two things had to be true and only one of them was.
+ *
+ * The easy one: "7 days away" must not flicker to 6 because the sweep happened to run in
+ * the afternoon. Both ends are reduced to a calendar day first, so the time of day is
+ * irrelevant.
+ *
+ * The one that bit: WHOSE calendar day. The first cut used getFullYear/getMonth/getDate,
+ * which is the SERVER's local timezone — so the same instants gave 7 on a UTC box and 8
+ * on a London one. That is a test failing on Terry's Windows machine and passing on the
+ * Linux VM, which is exactly the kind of difference that gets written off as flaky.
+ *
+ * It matters beyond tidiness: dayKeyOf() files the diary entry on the Europe/London day,
+ * so if this function counted days in a different zone, a "7-day warning" could be filed
+ * on a date that is not seven days out. The countdown and the date it lands on have to
+ * share ONE definition of a day. This is it, and it gives the same answer everywhere.
+ */
 export function daysBetween(from: Date, to: Date | null): number | null {
   if (!to) return null;
-  // Whole days, floored to midnight on both ends: "7 days away" must not flicker to 6
-  // because the sweep happens to run in the afternoon.
-  const a = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
-  const b = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
+  const a = Date.parse(dayKeyOf(from) + 'T00:00:00Z');
+  const b = Date.parse(dayKeyOf(to) + 'T00:00:00Z');
   return Math.round((b - a) / 86400000);
 }
 

@@ -85,8 +85,34 @@ console.log('\nDay arithmetic');
   check('D5 the time of day does not change the answer',
         daysBetween(new Date('2026-08-28T16:45:00Z'), new Date('2026-09-04T02:00:00Z')) === 7,
         String(daysBetween(new Date('2026-08-28T16:45:00Z'), new Date('2026-09-04T02:00:00Z'))));
-  check('D6 …in either direction across a day',
-        daysBetween(new Date('2026-08-28T01:00:00Z'), new Date('2026-09-04T23:00:00Z')) === 7);
+  check('D6 …at both ends of the same London day',
+        daysBetween(new Date('2026-08-28T01:00:00Z'), new Date('2026-09-04T20:00:00Z')) === 7,
+        String(daysBetween(new Date('2026-08-28T01:00:00Z'), new Date('2026-09-04T20:00:00Z'))));
+  // The version of D6 that caught the bug. 23:00Z in BST is ALREADY midnight in London,
+  // so it is genuinely the next London day and genuinely one more day away. The first cut
+  // of daysBetween used the server's local timezone, so this returned 7 on the UTC VM and
+  // 8 on Terry's London machine — a test that disagrees with itself by platform. Pinned
+  // here so the London-calendar rule is asserted rather than assumed.
+  check('D9 23:00Z during BST is already the next London day',
+        daysBetween(new Date('2026-08-28T01:00:00Z'), new Date('2026-09-04T23:00:00Z')) === 8,
+        String(daysBetween(new Date('2026-08-28T01:00:00Z'), new Date('2026-09-04T23:00:00Z'))));
+  // …and the same clock time in GMT is not.
+  check('D10 23:00Z in winter is still the same London day',
+        daysBetween(new Date('2026-12-01T01:00:00Z'), new Date('2026-12-08T23:00:00Z')) === 7,
+        String(daysBetween(new Date('2026-12-01T01:00:00Z'), new Date('2026-12-08T23:00:00Z'))));
+  // The whole point: the answer must not depend on where it runs.
+  check('D11 the count is the same whatever TZ the process is in', (() => {
+    const probe = () => daysBetween(new Date('2026-08-28T16:45:00Z'), new Date('2026-09-04T02:00:00Z'));
+    const before = probe();
+    const saved = process.env.TZ;
+    let same = true;
+    for (const tz of ['UTC', 'Europe/London', 'America/New_York', 'Pacific/Auckland']) {
+      process.env.TZ = tz;
+      if (probe() !== before) same = false;
+    }
+    if (saved === undefined) delete process.env.TZ; else process.env.TZ = saved;
+    return same && before === 7;
+  })());
   check('D7 it counts across a month end', daysBetween(D('2026-08-28'), D('2026-09-28')) === 31);
   // The clocks go back on 25 Oct 2026. A naive ms/86400000 gives 30.04 days here.
   check('D8 the BST→GMT change does not add or lose a day',
