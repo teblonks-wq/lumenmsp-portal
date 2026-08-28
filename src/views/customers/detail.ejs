@@ -1112,6 +1112,100 @@
       .msub-card .tbadge, .msub-meta .tbadge{font-size:10px;font-weight:600;padding:1px 8px;border-radius:20px;}
     </style>
 
+
+    <!-- LICENCE ALLOCATION — who is actually on the seats Giacom bills -->
+    <% var alloc = (typeof allocation!=='undefined' && allocation) ? allocation : null; %>
+    <div class="card" id="allocation" style="padding:0;margin-bottom:14px;">
+      <div class="card-header" style="padding:16px 20px 4px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <h2 style="margin:0;">Licence allocation <span class="muted" style="font-weight:500;font-size:12px;">— who is on the seats, live from Microsoft Graph (read-only)</span></h2>
+        <% if (alloc && alloc.state==='ok') { %><span class="muted" style="font-size:11px;">checked just now</span><% } %>
+      </div>
+
+      <% if (!alloc || alloc.state!=='ok') { %>
+        <p class="muted" style="padding:0 20px 16px;">
+          <%= alloc ? alloc.detail : 'Licence allocation is unavailable.' %>
+          <% if (alloc && alloc.state==='no-consent' && typeof graphConsentUrl==='function') { %>
+            <a class="row-link" href="<%= graphConsentUrl(alloc.tenantId) %>" target="_blank" rel="noopener">Send the consent link →</a>
+          <% } %>
+        </p>
+      <% } else if (!alloc.skus.length) { %>
+        <p class="muted" style="padding:0 20px 16px;">The tenant holds no licence pools.</p>
+      <% } else { %>
+        <% if (alloc.totals.reclaimable > 0) { %>
+          <div style="margin:8px 20px 4px;padding:10px 14px;border-radius:10px;background:var(--tint-warn,#fef3c7);color:var(--warn-deep,#b45309);font-size:13px;">
+            <strong>⚠ <%= alloc.totals.reclaimable %> seat<%= alloc.totals.reclaimable===1?'':'s' %> doing nothing<% if (alloc.totals.monthlyWaste>0) { %> — <%= money(alloc.totals.monthlyWaste) %>/mo buy, <%= money(alloc.totals.monthlyWaste*12) %>/yr<% } %>.</strong>
+            <%= alloc.totals.spare %> never assigned<% if (alloc.totals.onDisabled) { %>, <%= alloc.totals.onDisabled %> sitting on disabled accounts<% } %>.
+            Annual terms can only be reduced at renewal — check this before the renewal date, not after.
+          </div>
+        <% } %>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;padding:12px 20px 4px;">
+          <div class="msub-chip"><b><%= alloc.totals.poolSeats.toLocaleString('en-GB') %></b> in the pools</div>
+          <div class="msub-chip"><b><%= alloc.totals.assigned.toLocaleString('en-GB') %></b> assigned</div>
+          <div class="msub-chip" style="<%= alloc.totals.spare?'color:var(--warn-deep,#b45309);':'' %>"><b><%= alloc.totals.spare %></b> spare</div>
+          <div class="msub-chip" style="<%= alloc.totals.onDisabled?'color:var(--bad-fg,#b91c1c);':'' %>"><b><%= alloc.totals.onDisabled %></b> on disabled accounts</div>
+          <div class="msub-chip"><b><%= alloc.unlicensedUsers %></b> active users with no licence</div>
+        </div>
+
+        <div class="table-wrap"><table class="table">
+          <thead><tr>
+            <th>Licence</th>
+            <th style="text-align:right;">Billed</th>
+            <th style="text-align:right;">Pool</th>
+            <th style="text-align:right;">Assigned</th>
+            <th style="text-align:right;">Spare</th>
+            <th style="text-align:right;">On disabled</th>
+            <th style="text-align:right;">Reclaimable</th>
+            <th style="text-align:right;">Waste /mo</th>
+            <th></th>
+          </tr></thead>
+          <tbody>
+          <% alloc.skus.forEach(function(s, si){ %>
+            <tr>
+              <td>
+                <strong><%= s.name %></strong>
+                <% if (!s.matched && s.billedSeats!=null && !s.poolTotal) { %>
+                  <span class="badge" style="background:var(--tint-warn,#fef3c7);color:var(--warn-deep,#b45309);font-size:9px;" title="Giacom bills for this but it could not be paired with a licence pool in the tenant — the name mapping needs a look">⚠ no matching pool</span>
+                <% } else if (!s.matched) { %>
+                  <span class="badge" style="background:#f1f5f9;color:#475569;font-size:9px;" title="Present in the tenant but nothing in the Giacom feed bills for it">not billed via Giacom</span>
+                <% } %>
+                <% if (s.seatDrift) { %>
+                  <span class="badge" style="background:var(--bad-bg,#fee2e2);color:var(--bad-fg,#b91c1c);font-size:9px;" title="Giacom bills <%= s.billedSeats %> but the tenant pool holds <%= s.poolTotal %>">drift <%= s.seatDrift>0?'+':'' %><%= s.seatDrift %></span>
+                <% } %>
+                <% if (s.renewalDate) { %><div class="muted" style="font-size:11px;">renews <%= msD(s.renewalDate) %><% if (s.term) { %> · <%= s.term %><% } %></div><% } %>
+              </td>
+              <td style="text-align:right;"><%= s.billedSeats==null?'—':s.billedSeats %></td>
+              <td style="text-align:right;"><%= s.poolTotal||'—' %></td>
+              <td style="text-align:right;"><%= s.assigned||'—' %></td>
+              <td style="text-align:right;<%= s.spare?'color:var(--warn-deep,#b45309);font-weight:600;':'color:var(--muted);' %>"><%= s.spare||'—' %></td>
+              <td style="text-align:right;<%= s.onDisabled?'color:var(--bad-fg,#b91c1c);font-weight:600;':'color:var(--muted);' %>"><%= s.onDisabled||'—' %></td>
+              <td style="text-align:right;font-weight:600;"><%= s.reclaimable||'—' %></td>
+              <td style="text-align:right;"><%= s.monthlyWaste==null?'—':money(s.monthlyWaste) %></td>
+              <td style="text-align:right;">
+                <% if (s.holders.length) { %><button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="var r=document.getElementById('lah<%= si %>');r.style.display=(r.style.display==='none'?'table-row':'none')"><%= s.holders.length %> user<%= s.holders.length===1?'':'s' %></button><% } %>
+              </td>
+            </tr>
+            <% if (s.holders.length) { %>
+            <tr id="lah<%= si %>" style="display:none;"><td colspan="9" style="background:var(--tint-info-2,#f8fafc);padding:10px 16px;">
+              <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px;">
+                <% s.holders.forEach(function(h){ %>
+                  <div style="font-size:12px;padding:4px 8px;border-radius:6px;background:var(--surface);border:1px solid var(--line);<%= h.enabled?'':'border-color:var(--bad-fg,#b91c1c);' %>">
+                    <div style="font-weight:600;"><%= h.displayName %><% if (!h.enabled) { %> <span class="tbadge" style="background:var(--bad-bg,#fee2e2);color:var(--bad-fg,#b91c1c);font-size:9px;padding:1px 6px;border-radius:20px;">disabled</span><% } %><% if (h.isGuest) { %> <span class="tbadge" style="background:#f1f5f9;color:#475569;font-size:9px;padding:1px 6px;border-radius:20px;">guest</span><% } %></div>
+                    <div class="muted" style="font-size:11px;"><%= h.email %><% if (h.jobTitle) { %> · <%= h.jobTitle %><% } %></div>
+                  </div>
+                <% }); %>
+              </div>
+            </td></tr>
+            <% } %>
+          <% }); %>
+          </tbody>
+        </table></div>
+        <p class="muted" style="padding:8px 20px 14px;font-size:11px;">
+          <strong>Billed</strong> is what Giacom charges; <strong>Pool</strong> is what the tenant actually holds. A drift between them means one feed is stale or seats were bought another way.
+          <strong>Reclaimable</strong> = spare + licences on disabled accounts. Read-only — nothing here changes anything in the customer's tenant.
+        </p>
+      <% } %>
+    </div>
+
     <!-- GIACOM (auto, priced from the product list) -->
     <div class="card" style="padding:0;margin-bottom:14px;">
       <div class="card-header" style="padding:16px 20px 4px;"><h2>Giacom services <span class="muted" style="font-weight:500;font-size:12px;">— auto from the feed · priced from the product list · ✓ standard / ◆ override</span></h2></div>

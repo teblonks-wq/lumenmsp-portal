@@ -54,7 +54,12 @@ router.get('/', requireAuth, async (req: Request, res: Response) => {
     myTasks = r.rows;
   } catch { /* tasks table may not exist yet */ }
 
-  res.render('dashboard', { user, stats: blank, myTasks });
+  // Renewals coming up. Read-only, one indexed query — an NCE annual term cannot be
+  // reduced after it rolls, so this has to be visible before the date, not after it.
+  let renewals: any = null;
+  try { const { radar } = await import('../lib/renewal-watch'); renewals = await radar(60); } catch { renewals = null; }
+
+  res.render('dashboard', { user, stats: blank, myTasks, renewals });
 });
 
 export default router;

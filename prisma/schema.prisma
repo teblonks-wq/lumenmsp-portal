@@ -3000,6 +3000,24 @@ model MsSubscription {
   @@map("ms_subscription")
 }
 
+// Renewal early-warning ledger. One row per warning ACTUALLY RAISED, so the nightly sweep
+// can run as often as we like without duplicating a diary entry, and an entry somebody
+// deliberately deleted stays deleted. renewal_date is part of the key on purpose: next
+// year's renewal is a different event and warns again from scratch.
+model RenewalAlert {
+  id             Int      @id @default(autoincrement())
+  subscriptionId String   @map("subscription_id")
+  customerId     Int?     @map("customer_id")
+  stage          String   // 60 | 30 | 7
+  renewalDate    DateTime @map("renewal_date") @db.Date
+  diaryEntryId   Int?     @map("diary_entry_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([subscriptionId, stage, renewalDate])
+  @@index([customerId])
+  @@map("renewal_alerts")
+}
+
 // ── The Diary — Lumen business scheduling ────────────────────────────────────────
 // ONE pool of entries; the "diaries" (Mine / Andy's / Support / Onsite / Company
 // Week) are views over it. An entry can name one or both staff — "Andy comes onsite

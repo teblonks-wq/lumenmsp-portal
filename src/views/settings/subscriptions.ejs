@@ -109,6 +109,85 @@ var ov = overview;
   </details>
 <% } %>
 
+
+<h2 id="renewals" style="margin:26px 0 10px;">Renewal early warning <span class="muted" style="font-weight:500;font-size:13px;">— 60 / 30 / 7 days before each annual renewal</span></h2>
+<div class="card" style="max-width:1000px;margin-bottom:14px;">
+  <p class="muted" style="margin:0 0 12px;font-size:13px;">
+    An annual NCE term <strong>cannot be reduced once it renews</strong> — the seats are committed for another twelve months. So the warning has to arrive with enough runway to count heads, agree it with the customer and tell Giacom. Each warning becomes a dated <a class="row-link" href="/diary">Diary</a> task, raised once and never repeated.
+  </p>
+  <form method="post" action="/settings/subscriptions/renewal-owners" style="margin:0 0 12px;">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <label class="muted" style="font-size:12px;display:block;margin-bottom:6px;">Who receives the renewal tasks</label>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px;margin-bottom:10px;">
+      <% (staff||[]).forEach(function(u){ %>
+        <label style="font-size:13px;display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);">
+          <input type="checkbox" name="user_ids" value="<%= u.id %>" <%= (owners||[]).indexOf(u.id)>=0 ? 'checked' : '' %>>
+          <span><%= u.name || u.email %></span>
+        </label>
+      <% }); %>
+    </div>
+    <button class="btn btn-primary" type="submit">Save recipients</button>
+    <% if (!(owners||[]).length) { %>
+      <span class="muted" style="font-size:12px;margin-left:10px;">Nobody set — the nightly sweep writes nothing until somebody is.</span>
+    <% } %>
+  </form>
+  <form method="post" action="/settings/subscriptions/sweep-renewals" style="margin:0;">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="btn" type="submit">Run the sweep now</button>
+    <span class="muted" style="font-size:11px;margin-left:8px;">Runs automatically at 06:25. Safe to press twice — an entry already raised is never raised again.</span>
+  </form>
+</div>
+
+<% var rw = (typeof renewals!=='undefined' && renewals) ? renewals : null; %>
+<% if (rw && rw.cancelWindows.length) { %>
+  <div class="alert alert-error" style="max-width:1000px;">
+    <strong>⚠ <%= rw.cancelWindows.length %> subscription<%= rw.cancelWindows.length===1?'':'s' %> still inside the penalty-free cancellation window.</strong>
+    <p style="margin:6px 0 0;font-size:13px;">This window is usually only days wide and closes for good. Reduce or cancel now, or the seats are committed for the full term.</p>
+    <table class="table" style="margin-top:8px;">
+      <thead><tr><th>Customer</th><th>Product</th><th style="text-align:right;">Seats</th><th style="text-align:right;">Per year</th><th style="text-align:right;">Window closes</th></tr></thead>
+      <tbody>
+        <% rw.cancelWindows.forEach(function(c){ %>
+          <tr>
+            <td><% if (c.customerId) { %><a class="row-link" href="/customers/<%= c.customerId %>#allocation"><%= c.customerName %></a><% } else { %><%= c.customerName %><% } %></td>
+            <td><%= c.product %></td>
+            <td style="text-align:right;"><%= c.seats %></td>
+            <td style="text-align:right;"><%= c.annualValue==null?'—':money(c.annualValue) %></td>
+            <td style="text-align:right;white-space:nowrap;"><%= d(c.cancellableUntil) %> <%- dd(c.daysToCancellable) %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+<% } %>
+
+<% if (rw && rw.rows.length) { %>
+  <div class="card" style="max-width:1000px;margin-bottom:14px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+      <span class="badge" style="background:var(--tint-info-2,#f8fafc);color:var(--muted);"><strong><%= rw.totals.count %></strong> renewing in <%= rw.horizonDays %> days</span>
+      <span class="badge" style="background:var(--tint-info-2,#f8fafc);color:var(--muted);"><strong><%= rw.totals.seats.toLocaleString('en-GB') %></strong> seats</span>
+      <span class="badge" style="background:var(--tint-info-2,#f8fafc);color:var(--muted);"><strong><%= money(rw.totals.annualValue) %></strong>/yr buy</span>
+      <span class="badge" style="background:var(--bad-bg,#fee2e2);color:var(--bad-fg,#b91c1c);"><strong><%= rw.totals.within30 %></strong> inside 30 days</span>
+    </div>
+    <table class="table">
+      <thead><tr><th>Customer</th><th>Product</th><th style="text-align:right;">Seats</th><th style="text-align:right;">Per year</th><th style="text-align:right;">Renews</th><th style="text-align:right;">Stage</th></tr></thead>
+      <tbody>
+        <% rw.rows.forEach(function(r){ %>
+          <tr>
+            <td><% if (r.customerId) { %><a class="row-link" href="/customers/<%= r.customerId %>#allocation"><%= r.customerName %></a><% } else { %><span class="muted"><%= r.customerName %></span><% } %></td>
+            <td><%= r.product %></td>
+            <td style="text-align:right;"><%= r.seats %></td>
+            <td style="text-align:right;"><%= r.annualValue==null?'—':money(r.annualValue) %></td>
+            <td style="text-align:right;white-space:nowrap;"><%= d(r.renewalDate) %> <%- dd(r.daysToRenewal) %></td>
+            <td style="text-align:right;"><% if (r.stage) { %><span class="badge" style="background:<%= r.stage==='7'?'var(--bad-bg,#fee2e2)':r.stage==='30'?'var(--tint-warn,#fef3c7)':'#f1f5f9' %>;color:<%= r.stage==='7'?'var(--bad-fg,#b91c1c)':r.stage==='30'?'var(--warn-deep,#b45309)':'#475569' %>;"><%= r.stage %>-day</span><% } else { %><span class="muted">—</span><% } %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+<% } else if (rw) { %>
+  <p class="muted" style="max-width:1000px;">Nothing on an annual term renews in the next <%= rw.horizonDays %> days.</p>
+<% } %>
+
 <h2 style="margin:22px 0 10px;">Exposure by customer <span class="muted" style="font-weight:500;font-size:13px;">— worst first</span></h2>
 <% if (!ov.customers.length) { %>
   <p class="muted">No matched subscriptions yet. Hit <strong>Sync from Giacom</strong>, then link any unmatched accounts below.</p>

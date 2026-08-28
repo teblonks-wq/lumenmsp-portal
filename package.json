@@ -13,6 +13,7 @@
     "test:warranty": "tsx src/scripts/test-warranty.ts",
     "test:device-ask": "tsx src/scripts/test-device-ask.ts",
     "test:bitlocker": "tsx src/scripts/test-bitlocker.ts",
+    "test:renewals": "tsx src/scripts/test-renewals.ts",
     "oneboard-baseline": "node dist/scripts/oneboard-baseline-run.js",
     "build": "tsc",
     "start": "node dist/index.js",

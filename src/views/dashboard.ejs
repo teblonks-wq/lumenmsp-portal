@@ -141,4 +141,60 @@
   </div>
 </div>
 
+
+<%
+  var rw = (typeof renewals!=='undefined' && renewals) ? renewals : null;
+  function rwD(v){ if(!v) return '—'; return new Date(v).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
+  function rwMoney(n){ return n==null ? '—' : '£' + Number(n).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+%>
+<% if (rw && (rw.rows.length || rw.cancelWindows.length)) { %>
+<div class="card-grid" style="margin-top:16px;">
+  <div class="card" style="grid-column:1/-1;">
+    <div class="card-header">
+      <h2>Renewals coming up <span class="muted" style="font-weight:500;font-size:12px;">— annual Microsoft commitments in the next <%= rw.horizonDays %> days</span></h2>
+      <a class="btn" href="/settings/subscriptions">All subscriptions</a>
+    </div>
+
+    <% if (rw.cancelWindows.length) { %>
+      <div style="margin:0 0 12px;padding:10px 14px;border-radius:10px;background:var(--bad-bg,#fee2e2);color:var(--bad-fg,#b91c1c);font-size:13px;">
+        <strong>⚠ <%= rw.cancelWindows.length %> subscription<%= rw.cancelWindows.length===1?'':'s' %> can still be cancelled penalty-free — but not for long.</strong>
+        <% rw.cancelWindows.slice(0,3).forEach(function(c){ %>
+          <div style="margin-top:4px;font-size:12px;"><%= c.customerName %> — <%= c.product %>, window closes <strong><%= rwD(c.cancellableUntil) %></strong><%= c.daysToCancellable!=null ? ' (' + c.daysToCancellable + 'd)' : '' %></div>
+        <% }); %>
+        <% if (rw.cancelWindows.length>3) { %><div class="muted" style="margin-top:4px;font-size:11px;">…and <%= rw.cancelWindows.length-3 %> more.</div><% } %>
+      </div>
+    <% } %>
+
+    <% if (rw.rows.length) { %>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+        <div class="msub-chip"><b><%= rw.totals.count %></b> renewing</div>
+        <div class="msub-chip"><b><%= rw.totals.seats.toLocaleString('en-GB') %></b> seats</div>
+        <div class="msub-chip"><b><%= rwMoney(rw.totals.annualValue) %></b>/yr buy</div>
+        <div class="msub-chip" style="<%= rw.totals.within30?'color:var(--bad-fg,#b91c1c);':'' %>"><b><%= rw.totals.within30 %></b> inside 30 days</div>
+      </div>
+      <table class="table" style="margin-bottom:12px;">
+        <thead><tr><th>Customer</th><th>Product</th><th style="text-align:right;">Seats</th><th style="text-align:right;">Per year</th><th style="text-align:right;">Renews</th></tr></thead>
+        <tbody>
+          <% rw.rows.slice(0,10).forEach(function(r){
+               var c = r.urgency==='now' ? 'var(--bad-fg,#b91c1c)' : r.urgency==='soon' ? 'var(--warn-deep,#b45309)' : 'var(--muted)'; %>
+            <tr>
+              <td><% if (r.customerId) { %><a class="row-link" href="/customers/<%= r.customerId %>#allocation"><%= r.customerName %></a><% } else { %><span class="muted"><%= r.customerName %></span><% } %></td>
+              <td><%= r.product %></td>
+              <td style="text-align:right;"><%= r.seats %></td>
+              <td style="text-align:right;"><%= rwMoney(r.annualValue) %></td>
+              <td style="text-align:right;white-space:nowrap;color:<%= c %>;font-weight:<%= r.urgency==='ahead'?'400':'600' %>;">
+                <%= rwD(r.renewalDate) %><%= r.daysToRenewal!=null ? ' · ' + r.daysToRenewal + 'd' : '' %>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+      <% if (rw.rows.length>10) { %><p class="muted" style="font-size:11px;margin:0 0 10px;">Showing the 10 soonest of <%= rw.rows.length %>.</p><% } %>
+      <p class="muted" style="font-size:11px;margin:0;">Annual NCE terms cannot be reduced once they roll — check seat counts on the customer's <strong>Licence allocation</strong> panel before the renewal date.</p>
+    <% } %>
+  </div>
+</div>
+<style>.msub-chip{background:var(--tint-info-2,#f8fafc);border:1px solid var(--line);border-radius:20px;padding:4px 12px;font-size:12px;color:var(--muted);}.msub-chip b{color:var(--text,#0f172a);font-size:13px;}</style>
+<% } %>
+
 <%- include('partials/footer') %>

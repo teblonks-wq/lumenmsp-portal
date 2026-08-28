@@ -102,6 +102,7 @@ import { startBackupCron } from './lib/backup';
 import { startTeamsGraphCron } from './lib/teamsgraph';
 import { startGiacomSync } from './lib/giacom-sync';
 import { startMsSubscriptionsSync } from './lib/ms-subscriptions';
+import { startRenewalWatch } from './lib/renewal-watch';
 import { startDwsSync } from './lib/dws-sftp';
 import { startGoCardlessSync } from './lib/gocardless-sync';
 import { startExtLabelSync } from './lib/insights/ext-labels';
@@ -488,6 +489,7 @@ server.listen(config.PORT, () => {
   startTeamsGraphCron();
   startGiacomSync();
   startMsSubscriptionsSync(); // 05:20 nightly: mirror the Giacom NCE subscription report
+  startRenewalWatch();        // 06:25 nightly: raise 60/30/7-day renewal warnings into the Diary
   startDwsSync();
   startGoCardlessSync();    // hourly: auto-link new GoCardless mandates by email
   startExtLabelSync();      // 04:30: label CLIs with their extension name from Insights

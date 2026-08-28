@@ -602,6 +602,11 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
   let subs: any = null;
   try { const { customerSubscriptions } = await import('../lib/ms-subscriptions'); subs = await customerSubscriptions(customer.id); } catch { subs = null; }
 
+  // Who is actually SITTING on those seats. Read-only Graph, and it never throws — a
+  // missing tenant id or an unconsented tenant comes back as a state the panel explains.
+  let allocation: any = null;
+  try { const { customerAllocation } = await import('../lib/licence-allocation'); allocation = await customerAllocation(customer.id); } catch { allocation = null; }
+
   // Device inventory (Assets tab) — synced from Atera, read-only.
   let assets: any[] = []; let remoteTemplate = '';
   try {
@@ -685,7 +690,7 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
 
   res.render('customers/detail', {
     user, customer, contacts, sites: sitesRes.rows, domains: domainsRes.rows, keyContacts, insights, itcloud, itcloudTpl, itcloudHistory,
-    assets, subs, remoteTemplate, backupView, backupCompanies, backupCustNames, health, graphConsentUrl,
+    assets, subs, allocation, remoteTemplate, backupView, backupCompanies, backupCustNames, health, graphConsentUrl,
     quotes: quotesRes.rows, invoices: invoicesRes.rows, contracts: contractsRes.rows,
     serviceItems: serviceItemsRes.rows, lead, credentials, canVault, creditBalance, documents,
     licences, licenceTypes, licenceAssets,
