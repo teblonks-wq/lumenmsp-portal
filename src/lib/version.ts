@@ -1,6 +1,6 @@
 // App version + changelog. Bump APP_VERSION and prepend a new CHANGELOG entry on each release.
 // Minor work accumulates under the current version; ship a new MAJOR (v2, v3…) after a big batch.
-export const APP_VERSION = 'v4.5';
+export const APP_VERSION = 'v4.6';
 
 export interface ChangelogGroup { area: string; items: string[]; }
 export interface ChangelogEntry {
@@ -11,6 +11,20 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: 'v4.6',
+    date: '2026-08-30',
+    title: 'The script library moves in',
+    groups: [
+      { area: 'Scripts', items: [
+        'Endpoints -> Scripts is a new home for our automation scripts, so they no longer only exist inside Atera. Every script keeps its name, description, file type, who it runs as, arguments and its maximum run time.',
+        'The search box reads the script bodies as well as their names, so "which script touches that registry key" is a question you can now answer without opening them one at a time.',
+        'Scripts can be imported in a batch. An import is keyed on the id the script had in Atera, so running the same import twice updates what is already here instead of leaving two copies.',
+        'Removing a script hides it rather than destroying it - something we ran last week should not disappear out of the history.',
+        'Only Atera scripts we wrote ourselves come across. Atera\'s 1,106-script community library is deliberately left behind: this Portal is ours alone, and a public library in it would be dead weight.',
+      ] },
+    ],
+  },
   {
     version: 'v4.5',
     date: '2026-08-28',

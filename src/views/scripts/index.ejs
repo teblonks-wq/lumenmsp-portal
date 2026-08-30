@@ -1,0 +1,155 @@
+<%- include('../partials/header', { title: 'Scripts', user }) %>
+<%
+  var isAdmin = user.role === 'admin';
+  function kb(n){ return n < 1024 ? n + ' B' : (n/1024).toFixed(1) + ' KB'; }
+%>
+<style>
+  .sc-tools { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  .sc-tools input[type=search] { flex:1 1 260px; font:inherit; font-size:13px; padding:7px 11px;
+    border:1px solid var(--line-strong); border-radius:8px; background:var(--card,#fff); color:var(--ink); }
+  .sc-panel { display:none; margin-bottom:14px; padding:14px; border:1px solid var(--line);
+    border-radius:12px; background:var(--surface-2,#f8fafc); }
+  .sc-panel.on { display:block; }
+  .sc-panel label { font-size:11.5px; font-weight:700; color:var(--muted); display:block; margin:8px 0 3px; }
+  .sc-panel input, .sc-panel select, .sc-panel textarea { width:100%; font:inherit; font-size:12.5px;
+    padding:6px 9px; border:1px solid var(--line-strong); border-radius:7px;
+    background:var(--card,#fff); color:var(--ink); box-sizing:border-box; }
+  .sc-panel textarea { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12px; }
+  .sc-two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .sc-name { font-weight:700; text-decoration:none; color:var(--ink); }
+  .sc-desc { color:var(--muted); font-size:11.5px; margin-top:2px; }
+  .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; }
+  .pill.plain { background:var(--surface-2,#f1f5f9); color:var(--muted); }
+  .pill.info { background:var(--tint-info,#eff6ff); color:var(--info-fg,#1d4ed8); }
+  .sc-log { margin-top:10px; font-size:12px; white-space:pre-wrap; }
+</style>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--info-fg,#1d4ed8),var(--accent));margin-bottom:14px;">
+  <p class="doc-kicker">Automation, off Atera</p>
+  <h1>Scripts</h1>
+  <p class="doc-sub">Lumen's own script library. Atera's team scripts live here now — the community library does not come with them, because only we use this.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div class="stat-band">
+  <span class="tile" style="display:block;"><span class="n info" style="display:block;"><%= stats.total %></span><span class="l" style="display:block;">scripts</span></span>
+  <span class="tile" style="display:block;"><span class="n" style="display:block;"><%= stats.fromAtera %></span><span class="l" style="display:block;">lifted from Atera</span></span>
+  <span class="tile" style="display:block;"><span class="n" style="display:block;"><%= stats.ownWork %></span><span class="l" style="display:block;">written here</span></span>
+  <span class="tile" style="display:block;"><span class="n" style="display:block;"><%= kb(stats.bytes) %></span><span class="l" style="display:block;">of code</span></span>
+</div>
+
+<form method="get" class="sc-tools">
+  <input type="search" name="q" value="<%= q %>" placeholder="Search names, descriptions — and the script bodies themselves">
+  <button class="btn" type="submit">Search</button>
+  <% if (q) { %><a class="btn btn-ghost" href="/scripts">Clear</a><% } %>
+  <% if (isAdmin) { %>
+    <button class="btn btn-ghost" type="button" onclick="scPanel('scNew')">New script</button>
+    <button class="btn btn-ghost" type="button" onclick="scPanel('scImport')">Import</button>
+  <% } %>
+</form>
+
+<% if (isAdmin) { %>
+<div class="sc-panel" id="scImport">
+  <h3 style="margin:0 0 4px;font-size:14px;">Import a batch</h3>
+  <p style="margin:0 0 8px;font-size:12px;color:var(--muted);">
+    Expects <code>{"source":"atera","scripts":[{"sourceRef":"…","name":"…","body":"…"}]}</code>.
+    Keyed on <code>sourceRef</code>, so running it twice updates rather than duplicates.
+  </p>
+  <button class="btn" type="button" id="scClip">Import from clipboard</button>
+  <label for="scJson">…or paste the JSON here</label>
+  <textarea id="scJson" rows="6" spellcheck="false" placeholder='{"source":"atera","scripts":[…]}'></textarea>
+  <div style="margin-top:8px;"><button class="btn" type="button" id="scGo">Import pasted JSON</button></div>
+  <div class="sc-log" id="scLog"></div>
+</div>
+
+<div class="sc-panel" id="scNew">
+  <form method="post" action="/scripts">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="sc-two">
+      <div><label>Name</label><input name="name" required maxlength="200"></div>
+      <div><label>Category</label><input name="category" maxlength="120" placeholder="Optional"></div>
+    </div>
+    <label>Description</label><input name="description" maxlength="2000">
+    <div class="sc-two">
+      <div><label>File type</label><select name="file_type"><% fileTypes.forEach(function(t){ %><option value="<%= t %>"><%= t %></option><% }) %></select></div>
+      <div><label>Runs as</label><select name="run_as"><% runAs.forEach(function(t){ %><option value="<%= t %>"><%= t.replace('_',' ') %></option><% }) %></select></div>
+    </div>
+    <label>Script</label><textarea name="body" rows="14" spellcheck="false" required></textarea>
+    <div style="margin-top:10px;"><button class="btn" type="submit">Add script</button></div>
+  </form>
+</div>
+<% } %>
+
+<div class="table-lift">
+<table class="table">
+  <thead><tr><th>Name</th><th>Type</th><th>Runs as</th><th>Size</th><th>Source</th><th>Updated</th></tr></thead>
+  <tbody>
+  <% if (!scripts.length) { %>
+    <tr><td colspan="6" style="color:var(--muted);padding:18px;">Nothing here yet<%= q ? ' for that search' : '' %>.</td></tr>
+  <% } %>
+  <% scripts.forEach(function(s){ %>
+    <tr>
+      <td>
+        <a class="sc-name" href="/scripts/<%= s.id %>"><%= s.name %></a>
+        <% if (s.description && s.description !== s.name) { %><div class="sc-desc"><%= s.description %></div><% } %>
+      </td>
+      <td><span class="pill plain"><%= s.fileType %></span></td>
+      <td style="font-size:12px;color:var(--muted);"><%= String(s.runAs).replace('_',' ') %></td>
+      <td style="font-size:12px;color:var(--muted);"><%= s.lines %> lines · <%= kb(s.bytes) %></td>
+      <td><% if (s.source === 'atera') { %><span class="pill info">Atera</span><% } else { %><span class="pill plain">Lumen</span><% } %></td>
+      <td style="font-size:12px;color:var(--muted);"><%= new Date(s.updatedAt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) %></td>
+    </tr>
+  <% }) %>
+  </tbody>
+</table>
+</div>
+
+<script>
+function scPanel(id){ var p = document.getElementById(id); if (p) p.classList.toggle('on'); }
+<% if (isAdmin) { %>
+(function(){
+  var log = document.getElementById('scLog');
+  function say(msg, bad){ log.textContent = msg; log.style.color = bad ? 'var(--bad-fg,#b91c1c)' : 'var(--muted)'; }
+
+  async function send(text){
+    var payload;
+    try { payload = JSON.parse(text); }
+    catch (e) { say('That is not valid JSON: ' + e.message, true); return; }
+    if (!payload || !Array.isArray(payload.scripts) || !payload.scripts.length) {
+      say('No "scripts" array in that payload.', true); return;
+    }
+    say('Importing ' + payload.scripts.length + ' script(s)…');
+    try {
+      var r = await fetch('/scripts/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': '<%= csrfToken %>' },
+        body: JSON.stringify(payload),
+      });
+      var j = await r.json();
+      if (!j.ok) { say(j.error || 'Import failed.', true); return; }
+      var msg = j.created + ' added, ' + j.updated + ' updated, ' + j.failed.length + ' failed (of ' + j.total + ').';
+      if (j.failed.length) msg += '\n' + j.failed.map(function(f){ return '• ' + f.name + ' — ' + f.error; }).join('\n');
+      say(msg, j.failed.length > 0);
+      if (j.created || j.updated) setTimeout(function(){ location.reload(); }, 1800);
+    } catch (e) { say('Import failed: ' + e.message, true); }
+  }
+
+  document.getElementById('scGo').addEventListener('click', function(){ send(document.getElementById('scJson').value); });
+
+  // Reading the clipboard needs a real click for user activation — that is why this is a
+  // button and not something the page does on load.
+  document.getElementById('scClip').addEventListener('click', async function(){
+    try {
+      var text = await navigator.clipboard.readText();
+      if (!text) { say('The clipboard is empty.', true); return; }
+      document.getElementById('scJson').value = text.length > 200000 ? '(too big to show — importing anyway)' : text;
+      send(text);
+    } catch (e) { say('Could not read the clipboard: ' + e.message + ' — paste into the box instead.', true); }
+  });
+})();
+<% } %>
+</script>
+
+<%- include('../partials/footer') %>

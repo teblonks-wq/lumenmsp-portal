@@ -58,6 +58,7 @@ import m365Routes from './routes/m365';
 import patchingRoutes from './routes/patching';
 import diaryRoutes from './routes/diary';
 import thirdPartyRoutes from './routes/third-party';
+import scriptRoutes from './routes/scripts';
 import bookingRoutes from './routes/booking';
 import leaverRoutes from './routes/leaver';
 import securityRoutes from './routes/security';
@@ -425,6 +426,7 @@ app.use('/', m365Routes);        // Microsoft 365 read-only panel per customer
 app.use('/', patchingRoutes);    // Windows Update reporting across the estate
 app.use('/', diaryRoutes);       // The Diary — business scheduling (hard-block clash engine)
 app.use('/', thirdPartyRoutes); // Third parties — who a case is waiting on, and the chase board
+app.use('/', scriptRoutes);     // Script library — Lumen's automation scripts, lifted off Atera
 app.use('/', bookingRoutes);    // Customer bookings — /my/book + /diary/services
 app.use('/', leaverRoutes);     // Leavers — scheduled access cut + the support task
 app.use('/', securityRoutes);    // Endpoint Security — Bitdefender/GravityZone

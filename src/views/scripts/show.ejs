@@ -1,0 +1,73 @@
+<%- include('../partials/header', { title: script.name, user }) %>
+<%
+  var isAdmin = user.role === 'admin';
+  function kb(n){ return n < 1024 ? n + ' B' : (n/1024).toFixed(1) + ' KB'; }
+%>
+<style>
+  .sc-meta { display:flex; gap:14px; flex-wrap:wrap; align-items:center; color:var(--muted); font-size:12px; margin:6px 0 14px; }
+  .sc-form label { font-size:11.5px; font-weight:700; color:var(--muted); display:block; margin:10px 0 3px; }
+  .sc-form input, .sc-form select, .sc-form textarea { width:100%; font:inherit; font-size:12.5px;
+    padding:6px 9px; border:1px solid var(--line-strong); border-radius:7px;
+    background:var(--card,#fff); color:var(--ink); box-sizing:border-box; }
+  .sc-form textarea { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:12.5px; line-height:1.5; }
+  .sc-two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .sc-four { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  @media (max-width:900px){ .sc-four { grid-template-columns:1fr 1fr; } }
+  .sc-code { background:var(--surface-2,#f8fafc); border:1px solid var(--line); border-radius:10px;
+    padding:12px 14px; overflow:auto; max-height:60vh; }
+  .sc-code pre { margin:0; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:12.5px; line-height:1.55; white-space:pre; }
+  .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; }
+  .pill.plain { background:var(--surface-2,#f1f5f9); color:var(--muted); }
+  .pill.info { background:var(--tint-info,#eff6ff); color:var(--info-fg,#1d4ed8); }
+</style>
+
+<p style="margin:0 0 6px;"><a href="/scripts" style="font-size:12.5px;">&larr; All scripts</a></p>
+<h1 style="margin:0;font-size:22px;"><%= script.name %></h1>
+<div class="sc-meta">
+  <span class="pill plain"><%= script.fileType %></span>
+  <% if (script.source === 'atera') { %><span class="pill info">from Atera</span><% } %>
+  <span><%= script.lines %> lines · <%= kb(script.bytes) %></span>
+  <span>runs as <%= String(script.runAs).replace('_',' ') %></span>
+  <% if (script.sourceRef) { %><span title="Atera script id"><%= script.sourceRef %></span><% } %>
+  <a href="/scripts/<%= script.id %>/raw">Download</a>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<% if (script.description) { %><p style="margin:0 0 14px;font-size:13px;"><%= script.description %></p><% } %>
+
+<% if (isAdmin) { %>
+  <form method="post" action="/scripts/<%= script.id %>" class="sc-form">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <div class="sc-two">
+      <div><label>Name</label><input name="name" value="<%= script.name %>" required maxlength="200"></div>
+      <div><label>Category</label><input name="category" value="<%= script.category || '' %>" maxlength="120"></div>
+    </div>
+    <label>Description</label><input name="description" value="<%= script.description || '' %>" maxlength="2000">
+    <div class="sc-four">
+      <div><label>File type</label><select name="file_type"><% fileTypes.forEach(function(t){ %><option value="<%= t %>" <%= script.fileType === t ? 'selected' : '' %>><%= t %></option><% }) %></select></div>
+      <div><label>OS</label><select name="os_type"><% osTypes.forEach(function(t){ %><option value="<%= t %>" <%= script.osType === t ? 'selected' : '' %>><%= t %></option><% }) %></select></div>
+      <div><label>Runs as</label><select name="run_as"><% runAs.forEach(function(t){ %><option value="<%= t %>" <%= script.runAs === t ? 'selected' : '' %>><%= t.replace('_',' ') %></option><% }) %></select></div>
+      <div><label>Max runtime (mins)</label><input name="max_runtime_minutes" type="number" min="1" max="1440" value="<%= script.maxRuntimeMinutes || '' %>"></div>
+    </div>
+    <label>Arguments</label><input name="arguments" value="<%= script.arguments || '' %>" maxlength="2000">
+    <label>Script</label>
+    <textarea name="body" rows="26" spellcheck="false" required><%= script.body %></textarea>
+    <div style="margin-top:12px;display:flex;gap:10px;align-items:center;">
+      <button class="btn" type="submit">Save</button>
+      <a class="btn btn-ghost" href="/scripts">Cancel</a>
+    </div>
+  </form>
+
+  <form method="post" action="/scripts/<%= script.id %>/delete" style="margin-top:14px;"
+        onsubmit="return confirm('Remove &quot;<%= script.name %>&quot; from the library?');">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="btn btn-ghost" type="submit" style="color:var(--bad-fg,#b91c1c);">Remove script</button>
+  </form>
+<% } else { %>
+  <div class="sc-code"><pre><%= script.body %></pre></div>
+<% } %>
+
+<%- include('../partials/footer') %>

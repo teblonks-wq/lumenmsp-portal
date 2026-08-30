@@ -3526,3 +3526,31 @@ model QuestionnaireAnswer {
   @@index([questionId])
   @@map("questionnaire_answers")
 }
+
+// ── Script library ────────────────────────────────────────────────────────────────
+// Lumen's own automation scripts, moved off Atera. Atera's team library is the seed;
+// `sourceRef` is Atera's script GUID, which is what makes an import idempotent — a
+// re-import UPDATES the row it already created instead of laying down a second copy.
+// The Portal has no community library and is not getting one: only Lumen uses it.
+model Script {
+  id          Int       @id @default(autoincrement())
+  name        String
+  description String?
+  fileType    String    @default("ps1") @map("file_type")   // ps1 | bat | cmd | sh | py | vbs
+  osType      String    @default("windows") @map("os_type") // windows | macos | linux
+  body        String                                        // the script itself
+  runAs       String    @default("system") @map("run_as")   // system | current_user
+  arguments   String?
+  maxRuntimeMinutes Int? @map("max_runtime_minutes")
+  category    String?
+  source      String    @default("lumen")                   // atera | lumen
+  sourceRef   String?   @map("source_ref")                  // Atera script GUID
+  createdBy   Int?      @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  @@unique([source, sourceRef])
+  @@index([name])
+  @@map("scripts")
+}
