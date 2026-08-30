@@ -1,6 +1,6 @@
 // App version + changelog. Bump APP_VERSION and prepend a new CHANGELOG entry on each release.
 // Minor work accumulates under the current version; ship a new MAJOR (v2, v3…) after a big batch.
-export const APP_VERSION = 'v4.4';
+export const APP_VERSION = 'v4.5';
 
 export interface ChangelogGroup { area: string; items: string[]; }
 export interface ChangelogEntry {
@@ -11,6 +11,21 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: 'v4.5',
+    date: '2026-08-28',
+    title: 'A Direct Debit customer can always be matched',
+    groups: [
+      { area: 'GoCardless matching', items: [
+        'A customer who signs up for Direct Debit is now linked to their company by the invite itself. The setup link carries the company it was sent for, and that now rides all the way onto the mandate, so a new sign-up matches with no guessing and no one to match it by hand.',
+        'The link is now to the GoCardless CUSTOMER rather than to one mandate. A customer who changes bank, whose Direct Debit fails, or who simply signs up again keeps their link and starts collecting on the new mandate by themselves. Before, the old mandate stayed on the record for ever and quietly collected nothing.',
+        'A company whose email address only sits on a contact — not on the company record — now matches on that contact. That single gap was enough to make a paying customer unmatchable.',
+        'The match screen can no longer hide anyone. Every GoCardless customer is listed whether or not they have a mandate, a failed connection to GoCardless is now reported on the page instead of emptying it, and anyone can be matched by hand from the list — or, as a last resort, by pasting their GoCardless customer id straight off the GoCardless dashboard.',
+        'A new table shows customers holding a mandate GoCardless no longer honours. These are the ones that silently stop collecting, and until now nothing said so.',
+        'Matching only acts on its own when the evidence is exact — the invite, the GoCardless id, an email address or an exact company name, and only when nobody else claims it. A near match on a name or a shared email domain is offered as a suggestion for someone to confirm, because this decides which bank account gets debited.',
+      ] },
+    ],
+  },
   {
     version: 'v4.4',
     date: '2026-08-26',

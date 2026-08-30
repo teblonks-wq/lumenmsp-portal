@@ -402,7 +402,7 @@ export async function finaliseCommsBillRun(period: string, userId: number | null
         } else if (isEmailAddr(to)) {
           const flow = await gc.createMandateSetupFlow({
             redirectUri: config.APP_URL + '/gc/return', exitUri: config.APP_URL + '/gc/return',
-            email: to, companyName: inv.customer_name, metadata: { customer_id: String(inv.customer_id) },
+            email: to, companyName: inv.customer_name, metadata: { portal_customer_id: String(inv.customer_id) },
           });
           await sendMail({
             to, subject: 'Set up Direct Debit — Lumen IT Solutions',

@@ -2,45 +2,29 @@ import cron from 'node-cron';
 import { pool } from '../db/pool';
 import { GoCardless } from './gocardless';
 import { notify } from './notifications';
+import { buildMatchState, applyMatches } from './gocardless-match';
 
-// Pull active GoCardless mandates and AUTO-LINK the confident ones to portal customers by email
-// (the DD-setup invite prefills the customer's email, so a fresh mandate matches here). Anything
-// without a clean email match is left UNLINKED — it shows on Settings → GoCardless → Match
-// customers for a human to match by hand. Runs hourly + can be called on demand.
+// Pull GoCardless customers + mandates and link them to portal customers using the shared
+// matcher in gocardless-match.ts (DD-invite metadata → GC customer id → company email →
+// contact email → company name). Anything less than exact — a domain-only or near-name match —
+// is left for a human on Settings → GoCardless → Match customers. Also REFRESHES the cached
+// mandate of everyone already linked, so a customer who cancelled and re-signed starts
+// collecting again without anyone noticing they had stopped. Runs hourly + on demand.
 
-const gcName = (c: any): string => (c.company_name || [c.given_name, c.family_name].filter(Boolean).join(' ') || '').trim();
-
-export async function syncGoCardlessMandates(): Promise<{ total: number; linked: number; unmatched: number }> {
+export async function syncGoCardlessMandates(): Promise<{ total: number; linked: number; unmatched: number; refreshed: number }> {
   const gc = await GoCardless.load();
-  if (!gc.isConfigured()) return { total: 0, linked: 0, unmatched: 0 };
-  let gcCustomers: any[] = [], mandates: any[] = [];
-  try { [gcCustomers, mandates] = await Promise.all([gc.listCustomers(), gc.listMandates('active')]); }
-  catch (e) { console.error('[gocardless-sync] fetch failed:', (e as Error).message); return { total: 0, linked: 0, unmatched: 0 }; }
+  if (!gc.isConfigured()) return { total: 0, linked: 0, unmatched: 0, refreshed: 0 };
+  let state;
+  try { state = await buildMatchState(gc); }
+  catch (e) { console.error('[gocardless-sync] fetch failed:', (e as Error).message); return { total: 0, linked: 0, unmatched: 0, refreshed: 0 }; }
 
-  // First active mandate per GoCardless customer id.
-  const mandateByCust: Record<string, string> = {};
-  for (const m of mandates) { const cust = m?.links?.customer; if (cust && !mandateByCust[cust]) mandateByCust[cust] = m.id; }
-
-  const portal = (await pool.query('SELECT id, email, gocardless_mandate_id FROM customers WHERE deleted_at IS NULL')).rows;
-  const linkedMandates = new Set<string>(portal.filter((c: any) => c.gocardless_mandate_id).map((c: any) => String(c.gocardless_mandate_id)));
-  const emailTo: Record<string, any> = {};
-  for (const c of portal) { const e = (c.email || '').toLowerCase().trim(); if (e) emailTo[e] = c; }
-
-  let linked = 0, unmatched = 0;
-  for (const qc of gcCustomers) {
-    const mid = mandateByCust[qc.id];
-    if (!mid || linkedMandates.has(String(mid))) continue; // no active mandate, or already linked
-    const e = (qc.email || '').toLowerCase().trim();
-    const pc = e ? emailTo[e] : null;
-    if (pc && !pc.gocardless_mandate_id) {
-      await pool.query('UPDATE customers SET gocardless_mandate_id=$1 WHERE id=$2', [mid, pc.id]);
-      pc.gocardless_mandate_id = mid; linkedMandates.add(String(mid)); linked++;
-    } else {
-      unmatched++; // left for manual matching on the GoCardless match screen
-    }
+  const { linked, refreshed } = await applyMatches(state);
+  const unmatched = state.rows.filter((r) => !r.linked && r.mandateId).length;
+  if (linked || refreshed) {
+    console.log(`[gocardless-sync] linked ${linked} new mandate(s), refreshed ${refreshed}; ${unmatched} active mandate(s) still unmatched`);
   }
-  if (linked) console.log(`[gocardless-sync] auto-linked ${linked} new mandate(s) by email; ${unmatched} left for manual match`);
-  return { total: gcCustomers.length, linked, unmatched };
+  for (const w of state.warnings) console.warn('[gocardless-sync]', w);
+  return { total: state.rows.length, linked, unmatched, refreshed };
 }
 
 // ── Payment status → invoice paid ─────────────────────────────────────────────────

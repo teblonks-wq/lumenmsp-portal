@@ -13,6 +13,7 @@ import { renderInvoicePdf } from '../lib/invoice-pdf';
 import { invoiceEmailHtml } from '../lib/emails';
 import { invoiceViewUrl } from '../lib/invoice-link';
 import { syncGoCardlessMandates, linkGcPaymentsToInvoices, syncGoCardlessPayments } from '../lib/gocardless-sync';
+import { buildMatchState, applyMatches, linkGcCustomer, gcName as gcMatchName, TIER_LABEL, type MatchState } from '../lib/gocardless-match';
 const isEmailAddr = (e: any): boolean => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(e || '').trim());
 import { giacomBillingTest, GiacomBilling, GiacomPartner } from '../lib/giacom';
 import { syncGiacomBilling } from '../lib/giacom-sync';
@@ -923,7 +924,7 @@ export async function completeInvoice(id: number, userId: number): Promise<strin
       // No mandate → send a Direct Debit setup invite to the finance contact.
       const flow = await gc.createMandateSetupFlow({
         redirectUri: config.APP_URL + '/gc/return', exitUri: config.APP_URL + '/gc/return',
-        email: to, companyName: inv.name, metadata: { customer_id: String(inv.cust_id || '') },
+        email: to, companyName: inv.name, metadata: { portal_customer_id: String(inv.cust_id || '') },
       });
       await sendMail({
         to, subject: 'Set up Direct Debit — Lumen IT Solutions',
@@ -1087,86 +1088,81 @@ router.post('/settings/gocardless/save', requireAuth, requireAdmin, async (req: 
 });
 
 // ── GoCardless customer/mandate matching ─────────────────────────────────────────
-// Pull GoCardless customers + their active mandates and reconcile to portal customers.
-// Shows CURRENT matches (already linked), auto-links exact unique name/email matches so you
-// don't map everyone by hand, and surfaces only suggestions + unmatched for a decision.
-const gcName = (c: any): string => (c.company_name || [c.given_name, c.family_name].filter(Boolean).join(' ') || '').trim();
-
+// Settings → GoCardless → Match customers. The rule this screen exists to keep: EVERY
+// GoCardless customer is on it, with a way to match them by hand, always. It never redirects
+// away on an API error (that used to hide the whole list), never hides a customer for having no
+// active mandate, and takes a raw GoCardless customer id as a last resort so someone can always
+// be matched straight off the GoCardless dashboard.
 router.get('/settings/gocardless/match-customers', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const gc = await GoCardless.load();
   if (!gc.isConfigured()) { res.redirect('/settings/integrations?err=' + encodeURIComponent('GoCardless not configured')); return; }
-  let gcCustomers: any[] = []; let mandates: any[] = [];
-  try { [gcCustomers, mandates] = await Promise.all([gc.listCustomers(), gc.listMandates('active')]); }
-  catch (e: any) { res.redirect('/settings/integrations?err=' + encodeURIComponent(e.message)); return; }
 
-  // First active mandate per GoCardless customer id.
-  const mandateByCust: Record<string, string> = {};
-  for (const m of mandates) { const cust = m?.links?.customer; if (cust && !mandateByCust[cust]) mandateByCust[cust] = m.id; }
+  let state: MatchState | null = null; let fatal: string | null = null;
+  try { state = await buildMatchState(gc); }
+  catch (e: any) { fatal = e?.message || 'GoCardless request failed'; }
 
-  const portal = (await pool.query('SELECT id, name, email, gocardless_mandate_id FROM customers WHERE deleted_at IS NULL')).rows;
-  const byMandate: Record<string, any> = {};
-  const nameCount: Record<string, number> = {}; const nameTo: Record<string, any> = {};
-  const emailTo: Record<string, any> = {};
-  for (const c of portal) {
-    if (c.gocardless_mandate_id) byMandate[String(c.gocardless_mandate_id)] = c;
-    const k = (c.name || '').toLowerCase().trim(); if (k) { nameCount[k] = (nameCount[k] || 0) + 1; nameTo[k] = c; }
-    const e = (c.email || '').toLowerCase().trim(); if (e) emailTo[e] = c;
+  let autoLinked = 0, refreshed = 0;
+  if (state && req.query.noauto !== '1') {
+    const applied = await applyMatches(state);
+    autoLinked = applied.linked; refreshed = applied.refreshed;
   }
 
-  // Auto-link: a GC customer whose mandate isn't linked yet, matched to an UNLINKED portal
-  // customer by exact email or unique exact name.
-  let autoLinked = 0;
-  for (const qc of gcCustomers) {
-    const mid = mandateByCust[qc.id]; if (!mid || byMandate[String(mid)]) continue;
-    const e = (qc.email || '').toLowerCase().trim();
-    const k = gcName(qc).toLowerCase().trim();
-    const pc = (e && emailTo[e]) || (k && nameCount[k] === 1 ? nameTo[k] : null);
-    if (pc && !pc.gocardless_mandate_id) {
-      await pool.query('UPDATE customers SET gocardless_mandate_id=$1 WHERE id=$2', [mid, pc.id]);
-      pc.gocardless_mandate_id = mid; byMandate[String(mid)] = pc; autoLinked++;
-    }
+  res.render('settings/gocardless-customers', {
+    user: req.session.user!,
+    rows: state?.rows || [],
+    stale: state?.stale || [],
+    warnings: state?.warnings || [],
+    stats: state?.stats || { total: 0, withMandate: 0, linked: 0, suggested: 0, unmatched: 0, noMandate: 0 },
+    portalCustomers: state?.portalCustomers || [],
+    tierLabel: TIER_LABEL,
+    autoLinked, refreshed, fatal,
+    notice: req.query.msg || null,
+    error: req.query.err || null,
+  });
+});
+
+// Last resort: paste a GoCardless customer id (CU…) from the GoCardless dashboard and match it
+// to a portal customer. Works even if the customer never appeared in the list at all.
+router.post('/settings/gocardless/link-by-id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const gcCustomerId = String(req.body.gc_customer_id || '').trim();
+  const customerId = parseInt(String(req.body.customer_id || ''), 10);
+  const back = '/settings/gocardless/match-customers';
+  if (!gcCustomerId || !customerId) { res.redirect(back + '?err=' + encodeURIComponent('Give both a GoCardless customer id and a portal customer.')); return; }
+  try {
+    const gc = await GoCardless.load();
+    const qc = await gc.getCustomer(gcCustomerId);
+    if (!qc?.id) { res.redirect(back + '?err=' + encodeURIComponent('GoCardless has no customer with id ' + gcCustomerId)); return; }
+    const mandates = await gc.listMandates('active');
+    const mine = mandates.find((m: any) => m?.links?.customer === qc.id) || null;
+    await linkGcCustomer(String(qc.id), customerId, mine ? String(mine.id) : null);
+    res.redirect(back + '?msg=' + encodeURIComponent(
+      `Linked ${gcMatchName(qc) || qc.id}` + (mine ? ` (mandate ${mine.id})` : ' — no active mandate yet, it will attach on the next sync')));
+  } catch (e: any) {
+    res.redirect(back + '?err=' + encodeURIComponent('Could not link: ' + (e?.message || 'unknown error').slice(0, 160)));
   }
-
-  const rows = gcCustomers.map((qc: any) => {
-    const mid = mandateByCust[qc.id] || null;
-    const linked = mid ? (byMandate[String(mid)] || null) : null;
-    const e = (qc.email || '').toLowerCase().trim(); const k = gcName(qc).toLowerCase().trim();
-    const suggest = !linked && mid ? ((e && emailTo[e]) || (k && nameCount[k] >= 1 ? nameTo[k] : null)) : null;
-    return { gcId: qc.id, gcName: gcName(qc) || '(no name)', gcEmail: qc.email || '', mandateId: mid, linked, suggest };
-  }).sort((a: any, b: any) => a.gcName.localeCompare(b.gcName));
-
-  const stats = {
-    total: rows.length,
-    withMandate: rows.filter((r: any) => r.mandateId).length,
-    linked: rows.filter((r: any) => r.linked).length,
-    suggested: rows.filter((r: any) => !r.linked && r.suggest).length,
-    unmatched: rows.filter((r: any) => r.mandateId && !r.linked && !r.suggest).length,
-    autoLinked,
-  };
-  const portalCustomers = portal.slice().sort((a: any, b: any) => (a.name || '').localeCompare(b.name || ''));
-  res.render('settings/gocardless-customers', { user: req.session.user!, rows, stats, portalCustomers, notice: req.query.msg || null });
 });
 
 // Link a mandate to a portal customer (clears any other customer holding the same mandate).
 router.post('/settings/gocardless/link-customer', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const mandateId = String(req.body.mandate_id || '').trim();
+  const gcCustomerId = String(req.body.gc_customer_id || '').trim();
+  const mandateId = String(req.body.mandate_id || '').trim() || null;
   const customerId = parseInt(String(req.body.customer_id || ''), 10);
-  if (mandateId && customerId) {
-    await pool.query('UPDATE customers SET gocardless_mandate_id=NULL WHERE gocardless_mandate_id=$1', [mandateId]);
-    await pool.query('UPDATE customers SET gocardless_mandate_id=$1 WHERE id=$2', [mandateId, customerId]);
-  }
-  res.redirect('/settings/gocardless/match-customers?msg=Linked');
+  if (!gcCustomerId || !customerId) { res.redirect('/settings/gocardless/match-customers?err=' + encodeURIComponent('Pick a customer to link to.')); return; }
+  // Stores the GC CUSTOMER id, not just the mandate — so the link survives the mandate being
+  // cancelled and re-signed, which is what broke matching before.
+  await linkGcCustomer(gcCustomerId, customerId, mandateId);
+  res.redirect('/settings/gocardless/match-customers?msg=' + encodeURIComponent(mandateId ? 'Linked' : 'Linked (no active mandate yet)'));
 });
 
 // On-demand: pull new mandates and auto-link the email matches now (same as the hourly job).
 router.post('/settings/gocardless/sync-mandates', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
   const r = await syncGoCardlessMandates();
-  res.redirect('/settings/gocardless/match-customers?msg=' + encodeURIComponent(`Synced ${r.total} GoCardless customer(s): ${r.linked} auto-linked by email, ${r.unmatched} left to match manually.`));
+  res.redirect('/settings/gocardless/match-customers?msg=' + encodeURIComponent(`Synced ${r.total} GoCardless customer(s): ${r.linked} newly linked, ${r.refreshed} mandate(s) refreshed, ${r.unmatched} active mandate(s) left to match by hand.`));
 });
 
 router.post('/settings/gocardless/unlink-customer', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const customerId = parseInt(String(req.body.customer_id || ''), 10);
-  if (customerId) await pool.query('UPDATE customers SET gocardless_mandate_id=NULL WHERE id=$1', [customerId]);
+  if (customerId) await pool.query('UPDATE customers SET gocardless_mandate_id=NULL, gocardless_customer_id=NULL WHERE id=$1', [customerId]);
   res.redirect('/settings/gocardless/match-customers?msg=Unlinked');
 });
 

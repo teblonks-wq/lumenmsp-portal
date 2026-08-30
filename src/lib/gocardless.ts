@@ -78,6 +78,33 @@ export class GoCardless {
     return all;
   }
 
+  // One GoCardless customer by id -- used when a match is made by hand from a GC customer id
+  // pasted out of the GoCardless dashboard, so a customer can always be pulled in by id even if
+  // something upstream left them out of the list.
+  async getCustomer(customerId: string): Promise<any> {
+    const d = await this.apiGet('/customers/' + encodeURIComponent(customerId));
+    return d?.customers || null;
+  }
+
+  // Every billing request (paginated). A fulfilled one carries the metadata we stamped when the
+  // DD invite was sent AND links.mandate / links.customer -- the audit trail that lets historic
+  // mandates be matched back to their portal customer retrospectively.
+  async listBillingRequests(status = ''): Promise<any[]> {
+    const all: any[] = [];
+    let after: string | null = null;
+    do {
+      let path = '/billing_requests?limit=500';
+      if (status) path += '&status=' + encodeURIComponent(status);
+      if (after) path += '&after=' + encodeURIComponent(after);
+      const data = await this.apiGet(path);
+      const batch = data?.billing_requests || [];
+      all.push(...batch);
+      after = data?.meta?.cursors?.after || null;
+      if (batch.length === 0) break;
+    } while (after);
+    return all;
+  }
+
   // Create a mandate-setup (Direct Debit) flow for a customer and return a hosted link to email
   // them. The customer fills their bank details on GoCardless's hosted page; a mandate is created
   // on completion. `metadata` (e.g. our customer id) rides along so we can match the mandate back.
@@ -87,7 +114,12 @@ export class GoCardless {
     metadata?: Record<string, string>;
   }): Promise<{ authorisationUrl: string; billingRequestId: string }> {
     const billing_requests: any = { mandate_request: { scheme: 'bacs', currency: 'GBP' } };
-    if (opts.metadata) billing_requests.metadata = opts.metadata;
+    // Stamp the metadata on BOTH the billing request and the mandate request. GoCardless does not
+    // copy billing-request metadata onto the mandate it creates, so metadata set only at the top
+    // level is invisible on /mandates -- which is exactly how a signed-up customer ends up
+    // unmatchable. On the mandate_request it rides onto the mandate itself and the sync can link
+    // it to the right portal customer with no guessing at all.
+    if (opts.metadata) { billing_requests.metadata = opts.metadata; billing_requests.mandate_request.metadata = opts.metadata; }
     const br = await this.apiPost('/billing_requests', { billing_requests });
     const brId = br?.billing_requests?.id;
     if (!brId) throw new Error('GoCardless returned no billing request ID.');

@@ -3,7 +3,7 @@
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/settings/integrations">← Integrations</a></p>
   <h1>GoCardless customer match</h1>
-  <p class="muted">New mandates auto-link by email hourly; the rest are left here to match by hand.</p></div>
+  <p class="muted">Every GoCardless customer is listed here — with or without a mandate. Exact matches link themselves; everything else can be matched by hand.</p></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;">
     <form method="post" action="/settings/gocardless/link-payments" style="margin:0;"
           onsubmit="return confirm('Back-link GoCardless payments to invoices that have no GC reference (e.g. QB imports)?\n\nMatches by exact amount per customer mandate, then runs the payout sync so paid-out ones flip to paid immediately.');">
@@ -13,51 +13,114 @@
   </div>
 </div>
 
-<% if (notice) { %><div class="alert alert-success" style="max-width:760px;"><%= notice %></div><% } %>
-<% if (stats.autoLinked > 0) { %><div class="alert" style="background:var(--tint-ok);border:1px solid var(--ok-line);max-width:760px;">Auto-linked <strong><%= stats.autoLinked %></strong> exact match<%= stats.autoLinked===1?'':'es' %> this load.</div><% } %>
+<% if (fatal) { %>
+  <div class="alert alert-danger" style="max-width:860px;">
+    <strong>GoCardless didn't answer.</strong> <%= fatal %>
+    <p class="muted" style="margin:6px 0 0;font-size:13px;">Nothing below is current. Check the API key and environment in Settings → Integrations, then reload.</p>
+  </div>
+<% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:860px;"><%= error %></div><% } %>
+<% if (notice) { %><div class="alert alert-success" style="max-width:860px;"><%= notice %></div><% } %>
+<% warnings.forEach(function(w){ %><div class="alert" style="background:var(--tint-warn);border:1px solid var(--warn-line);max-width:860px;"><%= w %></div><% }); %>
+<% if (autoLinked > 0 || refreshed > 0) { %>
+  <div class="alert" style="background:var(--tint-ok);border:1px solid var(--ok-line);max-width:860px;">
+    <% if (autoLinked > 0) { %>Linked <strong><%= autoLinked %></strong> customer<%= autoLinked===1?'':'s' %> on this load.<% } %>
+    <% if (refreshed > 0) { %> Refreshed the mandate on <strong><%= refreshed %></strong> already-linked customer<%= refreshed===1?'':'s' %>.<% } %>
+  </div>
+<% } %>
 
 <div class="card-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));">
   <div class="card"><div class="card-header"><h2>GC customers</h2></div><div class="stat"><%= stats.total %></div></div>
-  <div class="card"><div class="card-header"><h2>With mandate</h2></div><div class="stat"><%= stats.withMandate %></div></div>
+  <div class="card"><div class="card-header"><h2>Active mandate</h2></div><div class="stat"><%= stats.withMandate %></div></div>
   <div class="card"><div class="card-header"><h2>Matched</h2></div><div class="stat" style="color:var(--ok-fg);"><%= stats.linked %></div></div>
   <div class="card"><div class="card-header"><h2>Suggested</h2></div><div class="stat" style="color:var(--blue);"><%= stats.suggested %></div></div>
   <div class="card"><div class="card-header"><h2>No match</h2></div><div class="stat" style="color:var(--warn-fg);"><%= stats.unmatched %></div></div>
 </div>
+<p class="muted" style="font-size:12.5px;margin:-4px 0 18px;">If “GC customers” doesn't equal the customer count on your GoCardless dashboard, the API key is pointed at a different GoCardless account — nothing below can be trusted until that matches.</p>
+
+<% if (stale && stale.length) { %>
+<div class="card" style="border:1px solid var(--warn-line);">
+  <div class="card-header"><h2>Mandates GoCardless no longer honours (<%= stale.length %>)</h2></div>
+  <p class="muted" style="margin:0 0 10px;">These customers still hold a mandate id, but GoCardless doesn't report it as active — <strong>Direct Debits against them will not collect</strong>. If they've re-signed, their new mandate is in the list below; link it and this clears.</p>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Customer</th><th>Mandate held</th><th>Why it's dead</th><th style="text-align:right;">Action</th></tr></thead>
+    <tbody><% stale.forEach(function(s){ %>
+      <tr>
+        <td><a class="row-link" href="/customers/<%= s.customer.id %>"><%= s.customer.name %></a></td>
+        <td><span style="font-family:monospace;font-size:11px;"><%= s.customer.gocardless_mandate_id %></span></td>
+        <td class="muted"><%= s.reason %></td>
+        <td style="text-align:right;"><form method="post" action="/settings/gocardless/unlink-customer" style="display:inline;"><input type="hidden" name="customer_id" value="<%= s.customer.id %>"><button class="btn" type="submit" style="font-size:12px;padding:4px 10px;">Clear</button></form></td>
+      </tr>
+    <% }); %></tbody>
+  </table></div>
+</div>
+<% } %>
 
 <div class="card" style="padding:0;">
   <div class="card-header" style="padding:16px 20px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><h2>GoCardless customers</h2>
-    <input class="input card-filter" placeholder="Search name or email…" style="max-width:260px;font-size:13px;padding:5px 8px;"></div>
+    <input class="input card-filter" placeholder="Search name, email or id…" style="max-width:280px;font-size:13px;padding:5px 8px;"></div>
   <div class="table-wrap">
     <table class="table">
       <thead><tr><th>GoCardless customer</th><th>Mandate</th><th>Status</th><th style="text-align:right;">Action</th></tr></thead>
       <tbody>
         <% rows.forEach(function(r){ %>
           <tr>
-            <td><%= r.gcName %><% if (r.gcEmail) { %> <span class="muted" style="font-size:12px;"><%= r.gcEmail %></span><% } %></td>
-            <td><% if (r.mandateId) { %><span style="font-family:monospace;font-size:11px;"><%= r.mandateId %></span><% } else { %><span class="muted" style="font-size:12px;">no active mandate</span><% } %></td>
             <td>
-              <% if (r.linked) { %><span class="badge badge-sent">Matched</span> <a class="row-link" href="/customers/<%= r.linked.id %>"><%= r.linked.name %></a>
-              <% } else if (r.suggest) { %><span class="badge badge-primary">Suggested</span> <span class="muted"><%= r.suggest.name %></span>
-              <% } else if (r.mandateId) { %><span class="badge badge-inactive">No portal match</span>
-              <% } else { %><span class="muted" style="font-size:12px;">—</span><% } %>
+              <%= r.gcName %>
+              <% if (r.gcEmail) { %><br><span class="muted" style="font-size:12px;"><%= r.gcEmail %></span><% } %>
+              <br><span class="muted" style="font-family:monospace;font-size:10.5px;"><%= r.gcId %></span>
+            </td>
+            <td>
+              <% if (r.mandateId) { %><span style="font-family:monospace;font-size:11px;"><%= r.mandateId %></span>
+              <% } else if (r.otherMandates > 0) { %><span class="muted" style="font-size:12px;">no active mandate<br><%= r.otherMandates %> cancelled/expired</span>
+              <% } else { %><span class="muted" style="font-size:12px;">never set one up</span><% } %>
+            </td>
+            <td>
+              <% if (r.linked) { %>
+                <span class="badge badge-sent">Matched</span> <a class="row-link" href="/customers/<%= r.linked.id %>"><%= r.linked.name %></a>
+              <% } else if (r.match) { %>
+                <span class="badge <%= r.confident ? 'badge-primary' : 'badge-inactive' %>"><%= r.confident ? 'Suggested' : 'Needs a look' %></span>
+                <span class="muted"><%= r.match.name %></span>
+                <br><span class="muted" style="font-size:11.5px;">matched on <%= tierLabel[r.tier] || r.tier %></span>
+              <% } else { %>
+                <span class="badge badge-inactive">No portal match</span>
+              <% } %>
+              <% if (r.ambiguous) { %><br><span style="font-size:11.5px;color:var(--warn-fg);">⚠ <%= r.ambiguous %></span><% } %>
             </td>
             <td style="text-align:right;white-space:nowrap;">
               <% if (r.linked) { %>
                 <form method="post" action="/settings/gocardless/unlink-customer" style="display:inline;"><input type="hidden" name="customer_id" value="<%= r.linked.id %>"><button class="btn" type="submit" style="font-size:12px;padding:4px 10px;">Unlink</button></form>
-              <% } else if (r.mandateId) { %>
-                <% if (r.suggest) { %><form method="post" action="/settings/gocardless/link-customer" style="display:inline;"><input type="hidden" name="mandate_id" value="<%= r.mandateId %>"><input type="hidden" name="customer_id" value="<%= r.suggest.id %>"><button class="btn btn-primary" type="submit">Link</button></form><% } %>
-                <form method="post" action="/settings/gocardless/link-customer" style="display:inline-flex;gap:4px;align-items:center;">
-                  <input type="hidden" name="mandate_id" value="<%= r.mandateId %>">
-                  <select class="input" name="customer_id" required style="width:auto;min-width:160px;padding:4px 7px;font-size:12px;"><option value="">— pick customer —</option><% portalCustomers.forEach(function(pc){ %><option value="<%= pc.id %>"><%= pc.name %></option><% }); %></select>
+              <% } else { %>
+                <% if (r.match) { %>
+                  <form method="post" action="/settings/gocardless/link-customer" style="display:inline;">
+                    <input type="hidden" name="gc_customer_id" value="<%= r.gcId %>"><input type="hidden" name="mandate_id" value="<%= r.mandateId || '' %>"><input type="hidden" name="customer_id" value="<%= r.match.id %>">
+                    <button class="btn btn-primary" type="submit" style="font-size:12px;padding:4px 10px;">Link <%= r.match.name %></button>
+                  </form>
+                <% } %>
+                <form method="post" action="/settings/gocardless/link-customer" style="display:inline-flex;gap:4px;align-items:center;margin-left:4px;">
+                  <input type="hidden" name="gc_customer_id" value="<%= r.gcId %>">
+                  <input type="hidden" name="mandate_id" value="<%= r.mandateId || '' %>">
+                  <select class="input" name="customer_id" required style="width:auto;min-width:190px;padding:4px 7px;font-size:12px;"><option value="">— pick customer —</option><% portalCustomers.forEach(function(pc){ %><option value="<%= pc.id %>"><%= pc.name %></option><% }); %></select>
                   <button class="btn" type="submit" style="font-size:12px;padding:4px 10px;">Link</button>
                 </form>
               <% } %>
             </td>
           </tr>
         <% }); %>
+        <% if (!rows.length) { %><tr><td colspan="4" class="muted" style="padding:18px;">No GoCardless customers came back. If your GoCardless dashboard shows customers, the API key here is for a different account or environment.</td></tr><% } %>
       </tbody>
     </table>
   </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Match by GoCardless customer id</h2></div>
+  <p class="muted" style="margin:0 0 12px;">The escape hatch: if someone can be seen on the GoCardless dashboard but not above, open them there, copy the <code>CU…</code> id out of the URL and match them here directly. Works whether or not they have a mandate yet.</p>
+  <form method="post" action="/settings/gocardless/link-by-id" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+    <input class="input" name="gc_customer_id" placeholder="CU000ABC123" required style="max-width:200px;font-family:monospace;">
+    <select class="input" name="customer_id" required style="max-width:280px;"><option value="">— portal customer —</option><% portalCustomers.forEach(function(pc){ %><option value="<%= pc.id %>"><%= pc.name %></option><% }); %></select>
+    <button class="btn btn-primary" type="submit">Match</button>
+  </form>
 </div>
 
 <%- include('../partials/footer') %>

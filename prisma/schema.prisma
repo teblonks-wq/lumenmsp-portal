@@ -81,6 +81,11 @@ model Customer {
   patchPolicyServerId      Int? @map("patch_policy_server_id")
   quickbooksCustomerId String?   @map("quickbooks_customer_id")
   gocardlessMandateId  String?   @map("gocardless_mandate_id")
+  // The GoCardless CUSTOMER this company is, independent of any one mandate. A mandate is
+  // cancelled and re-signed often (bank change, failed DD, re-signup) and its id changes with
+  // it; the GC customer id does not. Match on this and the link survives mandate churn --
+  // gocardlessMandateId is then just a cache of their CURRENT active mandate.
+  gocardlessCustomerId String?   @map("gocardless_customer_id")
   principalContactId   Int?      @map("principal_contact_id") // → customer_contacts.id (resolved in app, not a FK relation)
   billingContactId     Int?      @map("billing_contact_id")
   serviceContactId     Int?      @map("service_contact_id")
