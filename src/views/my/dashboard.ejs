@@ -1,6 +1,6 @@
 <%- include('header', { title: 'My Account', company, user, active }) %>
 <% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s==='update_required'?'badge-attention':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary'))); } %>
-<% function slabel(s){ return s==='update_required' ? 'With our engineers' : cap(s || 'open'); } %>
+<% function slabel(s){ return s==='update_required' ? 'Awaiting your reply' : cap(s || 'open'); } %>
 <% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
 <% var P = (typeof perms !== 'undefined' && perms) ? perms : {}; %>
 

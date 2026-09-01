@@ -1,0 +1,47 @@
+<%- include('../partials/header', { title: 'Automation', user }) %>
+<style>
+  .au-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:14px; }
+  .au-tile { display:block; text-decoration:none; color:inherit; padding:18px;
+    border:1px solid var(--line); border-radius:14px; background:var(--card,#fff); transition:border-color .15s, transform .15s; }
+  .au-tile:hover { border-color:var(--accent); transform:translateY(-1px); }
+  .au-tile h3 { margin:0 0 4px; font-size:15px; }
+  .au-tile p { margin:0; font-size:12.5px; color:var(--muted); line-height:1.45; }
+  .au-count { float:right; font-size:12px; font-weight:700; color:var(--accent-dark,#0e7490); }
+</style>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--info-fg,#1d4ed8),var(--accent));margin-bottom:16px;">
+  <p class="doc-kicker">Endpoints</p>
+  <h1>Automation</h1>
+  <p class="doc-sub">Everything the Portal does to machines without anyone sitting at them: the script library, work scheduled for later, Windows Update policy and software deployment.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div class="au-grid">
+  <a class="au-tile" href="/automation/scheduled-tasks">
+    <% if (counts.tasks || counts.scheduledPower) { %><span class="au-count"><%= counts.tasks + counts.scheduledPower %></span><% } %>
+    <h3>Scheduled tasks</h3>
+    <p>Restarts, shutdowns, Windows Updates on and off, scripts and software — to a set of machines, at a moment you choose. Everything already scheduled is listed here, including reboots queued from a device page.</p>
+  </a>
+  <a class="au-tile" href="/scripts">
+    <% if (counts.scripts) { %><span class="au-count"><%= counts.scripts %></span><% } %>
+    <h3>Scripts</h3>
+    <p>Lumen's own script library, lifted off Atera. Each one carries Claude's read of what it does and what it would break.</p>
+  </a>
+  <a class="au-tile" href="/patching">
+    <h3>Patching</h3>
+    <p>Pending Windows Updates across the estate, maintenance-window policies and manual deploy. Nothing is ever rebooted automatically.</p>
+  </a>
+  <a class="au-tile" href="/software">
+    <h3>Software</h3>
+    <p>What is installed across the estate, what is behind, and what is out of support.</p>
+  </a>
+</div>
+
+<p class="muted" style="font-size:12px;margin-top:18px;max-width:70ch;">
+  A scheduled task is an intention. Nothing reaches a machine until its moment arrives — so a
+  weekly reboot booked for a year does not sit as fifty-two commands on every machine from today.
+</p>
+
+<%- include('../partials/footer') %>

@@ -1,0 +1,106 @@
+<%- include('../partials/header', { title: task.name, user }) %>
+<%
+  function cap(s){ return s ? String(s).replace(/[_.]/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
+  function dbadge(s){
+    return s === 'done' ? 'badge-sent' : (s === 'failed' ? 'badge-failed'
+         : s === 'skipped' ? 'badge-inactive' : s === 'running' ? 'badge-attention' : 'badge-primary');
+  }
+  var live = task.status === 'scheduled' || task.status === 'armed';
+  var counts = { done:0, failed:0, waiting:0 };
+  devices.forEach(function(d){
+    if (d.status === 'done') counts.done++;
+    else if (d.status === 'failed' || d.status === 'skipped') counts.failed++;
+    else counts.waiting++;
+  });
+%>
+<style>
+  .tk-meta { display:flex; gap:26px; flex-wrap:wrap; padding:14px 16px; border:1px solid var(--line);
+    border-radius:12px; background:var(--surface-2,#f8fafc); margin-bottom:16px; }
+  .tk-meta dt { font-size:11px; font-weight:700; color:var(--muted); margin:0 0 2px; }
+  .tk-meta dd { margin:0; font-size:13px; font-weight:600; }
+  .tk-out { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11px;
+    white-space:pre-wrap; color:var(--muted); margin-top:3px; }
+</style>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
+  <div>
+    <h1 style="margin:0;"><%= task.name %></h1>
+    <p class="muted" style="margin:4px 0 0;font-size:13px;">
+      <a class="row-link" href="/automation/scheduled-tasks">Scheduled tasks</a> ·
+      <span class="badge <%= task.status === 'done' ? 'badge-sent' : task.status === 'cancelled' ? 'badge-inactive' : task.status === 'armed' ? 'badge-attention' : 'badge-primary' %>"><%= cap(task.status) %></span>
+    </p>
+  </div>
+  <% if (live) { %>
+  <div style="display:flex;gap:8px;">
+    <% if (task.status === 'scheduled') { %>
+      <form method="post" action="/automation/scheduled-tasks/<%= task.id %>/run-now" style="margin:0;"
+            onsubmit="return confirm('Send this to every machine now, ahead of its time?');">
+        <button class="btn" type="submit">Run now</button>
+      </form>
+    <% } %>
+    <form method="post" action="/automation/scheduled-tasks/<%= task.id %>/cancel" style="margin:0;"
+          onsubmit="return confirm('Cancel this task? Anything a machine has already started cannot be stopped.');">
+      <button class="btn" type="submit">Cancel</button>
+    </form>
+    <% if (task.series_id && siblings.length) { %>
+      <form method="post" action="/automation/scheduled-tasks/<%= task.id %>/cancel" style="margin:0;"
+            onsubmit="return confirm('Cancel this and every remaining occurrence in the series?');">
+        <input type="hidden" name="series" value="1">
+        <button class="btn" type="submit">Cancel series</button>
+      </form>
+    <% } %>
+  </div>
+  <% } %>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<dl class="tk-meta">
+  <div><dt>Action</dt><dd><%= def ? def.label : cap(task.action) %></dd></div>
+  <div><dt>Condition</dt><dd><%= task.condition === 'next_contact' ? 'Next contact' : task.condition === 'after_reboot' ? 'After next reboot' : when(task.run_at) %></dd></div>
+  <% if (task.recurrence && task.recurrence !== 'none') { %>
+    <div><dt>Repeats</dt><dd><%= cap(task.recurrence) %> until <%= task.recurrence_end %></dd></div>
+  <% } %>
+  <div><dt>Machines</dt><dd><%= devices.length %></dd></div>
+  <div><dt>Progress</dt><dd><%= counts.done %> done<% if (counts.failed) { %>, <%= counts.failed %> failed<% } %><% if (counts.waiting) { %>, <%= counts.waiting %> waiting<% } %></dd></div>
+  <div><dt>Created by</dt><dd><%= task.created_by_name || '—' %></dd></div>
+  <% if (task.armed_at) { %><div><dt>Sent</dt><dd><%= when(task.armed_at) %></dd></div><% } %>
+</dl>
+
+<% if (def) { %><p class="muted" style="font-size:12.5px;max-width:80ch;margin:-6px 0 16px;"><%= def.consequence %></p><% } %>
+
+<table class="table">
+  <thead><tr><th>Machine</th><th>Customer</th><th>Status</th><th>Finished</th></tr></thead>
+  <tbody>
+    <% devices.forEach(function(d){ %>
+      <tr>
+        <td><% if (d.device_id) { %><a class="row-link" href="/assets/<%= d.device_id %>"><%= d.hostname || ('#' + d.device_id) %></a><% } else { %><span class="muted">gone</span><% } %></td>
+        <td class="muted"><%= d.customer_name || '—' %></td>
+        <td>
+          <span class="badge <%= dbadge(d.status) %>"><%= cap(d.status) %></span>
+          <% if (d.error) { %><div class="tk-out"><%= d.error %></div><% } %>
+          <% if (!d.error && d.output_tail && d.status === 'done') { %><div class="tk-out"><%= d.output_tail %></div><% } %>
+        </td>
+        <td class="muted" style="white-space:nowrap;"><%= d.finished_at ? when(d.finished_at) : '—' %></td>
+      </tr>
+    <% }); %>
+  </tbody>
+</table>
+
+<% if (siblings.length) { %>
+<h2 style="font-size:14px;margin:26px 0 8px;">The rest of this series</h2>
+<table class="table">
+  <thead><tr><th>When</th><th>Status</th></tr></thead>
+  <tbody>
+    <% siblings.forEach(function(s){ %>
+      <tr>
+        <td><a class="row-link" href="/automation/scheduled-tasks/<%= s.id %>"><%= when(s.run_at) %></a></td>
+        <td><span class="badge <%= s.status === 'done' ? 'badge-sent' : s.status === 'cancelled' ? 'badge-inactive' : 'badge-primary' %>"><%= cap(s.status) %></span></td>
+      </tr>
+    <% }); %>
+  </tbody>
+</table>
+<% } %>
+
+<%- include('../partials/footer') %>

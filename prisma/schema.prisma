@@ -691,6 +691,11 @@ model AgentCommand {
   // maintenance window. The agent is never told about it; the poll simply does not hand
   // the command over until the time passes, so an offline machine still behaves correctly.
   runAfter    DateTime? @map("run_after")
+  // "After next reboot": armed at this moment, and the poll refuses to hand the command
+  // over until agent_devices.last_boot_at is LATER than it. Portal-side on purpose -
+  // the agent needs to know nothing, and a machine that is off simply picks it up on the
+  // first check-in after it has actually restarted.
+  runAfterBoot DateTime? @map("run_after_boot")
   // Live progress while a command runs. The agent streams the tail of the output as it
   // appears, and a script that knows how far along it is says so with a [[progress:n]]
   // marker — so a ten-minute install stops looking like a hung window.
@@ -3564,4 +3569,61 @@ model Script {
   @@unique([source, sourceRef])
   @@index([name])
   @@map("scripts")
+}
+
+// ── Automation: scheduled tasks ─────────────────────────────────────────────────
+// One row = one thing to do, to a chosen set of machines, at a chosen moment. The task
+// is the intention; agent_commands are what actually reach the machines, and they are
+// only created when the task is ARMED. That split is deliberate: a weekly reboot running
+// for a year would otherwise sit as 52 queued commands per machine from the day it was
+// made, and nobody could tell an outstanding command from a future one.
+//
+// Recurrence follows the diary's rule and MATERIALISES each occurrence as its own row
+// (series_id = the id of the first). Expanding at read time was rejected there for a
+// good reason and the same one applies here: you cannot cancel, re-time or report on an
+// occurrence that does not exist as a row.
+model AutomationTask {
+  id            Int       @id @default(autoincrement())
+  name          String
+  // power.restart | power.shutdown | wu.off | wu.on | script.run | software.install
+  action        String
+  // Action arguments: { scriptId } | { packageId, packageName } | { delaySeconds }
+  payload       Json?
+  // next_contact | datetime | after_reboot
+  condition     String    @default("next_contact")
+  runAt         DateTime? @map("run_at")            // the datetime condition
+  recurrence    String    @default("none")          // none | daily | weekdays | weekly | fortnightly | monthly
+  recurrenceEnd String?   @map("recurrence_end")    // 'YYYY-MM-DD', inclusive
+  seriesId      Int?      @map("series_id")
+  // scheduled = waiting for its moment · armed = commands are on the machines
+  // done · cancelled · failed (nothing could be armed at all)
+  status        String    @default("scheduled")
+  armedAt       DateTime? @map("armed_at")
+  finishedAt    DateTime? @map("finished_at")
+  cancelledAt   DateTime? @map("cancelled_at")
+  createdBy     Int?      @map("created_by")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([status, runAt])
+  @@index([seriesId])
+  @@map("automation_tasks")
+}
+
+// One machine's share of a task. command_id is filled at arm time and is the only link
+// back to what the agent actually did, so the task screen can report per machine rather
+// than as one lump that is "partly done".
+model AutomationTaskDevice {
+  id         Int       @id @default(autoincrement())
+  taskId     Int       @map("task_id")
+  deviceId   Int       @map("device_id")
+  commandId  Int?      @map("command_id")
+  status     String    @default("pending") // pending | queued | running | done | failed | skipped
+  error      String?
+  finishedAt DateTime? @map("finished_at")
+
+  @@unique([taskId, deviceId])
+  @@index([taskId])
+  @@index([deviceId])
+  @@map("automation_task_devices")
 }

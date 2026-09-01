@@ -301,9 +301,9 @@ router.post('/my/tickets/:id/reply', async (req: Request, res: Response) => {
       "INSERT INTO inbox_messages (ticket_id, message_direction, channel, from_name, from_email, body_text, received_at) VALUES ($1,'inbound','portal',$2,$3,$4,NOW())",
       [id, u.displayName || 'Customer', u.email, body]
     ).catch((e) => console.error('customer reply failed:', e.message));
-    // Reopen + bump so staff see it. 'update_required' (not 'open') so it leads the helpdesk
-    // view as a case the customer is waiting on, and the 48h awaiting timer is stood down.
-    await pool.query("UPDATE inbox_tickets SET status='update_required', postponed_until=NULL, updated_at=NOW() WHERE id=$1", [id]).catch(() => {});
+    // Reopen + bump so staff see it. 'awaiting_engineer' (not 'open') because the customer has
+    // just answered and the ball is ours, and the 48h awaiting timer is stood down with it.
+    await pool.query("UPDATE inbox_tickets SET status='awaiting_engineer', postponed_until=NULL, updated_at=NOW() WHERE id=$1", [id]).catch(() => {});
   }
   res.redirect('/my/tickets/' + id);
 });

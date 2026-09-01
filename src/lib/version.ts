@@ -1,6 +1,6 @@
 // App version + changelog. Bump APP_VERSION and prepend a new CHANGELOG entry on each release.
 // Minor work accumulates under the current version; ship a new MAJOR (v2, v3…) after a big batch.
-export const APP_VERSION = 'v4.6';
+export const APP_VERSION = 'v4.7';
 
 export interface ChangelogGroup { area: string; items: string[]; }
 export interface ChangelogEntry {
@@ -12,18 +12,38 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: 'v4.7',
+    date: '2026-09-01',
+    title: 'Automation, and a case that says the customer answered',
+    groups: [
+      { area: 'Automation', items: [
+        'Automation is a new section, and it is where Scripts, Patching and Software deployment now live together with the new Scheduled tasks screen. They were four separate ideas doing one job.',
+        'Scheduled tasks: restart, shut down, turn Windows Updates off or on, run a script from the library, or deploy a package - to one machine, a handful, or everything at a customer, at a moment you choose.',
+        'Three conditions. NEXT CONTACT acts the moment each machine checks in. TIME AND DATE waits for the clock. AFTER NEXT REBOOT waits until the machine has actually restarted, which it knows from the machine\'s own boot time rather than from anything we assume.',
+        'Tasks repeat - daily, weekdays, weekly, fortnightly or monthly - and a repeating task keeps its wall clock, so a 02:00 reboot is still 02:00 the week the clocks change.',
+        'Nothing reaches a machine until its moment arrives. A weekly reboot booked for a year does not sit as fifty-two commands on every machine from the day it was made, and the queue still means what it says.',
+        'Progress is per machine, not per task. A run across thirty machines that half-worked tells you which fifteen, and what each one said.',
+        'Turning Windows Updates off stops and disables the service AND sets the policy key. The service alone does not hold - Windows Update Medic Service is built to put it back, and it does.',
+        'Reboots and shutdowns scheduled from a machine\'s own page are listed here too. Everything scheduled is on one screen, whichever door it came in by.',
+        'None of this needed a new agent. Every action lands on a command the agent already understood.',
+      ] },
+      { area: 'Helpdesk', items: [
+        'A case that has gone quiet now says so. "Update required" is a new open status: park a case on the customer or a third party, hear nothing for 48 hours, and it is flagged rather than quietly returned to the queue looking like every other case.',
+        'That splits two things that used to look identical. "Awaiting engineer" now means somebody REPLIED and the ball is with us. "Update required" means nobody did, and we owe someone an update.',
+        'Update required leads the helpdesk view, above New - a case nobody has answered for two days is the one most likely to become a complaint.',
+        'A case parked on the customer or a third party waits 48 hours before the timer trips, not 24. A day was not long enough for a customer to find an answer.',
+        'A reply - by email, from the customer portal, from Teams, or from the chat in the Agent on their machine - stands the timer down, so a case that WAS answered is never later flagged as though it was ignored.',
+        'A third-party case with a chase date is still flagged on that date, and still says so rather than claiming nobody replied within 48 hours.',
+        'The Support badge in the sidebar counts both - every case waiting on us, in one number.',
+        'On the customer\'s own view of their case the same status reads "Awaiting your reply", because that is what it means from their side of it.',
+      ] },
+    ],
+  },
+  {
     version: 'v4.6',
     date: '2026-08-30',
     title: 'The script library moves in',
     groups: [
-      { area: 'Helpdesk', items: [
-        'A case the customer has answered now says so. "Update required" is a new open status set the moment a reply lands - by email, from the customer portal, from Teams, or from the chat in the Agent on their machine - and it leads the helpdesk view, above New.',
-        'That splits two things that used to look identical in the queue: a customer who came back to us, and a case that went quiet and needs chasing. "Awaiting engineer" now means only the second.',
-        'A case parked on the customer or a third party waits 48 hours before it returns to the engineer, not 24. A day was not long enough for a customer to find an answer, so cases were coming back before anyone had a chance to reply.',
-        'A reply stands the timer down: once the customer has answered there is nothing left to wait for, so the case is never "returned" to a queue it is already sitting in.',
-        'The Support badge in the sidebar counts both - every case waiting on us, in one number.',
-        'On the customer\'s own view of their case the same status reads "With our engineers", because "Update required" on their screen would look like a job for them.',
-      ] },
       { area: 'Scripts', items: [
         'Review scripts puts Claude over the whole library and says which ones are broken, which carry a risk if they run unattended, and which could simply be better. Each finding points at a line. It reports and never edits - several of these touch AD, BitLocker and public desktops on live estates, so changing one stays a human decision.',
         'A review is pinned to the code it read. Edit a script afterwards and its verdict is marked stale rather than standing as a pass mark on code that has since changed.',

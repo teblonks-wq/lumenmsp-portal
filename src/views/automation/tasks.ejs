@@ -1,0 +1,91 @@
+<%- include('../partials/header', { title: 'Scheduled tasks', user }) %>
+<%
+  function cap(s){ return s ? String(s).replace(/[_.]/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
+  var LABEL = {};
+  actions.forEach(function(a){ LABEL[a.key] = a.label; });
+  function actionLabel(k){ return LABEL[k] || cap(k); }
+  function condLabel(c){ return c === 'next_contact' ? 'Next contact' : (c === 'after_reboot' ? 'After next reboot' : 'Time and date'); }
+  function sbadge(s){
+    return s === 'done' ? 'badge-sent' : s === 'cancelled' ? 'badge-inactive'
+         : s === 'armed' ? 'badge-attention' : 'badge-primary';
+  }
+%>
+<style>
+  .au-sec { margin-bottom:26px; }
+  .au-sec h2 { font-size:14px; margin:0 0 8px; }
+  .au-sec .muted-sub { font-size:12px; color:var(--muted); margin:0 0 10px; }
+  .au-empty { padding:16px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); font-size:12.5px; }
+  .au-prog { font-size:11.5px; color:var(--muted); }
+</style>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
+  <div>
+    <h1 style="margin:0;">Scheduled tasks</h1>
+    <p class="muted" style="margin:4px 0 0;font-size:13px;">Work waiting to happen on customer machines. <a class="row-link" href="/automation">Automation</a></p>
+  </div>
+  <a class="btn btn-primary" href="/automation/scheduled-tasks/new">New task</a>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<%
+function taskTable(rows, showProgress) { %>
+  <table class="table">
+    <thead><tr><th>Task</th><th>Action</th><th>When</th><th>Machines</th><th>Status</th></tr></thead>
+    <tbody>
+      <% rows.forEach(function(t){ %>
+        <tr>
+          <td><a class="row-link" href="/automation/scheduled-tasks/<%= t.id %>"><strong><%= t.name %></strong></a>
+            <% if (t.recurrence && t.recurrence !== 'none') { %><br><span class="muted" style="font-size:11px;">repeats <%= t.recurrence %> until <%= t.recurrence_end %></span><% } %></td>
+          <td><%= actionLabel(t.action) %></td>
+          <td style="white-space:nowrap;"><%= t.condition === 'datetime' ? when(t.run_at) : condLabel(t.condition) %></td>
+          <td><%= t.devices %>
+            <% if (showProgress && t.devices) { %><br><span class="au-prog"><%= t.done %> done<% if (t.failed) { %>, <%= t.failed %> failed<% } %></span><% } %></td>
+          <td><span class="badge <%= sbadge(t.status) %>"><%= cap(t.status) %></span></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+<% }
+%>
+
+<div class="au-sec">
+  <h2>Running now</h2>
+  <p class="muted-sub">Commands are with the machines. A machine that is switched off acts the moment it comes back.</p>
+  <% if (running.length) { taskTable(running, true); } else { %><div class="au-empty">Nothing is out with the machines right now.</div><% } %>
+</div>
+
+<div class="au-sec">
+  <h2>Upcoming</h2>
+  <p class="muted-sub">Nothing has reached a machine yet — cancelling one of these takes it back cleanly.</p>
+  <% if (upcoming.length) { taskTable(upcoming, false); } else { %><div class="au-empty">Nothing scheduled.</div><% } %>
+</div>
+
+<% if (legacy.length) { %>
+<div class="au-sec">
+  <h2>Scheduled from a device page</h2>
+  <p class="muted-sub">Restarts and shutdowns booked before this screen existed, or straight from a machine's own page. They are real and pending; cancel them from the machine.</p>
+  <table class="table">
+    <thead><tr><th>Machine</th><th>Customer</th><th>Action</th><th>When</th><th>Booked by</th></tr></thead>
+    <tbody>
+      <% legacy.forEach(function(c){ %>
+        <tr>
+          <td><a class="row-link" href="/assets/<%= c.device_id %>"><%= c.hostname || ('#' + c.device_id) %></a></td>
+          <td class="muted"><%= c.customer_name || '—' %></td>
+          <td><%= c.kind === 'power.shutdown' ? 'Shut down' : c.kind === 'power.restart' ? 'Restart' : cap(c.kind) %></td>
+          <td style="white-space:nowrap;"><%= when(c.run_after) %></td>
+          <td class="muted"><%= c.requested_by_name || '—' %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+</div>
+<% } %>
+
+<div class="au-sec">
+  <h2>Recently finished</h2>
+  <% if (recent.length) { taskTable(recent, true); } else { %><div class="au-empty">Nothing has run yet.</div><% } %>
+</div>
+
+<%- include('../partials/footer') %>

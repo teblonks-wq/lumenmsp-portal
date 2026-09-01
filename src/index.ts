@@ -59,6 +59,7 @@ import patchingRoutes from './routes/patching';
 import diaryRoutes from './routes/diary';
 import thirdPartyRoutes from './routes/third-party';
 import scriptRoutes from './routes/scripts';
+import automationRoutes from './routes/automation';
 import bookingRoutes from './routes/booking';
 import leaverRoutes from './routes/leaver';
 import securityRoutes from './routes/security';
@@ -98,6 +99,7 @@ import reviewRoutes, { startReviewReminders } from './routes/reviews';
 import { startMailSync } from './lib/mailsync';
 import { startInvoiceInbox } from './lib/purchase-inbox';
 import { startPostponeSweep } from './lib/postpone-sweep';
+import { startAutomationSweep } from './lib/automation';
 import { startLeaverSweep } from './lib/leaver';
 import { startBackupCron } from './lib/backup';
 import { startTeamsGraphCron } from './lib/teamsgraph';
@@ -427,6 +429,7 @@ app.use('/', patchingRoutes);    // Windows Update reporting across the estate
 app.use('/', diaryRoutes);       // The Diary — business scheduling (hard-block clash engine)
 app.use('/', thirdPartyRoutes); // Third parties — who a case is waiting on, and the chase board
 app.use('/', scriptRoutes);     // Script library — Lumen's automation scripts, lifted off Atera
+app.use('/', automationRoutes); // Automation — the hub over Scripts/Patching/Software, and scheduled tasks
 app.use('/', bookingRoutes);    // Customer bookings — /my/book + /diary/services
 app.use('/', leaverRoutes);     // Leavers — scheduled access cut + the support task
 app.use('/', securityRoutes);    // Endpoint Security — Bitdefender/GravityZone
@@ -486,6 +489,7 @@ server.listen(config.PORT, () => {
   startMailSync();
   startInvoiceInbox();
   startPostponeSweep();
+  startAutomationSweep();
   startLeaverSweep();
   startBackupCron();
   startTeamsGraphCron();

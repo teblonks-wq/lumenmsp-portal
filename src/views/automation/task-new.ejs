@@ -1,0 +1,238 @@
+<%- include('../partials/header', { title: 'New scheduled task', user }) %>
+<style>
+  .nt-wrap { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:20px; align-items:start; }
+  @media (max-width:900px){ .nt-wrap { grid-template-columns:1fr; } }
+  .nt-card { padding:16px; border:1px solid var(--line); border-radius:14px; background:var(--card,#fff); }
+  .nt-card h2 { font-size:13.5px; margin:0 0 10px; }
+  .nt-card label { font-size:11.5px; font-weight:700; color:var(--muted); display:block; margin:12px 0 3px; }
+  .nt-card input, .nt-card select { width:100%; font:inherit; font-size:13px; padding:7px 9px;
+    border:1px solid var(--line-strong); border-radius:7px; background:var(--card,#fff); color:var(--ink); box-sizing:border-box; }
+  .nt-help { font-size:11.5px; color:var(--muted); margin:4px 0 0; line-height:1.45; }
+  .nt-consequence { margin-top:12px; padding:10px 12px; border-radius:9px; font-size:12.5px; line-height:1.5;
+    background:var(--tint-warn,#fffbeb); color:var(--warn-deep,#92400e); border:1px solid var(--warn-line,#fde68a); }
+  .nt-two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .nt-list { max-height:420px; overflow:auto; border:1px solid var(--line); border-radius:10px; margin-top:8px; }
+  .nt-row { display:flex; align-items:center; gap:9px; padding:6px 10px; border-bottom:1px solid var(--line); font-size:12.5px; }
+  .nt-row:last-child { border-bottom:0; }
+  .nt-row .h { font-weight:600; }
+  .nt-row .c { color:var(--muted); margin-left:auto; font-size:11.5px; }
+  .nt-dot { width:7px; height:7px; border-radius:50%; background:var(--muted); flex:0 0 auto; }
+  .nt-dot.on { background:var(--ok-fg,#15803d); }
+  .nt-picked { font-size:12px; font-weight:700; margin-top:8px; }
+  .hide { display:none !important; }
+</style>
+
+<div class="page-header" style="margin-bottom:14px;">
+  <h1 style="margin:0;">New scheduled task</h1>
+  <p class="muted" style="margin:4px 0 0;font-size:13px;"><a class="row-link" href="/automation/scheduled-tasks">Scheduled tasks</a></p>
+</div>
+
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<form method="post" action="/automation/scheduled-tasks" id="ntForm">
+<input type="hidden" name="device_ids" id="ntDeviceIds">
+<input type="hidden" name="run_at_epoch" id="ntEpoch">
+
+<div class="nt-wrap">
+  <div class="nt-card">
+    <h2>What, and when</h2>
+
+    <label for="ntName">Name it</label>
+    <input id="ntName" name="name" placeholder="Sunday night reboot — Larkmead servers" maxlength="200">
+    <p class="nt-help">What you will see in the list, and in the activity log afterwards.</p>
+
+    <label for="ntAction">Action</label>
+    <select id="ntAction" name="action">
+      <% actions.forEach(function(a){ %><option value="<%= a.key %>" data-needs="<%= a.needs %>" data-consequence="<%= a.consequence %>"><%= a.label %></option><% }); %>
+    </select>
+    <div class="nt-consequence" id="ntConsequence"></div>
+
+    <div id="ntScriptWrap" class="hide">
+      <label for="ntScript">Script</label>
+      <select id="ntScript" name="script_id">
+        <option value="">— pick a script —</option>
+        <% scripts.forEach(function(s){ %>
+          <option value="<%= s.id %>"><%= s.name %><%= s.reviewVerdict ? ' (' + s.reviewVerdict + ')' : '' %></option>
+        <% }); %>
+      </select>
+      <p class="nt-help">Windows scripts only for now. Read its review before sending it to a room full of machines.</p>
+    </div>
+
+    <div id="ntPackageWrap" class="hide">
+      <label for="ntPackage">Package</label>
+      <select id="ntPackage" name="package_id">
+        <option value="">— pick a package —</option>
+        <% packages.forEach(function(p){ %><option value="<%= p.id %>"><%= p.name %><%= p.version ? ' ' + p.version : '' %></option><% }); %>
+      </select>
+    </div>
+
+    <div id="ntDelayWrap" class="hide">
+      <label for="ntDelay">Warning to the person at the machine</label>
+      <select id="ntDelay" name="delay_seconds">
+        <option value="60">60 seconds</option>
+        <option value="300" selected>5 minutes</option>
+        <option value="900">15 minutes</option>
+        <option value="0">None — act immediately</option>
+      </select>
+      <p class="nt-help">They are told, not asked. They cannot stop it.</p>
+    </div>
+
+    <label for="ntCondition">Condition</label>
+    <select id="ntCondition" name="condition">
+      <% conditions.forEach(function(c){ %><option value="<%= c.key %>" data-help="<%= c.help %>"><%= c.label %></option><% }); %>
+    </select>
+    <p class="nt-help" id="ntCondHelp"></p>
+
+    <div id="ntWhenWrap" class="hide">
+      <div class="nt-two">
+        <div>
+          <label for="ntWhen">Date and time</label>
+          <input type="datetime-local" id="ntWhen">
+        </div>
+        <div>
+          <label for="ntRepeat">Repeat</label>
+          <select id="ntRepeat" name="recurrence">
+            <% recurrences.forEach(function(r){ %><option value="<%= r %>"><%= r === 'none' ? 'Does not repeat' : r.charAt(0).toUpperCase() + r.slice(1) %></option><% }); %>
+          </select>
+        </div>
+      </div>
+      <div id="ntUntilWrap" class="hide">
+        <label for="ntUntil">Repeat until</label>
+        <input type="date" id="ntUntil" name="recurrence_end">
+      </div>
+    </div>
+  </div>
+
+  <div class="nt-card">
+    <h2>Which machines</h2>
+    <div class="nt-two">
+      <div>
+        <label for="ntCustomer">Customer</label>
+        <select id="ntCustomer">
+          <option value="">All customers</option>
+          <% customers.forEach(function(c){ %><option value="<%= c.id %>"><%= c.name %> (<%= c.devices %>)</option><% }); %>
+        </select>
+      </div>
+      <div>
+        <label for="ntSearch">Search</label>
+        <input id="ntSearch" type="search" placeholder="hostname, user…">
+      </div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
+      <button type="button" class="btn" id="ntAll" style="font-size:12px;">Select all shown</button>
+      <button type="button" class="btn" id="ntNone" style="font-size:12px;">Clear</button>
+      <span class="nt-picked" id="ntPicked">0 selected</span>
+    </div>
+    <div class="nt-list" id="ntList"><div class="nt-row muted">Loading machines…</div></div>
+  </div>
+</div>
+
+<div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
+  <button class="btn btn-primary" type="submit">Schedule it</button>
+  <a class="btn" href="/automation/scheduled-tasks">Cancel</a>
+  <span class="muted" style="font-size:12px;" id="ntSummary"></span>
+</div>
+</form>
+
+<script>
+(function(){
+  var picked = Object.create(null);   // id -> hostname, kept across searches
+  var devices = [];
+
+  var action = document.getElementById('ntAction');
+  var cond = document.getElementById('ntCondition');
+  var repeat = document.getElementById('ntRepeat');
+
+  function show(el, on){ if (el) el.classList.toggle('hide', !on); }
+
+  function syncAction(){
+    var o = action.options[action.selectedIndex];
+    var needs = o.getAttribute('data-needs');
+    document.getElementById('ntConsequence').textContent = o.getAttribute('data-consequence') || '';
+    show(document.getElementById('ntScriptWrap'), needs === 'script');
+    show(document.getElementById('ntPackageWrap'), needs === 'package');
+    show(document.getElementById('ntDelayWrap'), action.value.indexOf('power.') === 0);
+  }
+  function syncCondition(){
+    var o = cond.options[cond.selectedIndex];
+    document.getElementById('ntCondHelp').textContent = o.getAttribute('data-help') || '';
+    var timed = cond.value === 'datetime';
+    show(document.getElementById('ntWhenWrap'), timed);
+    // Repeating needs a clock to repeat against. Reset it rather than leave a hidden
+    // value that would be refused on submit with no visible cause.
+    if (!timed) repeat.value = 'none';
+    syncRepeat();
+  }
+  function syncRepeat(){ show(document.getElementById('ntUntilWrap'), cond.value === 'datetime' && repeat.value !== 'none'); }
+
+  action.addEventListener('change', syncAction);
+  cond.addEventListener('change', syncCondition);
+  repeat.addEventListener('change', syncRepeat);
+
+  function render(){
+    var list = document.getElementById('ntList');
+    if (!devices.length) { list.innerHTML = '<div class="nt-row muted">No machines match.</div>'; return; }
+    list.innerHTML = devices.map(function(d){
+      var on = picked[d.id] ? ' checked' : '';
+      return '<label class="nt-row"><input type="checkbox" data-id="' + d.id + '"' + on + '>' +
+             '<span class="nt-dot' + (d.online ? ' on' : '') + '"></span>' +
+             '<span class="h">' + (d.hostname || ('#' + d.id)) + '</span>' +
+             '<span class="c">' + (d.customer_name || '') + '</span></label>';
+    }).join('');
+    list.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+      cb.addEventListener('change', function(){
+        var id = cb.getAttribute('data-id');
+        var d = devices.filter(function(x){ return String(x.id) === String(id); })[0];
+        if (cb.checked) picked[id] = (d && d.hostname) || id; else delete picked[id];
+        syncPicked();
+      });
+    });
+  }
+  function syncPicked(){
+    var ids = Object.keys(picked);
+    document.getElementById('ntPicked').textContent = ids.length + ' selected';
+    document.getElementById('ntDeviceIds').value = ids.join(',');
+  }
+
+  var t = null;
+  function load(){
+    var q = document.getElementById('ntSearch').value.trim();
+    var c = document.getElementById('ntCustomer').value;
+    fetch('/automation/devices.json?q=' + encodeURIComponent(q) + '&customer=' + encodeURIComponent(c))
+      .then(function(r){ return r.json(); })
+      .then(function(j){ devices = (j && j.devices) || []; render(); })
+      .catch(function(){ document.getElementById('ntList').innerHTML = '<div class="nt-row muted">Could not load machines.</div>'; });
+  }
+  document.getElementById('ntSearch').addEventListener('input', function(){ clearTimeout(t); t = setTimeout(load, 200); });
+  document.getElementById('ntCustomer').addEventListener('change', load);
+  document.getElementById('ntAll').addEventListener('click', function(){
+    devices.forEach(function(d){ picked[d.id] = d.hostname || d.id; }); render(); syncPicked();
+  });
+  document.getElementById('ntNone').addEventListener('click', function(){
+    picked = Object.create(null); render(); syncPicked();
+  });
+
+  document.getElementById('ntForm').addEventListener('submit', function(e){
+    // The browser reads datetime-local in ITS timezone, which for us is Europe/London.
+    // Sending the epoch means the server never has to guess what the text meant.
+    var w = document.getElementById('ntWhen');
+    if (cond.value === 'datetime') {
+      if (!w.value) { e.preventDefault(); alert('Pick the date and time it should run.'); return; }
+      document.getElementById('ntEpoch').value = Math.floor(new Date(w.value).getTime() / 1000);
+    } else {
+      document.getElementById('ntEpoch').value = '';
+    }
+    if (!Object.keys(picked).length) { e.preventDefault(); alert('Pick at least one machine.'); return; }
+    var o = action.options[action.selectedIndex];
+    var n = Object.keys(picked).length;
+    if (o.value.indexOf('power.') === 0 &&
+        !confirm(o.text + ' on ' + n + ' machine' + (n === 1 ? '' : 's') + '?\n\n' + o.getAttribute('data-consequence'))) {
+      e.preventDefault();
+    }
+  });
+
+  syncAction(); syncCondition(); syncPicked(); load();
+})();
+</script>
+
+<%- include('../partials/footer') %>

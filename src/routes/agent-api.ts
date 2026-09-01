@@ -704,12 +704,12 @@ router.post('/agent/api/chat/message', requireDevice, async (req: Request, res: 
       `INSERT INTO inbox_messages (ticket_id, mailbox, message_direction, channel, processing_status, is_unread, from_name, from_email, subject, body_text, received_at)
        VALUES ($1,'portal@lumenmsp.co.uk','inbound','agent','matched',true,$2,$3,$4,$5,NOW())`,
       [t.id, fromName, d.hostname || ('device-' + d.id), 'Agent chat message', text]);
-    // A user reply puts the ball back with us: the case becomes 'Update required' so it leads the
-    // helpdesk view. Same rule on every channel (email, portal, Teams, agent chat) - a customer
-    // message is always Update required, and never silently leaves the case where it was.
+    // A user reply puts the ball back with us. Same rule on every channel (email, portal, Teams,
+    // agent chat) - a customer message moves the case to Awaiting engineer and stands the 48h
+    // timer down, rather than silently leaving it parked on the person who just answered.
     await pool.query(
       `UPDATE inbox_tickets SET last_customer_message_at=NOW(), activity_status='unread',
-         status = CASE WHEN status IN ('resolved','closed') THEN status ELSE 'update_required' END,
+         status = CASE WHEN status IN ('resolved','closed') THEN status ELSE 'awaiting_engineer' END,
          postponed_until = CASE WHEN status IN ('resolved','closed') THEN postponed_until ELSE NULL END,
          updated_at=NOW() WHERE id=$1`, [t.id]);
     res.status(201).json({ ok: true, ticket_id: t.id, ticket_number: t.ticket_number });
@@ -980,6 +980,15 @@ async function takeQueued(deviceId: number): Promise<any[]> {
       WHERE id IN (SELECT id FROM agent_commands
                      WHERE device_id=$1 AND status='queued'
                        AND (run_after IS NULL OR run_after <= NOW())
+                       -- "After next reboot": hold it until the machine has actually
+                       -- restarted since the command was armed. last_reboot_at is written
+                       -- from the machine's own boot time on check-in, so this is the
+                       -- machine's word for it, not ours.
+                       AND (run_after_boot IS NULL OR EXISTS (
+                             SELECT 1 FROM agent_devices ad
+                              WHERE ad.id = agent_commands.device_id
+                                AND ad.last_boot_at IS NOT NULL
+                                AND ad.last_boot_at > agent_commands.run_after_boot))
                      ORDER BY (kind = 'mesh.install') DESC, id LIMIT 5)
       RETURNING id, kind, payload`, [deviceId]);
   return r.rows;

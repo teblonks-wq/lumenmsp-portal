@@ -233,7 +233,7 @@ async function processChatMessage(chatId: string, lp: any, selfUserId: string): 
     await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1, NULL, 'system_log', $2)`,
       [ticketId, 'Created from Teams (' + senderName + (senderEmail ? ' · ' + senderEmail : '') + ')']);
   } else {
-    await pool.query("UPDATE inbox_tickets SET prev_status=COALESCE(prev_status, status), prev_activity_status=COALESCE(prev_activity_status, activity_status), status='update_required', postponed_until=NULL, activity_status='unread', teams_conversation=$2, updated_at=NOW() WHERE id=$1 AND status NOT IN ('resolved','closed')", [ticketId, convJson]);
+    await pool.query("UPDATE inbox_tickets SET prev_status=COALESCE(prev_status, status), prev_activity_status=COALESCE(prev_activity_status, activity_status), status='awaiting_engineer', postponed_until=NULL, activity_status='unread', teams_conversation=$2, updated_at=NOW() WHERE id=$1 AND status NOT IN ('resolved','closed')", [ticketId, convJson]);
   }
 
   // Stored body = the text plus any downloaded pictures (clickable, full size in a new tab).
