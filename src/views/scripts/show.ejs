@@ -20,6 +20,15 @@
   .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; }
   .pill.plain { background:var(--surface-2,#f1f5f9); color:var(--muted); }
   .pill.info { background:var(--tint-info,#eff6ff); color:var(--info-fg,#1d4ed8); }
+  .pill.bad { background:var(--tint-bad,#fef2f2); color:var(--bad-fg,#b91c1c); }
+  .pill.warn { background:var(--tint-warn,#fffbeb); color:var(--warn-fg,#b45309); }
+  .pill.ok { background:var(--tint-ok,#f0fdf4); color:var(--ok-fg,#15803d); }
+  .rv { border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:16px; background:var(--surface,#fff); }
+  .rv h3 { margin:0 0 4px; font-size:14px; display:flex; align-items:center; gap:8px; }
+  .rv .sum { font-size:13px; margin:6px 0 0; }
+  .rv ul { margin:10px 0 0; padding-left:0; list-style:none; }
+  .rv li { border-top:1px dashed var(--line); padding:8px 0; font-size:12.5px; display:flex; gap:9px; align-items:flex-start; }
+  .rv li .ln { color:var(--muted); font-family:ui-monospace,Menlo,Consolas,monospace; font-size:11.5px; white-space:nowrap; padding-top:1px; }
 </style>
 
 <p style="margin:0 0 6px;"><a href="/scripts" style="font-size:12.5px;">&larr; All scripts</a></p>
@@ -35,6 +44,43 @@
 
 <% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
 <% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<% if (isAdmin) { %>
+<div class="rv">
+  <h3>
+    Claude's review
+    <% if (!script.reviewedAt) { %><span class="pill plain">not reviewed</span>
+    <% } else if (script.reviewVerdict === 'broken') { %><span class="pill bad">broken</span>
+    <% } else if (script.reviewVerdict === 'warn') { %><span class="pill warn">carries a risk</span>
+    <% } else { %><span class="pill ok">ok</span><% } %>
+    <% if (stale) { %><span class="pill warn">stale — edited since</span><% } %>
+    <button class="btn btn-ghost" type="button" id="rvRun" style="margin-left:auto;font-size:12px;">
+      <%= script.reviewedAt ? 'Review again' : 'Review this script' %></button>
+  </h3>
+  <% if (script.reviewedAt) { %>
+    <p class="sum"><strong><%= script.reviewHeadline %></strong></p>
+    <% if (script.reviewSummary) { %><p class="sum"><%= script.reviewSummary %></p><% } %>
+    <% var fs = script.reviewFindings || []; %>
+    <% if (fs.length) { %>
+      <ul>
+      <% fs.forEach(function(f){ %>
+        <li>
+          <span class="pill <%= f.severity === 'broken' ? 'bad' : (f.severity === 'risk' ? 'warn' : 'plain') %>"><%= f.severity %></span>
+          <span class="ln"><%= f.line ? ('line ' + f.line) : '—' %></span>
+          <span><%= f.note %></span>
+        </li>
+      <% }) %>
+      </ul>
+    <% } else { %><p class="sum" style="color:var(--muted);">No findings.</p><% } %>
+    <p class="sum" style="color:var(--muted);font-size:11.5px;">
+      Reviewed <%= new Date(script.reviewedAt).toLocaleString('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) %><%= stale ? ' — the script has changed since, so treat this as out of date.' : '' %>
+    </p>
+  <% } else { %>
+    <p class="sum" style="color:var(--muted);">Nobody has had Claude read this one yet.</p>
+  <% } %>
+  <div id="rvMsg" style="font-size:12px;color:var(--muted);margin-top:8px;"></div>
+</div>
+<% } %>
 
 <% if (script.description) { %><p style="margin:0 0 14px;font-size:13px;"><%= script.description %></p><% } %>
 
@@ -68,6 +114,21 @@
   </form>
 <% } else { %>
   <div class="sc-code"><pre><%= script.body %></pre></div>
+<% } %>
+
+<% if (isAdmin) { %>
+<script>
+document.getElementById('rvRun').addEventListener('click', async function(){
+  var b = this, m = document.getElementById('rvMsg');
+  b.disabled = true; m.textContent = 'Reading the script…';
+  try {
+    var r = await (await fetch('/scripts/<%= script.id %>/review', {
+      method: 'POST', headers: { 'x-csrf-token': '<%= csrfToken %>' } })).json();
+    if (!r.ok) { m.textContent = r.error || 'Review failed.'; b.disabled = false; return; }
+    m.textContent = 'Done — reloading.'; setTimeout(function(){ location.reload(); }, 700);
+  } catch (e) { m.textContent = 'Review failed: ' + e.message; b.disabled = false; }
+});
+</script>
 <% } %>
 
 <%- include('../partials/footer') %>

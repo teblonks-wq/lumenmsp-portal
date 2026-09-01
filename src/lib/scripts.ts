@@ -23,6 +23,12 @@ export interface ScriptRow {
   category: string | null;
   source: string;
   sourceRef: string | null;
+  reviewVerdict: string | null;
+  reviewHeadline: string | null;
+  reviewSummary: string | null;
+  reviewFindings: Array<{ severity: string; line: number | null; note: string }> | null;
+  reviewedAt: Date | null;
+  reviewedHash: string | null;
   createdAt: Date;
   updatedAt: Date;
   lines: number;
@@ -32,8 +38,11 @@ export interface ScriptRow {
 const SELECT = `
   SELECT id, name, description, file_type AS "fileType", os_type AS "osType", body,
          run_as AS "runAs", arguments, max_runtime_minutes AS "maxRuntimeMinutes",
-         category, source, source_ref AS "sourceRef", created_at AS "createdAt",
-         updated_at AS "updatedAt"
+         category, source, source_ref AS "sourceRef",
+         review_verdict AS "reviewVerdict", review_headline AS "reviewHeadline",
+         review_summary AS "reviewSummary", review_findings AS "reviewFindings",
+         reviewed_at AS "reviewedAt", reviewed_hash AS "reviewedHash",
+         created_at AS "createdAt", updated_at AS "updatedAt"
     FROM scripts`;
 
 function decorate(r: any): ScriptRow {
@@ -138,12 +147,21 @@ export async function deleteScript(id: number): Promise<void> {
   await pool.query('UPDATE scripts SET deleted_at = NOW() WHERE id = $1', [id]);
 }
 
-export async function scriptStats(): Promise<{ total: number; fromAtera: number; ownWork: number; bytes: number }> {
+export interface ScriptStats {
+  total: number; fromAtera: number; ownWork: number; bytes: number;
+  broken: number; warn: number; ok: number; unreviewed: number;
+}
+
+export async function scriptStats(): Promise<ScriptStats> {
   const r = (await pool.query(
     `SELECT COUNT(*)::int total,
             COUNT(*) FILTER (WHERE source = 'atera')::int "fromAtera",
             COUNT(*) FILTER (WHERE source <> 'atera')::int "ownWork",
-            COALESCE(SUM(octet_length(body)), 0)::int bytes
+            COALESCE(SUM(octet_length(body)), 0)::int bytes,
+            COUNT(*) FILTER (WHERE review_verdict = 'broken')::int broken,
+            COUNT(*) FILTER (WHERE review_verdict = 'warn')::int warn,
+            COUNT(*) FILTER (WHERE review_verdict = 'ok')::int ok,
+            COUNT(*) FILTER (WHERE reviewed_at IS NULL)::int unreviewed
        FROM scripts WHERE deleted_at IS NULL`)).rows[0];
   return r;
 }

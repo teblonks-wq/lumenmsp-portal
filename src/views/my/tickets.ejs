@@ -1,5 +1,6 @@
 <%- include('header', { title: 'Support', company: (user && user.displayName) || '', user, active }) %>
-<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); } %>
+<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s==='update_required'?'badge-attention':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary'))); } %>
+<% function slabel(s){ return s==='update_required' ? 'With our engineers' : cap(s || 'open'); } %>
 <% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
@@ -28,7 +29,7 @@
             <tr class="tk" data-closed="<%= closed ? 1 : 0 %>" style="<%= t.activity_status==='unread' ? 'font-weight:600;' : '' %>">
               <td><a class="row-link" href="/my/tickets/<%= t.id %>"><%= t.ticket_number || ('#' + t.id) %></a></td>
               <td><a class="row-link" href="/my/tickets/<%= t.id %>" style="color:inherit;"><%= t.subject || '(no subject)' %></a></td>
-              <td><span class="badge <%= sbadge(t.status) %>"><%= cap(t.status || 'open') %></span></td>
+              <td><span class="badge <%= sbadge(t.status) %>"><%= slabel(t.status) %></span></td>
               <td class="muted"><%= t.created_at ? new Date(t.created_at).toLocaleDateString('en-GB') : '' %></td>
               <td class="muted"><%= t.updated_at ? new Date(t.updated_at).toLocaleDateString('en-GB') : '' %></td>
             </tr>

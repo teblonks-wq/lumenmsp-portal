@@ -704,10 +704,13 @@ router.post('/agent/api/chat/message', requireDevice, async (req: Request, res: 
       `INSERT INTO inbox_messages (ticket_id, mailbox, message_direction, channel, processing_status, is_unread, from_name, from_email, subject, body_text, received_at)
        VALUES ($1,'portal@lumenmsp.co.uk','inbound','agent','matched',true,$2,$3,$4,$5,NOW())`,
       [t.id, fromName, d.hostname || ('device-' + d.id), 'Agent chat message', text]);
-    // A user reply puts the ball back with us: an awaiting-customer case returns to the queue.
+    // A user reply puts the ball back with us: the case becomes 'Update required' so it leads the
+    // helpdesk view. Same rule on every channel (email, portal, Teams, agent chat) - a customer
+    // message is always Update required, and never silently leaves the case where it was.
     await pool.query(
       `UPDATE inbox_tickets SET last_customer_message_at=NOW(), activity_status='unread',
-         status = CASE WHEN status='awaiting_customer' THEN 'awaiting_engineer' ELSE status END,
+         status = CASE WHEN status IN ('resolved','closed') THEN status ELSE 'update_required' END,
+         postponed_until = CASE WHEN status IN ('resolved','closed') THEN postponed_until ELSE NULL END,
          updated_at=NOW() WHERE id=$1`, [t.id]);
     res.status(201).json({ ok: true, ticket_id: t.id, ticket_number: t.ticket_number });
   } catch (e: any) {

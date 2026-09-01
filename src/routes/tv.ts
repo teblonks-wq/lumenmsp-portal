@@ -63,7 +63,7 @@ async function tvData() {
     pool.query(
       `SELECT
          COUNT(*) FILTER (WHERE assigned_user_id IS NULL AND status NOT IN ('resolved','closed'))::int AS unassigned,
-         COUNT(*) FILTER (WHERE status IN ('new','open','in_progress','pending'))::int AS live_open,
+         COUNT(*) FILTER (WHERE status IN ('new','update_required','open','in_progress','pending'))::int AS live_open,
          COUNT(*) FILTER (WHERE date_trunc('month', created_at) = date_trunc('month', CURRENT_DATE))::int AS this_month,
          COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE)::int AS new_today,
          COUNT(*) FILTER (WHERE closed_at::date = CURRENT_DATE)::int AS closed_today,

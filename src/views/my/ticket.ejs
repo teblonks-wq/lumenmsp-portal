@@ -1,6 +1,7 @@
 <%- include('header', { title: 'Ticket ' + (ticket.ticket_number || ''), company: (user && user.displayName) || '', user, active }) %>
 <%
-  function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); }
+  function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s==='update_required'?'badge-attention':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary'))); }
+  function slabel(s){ return s==='update_required' ? 'With our engineers' : cap(s || 'open'); }
   function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
   function fmtDT(x){ return x ? new Date(x).toLocaleString('en-GB', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'; }
   function initials(n){ n=(n||'').trim(); if(!n) return '?'; var p=n.split(/\s+/); return (p[0].charAt(0) + (p[1]?p[1].charAt(0):'')).toUpperCase(); }
@@ -13,7 +14,7 @@
     <div class="card">
       <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
         <h1 style="margin:0;font-size:22px;"><%= ticket.subject || '(no subject)' %></h1>
-        <span class="badge <%= sbadge(ticket.status) %>"><%= cap(ticket.status || 'open') %></span>
+        <span class="badge <%= sbadge(ticket.status) %>"><%= slabel(ticket.status) %></span>
       </div>
       <p class="muted" style="margin:6px 0 0;">Ref <%= ticket.ticket_number || ('#' + ticket.id) %></p>
     </div>
@@ -56,7 +57,7 @@
     <div class="card">
       <h2 style="margin:0 0 12px;font-size:15px;">Details</h2>
       <dl class="meta-list">
-        <dt>Status</dt><dd><span class="badge <%= sbadge(ticket.status) %>"><%= cap(ticket.status || 'open') %></span></dd>
+        <dt>Status</dt><dd><span class="badge <%= sbadge(ticket.status) %>"><%= slabel(ticket.status) %></span></dd>
         <dt>Assigned to</dt><dd><%= assignedTo || 'Awaiting assignment' %></dd>
         <dt>Reference</dt><dd><%= ticket.ticket_number || ('#' + ticket.id) %></dd>
         <% if (ticket.category) { %><dt>Category</dt><dd><%= cap(ticket.category) %></dd><% } %>

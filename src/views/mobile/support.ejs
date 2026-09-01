@@ -13,7 +13,7 @@
         <div class="t"><%= t.subject || '(no subject)' %></div>
         <div class="s"><%= t.ticket_number %><% if (t.customer_name) { %> · <%= t.customer_name %><% } %></div>
       </div>
-      <span class="pill <%= t.status==='new'?'warn':(t.status==='pending'?'':'ok') %>"><%= t.status %></span>
+      <span class="pill <%= t.status==='update_required'?'warn':(t.status==='new'?'warn':(t.status==='pending'?'':'ok')) %>"><%= String(t.status||'').replace(/_/g,' ') %></span>
     </a>
     <% }); %>
   </div>

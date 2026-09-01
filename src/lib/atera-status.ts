@@ -5,7 +5,7 @@ import { getSetting, setSetting } from './settings';
 // RC/CS ones) and can be edited in Settings → Integrations → Atera → Status MAP.
 export interface StatusTarget { status: string; stage: string; department: string }
 
-export const PORTAL_STATUSES = ['new', 'open', 'awaiting_customer', 'awaiting_3rd_party', 'awaiting_engineer', 'awaiting_installation', 'postponed', 'resolved', 'closed'];
+export const PORTAL_STATUSES = ['new', 'update_required', 'open', 'awaiting_customer', 'awaiting_3rd_party', 'awaiting_engineer', 'awaiting_installation', 'postponed', 'resolved', 'closed'];
 export const PORTAL_DEPARTMENTS = ['support', 'sales', 'repair_center', 'comms', 'quotes', 'invoices', 'leads', 'general'];
 
 export const DEFAULT_STATUS_MAP: Record<string, StatusTarget> = {

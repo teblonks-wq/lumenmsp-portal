@@ -16,7 +16,18 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-08-30',
     title: 'The script library moves in',
     groups: [
+      { area: 'Helpdesk', items: [
+        'A case the customer has answered now says so. "Update required" is a new open status set the moment a reply lands - by email, from the customer portal, from Teams, or from the chat in the Agent on their machine - and it leads the helpdesk view, above New.',
+        'That splits two things that used to look identical in the queue: a customer who came back to us, and a case that went quiet and needs chasing. "Awaiting engineer" now means only the second.',
+        'A case parked on the customer or a third party waits 48 hours before it returns to the engineer, not 24. A day was not long enough for a customer to find an answer, so cases were coming back before anyone had a chance to reply.',
+        'A reply stands the timer down: once the customer has answered there is nothing left to wait for, so the case is never "returned" to a queue it is already sitting in.',
+        'The Support badge in the sidebar counts both - every case waiting on us, in one number.',
+        'On the customer\'s own view of their case the same status reads "With our engineers", because "Update required" on their screen would look like a job for them.',
+      ] },
       { area: 'Scripts', items: [
+        'Review scripts puts Claude over the whole library and says which ones are broken, which carry a risk if they run unattended, and which could simply be better. Each finding points at a line. It reports and never edits - several of these touch AD, BitLocker and public desktops on live estates, so changing one stays a human decision.',
+        'A review is pinned to the code it read. Edit a script afterwards and its verdict is marked stale rather than standing as a pass mark on code that has since changed.',
+        'Scripts also has a card on the Admin page.',
         'Endpoints -> Scripts is a new home for our automation scripts, so they no longer only exist inside Atera. Every script keeps its name, description, file type, who it runs as, arguments and its maximum run time.',
         'The search box reads the script bodies as well as their names, so "which script touches that registry key" is a question you can now answer without opening them one at a time.',
         'Scripts can be imported in a batch. An import is keyed on the id the script had in Atera, so running the same import twice updates what is already here instead of leaving two copies.',

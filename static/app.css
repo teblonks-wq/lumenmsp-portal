@@ -864,3 +864,8 @@ html.theme-carbon .doc-hero .ds .n.bad { color:#f87171; }
    class was never defined - it rendered as an unstyled pill. Same look as badge-sent. */
 .badge-active { background: var(--ok-bg); color: var(--ok-fg); }
 html.theme-carbon .badge-active { border: 1px solid var(--ok-line); }
+
+/* Update required - the customer has replied and the case is waiting on us. Amber, so it reads
+   as "answer this" without borrowing the red that means a failure. */
+.badge-attention { background: var(--warn-bg); color: var(--warn-fg); }
+html.theme-carbon .badge-attention { border: 1px solid var(--warn-line); }

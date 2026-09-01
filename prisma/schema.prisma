@@ -3546,6 +3546,17 @@ model Script {
   source      String    @default("lumen")                   // atera | lumen
   sourceRef   String?   @map("source_ref")                  // Atera script GUID
   createdBy   Int?      @map("created_by")
+
+  // Claude's read of the script. `reviewedHash` is the md5 of the body AS REVIEWED — edit
+  // the script and the review is shown as stale rather than quietly standing for code that
+  // no longer exists. Never guard on reviewedAt alone for that reason.
+  reviewVerdict  String?   @map("review_verdict")   // ok | warn | broken
+  reviewHeadline String?   @map("review_headline")
+  reviewSummary  String?   @map("review_summary")
+  reviewFindings Json?     @map("review_findings")
+  reviewedAt     DateTime? @map("reviewed_at")
+  reviewedHash   String?   @map("reviewed_hash")
+
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
   deletedAt   DateTime? @map("deleted_at")

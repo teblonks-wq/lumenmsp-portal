@@ -4,6 +4,7 @@ import { logActivity } from '../lib/activity';
 import {
   FILE_TYPES, OS_TYPES, RUN_AS, listScripts, getScript, upsertScript, deleteScript, scriptStats,
 } from '../lib/scripts';
+import { reviewScript, saveReview, reviewIsStale } from '../lib/script-review';
 
 const router = Router();
 
@@ -19,6 +20,7 @@ router.get('/scripts', requireAuth, async (req: Request, res: Response) => {
   const [scripts, stats] = await Promise.all([listScripts(q), scriptStats()]);
   res.render('scripts/index', {
     user: req.session.user!, scripts, stats, q,
+    stale: scripts.filter(reviewIsStale).map(s => s.id),
     fileTypes: FILE_TYPES, osTypes: OS_TYPES, runAs: RUN_AS,
     notice: req.query.msg || null, error: req.query.err || null,
   });
@@ -28,7 +30,7 @@ router.get('/scripts/:id(\\d+)', requireAuth, async (req: Request, res: Response
   const script = await getScript(parseInt(String(req.params.id), 10));
   if (!script) { res.redirect(BACK + '?err=' + encodeURIComponent('That script is gone.')); return; }
   res.render('scripts/show', {
-    user: req.session.user!, script,
+    user: req.session.user!, script, stale: reviewIsStale(script),
     fileTypes: FILE_TYPES, osTypes: OS_TYPES, runAs: RUN_AS,
     notice: req.query.msg || null, error: req.query.err || null,
   });
@@ -127,6 +129,34 @@ router.post('/scripts/import', requireAuth, requireAdmin, async (req: Request, r
   await logActivity(req.session.user!.id, 'script_import', 'scripts', null,
     `Imported from ${source}: ${created} new, ${updated} updated, ${failed.length} failed`);
   res.json({ ok: true, created, updated, failed, total: items.length });
+});
+
+/**
+ * Review one script with Claude. Returns JSON so the page can walk a queue and show
+ * progress — reviewing 48 scripts inside one request would sit there for minutes and then
+ * time out with nothing saved.
+ */
+router.post('/scripts/:id(\\d+)/review', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const script = await getScript(id);
+  if (!script) { res.status(404).json({ ok: false, error: 'That script is gone.' }); return; }
+  try {
+    const result = await reviewScript(script);
+    await saveReview(script.id, script.body, result);
+    await logActivity(req.session.user!.id, 'script_review', 'scripts', script.id,
+      `Reviewed ${script.name}: ${result.verdict}`);
+    res.json({ ok: true, id: script.id, name: script.name, ...result });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, id, name: script.name, error: e?.message || 'Review failed.' });
+  }
+});
+
+/** The queue the Review button works through: never reviewed, or edited since. */
+router.get('/scripts/review-queue', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const all = String(req.query.all || '') === '1';
+  const scripts = await listScripts();
+  const due = all ? scripts : scripts.filter(s => !s.reviewedAt || reviewIsStale(s));
+  res.json({ ok: true, ids: due.map(s => ({ id: s.id, name: s.name })) });
 });
 
 export default router;

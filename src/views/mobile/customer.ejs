@@ -48,7 +48,7 @@
   <div class="sheet">
     <% if (!(tickets||[]).length) { %><div class="row"><div class="main s">No open cases.</div></div><% } %>
     <% (tickets||[]).forEach(function(t){ %>
-    <a class="row" href="/m/support/<%= t.id %>"><i class="ti ti-headset ic"></i><div class="main"><div class="t"><%= t.subject || '(no subject)' %></div><div class="s"><%= t.ticket_number %> · <%= t.status %></div></div><i class="ti ti-chevron-right chev"></i></a>
+    <a class="row" href="/m/support/<%= t.id %>"><i class="ti ti-headset ic"></i><div class="main"><div class="t"><%= t.subject || '(no subject)' %></div><div class="s"><%= t.ticket_number %> · <%= String(t.status||'').replace(/_/g,' ') %></div></div><i class="ti ti-chevron-right chev"></i></a>
     <% }); %>
   </div>
 </div>

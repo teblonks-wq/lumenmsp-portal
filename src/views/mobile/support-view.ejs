@@ -23,7 +23,7 @@
   <div class="sheet" style="padding:16px;">
     <div style="font-size:16px;font-weight:600;margin-bottom:4px;"><%= t.subject || '(no subject)' %></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <span class="pill <%= t.status==='new'?'warn':'info' %>"><%= t.status %></span>
+      <span class="pill <%= (t.status==='new'||t.status==='update_required')?'warn':'info' %>"><%= String(t.status||'').replace(/_/g,' ') %></span>
       <% if (t.department) { %><span class="pill"><%= t.department %></span><% } %>
       <% if (t.customer_id) { %><a class="pill" href="/m/customers/<%= t.customer_id %>"><i class="ti ti-building" style="font-size:12px;"></i> <%= t.customer_name %></a><% } %>
     </div>

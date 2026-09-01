@@ -1,5 +1,5 @@
 <%- include('../partials/header', { title: contact.full_name, user }) %>
-<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); } %>
+<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s==='update_required'?'badge-attention':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary'))); } %>
 <% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
 <% function tel(p){ return (p||'').replace(/[^+0-9]/g,''); } %>
 

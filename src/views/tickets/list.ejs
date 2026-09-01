@@ -1,5 +1,5 @@
 <%- include('../partials/header', { title: 'Support', user }) %>
-<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); } %>
+<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s==='update_required'?'badge-attention':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary'))); } %>
 <% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
 
 <style>
@@ -154,7 +154,7 @@
 <div class="tabs" style="margin-bottom:16px;flex-wrap:wrap;">
   <a class="tab-btn <%= view==='helpdesk' ? 'active' : '' %>" href="/tickets">Helpdesk</a>
   <a class="tab-btn <%= view==='all' ? 'active' : '' %>" href="/tickets?view=all">All</a>
-  <% ['new','open','awaiting_customer','awaiting_3rd_party','awaiting_engineer','awaiting_installation','postponed','resolved','closed'].forEach(function(s){ %>
+  <% ['new','update_required','open','awaiting_customer','awaiting_3rd_party','awaiting_engineer','awaiting_installation','postponed','resolved','closed'].forEach(function(s){ %>
     <a class="tab-btn <%= status===s ? 'active' : '' %>" href="/tickets?status=<%= s %>"><%= cap(s) %><% if (statusCounts[s]) { %> <span class="muted">(<%= statusCounts[s] %>)</span><% } %></a>
   <% }); %>
 </div>

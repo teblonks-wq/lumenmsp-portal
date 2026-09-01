@@ -21,6 +21,9 @@
   .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:1px 7px; border-radius:999px; }
   .pill.plain { background:var(--surface-2,#f1f5f9); color:var(--muted); }
   .pill.info { background:var(--tint-info,#eff6ff); color:var(--info-fg,#1d4ed8); }
+  .pill.bad { background:var(--tint-bad,#fef2f2); color:var(--bad-fg,#b91c1c); }
+  .pill.warn { background:var(--tint-warn,#fffbeb); color:var(--warn-fg,#b45309); }
+  .pill.ok { background:var(--tint-ok,#f0fdf4); color:var(--ok-fg,#15803d); }
   .sc-log { margin-top:10px; font-size:12px; white-space:pre-wrap; }
 </style>
 
@@ -33,11 +36,19 @@
 <% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
 <% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
 
+<div id="scReviewBox" style="display:none;margin-bottom:12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2,#f8fafc);">
+  <div style="font-size:13px;font-weight:700;" id="scReviewHead">Reviewing…</div>
+  <div style="font-size:12px;color:var(--muted);margin-top:4px;" id="scReviewBody"></div>
+</div>
+
 <div class="stat-band">
   <span class="tile" style="display:block;"><span class="n info" style="display:block;"><%= stats.total %></span><span class="l" style="display:block;">scripts</span></span>
   <span class="tile" style="display:block;"><span class="n" style="display:block;"><%= stats.fromAtera %></span><span class="l" style="display:block;">lifted from Atera</span></span>
   <span class="tile" style="display:block;"><span class="n" style="display:block;"><%= stats.ownWork %></span><span class="l" style="display:block;">written here</span></span>
   <span class="tile" style="display:block;"><span class="n" style="display:block;"><%= kb(stats.bytes) %></span><span class="l" style="display:block;">of code</span></span>
+  <span class="tile" style="display:block;"><span class="n bad" style="display:block;"><%= stats.broken %></span><span class="l" style="display:block;">look broken</span></span>
+  <span class="tile" style="display:block;"><span class="n warn" style="display:block;"><%= stats.warn %></span><span class="l" style="display:block;">carry a risk</span></span>
+  <span class="tile" style="display:block;"><span class="n" style="display:block;"><%= stats.unreviewed %></span><span class="l" style="display:block;">not reviewed</span></span>
 </div>
 
 <form method="get" class="sc-tools">
@@ -47,6 +58,7 @@
   <% if (isAdmin) { %>
     <button class="btn btn-ghost" type="button" onclick="scPanel('scNew')">New script</button>
     <button class="btn btn-ghost" type="button" onclick="scPanel('scImport')">Import</button>
+    <button class="btn" type="button" id="scReview">Review scripts</button>
   <% } %>
 </form>
 
@@ -84,16 +96,25 @@
 
 <div class="table-lift">
 <table class="table">
-  <thead><tr><th>Name</th><th>Type</th><th>Runs as</th><th>Size</th><th>Source</th><th>Updated</th></tr></thead>
+  <thead><tr><th>Name</th><th>Review</th><th>Type</th><th>Runs as</th><th>Size</th><th>Source</th><th>Updated</th></tr></thead>
   <tbody>
   <% if (!scripts.length) { %>
-    <tr><td colspan="6" style="color:var(--muted);padding:18px;">Nothing here yet<%= q ? ' for that search' : '' %>.</td></tr>
+    <tr><td colspan="7" style="color:var(--muted);padding:18px;">Nothing here yet<%= q ? ' for that search' : '' %>.</td></tr>
   <% } %>
   <% scripts.forEach(function(s){ %>
     <tr>
       <td>
         <a class="sc-name" href="/scripts/<%= s.id %>"><%= s.name %></a>
         <% if (s.description && s.description !== s.name) { %><div class="sc-desc"><%= s.description %></div><% } %>
+      </td>
+      <td>
+        <% var isStale = stale.indexOf(s.id) !== -1; %>
+        <% if (!s.reviewedAt) { %><span class="pill plain">not reviewed</span>
+        <% } else if (s.reviewVerdict === 'broken') { %><span class="pill bad">broken</span>
+        <% } else if (s.reviewVerdict === 'warn') { %><span class="pill warn">risk</span>
+        <% } else { %><span class="pill ok">ok</span><% } %>
+        <% if (isStale) { %><span class="pill warn" title="The script has been edited since this review">stale</span><% } %>
+        <% if (s.reviewHeadline && s.reviewedAt) { %><div class="sc-desc"><%= s.reviewHeadline %></div><% } %>
       </td>
       <td><span class="pill plain"><%= s.fileType %></span></td>
       <td style="font-size:12px;color:var(--muted);"><%= String(s.runAs).replace('_',' ') %></td>
@@ -137,6 +158,38 @@ function scPanel(id){ var p = document.getElementById(id); if (p) p.classList.to
   }
 
   document.getElementById('scGo').addEventListener('click', function(){ send(document.getElementById('scJson').value); });
+
+  // Reviewing runs one script at a time from the browser. Forty-eight calls to Claude in a
+  // single request would time out and save nothing; this way each verdict is written as it
+  // lands, and closing the tab only stops the queue rather than losing the work.
+  var rBox = document.getElementById('scReviewBox');
+  var rHead = document.getElementById('scReviewHead');
+  var rBody = document.getElementById('scReviewBody');
+  document.getElementById('scReview').addEventListener('click', async function(){
+    var btn = this; btn.disabled = true; rBox.style.display = 'block';
+    rHead.textContent = 'Working out what needs reviewing…'; rBody.textContent = '';
+    try {
+      var q = await (await fetch('/scripts/review-queue')).json();
+      var due = (q.ids || []);
+      if (!due.length) { rHead.textContent = 'Everything is already reviewed.'; btn.disabled = false; return; }
+      var done = 0, broken = 0, warn = 0, failed = 0;
+      for (var i = 0; i < due.length; i++) {
+        rHead.textContent = 'Reviewing ' + (i + 1) + ' of ' + due.length + ' — ' + due[i].name;
+        try {
+          var r = await (await fetch('/scripts/' + due[i].id + '/review', {
+            method: 'POST', headers: { 'x-csrf-token': '<%= csrfToken %>' } })).json();
+          if (r.ok) { done++; if (r.verdict === 'broken') broken++; else if (r.verdict === 'warn') warn++; }
+          else failed++;
+        } catch (e) { failed++; }
+        rBody.textContent = done + ' reviewed · ' + broken + ' broken · ' + warn + ' with a risk'
+                          + (failed ? ' · ' + failed + ' failed' : '');
+      }
+      rHead.textContent = 'Done — reloading.';
+      setTimeout(function(){ location.reload(); }, 1200);
+    } catch (e) {
+      rHead.textContent = 'Review failed: ' + e.message; btn.disabled = false;
+    }
+  });
 
   // Reading the clipboard needs a real click for user activation — that is why this is a
   // button and not something the page does on load.

@@ -1,6 +1,6 @@
 <%- include('../partials/header', { title: 'Atera ticket import', user }) %>
 <% function cap(s){ return s ? String(s).replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; }
-   function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary')); }
+   function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s==='update_required'?'badge-attention':(s && s.indexOf('awaiting')===0?'badge-failed':'badge-primary'))); }
    var tabs = [ {k:'live',label:'Live'}, {k:'closed',label:'Closed'}, {k:'resolved',label:'Resolved'} ]; %>
 
 <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">

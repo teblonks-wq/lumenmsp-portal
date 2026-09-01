@@ -65,12 +65,17 @@ router.post('/tickets/pickup-mail', requireAuth, async (_req: Request, res: Resp
   try { await syncInbox(); } catch (e) { console.error('[tickets] manual mail pickup failed:', (e as Error).message); }
   res.redirect('/tickets');
 });
-const STATUSES = ['new', 'open', 'awaiting_customer', 'awaiting_3rd_party', 'awaiting_engineer', 'awaiting_installation', 'postponed', 'resolved', 'closed'];
+// 'update_required' means the customer has come back to us: an inbound reply on an awaiting case
+// lands here rather than in awaiting_engineer, so "they answered" and "they went quiet" are two
+// different things in the queue. It is an OPEN status - it is not in the resolved/closed set that
+// every 'active cases' query excludes, so it shows on the helpdesk view by default.
+const STATUSES = ['new', 'update_required', 'open', 'awaiting_customer', 'awaiting_3rd_party', 'awaiting_engineer', 'awaiting_installation', 'postponed', 'resolved', 'closed'];
 
-const AUTO_RETURN_HOURS = 24;
-// 'postponed' keeps its explicit return date. Parking on the customer or a third party starts a 24h
+const AUTO_RETURN_HOURS = 48;
+// 'postponed' keeps its explicit return date. Parking on the customer or a third party starts a 48h
 // timer (stored in the same postponed_until column) — the sweep flips it back to Awaiting engineer
-// if nothing comes back. Any other status clears the timer.
+// if nothing comes back. Any other status clears the timer - including update_required, where the
+// customer has already replied and there is nothing left to wait for.
 function autoReturnAt(status: string, manualPostpone: Date | null): Date | null {
   // Postponed AND Awaiting installation both carry an explicit user-chosen date (installation date).
   if (status === 'postponed' || status === 'awaiting_installation') return manualPostpone && !isNaN(manualPostpone.getTime()) ? manualPostpone : null;
@@ -250,8 +255,9 @@ router.get('/tickets', requireAuth, async (req: Request, res: Response) => {
     const grp = async (cond: string) =>
       (await pool.query(`${SELECT} WHERE t.deleted_at IS NULL AND t.is_spam=false AND ${cond} ORDER BY t.created_at ASC LIMIT 200`)).rows;
     const groups = [
-      { key: 'unassigned',        label: 'New',                                 rows: await grp("(t.status='new' OR t.assigned_user_id IS NULL) AND t.status NOT IN ('resolved','closed')") },
-      { key: 'awaiting_engineer', label: 'Awaiting engineer (customer replied)', rows: await grp("t.status='awaiting_engineer' AND t.assigned_user_id IS NOT NULL") },
+      { key: 'update_required',   label: 'Update required - customer replied',   rows: await grp("t.status='update_required'") },
+      { key: 'unassigned',        label: 'New',                                 rows: await grp("(t.status='new' OR t.assigned_user_id IS NULL) AND t.status NOT IN ('resolved','closed','update_required')") },
+      { key: 'awaiting_engineer', label: 'Awaiting engineer - no reply in 48h',  rows: await grp("t.status='awaiting_engineer' AND t.assigned_user_id IS NOT NULL") },
       { key: 'open',              label: 'Open — assigned to me',               rows: await grp("t.status='open' AND t.assigned_user_id = " + parseInt(String(user.id), 10)) },
     ];
     res.render('tickets/list', { user, mode: 'helpdesk', groups, tickets: [], status: '', view: 'helpdesk', search: '', statusCounts, ...common });
@@ -1327,7 +1333,7 @@ router.post('/tickets/:id/message/:msgId/move', requireAuth, async (req: Request
     const conv = m.channel === 'teams' ? src.teams_conversation : null;
     const t = await pool.query(
       `INSERT INTO inbox_tickets (ticket_number, source, customer_id, contact_id, status, department, category, subject, description, activity_status, stage, teams_conversation, updated_at)
-       VALUES ($1,$2,$3,$4,'awaiting_engineer','support','incident',$5,$6,'unread','awaiting_triage',$7, NOW()) RETURNING id`,
+       VALUES ($1,$2,$3,$4,'update_required','support','incident',$5,$6,'unread','awaiting_triage',$7, NOW()) RETURNING id`,
       [targetNumber, m.channel, src.customer_id, src.contact_id, subject, m.body_text || '', conv]
     );
     targetId = t.rows[0].id;
@@ -1691,10 +1697,11 @@ router.post('/tickets/:id/convert-to-quote', requireAuth, async (req: Request, r
   res.redirect('/quotes/' + q.rows[0].id + '/edit');
 });
 
-// Sidebar badge: number of tickets awaiting an engineer (polled by the Support nav item).
+// Sidebar badge: cases waiting on US - the customer has replied (update_required), or the 48h
+// timer brought the case back with no reply (awaiting_engineer). Polled by the Support nav item.
 router.get('/tickets/nav/awaiting-count', requireAuth, async (_req: Request, res: Response) => {
   try {
-    const n = (await pool.query("SELECT COUNT(*)::int n FROM inbox_tickets WHERE status='awaiting_engineer' AND deleted_at IS NULL AND COALESCE(is_spam,false)=false")).rows[0].n;
+    const n = (await pool.query("SELECT COUNT(*)::int n FROM inbox_tickets WHERE status IN ('awaiting_engineer','update_required') AND deleted_at IS NULL AND COALESCE(is_spam,false)=false")).rows[0].n;
     res.json({ n });
   } catch { res.json({ n: 0 }); }
 });

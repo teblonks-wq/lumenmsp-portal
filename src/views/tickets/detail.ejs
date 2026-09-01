@@ -1,5 +1,5 @@
 <%- include('../partials/header', { title: ticket.ticket_number, user }) %>
-<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s==='pending'?'badge-failed':'badge-primary')); } %>
+<% function sbadge(s){ return s==='resolved'?'badge-sent':(s==='closed'?'badge-inactive':(s==='update_required'?'badge-attention':(s==='pending'?'badge-failed':'badge-primary'))); } %>
 <% function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{timeZone:'Europe/London',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : ''; } %>
 <% function cap(s){ return s ? s.replace(/_/g,' ').replace(/\b\w/g,function(c){return c.toUpperCase();}) : ''; } %>
 <style>

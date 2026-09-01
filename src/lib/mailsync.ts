@@ -284,7 +284,11 @@ export async function syncInbox(): Promise<{ fetched: number; inserted: number }
                 [tid, 'Auto-reply / out-of-office received from the customer']);
             } else {
               const reopen = ['resolved', 'closed'].includes(tk.rows[0].status);
-              await pool.query("UPDATE inbox_tickets SET status='awaiting_engineer', updated_at=NOW() WHERE id=$1", [tid]);
+              // The customer has answered: Update required, not Awaiting engineer. The two are
+              // deliberately different - one is a reply to read, the other is a case that went
+              // quiet for 48h and needs chasing. Clearing postponed_until stops the sweep
+              // "returning" a case that is already back.
+              await pool.query("UPDATE inbox_tickets SET status='update_required', postponed_until=NULL, updated_at=NOW() WHERE id=$1", [tid]);
               if (reopen) {
                 await pool.query(`INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1, NULL, 'system_log', $2)`,
                   [tid, 'Reopened by customer email reply']);
