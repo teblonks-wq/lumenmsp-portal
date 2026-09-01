@@ -16,8 +16,14 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: '2026-09-01',
     title: 'Automation, and a case that says the customer answered',
     groups: [
+      { area: 'Insights', items: [
+        'OneBoard now shows how long callers waited - and it shows it twice, because there are two different numbers hiding in one. The wait before a call was answered, and the wait before a caller we lost gave up. Averaged together they make a figure that describes neither.',
+        'Both waits carry the same up/down comparison as the other figures when a compare period is on, and both are in the CSV and the PDF.',
+        'Ask Insights can now answer "which call waited longest". It is given the ten longest waits at each branch - the time, the number, and whether anyone eventually picked up - so it can name a call rather than only describe an average.',
+        'Ask Insights also gets a whole-business roll-up for "altogether" questions, weighted by the calls behind each branch, so a forty-call site and a nine-hundred-call site are no longer treated as equals.',
+      ] },
       { area: 'Automation', items: [
-        'Automation is a new section, and it is where Scripts, Patching and Software deployment now live together with the new Scheduled tasks screen. They were four separate ideas doing one job.',
+        'Automation is a new section in the sidebar, holding Scheduled tasks, Scripts, Patching and Software. They were four separate ideas doing one job, and only two of them were findable.',
         'Scheduled tasks: restart, shut down, turn Windows Updates off or on, run a script from the library, or deploy a package - to one machine, a handful, or everything at a customer, at a moment you choose.',
         'Three conditions. NEXT CONTACT acts the moment each machine checks in. TIME AND DATE waits for the clock. AFTER NEXT REBOOT waits until the machine has actually restarted, which it knows from the machine\'s own boot time rather than from anything we assume.',
         'Tasks repeat - daily, weekdays, weekly, fortnightly or monthly - and a repeating task keeps its wall clock, so a 02:00 reboot is still 02:00 the week the clocks change.',

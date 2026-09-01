@@ -118,9 +118,30 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 12 6 12 9 20 15 4 18 12 22 12"/></svg>
       <span class="nav-label">N3twrx</span>
     </a>
-    <a href="/automation" class="nav-item" title="Automation — scripts, scheduled tasks, patching and software deployment">
+    </div>
+
+    <%# Automation is a SECTION, not a page: the four screens under it are the navigation,
+        so there is nothing left for a hub page to do. /automation redirects to Scheduled
+        tasks for anyone who still has the old link. %>
+    <button type="button" class="nav-section nav-section-btn" data-nav-group="automation" aria-expanded="true">
+      <span>Automation</span><span class="nav-chev" aria-hidden="true">▾</span>
+    </button>
+    <div class="nav-group" id="nav-group-automation">
+    <a href="/automation/scheduled-tasks" class="nav-item" title="Scheduled tasks — restarts, Windows Updates, scripts and software, on a condition">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+      <span class="nav-label">Scheduled tasks</span>
+    </a>
+    <a href="/scripts" class="nav-item" title="Scripts — Lumen's automation script library">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-      <span class="nav-label">Automation</span>
+      <span class="nav-label">Scripts</span>
+    </a>
+    <a href="/patching" class="nav-item" title="Patching — pending Windows Updates and maintenance-window policies">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v6"/><path d="M12 15v6"/><circle cx="12" cy="12" r="3"/><path d="M4.2 6.2l2.1 2.1"/><path d="M17.7 15.7l2.1 2.1"/></svg>
+      <span class="nav-label">Patching</span>
+    </a>
+    <a href="/software" class="nav-item" title="Software — what is installed across the estate, what is behind, what is out of support">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg>
+      <span class="nav-label">Software</span>
     </a>
     </div>
 

@@ -1,8 +1,8 @@
 import { insightsPool } from '../db/pool';
-import { buildJourneys, type LogicConfig } from './insights-journeys';
+import { buildJourneys, formatWait, type LogicConfig } from './insights-journeys';
 import {
   ONEBOARD_HOURS, DOW_LABELS, DOW_SHORT, dowIndex,
-  addDays, asDay, dayList, ldn, logicFingerprint, metricsOf, siteLogicOf,
+  addDays, asDay, dayList, ldn, logicFingerprint, metricsOf, siteLogicOf, type BoardMetrics,
 } from './oneboard-core';
 import {
   BASELINE_MIN_DAYS, baselineLabel, baselineWindow, fetchRowsBetween,
@@ -34,13 +34,28 @@ import {
 
 export { ONEBOARD_HOURS, DOW_LABELS, DOW_SHORT, dowIndex };
 
+/** One named call, for the "which call was the longest wait" question. */
+export interface LongestWait {
+  datetime: string;      // as the journey carries it, local
+  number: string;        // the caller
+  waitSecs: number;
+  wait: string;          // pre-formatted, so every surface says it the same way
+  status: string;        // Answered / Missed / Abandoned / Voicemail
+  answeredBy: string | null;
+}
+
 export interface OneBoardSite {
   id: number;
   label: string;
   configured: boolean;              // has groups/staff in its logic — only then does it show data
   included: boolean;                // ticked onto the dashboard by this user
-  metrics: { total: number; answered: number; missed: number; rate: number } | null;
-  prev:    { total: number; answered: number; missed: number; rate: number } | null; // compare period
+  metrics: BoardMetrics | null;
+  prev:    BoardMetrics | null; // compare period
+  // The worst individual waits in the period, worst first. Alex asked "which call was the
+  // longest wait" (28 Aug) and the aggregates cannot answer it — an average never names a
+  // caller. Capped at ten and computed here so the corpus, the board and anything later can
+  // read it without carrying thousands of journeys around.
+  longestWaits: LongestWait[];
   daily: { day: string; label: string; total: number; answered: number; missed: number }[];
   missedByHour: number[];           // indexed by hour-of-day (Europe/London)
   totalByHour: number[];            // ALL incoming calls per hour (Kim's all-calls heatmap)
@@ -238,7 +253,7 @@ export async function buildOneBoard(
       const included = wanted.has(Number(s.id));
       const logic = siteLogicOf(s);
       if (!logic || !included) {
-        sites.push({ id: Number(s.id), label: s.site_label, configured: !!logic, included, metrics: null, prev: null,
+        sites.push({ id: Number(s.id), label: s.site_label, configured: !!logic, included, metrics: null, prev: null, longestWaits: [],
           daily: [], missedByHour: [], totalByHour: [],
           missedByDow: [], totalByDow: [], daysSeenByDow: [], missedByDowHour: [], totalByDowHour: [],
           baseline: null, curve: [], curveSummary: null, year: null,
@@ -295,9 +310,21 @@ export async function buildOneBoard(
         yearNoteCalls: year ? observeCallShare(yCalls) : '',
       };
 
+      // Worst waits, worst first. Ten is enough to see a pattern and short enough to sit in
+      // the Ask Insights corpus without spoiling the prompt cache.
+      const longestWaits: LongestWait[] = journeys
+        .slice()
+        .sort((a, b) => (b.wait_secs || 0) - (a.wait_secs || 0))
+        .slice(0, 10)
+        .map((j) => ({
+          datetime: j.datetime, number: j.number, waitSecs: j.wait_secs || 0,
+          wait: formatWait(j.wait_secs || 0), status: j.status, answeredBy: j.answered_by,
+        }));
+
       sites.push({
         id: Number(s.id), label: s.site_label, configured: true, included: true,
         metrics: metricsOf(journeys),
+        longestWaits,
         prev: compare ? metricsOf(prevJourneys) : null,
         daily: days.map((d) => ({ ...d, ...(byDay.get(d.day) || { total: 0, answered: 0, missed: 0 }) })),
         missedByHour: heat,

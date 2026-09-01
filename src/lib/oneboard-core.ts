@@ -121,9 +121,36 @@ export function baselineLabel(from: string, to: string): string {
   return from.slice(0, 4) === to.slice(0, 4) ? `${to.slice(0, 4)} average` : '12-month average';
 }
 
-export function metricsOf(journeys: CallJourney[]): { total: number; answered: number; missed: number; rate: number } {
+/** What every OneBoard surface reads off a set of journeys. Kept as one exported type
+ *  because five places consume it — the board partial, the CSV, the PDF, the Ask Insights
+ *  corpus and the compare block — and a field added here has to reach all of them. */
+export interface BoardMetrics {
+  total: number;
+  answered: number;
+  missed: number;
+  rate: number;             // % answered
+  avgWaitAnswered: number;  // seconds, mean over ANSWERED journeys only
+  avgWaitMissed: number;    // seconds, mean over everything not answered
+}
+
+export function metricsOf(journeys: CallJourney[]): BoardMetrics {
   const total = journeys.length;
-  const answered = journeys.filter((j) => j.status === 'Answered').length;
+  const answeredJourneys = journeys.filter((j) => j.status === 'Answered');
+  const missedJourneys   = journeys.filter((j) => j.status !== 'Answered');
+  const answered = answeredJourneys.length;
   const missed = total - answered; // Missed + Abandoned + anything not answered — "missed includes abandoned"
-  return { total, answered, missed, rate: total ? Math.round((answered / total) * 100) : 0 };
+
+  // Wait is reported SPLIT and never blended. A single average mixes the caller answered in
+  // twenty seconds with the caller who rang for five minutes and gave up, and lands on a
+  // number describing neither. The Larkmead work of 28 Aug is the worked example of what
+  // that hides — see [C] Larkmead voicemail gap - investigation and safeguards.md.
+  const meanWait = (js: CallJourney[]): number =>
+    js.length ? Math.round(js.reduce((sum, j) => sum + (j.wait_secs || 0), 0) / js.length) : 0;
+
+  return {
+    total, answered, missed,
+    rate: total ? Math.round((answered / total) * 100) : 0,
+    avgWaitAnswered: meanWait(answeredJourneys),
+    avgWaitMissed: meanWait(missedJourneys),
+  };
 }

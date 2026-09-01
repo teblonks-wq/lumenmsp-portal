@@ -9,13 +9,15 @@
  * Everything under test is pure, so this suite needs no database and no .env. Run with:
  *   npm run build && node dist/scripts/test-oneboard.js     (or: npx tsx src/scripts/test-oneboard.ts)
  *
+ *   M1–M5   average wait: split, weighted, and the ten longest
  *   B1–B6   the baseline window and its January edge
  *   W1–W6   weekday-weighted scaling of a year onto the dates on screen
  *   C1–C6   the curve, its verdicts and the "too few calls to judge" floor
  *   S1–S3   the branch summary
  *   V1–V4   the drawing itself
  */
-import { asDay, baselineLabel, baselineWindow, dowIndex, ONEBOARD_HOURS } from '../lib/oneboard-core';
+import { asDay, baselineLabel, baselineWindow, dowIndex, metricsOf, ONEBOARD_HOURS } from '../lib/oneboard-core';
+import type { CallJourney } from '../lib/insights-journeys';
 import {
   baselineForRange, buildCurve, curveSvg, summariseCurve, verdictFor,
   CURVE_MIN_SAMPLE, CURVE_TARGET_DEFAULT,
@@ -40,6 +42,36 @@ function stats(byDow: DowBucket[], firstDay = '2026-01-05', lastDay = '2026-08-2
   return { siteId: 1, daysCovered: byDow.reduce((n, b) => n + b.days, 0), firstDay, lastDay, byDow };
 }
 const NOTHING = () => dow(0, 0, 0);
+
+console.log('\n── M: average wait ──────────────────────────────────────────────────');
+{
+  // Minimal journeys — only the fields metricsOf reads.
+  const j = (status: CallJourney['status'], waitSecs: number, number = '07700900000'): CallJourney => ({
+    datetime: '2026-08-24 09:00:00', number, ddi: '', status,
+    overflowed: false, in_hours: true, wait: '', wait_secs: waitSecs, answered_by: null,
+    steps: [], ivr_label: null, is_emergency: false, is_voicemail: false,
+    is_ivr_voicemail: false, is_overflow_voicemail: false,
+  });
+
+  // Answered waits 10s and 20s (mean 15). Missed waits 200s and 400s (mean 300).
+  // Blended they would be 157s — a number describing neither caller. That is the whole
+  // point of keeping them apart, so the fixture is chosen to make a blend obvious.
+  const m = metricsOf([j('Answered', 10), j('Answered', 20), j('Missed', 200), j('Abandoned', 400)]);
+  check('M1 average wait for ANSWERED calls uses only answered journeys', m.avgWaitAnswered === 15, String(m.avgWaitAnswered));
+  check('M2 average wait for MISSED calls counts abandoned too', m.avgWaitMissed === 300, String(m.avgWaitMissed));
+  check('M3 the two are never blended into one figure',
+    m.avgWaitAnswered !== m.avgWaitMissed && m.avgWaitAnswered !== 157 && m.avgWaitMissed !== 157);
+
+  const empty = metricsOf([]);
+  check('M4 no calls means zero, not NaN or a divide by zero',
+    empty.avgWaitAnswered === 0 && empty.avgWaitMissed === 0 && empty.rate === 0);
+
+  // A site where nobody was answered must still report a missed wait — the earlier code
+  // path would have had nothing to divide by.
+  const allMissed = metricsOf([j('Missed', 60), j('Missed', 120)]);
+  check('M5 a period with no answered calls still reports the missed wait',
+    allMissed.avgWaitAnswered === 0 && allMissed.avgWaitMissed === 90, String(allMissed.avgWaitMissed));
+}
 
 console.log('\n── B: the baseline window ───────────────────────────────────────────');
 {

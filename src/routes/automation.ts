@@ -25,19 +25,13 @@ function when(d: Date | string | null): string {
   });
 }
 
-// ── Hub ─────────────────────────────────────────────────────────────────────────
-
-router.get('/automation', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const [scripts, tasks, powers] = await Promise.all([
-    pool.query('SELECT COUNT(*)::int n FROM scripts WHERE deleted_at IS NULL'),
-    pool.query("SELECT COUNT(*)::int n FROM automation_tasks WHERE status IN ('scheduled','armed')"),
-    pool.query("SELECT COUNT(*)::int n FROM agent_commands WHERE kind LIKE 'power.%' AND status='queued' AND run_after IS NOT NULL"),
-  ]);
-  res.render('automation/index', {
-    user: req.session.user!,
-    counts: { scripts: scripts.rows[0].n, tasks: tasks.rows[0].n, scheduledPower: powers.rows[0].n },
-    notice: req.query.msg || null, error: req.query.err || null,
-  });
+// ── /automation ─────────────────────────────────────────────────────────────────
+// Automation is a nav SECTION, not a page. The four screens under it are the navigation,
+// so a hub page would only be a second, worse copy of the sidebar. The route stays as a
+// redirect because links to it exist - in the changelog, in the daily log, and in whatever
+// anyone bookmarked between this shipping and the nav changing.
+router.get('/automation', requireAuth, requireAdmin, (_req: Request, res: Response) => {
+  res.redirect('/automation/scheduled-tasks');
 });
 
 // ── The list ────────────────────────────────────────────────────────────────────

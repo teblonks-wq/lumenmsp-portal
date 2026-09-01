@@ -1,4 +1,5 @@
 import { OneBoardData, OneBoardSite, ONEBOARD_HOURS, DOW_LABELS } from './oneboard';
+import { formatWait } from './insights-journeys';
 import { aiAskCached, parseJsonAnswer, stripTrailingJson, AskUsage } from './ai-compose';
 
 // ── Ask Insights ────────────────────────────────────────────────────────────────
@@ -34,6 +35,22 @@ function siteBlock(s: OneBoardSite, data: OneBoardData): string {
   const lines: string[] = [];
   lines.push(`SITE: ${s.label}`);
   lines.push(`  Totals: ${m.total} calls, ${m.answered} answered, ${m.missed} missed (${m.rate}% answered)`);
+  // Wait is given SPLIT, and the model is told why, because the single blended average is
+  // the exact mistake this data punishes: at Larkmead the answered and abandoned waits sat
+  // five minutes apart and the blend described neither (28 Aug investigation).
+  lines.push(`  AVERAGE WAIT: ${formatWait(m.avgWaitAnswered)} before a call was answered; ${formatWait(m.avgWaitMissed)} before a caller we lost gave up. These two are deliberately separate - never average them together, and never quote one as "the average wait".`);
+  // The aggregates cannot answer "which call waited longest" - an average never names a
+  // caller. Ten is enough to show a pattern without spoiling the cached corpus.
+  if (s.longestWaits.length) {
+    const w = s.longestWaits[0];
+    lines.push(`  LONGEST WAIT in this period: ${w.wait} - ${w.number} at ${w.datetime}, ${w.status.toLowerCase()}${w.answeredBy ? ` by ${w.answeredBy}` : ''}.`);
+    if (s.longestWaits.length > 1) {
+      lines.push('  THE TEN LONGEST WAITS (worst first) - use these when asked which calls waited longest, and quote the time and number:');
+      for (const x of s.longestWaits) {
+        lines.push(`    ${x.wait.padStart(8, ' ')}  ${x.datetime}  ${x.number}  ${x.status}${x.answeredBy ? ' by ' + x.answeredBy : ''}`);
+      }
+    }
+  }
   if (s.prev) {
     lines.push(`  Previous equivalent period: ${s.prev.total} calls, ${s.prev.missed} missed (${s.prev.rate}% answered)`);
   }
@@ -92,7 +109,37 @@ export function buildInsightsCorpus(data: OneBoardData, from: string, to: string
     data.compareNote ? `NOTE: ${data.compareNote}` : null,
   ].filter(Boolean).join('\n');
   // The blank line matters: without it the last header line runs straight into "SITE:".
-  return head + '\n\n' + included.map((s) => siteBlock(s, data)).join('\n\n') + '\n';
+  return head + '\n\n' + included.map((s) => siteBlock(s, data)).join('\n\n')
+    + (included.length > 1 ? '\n\n' + combinedBlock(included) : '') + '\n';
+}
+
+/** "Altogether" as well as "by branch" (Alex, 28 Aug). Given only per-site blocks a model
+ *  answering a whole-business question averages the site averages, and a mean of means is
+ *  wrong whenever the sites differ in size — which they always do. So the combined figures
+ *  are computed here, weighted by the actual call counts, and handed over ready-made. */
+function combinedBlock(sites: OneBoardSite[]): string {
+  const withMetrics = sites.filter((s) => s.metrics);
+  if (!withMetrics.length) return '';
+  let total = 0, answered = 0, missed = 0, waitAnsSum = 0, waitMissSum = 0;
+  for (const s of withMetrics) {
+    const m = s.metrics!;
+    total += m.total; answered += m.answered; missed += m.missed;
+    waitAnsSum  += m.avgWaitAnswered * m.answered;   // weight by the calls behind each mean
+    waitMissSum += m.avgWaitMissed   * m.missed;
+  }
+  const rate = total ? Math.round((answered / total) * 100) : 0;
+  const lines: string[] = [];
+  lines.push(`ALL SITES COMBINED (${withMetrics.map((s) => s.label).join(', ')})`);
+  lines.push(`  Totals: ${total} calls, ${answered} answered, ${missed} missed (${rate}% answered)`);
+  lines.push(`  AVERAGE WAIT across the whole business: ${formatWait(answered ? Math.round(waitAnsSum / answered) : 0)} before answer; ${formatWait(missed ? Math.round(waitMissSum / missed) : 0)} before a lost caller gave up.`);
+  lines.push('  These combined figures are weighted by the calls behind each site. Use THEM for any "altogether" or whole-business question - do NOT average the per-site averages, which would treat a 40-call site and a 900-call site as equals.');
+  const worst = withMetrics.flatMap((s) => s.longestWaits.map((w) => ({ ...w, site: s.label })))
+    .sort((a, b) => b.waitSecs - a.waitSecs).slice(0, 10);
+  if (worst.length) {
+    lines.push('  THE TEN LONGEST WAITS ACROSS ALL SITES (worst first):');
+    for (const w of worst) lines.push(`    ${w.wait.padStart(8, ' ')}  ${w.datetime}  ${w.number}  ${w.site}  ${w.status}`);
+  }
+  return lines.join('\n');
 }
 
 const SYSTEM = [

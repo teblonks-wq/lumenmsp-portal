@@ -1,4 +1,5 @@
 import { OneBoardData, OneBoardSite, ONEBOARD_HOURS } from './oneboard';
+import { formatWait } from './insights-journeys';
 import { curveSvg, CURVE_PALETTE_PRINT, VERDICT_LABEL } from './oneboard-curve';
 
 // ── OneBoard take-away exports — CSV (the data) and PDF (the view) ─────────────────
@@ -48,6 +49,13 @@ export function oneBoardCsv(data: OneBoardData, from: string, to: string): strin
     }
     const m = s.metrics!;
     rows.push([s.label, 'TOTAL', m.total, m.answered, m.missed, m.rate].map(q).join(','));
+  }
+  rows.push('');
+  rows.push('Average wait');
+  rows.push(['Site', 'Answered (seconds)', 'Missed (seconds)', 'Answered', 'Missed'].map(q).join(','));
+  for (const s of sites) {
+    const m = s.metrics!;
+    rows.push([s.label, m.avgWaitAnswered, m.avgWaitMissed, formatWait(m.avgWaitAnswered), formatWait(m.avgWaitMissed)].map(q).join(','));
   }
   rows.push('');
   rows.push('Missed calls by hour');
@@ -150,6 +158,7 @@ export function oneBoardPdfHtml(data: OneBoardData, opts: { from: string; to: st
         <div><div class="sc-n" style="color:#dc2626;">${m.missed}</div><div class="sc-l">Missed${delta(m.missed, p?.missed, true)}</div></div>
         <div><div class="sc-n">${m.rate}%</div><div class="sc-l">Answer rate${p ? delta(m.rate, p.rate, false) : ''}</div></div>
       </div>
+      <div class="sc-base">Avg wait &middot; answered <b>${formatWait(m.avgWaitAnswered)}</b> &middot; missed <b>${formatWait(m.avgWaitMissed)}</b></div>
       ${s.baseline ? `<div class="sc-base">${esc(data.baselineName)} for these dates: <b>${s.baseline.expected.total}</b> calls${
         s.baseline.expected.total ? ` (${m.total >= s.baseline.expected.total ? '+' : ''}${Math.round(((m.total - s.baseline.expected.total) / s.baseline.expected.total) * 100)}%)` : ''
       } &middot; <b>${s.baseline.expected.rate}%</b> answered (${m.rate - s.baseline.expected.rate >= 0 ? '+' : ''}${m.rate - s.baseline.expected.rate}pp)</div>` : ''}
