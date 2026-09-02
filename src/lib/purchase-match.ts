@@ -1,5 +1,6 @@
 import { pool } from '../db/pool';
 import { QuickBooks } from './quickbooks';
+import { activeRules, categoryRuleFor } from './purchase-rules';
 
 // ── Purchase matching intelligence ────────────────────────────────────────────────
 // Shared knowledge for the purchase ledger, distilled from the Aug 2026 manual
@@ -140,6 +141,9 @@ export interface AutoCategoriseResult { applied: number; considered: number; fro
 export async function autoCategoriseOutstanding(): Promise<AutoCategoriseResult> {
   const map = await historyFromLedger();
   await historyFromQuickBooks(map);
+  // A coding a human DICTATED beats every inference. "These are Hardware Cost of Sale" is not
+  // a hint to weigh against history — it is the answer, from the person who knows.
+  const rules = await activeRules().catch(() => []);
   const outstanding = (await pool.query(
     `SELECT id, counterparty, description FROM bank_transactions
       WHERE amount < 0 AND status = 'new' AND (qb_account_id IS NULL OR qb_account_id = '')`
@@ -149,7 +153,10 @@ export async function autoCategoriseOutstanding(): Promise<AutoCategoriseResult>
     const hay = (t.counterparty || '') + ' ' + (t.description || '');
     const rule = SEED_RULES.find((r) => r.pattern.test(hay));
     const key = normaliseCounterparty(t.counterparty || t.description || '');
-    const hit: CatSuggestion | undefined = rule
+    const told = categoryRuleFor(rules, key);
+    const hit: CatSuggestion | undefined = told
+      ? { accountId: 'local:' + told.name, accountName: told.name, seen: 999, source: 'rule' }
+      : rule
       ? { accountId: rule.accountId, accountName: rule.accountName, seen: 999, source: 'rule' }
       : (key ? map.get(key) : undefined);
     if (!hit) { noHistory++; continue; }

@@ -1408,7 +1408,13 @@ model PurchaseRule {
   supplierKey String?   @map("supplier_key")
   kind        String    // suppress | context
   anomalyKind String?   @map("anomaly_kind")  // which finding it suppresses (null = all)
-  body        String                          // the rule, in plain words
+  body        String                          // the rule in one plain sentence
+  // The rule broken into the conditions it actually applies, so a person can see exactly
+  // what they are agreeing to BEFORE accepting rather than parse a paragraph. JSON array.
+  conditions  String?
+  // kind='category' carries the coding a human dictated ("these are Hardware Cost of Sale").
+  categoryId    String?  @map("category_id")
+  categoryName  String?  @map("category_name")
   reason      String?                         // what the person actually said
   status      String    @default("proposed")  // proposed | active | rejected
   fromAnomaly Int?      @map("from_anomaly")

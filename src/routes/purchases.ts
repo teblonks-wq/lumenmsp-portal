@@ -13,7 +13,7 @@ import { hashFile, findByHash, assessAndStore, rescanAllDuplicates, backfillHash
 import { attachDocToTxn } from '../lib/purchase-inbox';
 import { aiReadUnreadable, aiReadInvoiceDoc } from '../lib/purchase-agent';
 import { refreshAnomalies, listAnomalies, dismissAnomaly, sendAnomalyDigest } from '../lib/purchase-anomalies';
-import { replyToAnomaly, notesFor, listRules, setRuleStatus } from '../lib/purchase-rules';
+import { replyToAnomaly, notesFor, listRules, setRuleStatus, conditionsOf } from '../lib/purchase-rules';
 import { autoCategoriseOutstanding } from '../lib/purchase-match';
 import { parseAndStoreDoc } from '../lib/invoice-read';
 import { renderExpenseReportPdf, loadExpenseReport } from '../lib/expense-report';
@@ -112,10 +112,15 @@ router.get('/purchases', async (req: Request, res: Response) => {
   // The anomaly list is what Terry and Natalie work from, so it is on the screen they land
   // on rather than behind a tab. Read only — the nightly sweep does the computing.
   const anomalies = await listAnomalies('open');
-  const [notes, rules] = await Promise.all([
+  const [notesRaw, rules] = await Promise.all([
     notesFor(anomalies.map((a: any) => a.id)),
     listRules(),
   ]);
+  // Conditions are parsed here so the view never has to touch JSON.
+  const notes: Record<number, any[]> = {};
+  for (const k of Object.keys(notesRaw)) {
+    notes[Number(k)] = notesRaw[Number(k)].map((n: any) => ({ ...n, conditionList: conditionsOf(n) }));
+  }
   res.render('purchases/index', {
     user: req.session.user!, toDo, anomalies, notes, rules,
     open: req.query.open ? parseInt(String(req.query.open), 10) : null,
@@ -477,9 +482,13 @@ router.post('/purchases/anomalies/:id/reply', async (req: Request, res: Response
   if (!id || !text) { res.redirect('/purchases?err=' + encodeURIComponent('Write something first.')); return; }
   try {
     const r = await replyToAnomaly(id, text, req.session.user!.id, req.session.user!.displayName || 'A colleague');
+    if (r.repeat) {
+      res.redirect('/purchases?open=' + id + '&msg=' + encodeURIComponent('You just said that — nothing sent twice.'));
+      return;
+    }
     await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Purchase anomaly #${id}: replied${r.ruleId ? ' (rule proposed)' : ''}`);
     res.redirect('/purchases?open=' + id + '&msg=' + encodeURIComponent(
-      r.ruleId ? 'Claude has replied and proposed a rule — accept it and it starts applying.' : 'Claude has replied.'));
+      r.ruleId ? 'Replied, and a rule is proposed below — read the conditions, then accept it.' : 'Replied.'));
   } catch (e: any) {
     res.redirect('/purchases?open=' + id + '&err=' + encodeURIComponent(e.message || 'Could not send that.'));
   }
@@ -490,20 +499,51 @@ router.post('/purchases/anomalies/:id/reply', async (req: Request, res: Response
 router.post('/purchases/rules/:id/:decision(accept|reject)', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const accept = req.params.decision === 'accept';
+  let swept: { open: number; suppressed: number } | null = null;
   if (id) {
     await setRuleStatus(id, accept ? 'active' : 'rejected');
     await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Purchase rule #${id} ${accept ? 'accepted' : 'rejected'}`);
+    // A rule is not worth much if it only applies to the next thing that happens. Accepting
+    // one re-runs the whole sweep NOW, so the entire list comes under it immediately —
+    // that is what "add to rules" has to mean.
+    if (accept) { try { swept = await refreshAnomalies(); } catch (e) { console.error('[purchases] re-sweep after rule failed:', (e as Error).message); } }
   }
   res.redirect('/purchases?msg=' + encodeURIComponent(accept
-    ? 'Rule accepted — it applies from the next check.'
+    ? 'Rule added' + (swept ? ` — the whole list has been re-checked under it: ${swept.open} still open${swept.suppressed ? `, ${swept.suppressed} now held back by your rules` : ''}.` : ' — it applies from the next check.')
     : 'Rule rejected — nothing changed.'));
 });
 
 // Switch a live rule back off. Its findings start appearing again on the next sweep.
 router.post('/purchases/rules/:id/off', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
-  if (id) await setRuleStatus(id, 'rejected');
-  res.redirect('/purchases?msg=' + encodeURIComponent('Rule switched off — anything it was hiding will come back on the next check.'));
+  if (id) {
+    await setRuleStatus(id, 'rejected');
+    try { await refreshAnomalies(); } catch { /* the nightly sweep will catch up */ }
+  }
+  res.redirect('/purchases/rules?msg=' + encodeURIComponent('Rule switched off — anything it was hiding is back on the list.'));
+});
+
+// Every rule in one place — live, waiting, and turned down. Terry asked for somewhere to
+// review them after eight near-identical ones were proposed at once on 2 Sep.
+router.get('/purchases/rules', async (req: Request, res: Response) => {
+  const rules = await listRules();
+  res.render('purchases/rules', {
+    user: req.session.user!,
+    rules: rules.map((r: any) => ({ ...r, conditionList: conditionsOf(r) })),
+    notice: req.query.msg || null, error: req.query.err || null,
+  });
+});
+
+// Remove a rule outright — for tidying up duplicates, which is different from switching a
+// deliberate one off.
+router.post('/purchases/rules/:id/delete', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (id) {
+    await pool.query('DELETE FROM purchase_rules WHERE id=$1', [id]);
+    await pool.query('UPDATE purchase_anomaly_notes SET rule_id=NULL WHERE rule_id=$1', [id]);
+    try { await refreshAnomalies(); } catch { /* the nightly sweep will catch up */ }
+  }
+  res.redirect('/purchases/rules?msg=' + encodeURIComponent('Rule deleted.'));
 });
 
 // Send the Monday digest now (the cron sends it at 07:30 on a Monday).

@@ -1,0 +1,63 @@
+<%- include('../partials/header', { title: 'Purchase rules', user }) %>
+
+<%
+  var live     = (rules||[]).filter(function(r){ return r.status==='active'; });
+  var waiting  = (rules||[]).filter(function(r){ return r.status==='proposed'; });
+  var turned   = (rules||[]).filter(function(r){ return r.status==='rejected'; });
+  function kindLabel(k){ return k==='suppress' ? 'stops a finding' : (k==='category' ? 'sets the coding' : 'adds context'); }
+%>
+
+<div class="page-header">
+  <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/purchases">← Purchase Ledger</a></p>
+  <h1>Purchase rules</h1>
+  <p class="muted" style="margin:0;">Everything you have told the agent, in your own words. A <strong>context</strong> rule makes it judge better, a <strong>coding</strong> rule tells it how to categorise, and a <strong>stops a finding</strong> rule is a deliberate blind spot.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<% function ruleTable(title, list, showAccept) { %>
+<div class="card" style="padding:0;margin-bottom:18px;">
+  <div class="card-header" style="padding:16px 20px 0;"><h2><%= title %> <span class="muted">(<%= list.length %>)</span></h2></div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Rule</th><th>Applies when</th><th>Supplier</th><th>Type</th><th>Because you said</th><th></th></tr></thead>
+    <tbody>
+      <% if (!list.length) { %><tr><td colspan="6"><div class="empty-state">Nothing here.</div></td></tr><% } %>
+      <% list.forEach(function(r){ %>
+      <tr>
+        <td style="font-size:13px;max-width:280px;"><strong><%= r.body %></strong>
+          <% if (r.kind==='category' && r.category_name) { %><br><span style="font-size:12px;">Codes to <strong><%= r.category_name %></strong></span><% } %></td>
+        <td style="font-size:12px;max-width:300px;">
+          <% var cl = r.conditionList || []; if (cl.length) { %>
+            <ol style="margin:0;padding-left:18px;"><% cl.forEach(function(c){ %><li><%= c %></li><% }); %></ol>
+          <% } else { %><span class="muted">— not stated —</span><% } %>
+        </td>
+        <td style="font-size:12px;"><%= r.scope==='global' ? 'the whole ledger' : (r.supplier_key || '—') %>
+          <% if (r.anomaly_kind) { %><br><span class="muted" style="font-size:11px;"><%= r.anomaly_kind %></span><% } %></td>
+        <td><span class="badge" style="font-size:10px;"><%= kindLabel(r.kind) %></span></td>
+        <td class="muted" style="font-size:12px;max-width:240px;"><%= r.reason || '' %></td>
+        <td style="white-space:nowrap;">
+          <% if (showAccept) { %>
+            <form method="post" action="/purchases/rules/<%= r.id %>/accept" style="display:inline;margin:0;"><button class="btn btn-primary" type="submit" style="font-size:11px;padding:3px 8px;">Add</button></form>
+            <form method="post" action="/purchases/rules/<%= r.id %>/reject" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;">No</button></form>
+          <% } else if (r.status==='active') { %>
+            <form method="post" action="/purchases/rules/<%= r.id %>/off" style="display:inline;margin:0;" onsubmit="return confirm('Switch this rule off? Anything it was hiding comes straight back onto the list.');"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;">Switch off</button></form>
+          <% } %>
+          <form method="post" action="/purchases/rules/<%= r.id %>/delete" style="display:inline;margin:0;" onsubmit="return confirm('Delete this rule for good?');"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);">Delete</button></form>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<% if (waiting.length) { %>
+  <div class="alert alert-warning" style="max-width:900px;"><strong><%= waiting.length %></strong> rule<%= waiting.length===1?'':'s' %> waiting on you. Read the conditions before adding one — accepting re-checks the whole list under it immediately.</div>
+<% } %>
+
+<% ruleTable('Waiting for you', waiting, true) %>
+<% ruleTable('Live', live, false) %>
+<% if (turned.length) { %><% ruleTable('Turned down or switched off', turned, false) %><% } %>
+
+<%- include('../partials/footer') %>

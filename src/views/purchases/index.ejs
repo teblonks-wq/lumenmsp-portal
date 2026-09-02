@@ -57,6 +57,7 @@
     <div style="display:flex;gap:8px;">
       <form method="post" action="/purchases/anomalies/refresh" style="margin:0;"><button class="btn" type="submit" title="Re-check the ledger now instead of waiting for tonight">↻ Check now</button></form>
       <form method="post" action="/purchases/anomalies/digest" style="margin:0;"><button class="btn" type="submit" title="Email the open list now (it also goes out automatically on Monday morning)">✉ Email the list</button></form>
+      <a class="btn" href="/purchases/rules" title="Everything you have told the agent">📋 Rules<% var lr=(rules||[]).filter(function(r){return r.status==='active';}); if (lr.length) { %> (<%= lr.length %>)<% } %></a>
     </div>
   </div>
 
@@ -83,13 +84,21 @@
                 <div style="font-size:11px;font-weight:700;color:<%= n.is_claude ? 'var(--blue)' : 'var(--navy)' %>;"><%= n.is_claude ? 'Claude' : (n.author_name || 'Colleague') %></div>
                 <div style="font-size:12.5px;white-space:pre-wrap;"><%= n.body %></div>
                 <% if (n.rule_id && n.rule_body) { %>
-                  <div style="margin-top:6px;padding:8px 10px;border-radius:8px;background:var(--chip-bg,#eef2f7);">
+                  <div style="margin-top:6px;padding:10px 12px;border-radius:8px;background:var(--chip-bg,#eef2f7);">
                     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:var(--muted);">
-                      Proposed rule<%= n.rule_kind === 'suppress' ? ' — stops a finding' : ' — adds context' %>
+                      Proposed rule<%= n.rule_kind === 'suppress' ? ' — stops a finding' : (n.rule_kind === 'category' ? ' — sets the coding' : ' — adds context') %>
                     </div>
-                    <div style="font-size:12.5px;margin:3px 0 6px;"><%= n.rule_body %></div>
+                    <div style="font-size:13px;font-weight:600;margin:3px 0 2px;"><%= n.rule_body %></div>
+                    <% if (n.rule_kind === 'category' && n.rule_category) { %><div style="font-size:12.5px;margin-bottom:4px;">Codes to <strong><%= n.rule_category %></strong>.</div><% } %>
+                    <% var cl = n.conditionList || []; if (cl.length) { %>
+                      <div style="font-size:11px;font-weight:700;color:var(--muted);margin-top:6px;">Applies when all of these are true</div>
+                      <ol style="margin:3px 0 8px;padding-left:20px;font-size:12.5px;">
+                        <% cl.forEach(function(c){ %><li><%= c %></li><% }); %>
+                      </ol>
+                    <% } %>
                     <% if (n.rule_status === 'proposed') { %>
                       <% if (n.rule_kind === 'suppress') { %><div class="muted" style="font-size:11px;margin-bottom:6px;">Accepting this creates a deliberate blind spot — you will stop being told about it.</div><% } %>
+                      <div class="muted" style="font-size:11px;margin-bottom:6px;">Accepting re-checks the whole list under it straight away.</div>
                       <div style="display:flex;gap:6px;">
                         <form method="post" action="/purchases/rules/<%= n.rule_id %>/accept" style="margin:0;"><button class="btn btn-primary" type="submit" style="font-size:11px;padding:3px 8px;">Add to rules</button></form>
                         <form method="post" action="/purchases/rules/<%= n.rule_id %>/reject" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;">No</button></form>
@@ -101,9 +110,9 @@
                 <% } %>
               </div>
             <% }); %>
-            <form method="post" action="/purchases/anomalies/<%= a.id %>/reply" style="margin:6px 0 0;display:flex;gap:6px;align-items:flex-start;">
+            <form method="post" action="/purchases/anomalies/<%= a.id %>/reply" class="anReply" style="margin:6px 0 0;display:flex;gap:6px;align-items:flex-start;">
               <textarea class="input" name="text" rows="2" required placeholder="Tell it what you know — e.g. &quot;the rent is collected quarterly, not monthly&quot;" style="flex:1;font-size:12.5px;resize:vertical;"></textarea>
-              <button class="btn" type="submit" style="font-size:11px;padding:5px 10px;">Send</button>
+              <button class="btn" type="submit" style="font-size:11px;padding:5px 10px;min-width:74px;">Send</button>
             </form>
           </div>
         </div>
@@ -115,6 +124,20 @@
 
 <script>
   function anToggle(id){ var el=document.getElementById('an-th-'+id); if(el) el.style.display = (el.style.display==='none'?'block':'none'); }
+  // Reading the invoice and thinking about it takes a few seconds, and a button that looks
+  // idle gets pressed again. On 2 Sep that turned one answer into seven and produced eight
+  // rewordings of the same rule. One submission per form, and it says it is working.
+  Array.prototype.forEach.call(document.querySelectorAll('form.anReply'), function(f){
+    f.addEventListener('submit', function(e){
+      if (f.dataset.sent === '1') { e.preventDefault(); return; }
+      var ta = f.querySelector('textarea');
+      if (ta && !ta.value.trim()) return;              // let the browser's own check speak
+      f.dataset.sent = '1';
+      var b = f.querySelector('button');
+      if (b) { b.disabled = true; b.textContent = 'Thinking…'; }
+      if (ta) ta.readOnly = true;
+    });
+  });
 </script>
 
 <% var liveRules = (rules||[]).filter(function(r){ return r.status==='active'; }); %>
