@@ -10,7 +10,7 @@ import { QuickBooks } from '../lib/quickbooks';
 import { syncOpenBanking } from '../lib/openbanking';
 import { syncInvoiceInbox, getInvoiceMailbox, autoMatchInvoices } from '../lib/purchase-inbox';
 import { hashFile, findByHash, assessAndStore, rescanAllDuplicates, backfillHashes } from '../lib/purchase-dupes';
-import { attachDocToTxn } from '../lib/purchase-inbox';
+import { attachDocToTxn, looksLikeStatement } from '../lib/purchase-inbox';
 import { normaliseCounterparty } from '../lib/purchase-match';
 import { aiReadUnreadable, aiReadInvoiceDoc } from '../lib/purchase-agent';
 import { refreshAnomalies, listAnomalies, dismissAnomaly, sendAnomalyDigest } from '../lib/purchase-anomalies';
@@ -197,7 +197,8 @@ router.get('/purchases/expenses', async (req: Request, res: Response) => {
 router.get('/purchases/doc/:id/view', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const d = id ? (await pool.query('SELECT * FROM purchase_documents WHERE id=$1', [id])).rows[0] : null;
-  if (!d || !fs.existsSync(d.file_path)) { res.status(404).send('Not found'); return; }
+  if (!d) { res.status(404).type('html').send('<p style="font:14px system-ui;padding:20px;">This invoice has been deleted from the pool. The finding that pointed at it is stale — run <strong>Check now</strong> on the Purchase Ledger screen and it will clear itself.</p>'); return; }
+  if (!fs.existsSync(d.file_path)) { res.status(404).type('html').send('<p style="font:14px system-ui;padding:20px;">The record for <strong>' + String(d.file_name || 'this invoice').replace(/[&<>]/g, '') + '</strong> is still here but the file is missing from disk.</p>'); return; }
   // The global CSP sets frame-ancestors 'none', which blocks this file from rendering in the
   // expenses lightbox's own iframe. Relax it to same-origin for this file-serving route only.
   res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
@@ -289,6 +290,9 @@ router.post('/purchases/doc/:id/delete', async (req: Request, res: Response) => 
     const d = (await pool.query('SELECT file_path FROM purchase_documents WHERE id=$1', [id])).rows[0];
     if (d?.file_path) { try { fs.unlinkSync(d.file_path); } catch { /* already gone */ } }
     await pool.query('DELETE FROM purchase_documents WHERE id=$1', [id]);
+    // Findings that point at it go too, or the list keeps offering a preview of a document
+    // that is no longer there — which is what "Not found" was.
+    await pool.query("UPDATE purchase_anomalies SET status='resolved', document_id=NULL WHERE document_id=$1 AND status IN ('open','answered')", [id]).catch(() => {});
   }
   // Come back to the tab you were working in. Clearing duplicates is a run of small
   // decisions, and being thrown to the inbox after each one loses your place every time.
@@ -328,8 +332,9 @@ router.post('/purchases/inbox/upload', bulkUpload, async (req: Request, res: Res
   try { const raw = (req.body && req.body.rel_paths) || ''; if (raw) relPaths = JSON.parse(String(raw)); } catch { relPaths = []; }
   const batchId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
 
-  let added = 0, skipped = 0, flagged = 0, paidWarn = 0, failed = 0;
+  let added = 0, skipped = 0, flagged = 0, paidWarn = 0, failed = 0, statements = 0;
   const skippedNames: string[] = [];
+  const statementNames: string[] = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     try {
@@ -338,6 +343,16 @@ router.post('/purchases/inbox/upload', bulkUpload, async (req: Request, res: Res
       // for display and the full path for provenance.
       const displayName = String(f.originalname || 'invoice').split(/[\\/]/).pop() || 'invoice';
       const relDir = rel && rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : null;
+
+      // A statement is not an invoice — it restates a balance made of invoices we already
+      // hold. Pooling one gives a total that matches nothing, or matches a payment and hides
+      // the real invoice behind it.
+      if (looksLikeStatement(displayName, null)) {
+        try { fs.unlinkSync(f.path); } catch { /* leave it */ }
+        statements++;
+        if (statementNames.length < 5) statementNames.push(displayName);
+        continue;
+      }
 
       const hash = hashFile(f.path);
       if (hash) {
@@ -374,12 +389,13 @@ router.post('/purchases/inbox/upload', bulkUpload, async (req: Request, res: Res
     await logActivity(req.session.user!.id, 'created', 'invoices', 0,
       `Purchase inbox: bulk upload added ${added} invoice(s), skipped ${skipped} exact duplicate(s), flagged ${flagged + paidWarn}`);
   }
-  if (!added && !skipped && failed) {
+  if (!added && !skipped && !statements && failed) {
     res.redirect('/purchases/expenses?view=inbox&err=' + encodeURIComponent(
       `None of the ${failed} file(s) could be added. The server log has the reason — pm2 logs lumenmsp-portal.`));
     return;
   }
   const bits = [`Added ${added} invoice(s)`];
+  if (statements) bits.push(`ignored ${statements} statement${statements === 1 ? '' : 's'} (${statementNames.join(', ')}${statements > statementNames.length ? ', …' : ''}) — a statement is not an invoice`);
   if (skipped) bits.push(`skipped ${skipped} exact duplicate${skipped === 1 ? '' : 's'}${skippedNames.length ? ' (' + skippedNames.join(', ') + (skipped > skippedNames.length ? ', …' : '') + ')' : ''}`);
   if (paidWarn) bits.push(`${paidWarn} look ALREADY PAID`);
   if (flagged) bits.push(`${flagged} possible duplicate${flagged === 1 ? '' : 's'}`);
@@ -437,8 +453,10 @@ router.post('/purchases/inbox/dupes/bulk', async (req: Request, res: Response) =
       if (d.file_path) { try { fs.unlinkSync(d.file_path); } catch { /* already gone */ } }
     }
     if (deletable.length) {
-      const r = await pool.query('DELETE FROM purchase_documents WHERE id = ANY($1)', [deletable.map((d: any) => d.id)]);
+      const ids2 = deletable.map((d: any) => d.id);
+      const r = await pool.query('DELETE FROM purchase_documents WHERE id = ANY($1)', [ids2]);
       done = r.rowCount || 0;
+      await pool.query("UPDATE purchase_anomalies SET status='resolved', document_id=NULL WHERE document_id = ANY($1) AND status IN ('open','answered')", [ids2]).catch(() => {});
     }
   } else {
     res.redirect('/purchases/expenses?view=duplicates&err=' + encodeURIComponent('Unknown action.')); return;

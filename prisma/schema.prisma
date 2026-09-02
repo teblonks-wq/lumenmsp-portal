@@ -1324,6 +1324,11 @@ model PurchaseDocAi {
   // when the lines plainly read as hardware rather than a monthly service charge.
   aiLines      String?  @map("ai_lines")       // JSON: [{description, amount}]
   aiKind       String?  @map("ai_kind")        // what SORT of spend: hardware | service | subscription | licence | rent | other
+  // WHO THE INVOICE IS ADDRESSED TO. A purchase invoice is billed to Lumen; one billed to a
+  // customer is one of OUR OWN sales invoices that has landed in the wrong pile, and must
+  // never be matched to a payment or counted as money we owe.
+  aiBilledTo   String?  @map("ai_billed_to")
+  aiToUs       Boolean? @map("ai_to_us")        // null = could not tell
   aiConcerns   String?  @map("ai_concerns")    // anything that looked wrong on the face of it
   readAt       DateTime @default(now()) @map("read_at")
   @@map("purchase_doc_ai")

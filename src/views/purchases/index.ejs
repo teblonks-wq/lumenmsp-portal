@@ -31,7 +31,8 @@
   var mid = anoms.filter(function(a){ return a.severity==='medium'; });
   var lo  = anoms.filter(function(a){ return a.severity!=='high' && a.severity!=='medium'; });
   function amt(v){ if (v==null) return ''; var n=Math.abs(Number(v)||0); return '£'+n.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-  var KIND = { already_paid:'Already paid', unpaid_invoice:'Not paid', payment_no_invoice:'No invoice',
+  var KIND = { already_paid:'Already paid', not_a_purchase:'Not ours', possible_duplicate:'Duplicate?',
+               unpaid_invoice:'Not paid', payment_no_invoice:'No invoice',
                price_jump:'Price up', missing_bill:'Bill missing', new_supplier:'New supplier',
                vat_mismatch:'Figures', ai_concern:'Claude' };
 %>

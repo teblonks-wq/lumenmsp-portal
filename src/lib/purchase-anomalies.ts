@@ -50,6 +50,24 @@ async function findAlreadyPaid(): Promise<Finding[]> {
   }));
 }
 
+// An invoice addressed to somebody other than us. Terry, 2 Sep: "check who the invoice is
+// TO — if it is Lumen it is a purchase, if it is a customer it is probably a sales invoice."
+// One of ours in the purchase pile is not a small filing error: left alone it becomes money
+// we appear to owe, and it can be matched to a payment and hide a real bill.
+async function findNotOurPurchases(): Promise<Finding[]> {
+  const rows = (await pool.query(
+    `SELECT d.id, d.file_name, d.rel_path, a.ai_billed_to, a.ai_supplier, a.ai_gross
+       FROM purchase_documents d JOIN purchase_doc_ai a ON a.document_id = d.id
+      WHERE a.ai_to_us = false AND d.archived_at IS NULL AND d.status <> 'attached'`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  return rows.map((r: any) => ({
+    key: 'not_ours:' + r.id, kind: 'not_a_purchase', severity: 'medium' as const,
+    title: `${r.file_name} is billed to ${r.ai_billed_to || 'somebody other than us'} — this looks like one of OUR sales invoices`,
+    detail: `A purchase invoice is addressed to Lumen. This one is not, so it has probably landed in the purchase pool by mistake${r.rel_path ? ` (from ${r.rel_path})` : ''}. It is being kept out of matching until somebody says otherwise.`,
+    amount: r.ai_gross != null ? Number(r.ai_gross) : null, documentId: r.id,
+  }));
+}
+
 // A possible duplicate — the same invoice arriving as a different file. Raised as a finding
 // like any other so it gets a conversation, and so answering it can teach a rule rather than
 // being a yes/no button that forgets why.
@@ -213,11 +231,11 @@ async function findVatMismatches(): Promise<Finding[]> {
 // Kinds this function is authoritative for. An open row of one of these kinds that is NOT
 // re-raised has stopped being true, so it resolves. 'ai_concern' is raised by the matcher
 // as it reads, so it is NOT in this list and is never auto-resolved from here.
-const OWNED_KINDS = ['already_paid', 'possible_duplicate', 'unpaid_invoice', 'payment_no_invoice', 'price_jump', 'missing_bill', 'new_supplier', 'vat_mismatch'];
+const OWNED_KINDS = ['already_paid', 'not_a_purchase', 'possible_duplicate', 'unpaid_invoice', 'payment_no_invoice', 'price_jump', 'missing_bill', 'new_supplier', 'vat_mismatch'];
 
 export async function refreshAnomalies(): Promise<{ raised: number; resolved: number; open: number; suppressed: number }> {
   const all: Finding[] = [];
-  for (const fn of [findAlreadyPaid, findPossibleDuplicates, findUnpaidInvoices, findPaymentsWithoutInvoice, findPriceJumps, findMissingBills, findNewSuppliers, findVatMismatches]) {
+  for (const fn of [findAlreadyPaid, findNotOurPurchases, findPossibleDuplicates, findUnpaidInvoices, findPaymentsWithoutInvoice, findPriceJumps, findMissingBills, findNewSuppliers, findVatMismatches]) {
     try { all.push(...await fn()); }
     catch (e) { console.error('[purchase-anomalies] detector failed:', (e as Error).message); }
   }
@@ -259,6 +277,14 @@ export async function refreshAnomalies(): Promise<{ raised: number; resolved: nu
       WHERE status='open' AND kind = ANY($1) AND NOT (dedupe_key = ANY($2))`,
     [OWNED_KINDS, keys.length ? keys : ['']]
   ).catch(() => ({ rowCount: 0 }));
+
+  // Any finding pointing at a document that no longer exists is debris — including
+  // 'ai_concern', which nothing else ever clears.
+  await pool.query(
+    `UPDATE purchase_anomalies SET status='resolved', document_id=NULL
+      WHERE status IN ('open','answered') AND document_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM purchase_documents d WHERE d.id = purchase_anomalies.document_id)`
+  ).catch(() => {});
 
   const open = Number((await pool.query("SELECT COUNT(*)::int n FROM purchase_anomalies WHERE status='open'").catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n);
   return { raised: found.length, resolved: res.rowCount || 0, open, suppressed };

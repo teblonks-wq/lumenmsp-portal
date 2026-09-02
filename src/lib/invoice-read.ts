@@ -15,7 +15,7 @@ export interface ParsedInvoice {
   status: 'ok' | 'no_text' | 'error';
 }
 
-async function extractText(filePath: string, contentType: string | null, fileName: string): Promise<string> {
+export async function extractText(filePath: string, contentType: string | null, fileName: string): Promise<string> {
   const isPdf = /pdf/i.test(contentType || '') || /\.pdf$/i.test(fileName || '');
   const isHtml = /html/i.test(contentType || '') || /\.html?$/i.test(fileName || '');
   if (isPdf) {

@@ -1,5 +1,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
+import fs from 'fs';
+import { extractText } from '../lib/invoice-read';
 import { pool } from '../db/pool';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { customerSubscriptions, subscriptionsOverview } from '../lib/ms-subscriptions';
@@ -124,6 +126,12 @@ const customerNotFound = (ref: CustomerRef, ident: any) =>
     ? { error: `Multiple customers match "${ident}" — pass the id or account_number.`, candidates: ref.ambiguous }
     : { error: `No customer found matching "${ident}".` };
 
+/** Stored JSON columns are read back for display; malformed data must never break a tool. */
+function safeJson(v: any): any {
+  if (v == null) return null;
+  try { return typeof v === 'string' ? JSON.parse(v) : v; } catch { return v; }
+}
+
 // ── Tools ─────────────────────────────────────────────────────────────────────
 interface Tool {
   name: string;
@@ -191,6 +199,255 @@ const TOOLS: Tool[] = [
         companies: cust.rows, contacts: cont.rows, tickets: tick.rows,
         quotes: quo.rows, invoices: inv.rows, services: svc.rows,
       };
+    },
+  },
+
+  // ── Purchase ledger ─────────────────────────────────────────────────────────
+  // Terry, 2 Sep 2026: the ledger gets a review "bi-monthly… looking for consistencies and
+  // errors", and that review needs EVERYTHING — not just the rows, but what was read off
+  // each document, who matched it and why, the duplicate flags, the case-by-case
+  // conversations, the rules those produced, and every decision anyone made. Reviewing an
+  // agent's judgement from a summary of its judgement is not a review.
+  {
+    name: 'purchase_invoices',
+    description:
+      'Supplier invoices in the purchase ledger, with what Claude read off each one (supplier, invoice number, date, net/VAT/gross, the LINE ITEMS, what sort of spend it is), the payment it was matched to and BY WHOM (rules, Claude with its confidence and reasoning, or a human), duplicate flags, and the folder it was uploaded from. Filter to find inconsistencies: unmatched=true for invoices with no payment, duplicates=true for flagged ones, unread=true for ones no text could be read from.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        month: { type: 'string', description: "Invoice month as YYYY-MM (by date received)." },
+        supplier: { type: 'string', description: 'Match the supplier read off the invoice, the sender, or the filename.' },
+        unmatched: { type: 'boolean', description: 'Only invoices not attached to any payment.' },
+        duplicates: { type: 'boolean', description: 'Only invoices flagged as a possible or already-paid duplicate.' },
+        unread: { type: 'boolean', description: 'Only invoices with no readable total — scans that failed, or that nothing has read yet.' },
+        min_amount: { type: 'number', description: 'Only invoices at or above this gross total.' },
+        limit: { type: 'number', description: 'Default 100, max 500.' },
+      },
+    },
+    run: async (a) => {
+      const lim = Math.min(Math.max(parseInt(String(a.limit ?? 100), 10) || 100, 1), 500);
+      const w: string[] = ['d.archived_at IS NULL']; const v: any[] = []; let i = 1;
+      if (a.month) { w.push(`to_char(COALESCE(d.received_at, d.created_at),'YYYY-MM') = $${i++}`); v.push(String(a.month)); }
+      if (a.supplier) { w.push(`(a.ai_supplier ILIKE $${i} OR d.from_name ILIKE $${i} OR d.from_email ILIKE $${i} OR d.file_name ILIKE $${i})`); v.push('%' + String(a.supplier) + '%'); i++; }
+      if (a.unmatched === true) w.push("d.status <> 'attached'");
+      if (a.duplicates === true) w.push("d.dupe_status IN ('likely','paid')");
+      if (a.unread === true) w.push('d.parsed_amount IS NULL');
+      if (a.min_amount != null) { w.push(`d.parsed_amount >= $${i++}`); v.push(Number(a.min_amount)); }
+      v.push(lim);
+      const rows = (await pool.query(
+        `SELECT d.id, d.file_name, d.rel_path, d.source, d.from_name, d.from_email, d.received_at, d.created_at,
+                d.parsed_amount, d.parsed_invoice_no, d.parsed_date, d.parse_status, d.ai_read_status,
+                d.status, d.bank_transaction_id, d.dupe_status, d.dupe_of_id, d.dupe_reason,
+                d.suggest_txn_id, d.suggest_confidence, d.suggest_reason,
+                a.ai_supplier, a.ai_gross, a.ai_net, a.ai_vat, a.ai_currency, a.ai_period,
+                a.ai_summary, a.ai_kind, a.ai_lines, a.ai_billed_to, a.ai_to_us, a.ai_concerns,
+                t.counterparty AS paid_to, t.amount AS paid_amount, t.booked_at AS paid_at,
+                t.matched_by, t.match_confidence, t.match_reason, t.qb_account_name AS coded_to
+           FROM purchase_documents d
+           LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
+           LEFT JOIN bank_transactions t ON t.id = d.bank_transaction_id
+          WHERE ${w.join(' AND ')}
+          ORDER BY COALESCE(d.received_at, d.created_at) DESC, d.id DESC LIMIT $${i}`, v)).rows;
+      return {
+        count: rows.length,
+        note: rows.length === lim ? 'Capped at the limit — narrow by month or supplier to see the rest.' : undefined,
+        invoices: rows.map((r: any) => ({ ...r, ai_lines: safeJson(r.ai_lines) })),
+      };
+    },
+  },
+
+  {
+    name: 'purchase_invoice_file',
+    description:
+      'The invoice DOCUMENT itself. Returns the full extracted text of the PDF or HTML, everything Claude read off it including line items, the payment it is attached to, and its duplicate flags. When the file is an image it is returned as an image so it can actually be looked at. Use this to check whether what was recorded matches what the document says.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'number', description: 'purchase_invoices id.' } },
+      required: ['id'],
+    },
+    run: async (a) => {
+      const id = parseInt(String(a.id ?? ''), 10);
+      if (!id) return { error: 'Pass the invoice id from purchase_invoices.' };
+      const d = (await pool.query(
+        `SELECT d.*, a.ai_supplier, a.ai_gross, a.ai_net, a.ai_vat, a.ai_currency, a.ai_period,
+                a.ai_summary, a.ai_kind, a.ai_lines, a.ai_concerns,
+                t.counterparty AS paid_to, t.amount AS paid_amount, t.booked_at AS paid_at,
+                t.matched_by, t.match_confidence, t.match_reason, t.qb_account_name AS coded_to
+           FROM purchase_documents d
+           LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
+           LEFT JOIN bank_transactions t ON t.id = d.bank_transaction_id
+          WHERE d.id = $1`, [id])).rows[0];
+      if (!d) return { error: `No invoice ${id} in the pool — it may have been deleted.` };
+
+      const base: any = {
+        id: d.id, file_name: d.file_name, folder: d.rel_path, source: d.source,
+        from: d.from_name || d.from_email, received_at: d.received_at,
+        read: {
+          supplier: d.ai_supplier, invoice_no: d.parsed_invoice_no, date: d.parsed_date,
+          net: d.ai_net, vat: d.ai_vat, gross: d.ai_gross ?? d.parsed_amount,
+          currency: d.ai_currency, period: d.ai_period, kind: d.ai_kind,
+          summary: d.ai_summary, lines: safeJson(d.ai_lines), concerns: d.ai_concerns,
+          parse_status: d.parse_status, ai_read_status: d.ai_read_status,
+        },
+        matched: d.status === 'attached' ? {
+          payment_id: d.bank_transaction_id, paid_to: d.paid_to, amount: d.paid_amount,
+          booked_at: d.paid_at, matched_by: d.matched_by, confidence: d.match_confidence,
+          reason: d.match_reason, coded_to: d.coded_to,
+        } : null,
+        duplicate: d.dupe_status ? { status: d.dupe_status, of_document: d.dupe_of_id, reason: d.dupe_reason } : null,
+      };
+      if (!d.file_path || !fs.existsSync(d.file_path)) return { ...base, file: 'The record is here but the file is missing from disk.' };
+
+      const name = String(d.file_name || '').toLowerCase();
+      const isImage = /\.(png|jpe?g|gif|webp)$/.test(name) || /^image\/(png|jpeg|gif|webp)$/.test(String(d.content_type || ''));
+      if (isImage) {
+        try {
+          const buf = fs.readFileSync(d.file_path);
+          if (buf.length <= 5 * 1024 * 1024) {
+            const mt = /\.png$/.test(name) ? 'image/png' : /\.gif$/.test(name) ? 'image/gif' : /\.webp$/.test(name) ? 'image/webp' : 'image/jpeg';
+            return { ...base, file: 'Returned as an image below.', __content: [{ type: 'image', data: buf.toString('base64'), mimeType: mt }] };
+          }
+          return { ...base, file: 'The image is too large to return inline.' };
+        } catch (e: any) { return { ...base, file: 'Could not read the image: ' + e.message }; }
+      }
+      try {
+        const text = await extractText(d.file_path, d.content_type, d.file_name);
+        return { ...base, text: text ? text.slice(0, 40000) : '(no extractable text — this is a scan; the "read" block above is what Claude saw when it looked at the page)' };
+      } catch (e: any) { return { ...base, text: 'Could not extract text: ' + e.message }; }
+    },
+  },
+
+  {
+    name: 'purchase_payments',
+    description:
+      'Money leaving the bank, with how each one was categorised and whether an invoice is attached — and if so who matched it (rules, Claude with its confidence and reasoning, or a human) . Use uncoded=true or no_invoice=true to find gaps, and matched_by="claude" to review what the agent decided on its own.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        month: { type: 'string', description: 'YYYY-MM by booked date.' },
+        payee: { type: 'string', description: 'Match the counterparty, description or reference.' },
+        no_invoice: { type: 'boolean', description: 'Only payments with no invoice attached.' },
+        uncoded: { type: 'boolean', description: 'Only payments with no category.' },
+        matched_by: { type: 'string', description: 'rules | claude | human — who made the match.' },
+        min_amount: { type: 'number', description: 'Only payments of at least this size (absolute).' },
+        limit: { type: 'number', description: 'Default 100, max 500.' },
+      },
+    },
+    run: async (a) => {
+      const lim = Math.min(Math.max(parseInt(String(a.limit ?? 100), 10) || 100, 1), 500);
+      const w: string[] = ['t.amount < 0']; const v: any[] = []; let i = 1;
+      if (a.month) { w.push(`to_char(t.booked_at,'YYYY-MM') = $${i++}`); v.push(String(a.month)); }
+      if (a.payee) { w.push(`(t.counterparty ILIKE $${i} OR t.description ILIKE $${i} OR t.reference ILIKE $${i})`); v.push('%' + String(a.payee) + '%'); i++; }
+      if (a.no_invoice === true) w.push('t.attachment_path IS NULL');
+      if (a.uncoded === true) w.push("(t.qb_account_id IS NULL OR t.qb_account_id = '')");
+      if (a.matched_by) { w.push(`t.matched_by = $${i++}`); v.push(String(a.matched_by)); }
+      if (a.min_amount != null) { w.push(`ABS(t.amount) >= $${i++}`); v.push(Number(a.min_amount)); }
+      v.push(lim);
+      const rows = (await pool.query(
+        `SELECT t.id, t.booked_at, t.amount, t.counterparty, t.description, t.reference, t.account_name,
+                t.qb_account_name AS coded_to, t.status, t.attachment_name,
+                t.matched_by, t.match_confidence, t.match_reason, t.matched_at,
+                d.id AS invoice_id, d.parsed_invoice_no
+           FROM bank_transactions t
+           LEFT JOIN purchase_documents d ON d.bank_transaction_id = t.id AND d.status = 'attached'
+          WHERE ${w.join(' AND ')}
+          ORDER BY t.booked_at DESC, t.id DESC LIMIT $${i}`, v)).rows;
+      return { count: rows.length, payments: rows };
+    },
+  },
+
+  {
+    name: 'purchase_anomalies',
+    description:
+      'The agent\'s findings about the ledger, WITH the full case-by-case conversation on each — what Claude said, what a colleague answered, and any rule that came out of it. status: open (still to look at), answered (replied to, off the worklist), dismissed, resolved. This is where to see whether the agent\'s judgement was sound and whether the answers it was given were acted on.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: 'open | answered | dismissed | resolved. Default open.' },
+        kind: { type: 'string', description: 'already_paid | not_a_purchase (one of our own sales invoices in the purchase pile) | possible_duplicate | unpaid_invoice | payment_no_invoice | price_jump | missing_bill | new_supplier | vat_mismatch | ai_concern' },
+        with_conversation: { type: 'boolean', description: 'Include the full thread on each. Default true.' },
+        limit: { type: 'number', description: 'Default 100, max 400.' },
+      },
+    },
+    run: async (a) => {
+      const lim = Math.min(Math.max(parseInt(String(a.limit ?? 100), 10) || 100, 1), 400);
+      const w: string[] = []; const v: any[] = []; let i = 1;
+      w.push(`status = $${i++}`); v.push(String(a.status || 'open'));
+      if (a.kind) { w.push(`kind = $${i++}`); v.push(String(a.kind)); }
+      v.push(lim);
+      const rows = (await pool.query(
+        `SELECT * FROM purchase_anomalies WHERE ${w.join(' AND ')}
+          ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
+                   ABS(COALESCE(amount,0)) DESC, id DESC LIMIT $${i}`, v)).rows;
+      if (a.with_conversation === false || !rows.length) return { count: rows.length, findings: rows };
+      const notes = (await pool.query(
+        `SELECT n.anomaly_id, n.is_claude, n.author_name, n.body, n.created_at,
+                r.body AS rule_body, r.status AS rule_status, r.kind AS rule_kind
+           FROM purchase_anomaly_notes n LEFT JOIN purchase_rules r ON r.id = n.rule_id
+          WHERE n.anomaly_id = ANY($1) ORDER BY n.id`, [rows.map((r: any) => r.id)])).rows;
+      const byId: Record<number, any[]> = {};
+      for (const n of notes) (byId[n.anomaly_id] = byId[n.anomaly_id] || []).push(n);
+      return { count: rows.length, findings: rows.map((r: any) => ({ ...r, conversation: byId[r.id] || [] })) };
+    },
+  },
+
+  {
+    name: 'purchase_rules',
+    description:
+      'The standing rules a human accepted after answering a finding — what the agent has been TOLD that it could not have worked out. Each carries the conditions it applies under, the supplier, and the words the person actually used. Check these first when the agent stops raising something it used to.',
+    inputSchema: {
+      type: 'object',
+      properties: { status: { type: 'string', description: 'active | proposed | rejected. Omit for all.' } },
+    },
+    run: async (a) => {
+      const rows = (await pool.query(
+        a.status ? 'SELECT * FROM purchase_rules WHERE status=$1 ORDER BY id DESC' : 'SELECT * FROM purchase_rules ORDER BY id DESC',
+        a.status ? [String(a.status)] : [])).rows;
+      return { count: rows.length, rules: rows.map((r: any) => ({ ...r, conditions: safeJson(r.conditions) })) };
+    },
+  },
+
+  {
+    name: 'purchase_suppliers',
+    description:
+      'What the agent has LEARNED about each supplier, per kind of spend (hardware, service, subscription, licence, rent) — the bank descriptors it recognises, typical and extreme amounts, how long that supplier takes to collect, how often it bills, and how it is normally coded. Learned only from matches a human confirmed. Useful for spotting a supplier whose learned figures look wrong.',
+    inputSchema: {
+      type: 'object',
+      properties: { supplier: { type: 'string', description: 'Filter by supplier key or display name.' } },
+    },
+    run: async (a) => {
+      const rows = (await pool.query(
+        a.supplier
+          ? 'SELECT * FROM purchase_supplier_profiles WHERE supplier_key ILIKE $1 OR display_name ILIKE $1 ORDER BY supplier_key, kind'
+          : 'SELECT * FROM purchase_supplier_profiles ORDER BY match_count DESC, supplier_key, kind',
+        a.supplier ? ['%' + String(a.supplier) + '%'] : [])).rows;
+      return { count: rows.length, suppliers: rows.map((r: any) => ({ ...r, descriptors: safeJson(r.descriptors) })) };
+    },
+  },
+
+  {
+    name: 'purchase_decisions',
+    description:
+      'The decision log — every judgement made about the purchase ledger and who made it: findings answered and dismissed, rules added and switched off, duplicates cleared or deleted, matches accepted, codings carried across. The audit trail for a periodic review of whether the agent and the people using it have been getting it right.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        month: { type: 'string', description: 'YYYY-MM. Omit for the most recent.' },
+        limit: { type: 'number', description: 'Default 200, max 1000.' },
+      },
+    },
+    run: async (a) => {
+      const lim = Math.min(Math.max(parseInt(String(a.limit ?? 200), 10) || 200, 1), 1000);
+      const v: any[] = []; let i = 1;
+      const monthSql = a.month ? `AND to_char(l.created_at,'YYYY-MM') = $${i++}` : '';
+      if (a.month) v.push(String(a.month));
+      v.push(lim);
+      const rows = (await pool.query(
+        `SELECT l.created_at, l.action, l.summary, u.display_name AS who
+           FROM activity_log l LEFT JOIN users u ON u.id = l.user_id
+          WHERE (l.entity_type = 'purchase_agent' OR l.summary LIKE 'Purchase%') ${monthSql}
+          ORDER BY l.created_at DESC LIMIT $${i}`, v)).rows;
+      return { count: rows.length, decisions: rows };
     },
   },
 
@@ -688,7 +945,7 @@ async function handleRpc(msg: any, ctx: { ip: string | null; principal: Principa
           capabilities: { tools: {} },
           serverInfo: { name: 'LumenMSP Portal', version: '1.0.0' },
           instructions:
-            `Read-only access to the LumenMSP Portal (Lumen IT Solutions): customers, contacts, helpdesk tickets, invoices and billing state. All money values are GBP. Nothing here can modify Portal data. Start with the search tool when you only have a name or number. You are connected as: ${ctx.principal.label}. Every call you make is recorded in the Portal's MCP audit log against that name.`,
+            `Read-only access to the LumenMSP Portal (Lumen IT Solutions): customers, contacts, helpdesk tickets, invoices and billing state, AND the whole PURCHASE LEDGER — supplier invoices with what was read off them, the payments they were matched to and by whom, the duplicate flags, the anomaly findings with their conversations, the standing rules a human accepted, the learned supplier norms, and the decision log. Use purchase_* for a consistency review; purchase_invoice_file returns the document itself. All money values are GBP. Nothing here can modify Portal data. Start with the search tool when you only have a name or number. You are connected as: ${ctx.principal.label}. Every call you make is recorded in the Portal's MCP audit log against that name.`,
         });
       }
       case 'ping':
@@ -712,7 +969,13 @@ async function handleRpc(msg: any, ctx: { ip: string | null; principal: Principa
           // A tool may hand back { error } for a soft failure (no customer found etc.) — record that too.
           const soft = result && typeof result === 'object' && 'error' in result ? String((result as any).error) : null;
           auditCall({ method, tool: name, args, ok: !soft, error: soft, durationMs: Date.now() - started, ip: ctx.ip, principal: ctx.principal.label });
-          return rpcOk(id, { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], isError: false });
+          // Most tools return plain data. A tool that hands back __content is returning real
+          // MCP content blocks as well — a scanned invoice as an image, say — so that a
+          // document can be LOOKED at and not merely described.
+          const extra = result && typeof result === 'object' && Array.isArray((result as any).__content)
+            ? (result as any).__content : [];
+          const data = extra.length ? { ...(result as any), __content: undefined } : result;
+          return rpcOk(id, { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }, ...extra], isError: false });
         } catch (e: any) {
           auditCall({ method, tool: name, args, ok: false, error: e?.message || String(e), durationMs: Date.now() - started, ip: ctx.ip, principal: ctx.principal.label });
           // Tool-level failure → isError result (not a protocol error), per spec.

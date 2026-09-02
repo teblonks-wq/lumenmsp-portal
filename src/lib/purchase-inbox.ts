@@ -23,6 +23,19 @@ const LAST_KEY = 'invoice_last_sync';
 // Where pooled invoice files live (private — streamed via an auth-gated route, not /static).
 export const PURCHASE_DOCS_DIR = path.join(process.cwd(), 'uploads', 'purchase-docs');
 
+// ── Statements are not invoices ─────────────────────────────────────────────────
+// Terry, 2026-09-02: "anything with the word statement in should be ignored as an invoice."
+// An account statement restates a balance that is made up of invoices we already hold, so
+// pooling one gives a document with a total that matches nothing, or worse, matches a
+// payment and hides the real invoice behind it. Checked on the FILE NAME and the EMAIL
+// SUBJECT — never on the document text, because a genuine invoice can perfectly well use
+// the word inside it (Giacom's invoices carry a "total amount now outstanding" line).
+const STATEMENT = /\bstatements?\b/i;
+
+export function looksLikeStatement(fileName?: string | null, subject?: string | null): boolean {
+  return STATEMENT.test(String(fileName || '')) || STATEMENT.test(String(subject || ''));
+}
+
 // Keep every real attachment as a possible invoice — only inline logos/signatures are skipped.
 function looksLikeInvoiceDoc(name: string, contentType: string, isInline: boolean): boolean {
   const ct = (contentType || '').toLowerCase();
@@ -91,6 +104,7 @@ export async function syncInvoiceInbox(): Promise<{ fetched: number; pooled: num
         const atts = await graphListAttachments(mailbox, m.id);
         for (const a of atts) {
           if (!looksLikeInvoiceDoc(a.name, a.contentType, a.isInline)) continue;
+          if (looksLikeStatement(a.name, m.subject)) { console.log('[invoice-inbox] skipped a statement:', a.name); continue; }
           const safe = (a.name || 'invoice').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80);
           const filename = Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '-' + safe;
           const dest = path.join(PURCHASE_DOCS_DIR, filename);
@@ -111,7 +125,7 @@ export async function syncInvoiceInbox(): Promise<{ fetched: number; pooled: num
       // No invoice attachment → the invoice is in the email body itself. Save the body as
       // an HTML document so it can be previewed and attached like any other invoice.
       // (Skipped if an attachment existed but failed to save — that already raised a notice.)
-      if (docsForMsg === 0 && !attachFailed) {
+      if (docsForMsg === 0 && !attachFailed && !looksLikeStatement(null, m.subject)) {
         const bodyHtml = (m.bodyHtml && m.bodyHtml.trim())
           ? m.bodyHtml
           : '<pre style="white-space:pre-wrap;font:14px/1.5 sans-serif;padding:16px;">' +
@@ -180,9 +194,12 @@ export async function autoMatchInvoices(opts?: { useAi?: boolean }): Promise<Aut
   // the free rules have had their go.
   const useAi = opts?.useAi ?? ((await getSetting(GROUP, 'ai_matching')) !== '0');
   const docs = (await pool.query(
-    `SELECT d.*, a.ai_supplier FROM purchase_documents d
+    `SELECT d.*, a.ai_supplier, a.ai_to_us, a.ai_billed_to FROM purchase_documents d
        LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
       WHERE d.status <> 'attached' AND d.archived_at IS NULL
+        -- An invoice billed to a CUSTOMER is one of our own sales invoices in the wrong
+        -- pile. Matching it to a payment would invent a purchase we never made.
+        AND (a.ai_to_us IS NULL OR a.ai_to_us = true)
       ORDER BY d.received_at DESC NULLS LAST`
   )).rows;
   let matched = 0, byClaude = 0, suggested = 0, aiRead = 0;

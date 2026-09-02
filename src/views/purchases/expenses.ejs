@@ -68,6 +68,8 @@
 (function(){
   var form = document.getElementById('pxUploadForm'); if (!form) return;
   var OK = /\.(pdf|png|jpe?g|webp|tiff?|html?)$/i;
+  // A statement is not an invoice — do not even send it up. (Terry, 2 Sep.)
+  var STATEMENT = /\bstatements?\b/i;
   var MAX = <%= bulkMaxFiles %>;
   var MAXBYTES = 25 * 1024 * 1024;
   var fileIn = document.getElementById('pxFiles'), folderIn = document.getElementById('pxFolder');
@@ -77,8 +79,9 @@
   var trimmed = true;   // false = the browser would not let us shrink the list
   folderIn.addEventListener('change', function(){
     var all = Array.prototype.slice.call(folderIn.files || []);
-    var keep = all.filter(function(f){ return OK.test(f.name); });
-    var dropped = all.length - keep.length, over = 0;
+    var keep = all.filter(function(f){ return OK.test(f.name) && !STATEMENT.test(f.name); });
+    var statements = all.filter(function(f){ return OK.test(f.name) && STATEMENT.test(f.name); }).length;
+    var dropped = all.length - keep.length - statements, over = 0;
     // Something too big to be an invoice is skipped like any other non-invoice file. One
     // oversized PDF in a folder of four hundred must not cost you the other 399.
     var huge = keep.filter(function(f){ return f.size > MAXBYTES; });
@@ -97,6 +100,7 @@
     note.textContent = trimmed
       ? (keep.length + ' invoice file(s) found in the folder'
          + (dropped ? ', ' + dropped + ' other file(s) ignored' : '')
+         + (statements ? ', ' + statements + ' statement(s) ignored — a statement is not an invoice' : '')
          + (huge.length ? ', ' + huge.length + ' skipped as too big to be an invoice (' + huge.slice(0,3).map(function(f){return f.name;}).join(', ') + (huge.length>3?', …':'') + ')' : '')
          + (over ? ' — ' + over + ' over the ' + MAX + '-file limit were left out; upload the rest in a second pass' : ''))
       : (all.length + ' file(s) selected. This browser will not let the list be filtered, so everything in the folder is sent as-is'
