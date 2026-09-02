@@ -32,7 +32,9 @@
   var lo  = anoms.filter(function(a){ return a.severity!=='high' && a.severity!=='medium'; });
   function amt(v){ if (v==null) return ''; var n=Math.abs(Number(v)||0); return '£'+n.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   var KIND = { already_paid:'Already paid', invoice_not_received:'Invoice missing', not_a_purchase:'Not ours', possible_duplicate:'Duplicate?',
-               unpaid_invoice:'Not paid', payment_no_invoice:'No invoice',
+               needs_match:'One click', unpaid_invoice:'Not paid', unpaid_invoices:'Not paid',
+               payment_no_invoice:'No invoice', payments_no_invoice:'No invoices', small_spend_no_invoice:'Small spend',
+               covers_several:'One payment, several bills',
                price_jump:'Price up', missing_bill:'Bill missing', new_supplier:'New supplier',
                vat_mismatch:'Figures', ai_concern:'Claude' };
 %>
@@ -52,8 +54,13 @@
 <div class="card" style="padding:0;margin-bottom:18px;<%= hi.length ? 'border-left:3px solid var(--bad-fg);' : '' %>">
   <div class="card-header" style="padding:16px 20px 12px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
     <div>
-      <h2 style="margin:0;">What needs looking at <% if (anoms.length) { %><span class="muted">(<%= anoms.length %>)</span><% } %></h2>
-      <p class="muted" style="font-size:12px;margin:4px 0 0;">Checked overnight. Bills nobody paid, payments with no bill behind them, prices that moved, and anything Claude noticed while reading an invoice. Reply to one and it comes off this list.</p>
+      <h2 style="margin:0;">What needs looking at <% if (hi.length + mid.length) { %><span class="muted">(<%= hi.length + mid.length %>)</span><% } %></h2>
+      <p class="muted" style="font-size:12px;margin:4px 0 0;">
+        <% var oneClick = mid.filter(function(a){ return a.kind==='needs_match'; }).length; %>
+        Decisions, not rows. A supplier's payments travel together, so fourteen Amazon orders are one question rather than fourteen.
+        <% if (oneClick) { %><strong><%= oneClick %></strong> of these just need the invoice we already hold attaching &mdash; one click each.<% } %>
+        <% if (lo.length) { %><%= lo.length %> more are worth knowing but need nothing from you; they are at the bottom.<% } %>
+      </p>
     </div>
     <div style="display:flex;gap:8px;">
       <form method="post" action="/purchases/anomalies/refresh" style="margin:0;"><button class="btn" type="submit" title="Re-check the ledger now instead of waiting for tonight">↻ Check now</button></form>
@@ -66,7 +73,7 @@
   <% if (!anoms.length) { %>
     <div class="empty-state" style="margin:0;padding:24px;">Nothing outstanding. Every invoice is matched, every payment has a bill behind it, and no supplier has changed its price.</div>
   <% } else { %>
-    <% [['high',hi],['medium',mid],['info',lo]].forEach(function(grp){ grp[1].forEach(function(a){ %>
+    <% [['high',hi],['medium',mid]].forEach(function(grp){ grp[1].forEach(function(a){ %>
       <div class="an-row">
         <span class="an-tag <%= a.severity==='high'?'an-high':(a.severity==='medium'?'an-mid':'an-low') %>"><%= KIND[a.kind] || a.kind %></span>
         <div class="an-body">
@@ -76,6 +83,12 @@
             <% if (a.document_id) { %><button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="anPeek(<%= a.document_id %>, this)">👁 Preview</button>
             <a class="btn" href="/purchases/doc/<%= a.document_id %>/view" target="_blank" style="font-size:11px;padding:2px 8px;">Open invoice</a><% } %>
             <% if (a.txn_id) { %><a class="btn" href="/purchases/txn/<%= a.txn_id %>/go" style="font-size:11px;padding:2px 8px;" title="Open that payment on the right month and tab">💷 Open the payment</a><% } %>
+            <% if (a.kind === 'needs_match' && a.document_id && a.txn_id) { %>
+              <form method="post" action="/purchases/doc/<%= a.document_id %>/attach" style="margin:0;">
+                <input type="hidden" name="txn_id" value="<%= a.txn_id %>">
+                <button class="btn btn-primary" type="submit" style="font-size:11px;padding:2px 10px;" title="Attach the invoice we are already holding to that payment. Recorded as your decision, and the supplier profile learns from it.">✓ Attach it</button>
+              </form>
+            <% } %>
             <button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="anToggle(<%= a.id %>)" title="Tell it what you know. It will consider what you say and, if it is a standing instruction, offer to remember it.">💬 Reply<% var th=(notes||{})[a.id]||[]; if (th.length) { %> (<%= th.length %>)<% } %></button>
             <form method="post" action="/purchases/anomalies/<%= a.id %>/dismiss" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:2px 8px;" title="Stop showing me this. A REPLY is usually better — it keeps the reason, so the same thing does not come back next month.">Dismiss</button></form>
           </div>
@@ -123,6 +136,35 @@
         <% if (a.amount != null) { %><div class="an-amt"><%= amt(a.amount) %></div><% } %>
       </div>
     <% }); }); %>
+    <% if (lo.length) { %>
+      <div style="border-top:1px solid var(--line);padding:12px 16px;">
+        <button class="btn" type="button" style="font-size:12px;" onclick="var e=document.getElementById('anInfo');var open=e.style.display!=='none';e.style.display=open?'none':'block';this.textContent=(open?'Worth knowing (':'Hide worth knowing (')+<%= lo.length %>+')';">Worth knowing (<%= lo.length %>)</button>
+        <span class="muted" style="font-size:11.5px;margin-left:8px;">Nothing here needs a decision &mdash; new payees, arithmetic that did not add up, small card spend.</span>
+      </div>
+      <div id="anInfo" style="display:none;">
+        <% lo.forEach(function(a){ %>
+          <div class="an-row">
+            <span class="an-tag an-low"><%= KIND[a.kind] || a.kind %></span>
+            <div class="an-body">
+              <div class="an-title"><%= a.title %></div>
+              <% if (a.detail) { %><div class="an-detail"><%= a.detail %></div><% } %>
+              <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                <% if (a.txn_id) { %><a class="btn" href="/purchases/txn/<%= a.txn_id %>/go" style="font-size:11px;padding:2px 8px;">💷 Open the payment</a><% } %>
+                <button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="anToggle(<%= a.id %>)">💬 Reply</button>
+                <form method="post" action="/purchases/anomalies/<%= a.id %>/dismiss" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:2px 8px;">Dismiss</button></form>
+              </div>
+              <div id="an-th-<%= a.id %>" style="display:none;margin-top:10px;border-left:2px solid var(--line);padding-left:12px;">
+                <form method="post" action="/purchases/anomalies/<%= a.id %>/reply" class="anReply" style="margin:6px 0 0;display:flex;gap:6px;align-items:flex-start;">
+                  <textarea class="input" name="text" rows="2" required placeholder="Tell it what you know" style="flex:1;font-size:12.5px;resize:vertical;"></textarea>
+                  <button class="btn" type="submit" style="font-size:11px;padding:5px 10px;min-width:74px;">Send</button>
+                </form>
+              </div>
+            </div>
+            <% if (a.amount != null) { %><div class="an-amt"><%= amt(a.amount) %></div><% } %>
+          </div>
+        <% }); %>
+      </div>
+    <% } %>
   <% } %>
 </div>
 

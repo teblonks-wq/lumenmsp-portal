@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { pool } from '../db/pool';
 import { getSetting } from './settings';
 import { graphConfigured, graphSendMail } from './graph';
-import { classifyNoInvoice, classifyNoInvoiceLive, normaliseCounterparty } from './purchase-match';
+import { classifyNoInvoice, classifyNoInvoiceLive, normaliseCounterparty, aliasTokensFor } from './purchase-match';
 import { getInvoiceMailbox } from './purchase-inbox';
 import { activeRules, suppressedBy } from './purchase-rules';
 
@@ -48,6 +48,79 @@ async function findAlreadyPaid(): Promise<Finding[]> {
     detail: r.dupe_reason || `An earlier copy is attached to a payment to ${r.counterparty || 'a supplier'} on ${dISO(r.booked_at)}.`,
     amount: r.parsed_amount != null ? Number(r.parsed_amount) : null, documentId: r.id, txnId: r.dupe_paid_txn_id,
   }));
+}
+
+// ── One payment, several invoices ───────────────────────────────────────────────
+// Found 2026-09-02 from the bookkeeper's own list. A £2,565.00 payment to Aventis was down
+// as "No Invoice" — but Aventis is the LANDLORD, it collects the Gemini House rent in two-
+// and three-month blocks, and £2,565.00 is exactly three months at £855.00. All three
+// invoices were already in the pool. Nobody needed to go and find anything.
+//
+// The matcher could not see it because it matches ONE document to ONE payment. So a payment
+// covering several invoices looks like a payment with no invoice for ever, and every month
+// it goes back on the chase list. This finds those instead of sending somebody hunting for
+// paperwork they already hold.
+async function findPaymentCoversSeveral(): Promise<Finding[]> {
+  const payments = (await pool.query(
+    `SELECT t.id, t.booked_at, t.amount, t.counterparty, t.description
+       FROM bank_transactions t
+      WHERE t.amount < 0 AND t.status <> 'ignored' AND t.attachment_path IS NULL
+        AND t.booked_at > NOW() - INTERVAL '400 days'
+      ORDER BY ABS(t.amount) DESC LIMIT 300`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  if (!payments.length) return [];
+
+  const docs = (await pool.query(
+    `SELECT d.id, d.file_name, d.parsed_amount, d.parsed_invoice_no, d.received_at,
+            COALESCE(a.ai_supplier, d.from_name, d.file_name) AS supplier
+       FROM purchase_documents d
+       LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
+      WHERE d.status <> 'attached' AND d.archived_at IS NULL AND d.parsed_amount IS NOT NULL
+        AND (d.doc_type IS NULL OR d.doc_type = 'invoice')`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  if (!docs.length) return [];
+
+  const out: Finding[] = [];
+  const used = new Set<number>();
+  for (const p of payments) {
+    const target = Math.round(Math.abs(Number(p.amount)) * 100);
+    const payeeKey = normaliseCounterparty(p.counterparty || p.description || '');
+    if (!payeeKey) continue;
+    // Candidates: same supplier by name OR by the processor aliases (Aventis collects for
+    // Re-Leased/Hurstwood, so the payee and the invoice never share a name).
+    const aliases = aliasTokensFor(((p.counterparty || '') + ' ' + (p.description || '')).toLowerCase());
+    const cands = docs.filter((d: any) => {
+      if (used.has(d.id)) return false;
+      const sk = normaliseCounterparty(d.supplier || '');
+      if (!sk) return false;
+      if (sk === payeeKey || sk.includes(payeeKey) || payeeKey.includes(sk)) return true;
+      return aliases.some((al) => sk.includes(al) || al.includes(sk));
+    }).slice(0, 10);
+    if (cands.length < 2) continue;
+
+    // Exact subset that sums to the payment, up to 6 invoices. Bounded on purpose: this runs
+    // over the whole ledger nightly and an unbounded subset-sum would not.
+    const cents = cands.map((d: any) => Math.round(Number(d.parsed_amount) * 100));
+    let hit: number[] | null = null;
+    const n = Math.min(cands.length, 10);
+    for (let mask = 1; mask < (1 << n) && !hit; mask++) {
+      let bits = 0; for (let i = 0; i < n; i++) if (mask & (1 << i)) bits++;
+      if (bits < 2 || bits > 6) continue;
+      let sum = 0; for (let i = 0; i < n; i++) if (mask & (1 << i)) sum += cents[i];
+      if (sum === target) { hit = []; for (let i = 0; i < n; i++) if (mask & (1 << i)) hit.push(i); }
+    }
+    if (!hit) continue;
+    const picked = hit.map((i) => cands[i]);
+    picked.forEach((d: any) => used.add(d.id));
+    out.push({
+      key: 'covers:' + p.id, kind: 'covers_several', severity: 'medium',
+      title: `${money(p.amount)} to ${p.counterparty || 'a supplier'} covers ${picked.length} invoices you already hold`,
+      detail: `Nothing to go and find. ${picked.map((d: any) => `${d.parsed_invoice_no || d.file_name} ${money(d.parsed_amount)}`).join(' + ')} = ${money(p.amount)}. The matcher links one invoice to one payment, so this looked like a payment with no invoice.`,
+      amount: Number(p.amount), txnId: p.id, documentId: picked[0].id,
+      supplierKey: normaliseCounterparty(picked[0].supplier || ''),
+    });
+  }
+  return out;
 }
 
 // An email that announces an invoice but does not contain one. Terry, 2 Sep: "sometimes an
@@ -116,46 +189,205 @@ async function findPossibleDuplicates(): Promise<Finding[]> {
 // An invoice we hold, with a total, that no payment has ever been matched to and that is
 // now old enough that a Direct Debit would have collected. Either it is unpaid, or the
 // payment is there and we failed to spot it. Both need a human.
-async function findUnpaidInvoices(): Promise<Finding[]> {
-  const rows = (await pool.query(
-    `SELECT id, file_name, from_name, from_email, parsed_amount, parsed_invoice_no, received_at, created_at
-       FROM purchase_documents
-      WHERE status <> 'attached' AND archived_at IS NULL AND parsed_amount IS NOT NULL
-        AND COALESCE(received_at, created_at) < NOW() - ($1 || ' days')::interval
-      ORDER BY parsed_amount DESC LIMIT 100`, [String(UNPAID_AFTER_DAYS)]
-  ).catch(() => ({ rows: [] as any[] }))).rows;
-  return rows.map((r: any) => ({
-    key: 'unpaid:' + r.id, kind: 'unpaid_invoice', severity: 'high' as const,
-    title: `No payment found for ${money(r.parsed_amount)} — ${r.from_name || r.from_email || r.file_name}`,
-    detail: `Invoice ${r.parsed_invoice_no || '(no number read)'} received ${dISO(r.received_at || r.created_at)}, still unmatched after ${UNPAID_AFTER_DAYS} days. Either it has not been paid, or the payment is on the statement and nothing linked it.`,
-    amount: Number(r.parsed_amount), documentId: r.id,
-  }));
+// ── The matching backlog is not an anomaly list ─────────────────────────────────
+// Two detectors used to look at the SAME failure from opposite ends: an invoice we hold
+// with no payment against it, and a payment with no invoice behind it. When they are the
+// same transaction, the ledger reported one problem twice — and neither line was a
+// question about the business. It was the matcher admitting it had not joined them up.
+//
+// Terry, 2026-09-02: "there is more to look at not less ... I don't want to have to check
+// every line for validity as I may as well do it the old fashioned way."
+//
+// So they are paired FIRST. A pair becomes one row with an Attach button — a decision that
+// takes a click, not an investigation. What is left over is grouped by supplier, because
+// fourteen Amazon orders are one question ("where are the Amazon invoices for May to
+// July?"), not fourteen. Nothing is hidden: every underlying row is still on the ledger,
+// still counted, still chaseable. What changes is how many times a human is asked.
+
+const GROUP_FROM = 2;      // two or more from one supplier travel as one finding
+const SMALL_ITEM = 25;     // a lone payment under this is card spend, not a finding
+const PAIR_DAYS = 60;      // an invoice and its payment sit within about two months
+
+// Payments already explained by findPaymentCoversSeveral, so they are never reported twice.
+let coveredIds = new Set<number>();
+
+const STOP = new Set(['ltd','limited','plc','llp','the','and','uk','com','co','inv','invoice',
+  'payment','ref','card','online','purchase','services','service','group','holdings','www','net','store']);
+
+function nameTokens(s: any): Set<string> {
+  return new Set(String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP.has(w)));
+}
+function shareAToken(a: Set<string>, b: Set<string>): boolean {
+  for (const w of a) if (b.has(w)) return true;
+  return false;
+}
+const penny = (v: any) => Math.round(Math.abs(Number(v) || 0) * 100);
+
+// Both sides of the backlog, paired where they obviously belong together.
+// Pairing is deliberately timid: same amount to the penny, a distinctive word in common,
+// within PAIR_DAYS — and ONE candidate each way. Three £855.00 rent invoices against three
+// £855.00 payments are ambiguous, so they are left alone rather than guessed at.
+interface Backlog {
+  pairs: { doc: any; txn: any }[];
+  docs: any[];      // unmatched invoices with no payment found
+  txns: any[];      // unmatched payments with no invoice found
 }
 
-// Money out with no invoice behind it. Tax, financing and payroll never have one, so those
-// are excluded by the same classifier the reconcile screen uses.
-async function findPaymentsWithoutInvoice(): Promise<Finding[]> {
-  const rows = (await pool.query(
+async function backlog(): Promise<Backlog> {
+  const docs = (await pool.query(
+    `SELECT d.id, d.file_name, d.from_name, d.from_email, d.parsed_amount, d.parsed_invoice_no,
+            d.received_at, d.created_at, a.ai_supplier
+       FROM purchase_documents d LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
+      WHERE d.status <> 'attached' AND d.archived_at IS NULL AND d.parsed_amount IS NOT NULL
+        AND COALESCE(d.received_at, d.created_at) < NOW() - ($1 || ' days')::interval
+        AND COALESCE(d.doc_type,'invoice') NOT IN ('statement','sales_invoice','not_a_purchase')
+      ORDER BY d.parsed_amount DESC`, [String(UNPAID_AFTER_DAYS)]
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+
+  const rawTxns = (await pool.query(
     `SELECT t.id, t.counterparty, t.description, t.amount, t.booked_at, t.qb_account_name
        FROM bank_transactions t
       WHERE t.amount < 0 AND t.status IN ('new','categorised') AND t.attachment_path IS NULL
         AND t.booked_at < NOW() - ($1 || ' days')::interval
         AND NOT EXISTS (SELECT 1 FROM bank_transaction_splits s WHERE s.transaction_id = t.id AND s.attachment_path IS NOT NULL)
-      ORDER BY ABS(t.amount) DESC LIMIT 100`, [String(NO_INVOICE_AFTER_DAYS)]
+      ORDER BY ABS(t.amount) DESC`, [String(NO_INVOICE_AFTER_DAYS)]
   ).catch(() => ({ rows: [] as any[] }))).rows;
+
+  // The ignore list is the ONLY reason money may leave with no invoice behind it.
+  const txns: any[] = [];
+  for (const t of rawTxns) {
+    if (coveredIds.has(t.id)) continue;   // already explained by findPaymentCoversSeveral
+    if (await classifyNoInvoiceLive((t.counterparty || '') + ' ' + (t.description || ''))) continue;
+    txns.push(t);
+  }
+
+  for (const d of docs) d.__tok = nameTokens(d.ai_supplier || d.from_name || d.from_email || d.file_name);
+  for (const t of txns) t.__tok = nameTokens((t.counterparty || '') + ' ' + (t.description || ''));
+
+  // Candidate lists both ways, then keep only the mutually unambiguous ones.
+  const candFor = new Map<number, any[]>();
+  const claims = new Map<number, number>();      // docId -> how many payments want it
+  for (const t of txns) {
+    const hits = docs.filter((d) => penny(d.parsed_amount) === penny(t.amount)
+      && shareAToken(d.__tok, t.__tok)
+      && Math.abs(new Date(t.booked_at).getTime() - new Date(d.received_at || d.created_at).getTime()) < PAIR_DAYS * 864e5);
+    if (hits.length) { candFor.set(t.id, hits); for (const h of hits) claims.set(h.id, (claims.get(h.id) || 0) + 1); }
+  }
+
+  const pairs: { doc: any; txn: any }[] = [];
+  const usedDocs = new Set<number>(), usedTxns = new Set<number>();
+  for (const t of txns) {
+    const hits = candFor.get(t.id);
+    if (!hits || hits.length !== 1) continue;          // this payment has a choice — do not guess
+    const d = hits[0];
+    if ((claims.get(d.id) || 0) !== 1) continue;       // that invoice is wanted by others — do not guess
+    pairs.push({ doc: d, txn: t });
+    usedDocs.add(d.id); usedTxns.add(t.id);
+  }
+
+  return {
+    pairs,
+    docs: docs.filter((d) => !usedDocs.has(d.id)),
+    txns: txns.filter((t) => !usedTxns.has(t.id)),
+  };
+}
+
+// One row per obvious pair: "we are holding the invoice for this payment."
+function pairFindings(b: Backlog): Finding[] {
+  return b.pairs.map(({ doc, txn }) => ({
+    key: 'needs_match:' + txn.id + ':' + doc.id, kind: 'needs_match', severity: 'medium' as const,
+    title: `We already hold the invoice for ${money(txn.amount)} to ${txn.counterparty || 'this supplier'}`,
+    detail: `${doc.file_name}${doc.parsed_invoice_no ? ` (invoice ${doc.parsed_invoice_no})` : ''} is ${money(doc.parsed_amount)} — the same amount, the same supplier, received ${dISO(doc.received_at || doc.created_at)} against a payment on ${dISO(txn.booked_at)}. Nothing linked them. One click and this is done.`,
+    amount: Number(txn.amount), documentId: doc.id, txnId: txn.id,
+  }));
+}
+
+// Payments with genuinely nothing to match, grouped by who they went to.
+function paymentFindings(b: Backlog): Finding[] {
+  const bySupplier = new Map<string, any[]>();
+  for (const t of b.txns) {
+    const k = normaliseCounterparty(t.counterparty || '') || 'unknown';
+    (bySupplier.get(k) || bySupplier.set(k, []).get(k)!).push(t);
+  }
   const out: Finding[] = [];
-  for (const r of rows) {
-    const desc = (r.counterparty || '') + ' ' + (r.description || '');
-    // The ignore list is the ONLY reason money may leave with no invoice behind it.
-    if (await classifyNoInvoiceLive(desc)) continue;
+  const smalls: any[] = [];
+  for (const [key, list] of bySupplier) {
+    const total = list.reduce((n, t) => n + Math.abs(Number(t.amount) || 0), 0);
+    const label = list[0].counterparty || key;
+    if (list.length >= GROUP_FROM) {
+      const dates = list.map((t) => new Date(t.booked_at)).sort((a, c) => +a - +c);
+      out.push({
+        key: 'no_invoice_grp:' + key, kind: 'payments_no_invoice', severity: 'medium',
+        title: `${label} — ${list.length} payments totalling ${money(total)} with no invoice`,
+        detail: `Between ${dISO(dates[0])} and ${dISO(dates[dates.length - 1])}. Largest ${money(Math.max(...list.map((t) => Math.abs(Number(t.amount)))))}. `
+          + `This is ONE question — where are this supplier's invoices for that period — not ${list.length} separate ones. `
+          + `Answer it once and every payment in the group comes off the list together.`,
+        amount: total, supplierKey: key, txnId: list[0].id,
+      });
+      continue;
+    }
+    if (Math.abs(Number(list[0].amount)) < SMALL_ITEM) { smalls.push(list[0]); continue; }
+    const t = list[0];
     out.push({
-      key: 'no_invoice:' + r.id, kind: 'payment_no_invoice', severity: 'medium',
-      title: `${money(r.amount)} paid to ${r.counterparty || 'unknown'} with no invoice`,
-      detail: `Left the bank on ${dISO(r.booked_at)}${r.qb_account_name ? `, coded to ${r.qb_account_name}` : ''}. Nothing in the invoice pool has been matched to it.`,
-      amount: Number(r.amount), txnId: r.id,
+      key: 'no_invoice:' + t.id, kind: 'payment_no_invoice', severity: 'medium',
+      title: `${money(t.amount)} paid to ${t.counterparty || 'unknown'} with no invoice`,
+      detail: `Left the bank on ${dISO(t.booked_at)}${t.qb_account_name ? `, coded to ${t.qb_account_name}` : ''}. Nothing in the invoice pool matches it, and we hold no invoice of that amount from anyone.`,
+      amount: Number(t.amount), txnId: t.id,
+    });
+  }
+  // Everything small and one-off in a single line. Still on the ledger, still chaseable —
+  // just not worth interrupting anyone about individually.
+  if (smalls.length) {
+    const total = smalls.reduce((n, t) => n + Math.abs(Number(t.amount) || 0), 0);
+    out.push({
+      key: 'no_invoice_small', kind: 'small_spend_no_invoice', severity: 'info',
+      title: `${smalls.length} small payments under ${money(SMALL_ITEM)} with no receipt — ${money(total)} in total`,
+      detail: smalls.slice(0, 12).map((t) => `${dISO(t.booked_at)} ${t.counterparty || '?'} ${money(t.amount)}`).join(' · ')
+        + (smalls.length > 12 ? ` · and ${smalls.length - 12} more` : ''),
+      amount: total,
     });
   }
   return out;
+}
+
+// Invoices we hold that nothing has paid, grouped the same way.
+function invoiceFindings(b: Backlog): Finding[] {
+  const bySupplier = new Map<string, any[]>();
+  for (const d of b.docs) {
+    const k = normaliseCounterparty(String(d.ai_supplier || d.from_name || d.from_email || d.file_name)) || 'unknown';
+    (bySupplier.get(k) || bySupplier.set(k, []).get(k)!).push(d);
+  }
+  const out: Finding[] = [];
+  for (const [key, list] of bySupplier) {
+    const total = list.reduce((n, d) => n + Math.abs(Number(d.parsed_amount) || 0), 0);
+    const label = list[0].ai_supplier || list[0].from_name || key;
+    if (list.length >= GROUP_FROM) {
+      out.push({
+        key: 'unpaid_grp:' + key, kind: 'unpaid_invoices', severity: 'high',
+        title: `${label} — ${list.length} invoices totalling ${money(total)} with no payment found`,
+        detail: `Oldest received ${dISO(list.map((d) => new Date(d.received_at || d.created_at)).sort((a, c) => +a - +c)[0])}. `
+          + `Either they have not been paid, or the payments are on the statement and nothing linked them. `
+          + `Check one and the rest of this supplier's usually follow.`,
+        amount: total, supplierKey: key, documentId: list[0].id,
+      });
+      continue;
+    }
+    const d = list[0];
+    out.push({
+      key: 'unpaid:' + d.id, kind: 'unpaid_invoice', severity: 'high',
+      title: `No payment found for ${money(d.parsed_amount)} — ${label}`,
+      detail: `Invoice ${d.parsed_invoice_no || '(no number read)'} received ${dISO(d.received_at || d.created_at)}, still unmatched after ${UNPAID_AFTER_DAYS} days, and no payment of that amount is sitting unexplained.`,
+      amount: Number(d.parsed_amount), documentId: d.id,
+    });
+  }
+  return out;
+}
+
+// The three of them share one pass over the ledger, so the pairing is done once.
+async function findBacklog(): Promise<Finding[]> {
+  const b = await backlog();
+  return [...pairFindings(b), ...invoiceFindings(b), ...paymentFindings(b)];
 }
 
 // A supplier billing materially more than it normally does. Uses the profile the agent
@@ -255,12 +487,16 @@ async function findVatMismatches(): Promise<Finding[]> {
 // Kinds this function is authoritative for. An open row of one of these kinds that is NOT
 // re-raised has stopped being true, so it resolves. 'ai_concern' is raised by the matcher
 // as it reads, so it is NOT in this list and is never auto-resolved from here.
-const OWNED_KINDS = ['already_paid', 'invoice_not_received', 'not_a_purchase', 'possible_duplicate', 'unpaid_invoice', 'payment_no_invoice', 'price_jump', 'missing_bill', 'new_supplier', 'vat_mismatch'];
+const OWNED_KINDS = ['already_paid', 'covers_several', 'invoice_not_received', 'not_a_purchase', 'possible_duplicate', 'needs_match', 'unpaid_invoice', 'unpaid_invoices', 'payment_no_invoice', 'payments_no_invoice', 'small_spend_no_invoice', 'price_jump', 'missing_bill', 'new_supplier', 'vat_mismatch'];
 
 export async function refreshAnomalies(): Promise<{ raised: number; resolved: number; open: number; suppressed: number }> {
   const all: Finding[] = [];
-  for (const fn of [findAlreadyPaid, findMissingBehindNotification, findNotOurPurchases, findPossibleDuplicates, findUnpaidInvoices, findPaymentsWithoutInvoice, findPriceJumps, findMissingBills, findNewSuppliers, findVatMismatches]) {
-    try { all.push(...await fn()); }
+  for (const fn of [findAlreadyPaid, findPaymentCoversSeveral, findMissingBehindNotification, findNotOurPurchases, findPossibleDuplicates, findBacklog, findPriceJumps, findMissingBills, findNewSuppliers, findVatMismatches]) {
+    try {
+      const found = await fn();
+      if (fn === findPaymentCoversSeveral) coveredIds = new Set(found.map((f) => f.txnId!).filter(Boolean));
+      all.push(...found);
+    }
     catch (e) { console.error('[purchase-anomalies] detector failed:', (e as Error).message); }
   }
 
@@ -373,4 +609,93 @@ export function startPurchaseAnomalies(): void {
       .catch((e) => console.error('[purchase-anomalies] digest error:', e.message));
   });
   console.log('[purchase-anomalies] started — nightly sweep 02:35, Monday digest 07:30');
+}
+
+// ── What paperwork are we actually missing? ─────────────────────────────────────
+// Terry, 2026-09-02: "I will definitely have to go looking for some invoices, but I need to
+// know WHICH ONES we do not have."
+//
+// That is a different question from the worklist. The worklist is "what needs a decision";
+// this is "what do I have to go and fetch". It is grouped BY SUPPLIER because that is how
+// the fetching happens — one login, one portal, download everything missing at once — and it
+// ignores nothing except the payees on the ignore list, because for tax every real purchase
+// needs its invoice.
+export interface MissingGroup {
+  supplier: string;
+  payee: string;
+  count: number;
+  total: number;
+  oldest: string | null;
+  newest: string | null;
+  website: string | null;
+  payments: Array<{ id: number; booked_at: string; amount: number; reference: string | null; description: string | null; coded_to: string | null; locked: boolean }>;
+}
+
+export async function missingPaperwork(): Promise<{
+  groups: MissingGroup[]; totalPayments: number; totalValue: number;
+  announced: any[]; unreadable: number;
+}> {
+  const rows = (await pool.query(
+    `SELECT t.id, t.booked_at, t.amount, t.counterparty, t.description, t.reference,
+            t.qb_account_name AS coded_to, t.status
+       FROM bank_transactions t
+      WHERE t.amount < 0
+        AND t.status <> 'ignored'
+        AND t.attachment_path IS NULL
+        AND NOT EXISTS (SELECT 1 FROM bank_transaction_splits s
+                         WHERE s.transaction_id = t.id AND s.attachment_path IS NOT NULL)
+      ORDER BY t.booked_at DESC`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+
+  const suppliers = (await pool.query('SELECT name, url FROM suppliers WHERE is_active = true')
+    .catch(() => ({ rows: [] as any[] }))).rows;
+
+  const byKey = new Map<string, MissingGroup>();
+  let totalPayments = 0, totalValue = 0;
+  for (const r of rows) {
+    const desc = (r.counterparty || '') + ' ' + (r.description || '');
+    // The ignore list is the ONLY reason a payment may have no invoice behind it.
+    if (await classifyNoInvoiceLive(desc)) continue;
+    const key = normaliseCounterparty(r.counterparty || r.description || '') || '(unnamed)';
+    let g = byKey.get(key);
+    if (!g) {
+      const sup = suppliers.find((s: any) => {
+        const n = normaliseCounterparty(s.name);
+        return n && (n === key || n.includes(key) || key.includes(n));
+      });
+      g = { supplier: sup?.name || (r.counterparty || key), payee: r.counterparty || key,
+            count: 0, total: 0, oldest: null, newest: null, website: sup?.url || null, payments: [] };
+      byKey.set(key, g);
+    }
+    const amt = Math.abs(Number(r.amount) || 0);
+    g.count++; g.total += amt;
+    const d = dISO(r.booked_at);
+    if (!g.oldest || d < g.oldest) g.oldest = d;
+    if (!g.newest || d > g.newest) g.newest = d;
+    g.payments.push({ id: r.id, booked_at: d, amount: amt, reference: r.reference,
+                      description: r.description, coded_to: r.coded_to, status: r.status,
+                      locked: r.status !== 'new' } as any);
+    totalPayments++; totalValue += amt;
+  }
+
+  // Invoices a supplier TOLD us about and we still do not hold. Different from a payment with
+  // no invoice: here we know the document exists and where to get it.
+  const announced = (await pool.query(
+    `SELECT d.id, d.file_name, d.subject, d.from_name, d.from_email, d.received_at, a.ai_supplier
+       FROM purchase_documents d
+       LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
+      WHERE d.archived_at IS NULL AND d.status <> 'attached'
+        AND (d.doc_type = 'notification' OR a.ai_doc_type = 'notification')
+      ORDER BY d.received_at DESC`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+
+  // Held but unreadable — we HAVE these, they just cannot be read. Not a fetching job.
+  const unreadable = Number((await pool.query(
+    `SELECT COUNT(*)::int n FROM purchase_documents
+      WHERE archived_at IS NULL AND parsed_amount IS NULL
+        AND (doc_type IS NULL OR doc_type = 'invoice')`
+  ).catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n);
+
+  const groups = [...byKey.values()].sort((a, b) => b.total - a.total);
+  return { groups, totalPayments, totalValue, announced, unreadable };
 }

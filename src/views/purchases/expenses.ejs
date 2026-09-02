@@ -170,9 +170,19 @@
 })();
 </script>
 
-<div style="display:flex;gap:8px;margin-bottom:12px;">
+<div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
   <a class="btn <%= !showArchived ? 'btn-primary' : '' %>" href="/purchases/expenses?view=inbox">Inbox (<%= inboxCount %>)</a>
   <a class="btn <%= showArchived ? 'btn-primary' : '' %>" href="/purchases/expenses?view=inbox&docs=archived">Archived (<%= archivedCount %>)</a>
+  <% var jc = typeof junkCount !== 'undefined' ? junkCount : 0; var jr = (typeof junkRows !== 'undefined' ? junkRows : []); %>
+  <% if (!showArchived && jc) { %>
+    <% var TN = { statement:'statements', sales_invoice:'our own sales invoices', not_a_purchase:'not purchases', notification:'notifications', contract:'contracts' };
+       var summary = jr.map(function(r){ return r.n + ' ' + (TN[r.t] || r.t); }).join(', '); %>
+    <form method="post" action="/purchases/inbox/clear-non-invoices" style="margin:0;"
+          onsubmit="return confirm('Clear <%= jc %> items that are not purchase invoices?\n\n<%= summary %>\n\nThey are ARCHIVED, not deleted — everything lands on the Archived tab and Restore puts any of it back.');">
+      <button class="btn" type="submit" title="<%= summary %> — archived, not deleted">🧹 Clear non-invoices (<%= jc %>)</button>
+    </form>
+    <span class="muted" style="font-size:12px;"><%= summary %> &mdash; archived, never deleted.</span>
+  <% } %>
 </div>
 <div class="px-grid">
   <% if (!(docs||[]).length) { %><div class="empty-state" style="grid-column:1/-1;"><% if (showArchived) { %>Nothing archived yet. Use <strong>Archive</strong> on an inbox item to file it away here.<% } else { %>Nothing pooled yet. Get suppliers to email invoices to <strong><%= invoiceMailbox %></strong>, then hit “Sync mailbox”.<% } %></div><% } %>

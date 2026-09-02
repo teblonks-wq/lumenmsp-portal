@@ -169,6 +169,16 @@ router.get('/purchases/expenses', async (req: Request, res: Response) => {
   ).catch(() => ({ rows: [] }))).rows;
   const inboxCount = Number((await pool.query("SELECT COUNT(*)::int n FROM purchase_documents WHERE archived_at IS NULL AND status<>'attached'").catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n);
   const archivedCount = Number((await pool.query("SELECT COUNT(*)::int n FROM purchase_documents WHERE archived_at IS NOT NULL").catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n);
+  // What is sitting in the inbox that is NOT a purchase invoice — statements, our own sales
+  // invoices that came back to us, notifications, contracts. Counted so the clear-out button
+  // can say what it will take BEFORE it is pressed.
+  const junkRows = (await pool.query(
+    `SELECT COALESCE(doc_type,'unknown') t, COUNT(*)::int n FROM purchase_documents
+      WHERE archived_at IS NULL AND status <> 'attached'
+        AND doc_type IS NOT NULL AND doc_type NOT IN ('invoice','receipt')
+      GROUP BY 1 ORDER BY 2 DESC`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  const junkCount = junkRows.reduce((n: number, r: any) => n + Number(r.n || 0), 0);
   // Flagged possible duplicates — 'paid' (the earlier copy is already attached to a payment)
   // leads, because that is the one that costs money if it slips through.
   const dupeDocs = (await pool.query(
@@ -187,7 +197,7 @@ router.get('/purchases/expenses', async (req: Request, res: Response) => {
   const suppliers = (await pool.query("SELECT * FROM suppliers WHERE is_active = true ORDER BY lower(name)").catch(() => ({ rows: [] }))).rows;
   res.render('purchases/expenses', {
     user: req.session.user!, txns, splitsByTxn, cats, qbOn, qbPushEnabled, period, months, closed, accounts,
-    docs, inboxCount, archivedCount, showArchived, view, suppliers, invoiceMailbox: await getInvoiceMailbox(),
+    docs, inboxCount, archivedCount, junkCount, junkRows, showArchived, view, suppliers, invoiceMailbox: await getInvoiceMailbox(),
     dupeDocs, dupeCount, bulkMaxFiles: BULK_MAX_FILES,
     notice: req.query.msg || null, error: req.query.err || null,
   });
@@ -306,6 +316,39 @@ router.post('/purchases/doc/:id/archive', async (req: Request, res: Response) =>
   const id = parseInt(String(req.params.id), 10);
   if (id) await pool.query('UPDATE purchase_documents SET archived_at=NOW() WHERE id=$1', [id]).catch(() => {});
   res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent('Archived.'));
+});
+
+// Clear the inbox of everything that is NOT a purchase invoice — statements, our own sales
+// invoices that came back to us, notifications, contracts. It ARCHIVES; it never deletes.
+// Terry's standing rule is that we keep every invoice for tax reasons, and a doc_type is a
+// judgement that can be wrong, so this has to be undoable: everything lands on the Archived
+// tab and Restore puts it straight back. Anything already attached to a payment is left alone
+// whatever its type, because attaching it was a human decision.
+router.post('/purchases/inbox/clear-non-invoices', async (req: Request, res: Response) => {
+  const rows = (await pool.query(
+    `SELECT id, doc_type FROM purchase_documents
+      WHERE archived_at IS NULL AND status <> 'attached'
+        AND doc_type IS NOT NULL AND doc_type NOT IN ('invoice','receipt')`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  if (!rows.length) {
+    res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent('Nothing to clear — everything in the inbox reads as an invoice or a receipt.'));
+    return;
+  }
+  const ids = rows.map((r: any) => r.id);
+  const r = await pool.query('UPDATE purchase_documents SET archived_at=NOW() WHERE id = ANY($1)', [ids]).catch(() => ({ rowCount: 0 }));
+  // Findings that pointed at them are no longer anybody's problem.
+  await pool.query(
+    "UPDATE purchase_anomalies SET status='resolved' WHERE document_id = ANY($1) AND status='open'", [ids]
+  ).catch(() => {});
+  const byType: Record<string, number> = {};
+  for (const x of rows) byType[x.doc_type] = (byType[x.doc_type] || 0) + 1;
+  const NICE: Record<string, string> = { statement: 'statements', sales_invoice: 'our own sales invoices',
+    not_a_purchase: 'not purchases', notification: 'notifications', contract: 'contracts' };
+  const parts = Object.entries(byType).map(([k, n]) => `${n} ${NICE[k] || k}`).join(', ');
+  await logActivity(req.session.user!.id, 'updated', 'invoices', 0,
+    `Purchases: cleared ${r.rowCount || 0} non-invoices from the inbox (${parts})`);
+  res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent(
+    `Cleared ${r.rowCount || 0} from the inbox — ${parts}. Nothing was deleted: it is all on the Archived tab and Restore puts any of it back.`));
 });
 
 // Restore an archived invoice back into the live inbox.

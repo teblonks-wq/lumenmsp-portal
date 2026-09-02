@@ -58,11 +58,22 @@ export function isFxBilled(hay: string): boolean { return FX_TOKEN.test(hay); }
 const NO_INVOICE_SEEDS: Array<{ pattern: string; label: string }> = [
   { pattern: 'hmrc', label: 'Tax (HMRC) — no invoice expected' },
   { pattern: 'pipe technologies', label: 'Pipe — financing agreement, not an invoice' },
-  { pattern: 'aventis capital(?!.*rent)', label: 'Financing — agreement, not an invoice' },
+  // AVENTIS IS THE LANDLORD (Terry, 2026-09-02) — it was on this list as financing, guarded
+  // only by a "(?!.*rent)" lookahead that the bank narrative "Aventis capital limited" does
+  // NOT contain. So a quarter's rent read as a financing repayment and would never have been
+  // chased for its invoice. Removed outright: an ignore rule that hides a real, VAT-bearing
+  // purchase is the most damaging thing this list can do, and a near-miss is not good enough.
+  //   The rent is invoiced by Re-Leased / Hurstwood (Gemini House) at £855 a month and
+  //   COLLECTED BY AVENTIS IN 2-3 MONTH BLOCKS — see the many-invoice detector in
+  //   purchase-anomalies.ts, because one payment covers several invoices.
   { pattern: 'mbna', label: 'Card repayment — statement, not an invoice' },
   { pattern: 'capitalise', label: 'Financing — agreement, not an invoice' },
   { pattern: 'debt revenue', label: 'Financing — agreement, not an invoice' },
   { pattern: 'gocardless.*fee', label: 'GoCardless fees — invoice in the GC dashboard' },
+  // Added 2026-09-02 from the bookkeeper's own missing-invoice list to 31 July. Each of
+  // these was being chased for an invoice that does not exist, month after month.
+  { pattern: 'premfina', label: 'Premfina — insurance premium finance, not an invoice' },
+  { pattern: 'andrew simoncsics', label: 'Wages — paid through payroll (Pi run the PAYE)' },
 ];
 
 let _ignoreCache: Array<{ re: RegExp; label: string }> | null = null;
@@ -73,14 +84,18 @@ let _ignoreAt = 0;
 export async function loadIgnoreList(): Promise<Array<{ re: RegExp; label: string }>> {
   if (_ignoreCache && Date.now() - _ignoreAt < 60_000) return _ignoreCache;
   try {
-    const n = Number((await pool.query('SELECT COUNT(*)::int c FROM purchase_ignore_rules')).rows[0].c);
-    if (!n) {
-      for (const sd of NO_INVOICE_SEEDS) {
-        await pool.query(
-          'INSERT INTO purchase_ignore_rules (pattern, label, reason, is_regex, is_active) VALUES ($1,$2,$3,true,true)',
-          [sd.pattern, sd.label, 'Seeded from the original built-in list']
-        ).catch(() => {});
-      }
+    // Top up rather than seed-once: a seed added in a later release must still arrive at a
+    // Portal that was seeded months ago. Existing patterns are left exactly as they are, so
+    // a rule somebody has since turned off is never quietly switched back on.
+    const have = new Set(
+      (await pool.query('SELECT lower(pattern) AS p FROM purchase_ignore_rules')).rows.map((r: any) => r.p)
+    );
+    for (const sd of NO_INVOICE_SEEDS) {
+      if (have.has(sd.pattern.toLowerCase())) continue;
+      await pool.query(
+        'INSERT INTO purchase_ignore_rules (pattern, label, reason, is_regex, is_active) VALUES ($1,$2,$3,true,true)',
+        [sd.pattern, sd.label, 'Built in — a payee that never produces a supplier invoice']
+      ).catch(() => {});
     }
     const rows = (await pool.query('SELECT pattern, label, is_regex FROM purchase_ignore_rules WHERE is_active = true')).rows;
     const out: Array<{ re: RegExp; label: string }> = [];
