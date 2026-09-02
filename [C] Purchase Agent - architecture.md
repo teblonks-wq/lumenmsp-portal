@@ -215,6 +215,33 @@ A PO is not mandatory for everything (nobody raises a PO for a kebab). Per suppl
 
 ## 5. Supplier credit accounts → cash flow
 
+**Confirmed by Terry, 2026-09-02 — we hold credit with exactly three suppliers:**
+
+| account | note |
+|---|---|
+| **Giacom — Hardware** | the hardware account only. Giacom's cloud/licence billing (Giacom World Networks / DWS) is a **separate** relationship and must be a separate supplier account, or hardware spend and monthly licence spend pool together again — the mistake the per-kind supplier profiles already exist to prevent |
+| **Adept Networks — Swindon** | |
+| **All Trade** | |
+
+Everything else is **paid at the point of purchase** — card, direct debit or transfer. That
+single fact shapes more of this system than anything else in this document:
+
+- **The payables ledger is three suppliers deep.** Cash flow "due" is knowable and small.
+- **For every other supplier, invoice and payment are near-simultaneous.** So a wide date
+  window is not needed to match them, and an unmatched invoice more than a few days old is
+  a real question rather than normal lag.
+- **"Unpaid invoice after 45 days" is only meaningful for these three.** Applied to a card
+  supplier it is noise, and it was a large part of the 533.
+- **Statements matter for exactly these three.** Reconciling a supplier statement against
+  what we hold is how a credit account is checked, and it is the fastest way to recover a
+  missing invoice — an Adept statement would produce the £423.92 from 10 June that the
+  bookkeeper has down as "No Invoice", without asking anyone.
+- **Purchase orders belong mainly here too.** `po_required: always` fits a credit account;
+  `never` fits a card purchase.
+
+Terms, credit limits and statement days for the three still need capturing — one short
+conversation, and the cash flow module has everything it needs.
+
 `supplier_accounts`: `supplier_id`, `account_ref`, `credit_limit`, `terms`
 (net_30 | eom_30 | net_14 | on_receipt | prepay), `statement_day`, `direct_debit`,
 `self_billed`, `contact`. Balance is derived, never typed.
@@ -253,6 +280,210 @@ naming the two realistic routes, and the sales side already carries
 Practical order: statement upload now (works today, no dependencies) → GoCardless keys and
 a one-time consent → the `syncOpenBanking` TODO wired to upsert like the CSV path. The
 existing CSV import stays as the fallback for ever.
+
+---
+
+## 6b. QuickBooks IS the bank feed — statement import is dropped
+
+Terry, 2026-09-02: *"if you can see the already linked bank we dont need to import statements."*
+
+Correct, and it removes a whole subsystem. QuickBooks already has the live bank feed, and
+every **accepted** feed line exists as a queryable QB transaction. So the Portal stops
+importing bank data and starts **reading it from QuickBooks** — `bank_transactions` is
+populated from QB (Purchase, Deposit, Transfer, BillPayment on the bank accounts) rather than
+from CSV or a statement PDF, keyed on the QB transaction id so the sync is idempotent.
+
+What this deletes from the plan:
+
+- **Bank statement import** — not needed. The Starling statement PDFs sitting in
+  `From Downloads` were a manual workaround for exactly this.
+- **Open banking / GoCardless Bank Account Data** — demoted from a phase to an *option*. Its
+  only remaining value is a live cash view **ahead of** the bookkeeper accepting feed lines.
+  Worth doing later for cash flow; not needed for reconciliation at all. That also removes
+  the 90-day AISP consent renewal from the critical path.
+- **CSV import** stays as the fallback for a bank QuickBooks is not connected to.
+
+⚠ **What is NOT dropped: supplier statements.** Different thing entirely. A bank statement is
+a list of money that moved — QuickBooks has that. A *supplier* statement from Giacom Hardware,
+Adept or All Trade is a list of what **they** think we owe, and reconciling it against the
+Bills we hold is the only way a credit account gets checked, and the fastest way to name a
+missing invoice. Those are still ingested, still parsed, still reconciled.
+
+### The one limitation, stated plainly
+
+**Only accepted transactions are visible.** Anything still sitting in QuickBooks' "For Review"
+queue cannot be read — Intuit does not expose it, because the feed data is bought from Plaid
+and Yodlee and an open API would let it be extracted without paying them. This is a firm
+product boundary, not a gap in our integration, and no amount of design gets around it.
+
+So the Portal's picture of the bank is **whatever the bookkeeper has accepted**, and it lags
+her by however long she takes. For attaching paperwork and reconciling, that is fine — the
+paperwork is not late, it is just applied slightly after the entry appears. For a live cash
+position it is not fine, and that is the one thing open banking would later buy us.
+
+*(A second route exists for the lag: QuickBooks accepts receipts and bills forwarded by email
+into its Receipts inbox, where QB itself matches them to feed lines. It would put paperwork
+against For Review items without API access — but QB does the matching, so we lose our own
+provenance and control. Keep it in reserve, do not build on it.)*
+
+---
+
+## 6a. QuickBooks — closing the loop
+
+Terry, 2026-09-02: *"we do need to collect the invoices and have them add to and then bank
+payments reconcile accounts - we would need to influence QB as well."*
+
+The whole loop, end to end:
+
+```
+collect  ─►  read  ─►  match to payment  ─►  categorise  ─►  push to QB with the invoice attached  ─►  reconciled  ─►  month closed
+```
+
+QuickBooks is the accounting record and the bookkeeper works in it. **The Portal's job is to
+make QB correct without anyone re-keying, and with the invoice attached to the entry.** Get
+that right and nobody has to chase us for paperwork, because the paperwork is already in the
+system they are looking at.
+
+### What already works
+
+`lib/quickbooks.ts` is further along than expected: OAuth with token refresh, expense and
+bank account lookup, `createPurchase`, `attachToPurchase` via the Attachable multipart
+endpoint, and `getPurchaseHistory` feeding category learning. `bank_transactions.qb_purchase_id`
+is stored on push, so **it is already idempotent** — a pushed transaction cannot be pushed
+twice. Keep all of it.
+
+### Three real gaps
+
+**1. No vendor.** `createPurchase` puts the payee in `PrivateNote` and sets no `VendorRef`,
+so QuickBooks holds no supplier link at all — supplier reporting inside QB cannot work, and
+neither can any per-supplier check the accountant runs. Once the supplier master exists it
+maps to QB **Vendors**, and the Portal's supplier becomes the same object the accountant
+sees. `supplier.qb_vendor_id` alongside the aliases.
+
+**2. Credit accounts are being posted as if paid on the spot.** A QB `Purchase` means money
+already gone — correct for card and DD, which is nearly everything we buy. But the three
+credit accounts (Giacom Hardware, Adept Networks Swindon, All Trade) create a liability when
+the invoice arrives and settle it later. In QuickBooks that is a **Bill**, then a
+**BillPayment** against it. Posting those as Purchases understates payables and makes the
+supplier statement impossible to reconcile.
+
+So the posting rule follows straight from the supplier record:
+
+| supplier | QB object |
+|---|---|
+| pays at point of purchase (card, DD, transfer) | `Purchase` + attachment — as today |
+| on credit (the three) | `Bill` on invoice → `BillPayment` on payment, both attached |
+
+**3. The bank feed owns every bank line. CONFIRMED by Terry, 2026-09-02: bank feeds are
+live in QuickBooks.** That settles the posting design, and it settles it as one rule:
+
+> **The Portal never creates anything in QuickBooks that has a bank line.**
+
+| QB object | has a bank line? | who creates it |
+|---|---|---|
+| `Bill` (the three credit accounts) | no — a Bill is a liability, nothing has left the bank | **Portal creates it** |
+| `Purchase` (card, DD, transfer — nearly everything) | yes | **the bank feed creates it.** Portal never posts one |
+| `BillPayment` (settling a credit account) | yes | **the bank feed**, matched against the open Bill |
+
+For everything with a bank line the Portal's job changes from *create* to **enrich**: once the
+feed line has been accepted and exists as a QB transaction, the Portal finds it by
+account + date + amount, **sets the expense account and attaches the invoice PDF.** A
+background sweep, running behind whatever the bookkeeper is already doing.
+
+This is a better outcome than posting, not a compromise:
+
+- **Duplicates become structurally impossible.** Not "unlikely if the matcher behaves" —
+  impossible, because only one system ever creates a bank line.
+- **The bookkeeper's workflow does not change at all.** She accepts feed lines in QB exactly
+  as she does today, and the receipts simply appear on the entries behind her. Nothing to
+  learn, nothing to adopt, no reason to resist it.
+- **The chasing stops for the right reason** — not because we send her a list, but because
+  the paperwork is already attached to the entry she is looking at.
+
+The only cost is a lag: the Portal can only enrich a transaction after the feed line is
+accepted. Unaccepted feed items sit in QuickBooks' "For Review" queue, which **the Accounting
+API does not expose** — so there is no way around this, and no point designing one. The sweep
+simply runs continuously and picks each entry up shortly after it lands.
+
+⚠ **Check before anything else ships:** `createPurchase` is wired to the Submit button on the
+reconcile screen (behind the `purchases.qb_push_enabled` setting). With feeds live, every
+Purchase it posted is a candidate duplicate of a feed line — QuickBooks offers "Match" but a
+person can just as easily click "Add", and then the expense is in twice. **Confirm whether
+that flag has ever been on, and if so spot-check QB for double entries over that period.**
+Once the rule above is implemented, that push is removed rather than fixed.
+
+### Managing the credit accounts — Portal in front of QB, never instead of it
+
+Terry, 2026-09-02: *"we don't need purchase orders to go QB, but if we're managing credit
+accounts on Portal what is the best way forward."*
+
+Agreed on POs — they stay Portal-only. QuickBooks purchase orders add friction for the
+bookkeeper and nothing for us. But that raises the real risk in this whole design:
+
+> **Two systems must never both keep the payables balance.** The moment the Portal holds a
+> liability figure of its own, it is a second set of books, and second sets of books drift.
+
+So the split is by *kind of fact*, and it is absolute:
+
+| | owns |
+|---|---|
+| **QuickBooks** | the **liability**. Bills, BillPayments, the AP balance, VAT, year end. Statutory, and the bookkeeper's and accountant's record |
+| **Portal** | the **operational layer QB has no idea about** — the PO, what was ordered and received, the invoice document itself, statement reconciliation, credit headroom, disputes, and which customer or job the spend belongs to |
+
+The Portal computes nothing it cannot check. **Credit headroom is `credit_limit` minus the
+open Bill balance read back from QuickBooks** — not a running total the Portal keeps for
+itself. If the Portal's expectation and QB's balance disagree, that disagreement is an
+exception raised to a human. It is never quietly reconciled away.
+
+### The flow for a credit supplier
+
+```
+PO raised in Portal            (never sent to QB — internal authorisation, budget, job link)
+   ↓
+invoice arrives, matched to the PO
+   ↓
+Portal proposes → Terry accepts → Bill created in QB
+        VendorRef, expense account, invoice PDF attached,
+        PO number carried in DocNumber/Memo so the chain survives into QB
+   ↓
+payment leaves the bank, matched
+   ↓
+BillPayment against that Bill      (part-payments work natively — the reason to use Bills)
+   ↓
+monthly statement reconciled against the Bills we hold
+```
+
+The PO number riding in the Bill's `DocNumber`/`Memo` is what gives us EST → PO → INV → PAY
+visible inside QuickBooks **without pushing a single PO object.** That is the whole answer to
+"we don't need POs in QB": the *number* goes, the *object* stays here.
+
+Because Terry's standing decision is that the agent always proposes, and creating a Bill
+writes into an external accounting system, **every Bill and BillPayment is a proposal he
+accepts.** Grouped per supplier per statement period, so accepting a month of Giacom Hardware
+is one action.
+
+### What this needs building in `lib/quickbooks.ts`
+
+Today it has `createPurchase` and `attachToPurchase` only. New:
+
+- `getVendors` / `createVendor`, and `supplier.qb_vendor_id` on the supplier master
+- `createBill` (VendorRef, line to expense account, DocNumber = supplier's invoice number,
+  Memo = our PO number) + attachment
+- `createBillPayment` (against one or several Bills — part-payment and one-payment-covers-
+  several both fall out for free, which is the Aventis case solved properly rather than by a
+  subset-sum detector)
+- `getVendorBalance` / open Bills per vendor — so headroom and drift are read, never assumed
+- `qb_bill_id` and `qb_bill_payment_id` stored alongside the existing `qb_purchase_id`, so
+  every push stays idempotent
+
+### Statement reconciliation — the payoff for the credit accounts
+
+For the three credit suppliers, a monthly statement is the check: every line on the
+supplier's statement should meet a Bill we hold. Anything on their statement we do not hold
+is a **missing invoice we can name and request** — and anything we hold that is not on their
+statement is a query for them. This is how the Adept £423.92 gets found without asking
+anybody, and it is why statements are ingested as statements rather than ignored as
+not-invoices.
 
 ---
 

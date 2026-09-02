@@ -1,0 +1,135 @@
+<%- include('../partials/header', { title: 'Suppliers', user }) %>
+
+<div class="page-header"><h1>Suppliers</h1>
+  <p class="muted">The record that everything else hangs off. A supplier is confirmed once by a person and then never guessed at again — which is how &ldquo;Amazon&rdquo;, &ldquo;Amazon.co.uk&rdquo; and &ldquo;Amazon J Tf&rdquo; stop being three suppliers.</p></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:980px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:980px;"><%= error %></div><% } %>
+
+<style>
+  .sm-row{border-top:1px solid var(--line);padding:14px 18px;}
+  .sm-row:first-child{border-top:0;}
+  .sm-name{font-weight:700;font-size:15px;}
+  .sm-chip{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;padding:2px 7px;border-radius:5px;background:var(--chip-bg,#eef2f7);color:var(--muted);margin-left:6px;}
+  .sm-credit{background:#fdf3e2;color:#8a5a00;}
+  .sm-unconf{background:var(--bad-bg,#fde8e8);color:var(--bad-fg,#a12626);}
+  .sm-alias{display:inline-block;font-size:11px;padding:2px 7px;border-radius:5px;background:var(--surface-2);margin:2px 4px 2px 0;font-family:ui-monospace,monospace;}
+  .sm-alias.proposed{border:1px dashed var(--line);opacity:.75;}
+  .sm-money{font-weight:700;white-space:nowrap;}
+  .sm-grid{display:grid;grid-template-columns:1fr auto;gap:14px;align-items:start;}
+  .sm-form{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:8px;}
+  .sm-form .input,.sm-form select{font-size:12.5px;padding:5px 8px;}
+</style>
+
+<%
+  function money(v){ var n=Math.abs(Number(v)||0); return '£'+n.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var unconfirmed = (suppliers||[]).filter(function(s){ return !s.confirmed_at; });
+%>
+
+<!-- ── The confirm queue: spend with nobody behind it ─────────────────────────── -->
+<div class="card" style="padding:0;margin-bottom:18px;<%= (unresolved||[]).length ? 'border-left:3px solid var(--bad-fg);' : '' %>">
+  <div class="card-header" style="padding:16px 20px 12px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+    <div>
+      <h2 style="margin:0;">Spend with no supplier <% if ((unresolved||[]).length) { %><span class="muted">(<%= unresolved.length %>)</span><% } %></h2>
+      <p class="muted" style="font-size:12px;margin:4px 0 0;">Biggest money first. Claim one and the bank narrative is remembered, so it never has to be decided again. Ten of these usually covers most of the ledger.</p>
+    </div>
+    <form method="post" action="/purchases/suppliers/seed" style="margin:0;"
+          onsubmit="return confirm('Seed suppliers and aliases from evidence already held — confirmed matches, the mailbox sender rules, and the three credit accounts?\n\nEverything lands UNCONFIRMED for you to tick off. Nothing is invented.');">
+      <button class="btn" type="submit">⚙ Seed from what we already know</button>
+    </form>
+  </div>
+  <% if (!(unresolved||[]).length) { %>
+    <div class="empty-state" style="margin:0;padding:22px;">Every payment in the last 18 months resolves to a supplier.</div>
+  <% } else { %>
+    <% unresolved.forEach(function(u){ %>
+      <div class="sm-row sm-grid">
+        <div>
+          <div class="sm-name"><%= u.label %></div>
+          <div class="muted" style="font-size:12px;"><%= u.count %> payment<%= u.count===1?'':'s' %> · nothing in the supplier master matches this narrative</div>
+          <form method="post" action="/purchases/suppliers/claim" class="sm-form">
+            <input type="hidden" name="label" value="<%= u.label %>">
+            <select name="supplier_id" class="input">
+              <option value="">— new supplier —</option>
+              <% (suppliers||[]).forEach(function(s){ %><option value="<%= s.id %>"><%= s.name %></option><% }); %>
+            </select>
+            <input class="input" name="name" placeholder="…or a name for a new one" value="<%= u.label %>" style="min-width:220px;">
+            <button class="btn btn-primary" type="submit" style="font-size:12.5px;">This is them</button>
+          </form>
+        </div>
+        <div class="sm-money"><%= money(u.total) %></div>
+      </div>
+    <% }); %>
+  <% } %>
+</div>
+
+<!-- ── The master ─────────────────────────────────────────────────────────────── -->
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:16px 20px 12px;">
+    <h2 style="margin:0;">Supplier master <span class="muted">(<%= (suppliers||[]).length %>)</span></h2>
+    <p class="muted" style="font-size:12px;margin:4px 0 0;">
+      <% if (unconfirmed.length) { %><strong><%= unconfirmed.length %></strong> not yet confirmed. An unconfirmed supplier can be matched against and displayed, but never drives an automatic decision.<% } else { %>Every supplier here has been confirmed by a person.<% } %>
+    </p>
+  </div>
+  <% if (!(suppliers||[]).length) { %>
+    <div class="empty-state" style="margin:0;padding:22px;">Nothing yet. Use <strong>Seed from what we already know</strong> above — it builds the list from matches you have already confirmed and the sender rules from the mailbox export.</div>
+  <% } %>
+  <% (suppliers||[]).forEach(function(s){ var al = (bySupplier||{})[s.id] || []; %>
+    <div class="sm-row">
+      <div class="sm-grid">
+        <div>
+          <div class="sm-name"><%= s.name %>
+            <% if (s.on_credit) { %><span class="sm-chip sm-credit">credit account</span><% } %>
+            <% if (!s.confirmed_at) { %><span class="sm-chip sm-unconf">not confirmed</span><% } %>
+            <% if (s.invoice_expected === 'never') { %><span class="sm-chip">no invoice expected</span><% } %>
+            <% if (s.invoice_source === 'portal') { %><span class="sm-chip">portal only</span><% } %>
+          </div>
+          <% if (s.invoice_expected === 'never' && s.invoice_expected_reason) { %>
+            <div class="muted" style="font-size:12px;margin-top:2px;">No invoice expected &mdash; <%= s.invoice_expected_reason %></div>
+          <% } %>
+          <div style="margin-top:6px;">
+            <% if (!al.length) { %><span class="muted" style="font-size:12px;">No aliases yet &mdash; nothing will resolve to this supplier.</span><% } %>
+            <% al.slice(0,14).forEach(function(a){ %>
+              <span class="sm-alias <%= a.status==='proposed'?'proposed':'' %>" title="<%= a.kind %> · <%= a.match %><%= a.reason ? ' · ' + a.reason : '' %>"><%= a.value %></span>
+            <% }); %>
+            <% if (al.length > 14) { %><span class="muted" style="font-size:11px;">+<%= al.length-14 %> more</span><% } %>
+          </div>
+          <form method="post" action="/purchases/suppliers/<%= s.id %>/settings" class="sm-form">
+            <label style="font-size:12px;">Invoice expected
+              <select name="invoice_expected" class="input">
+                <% ['always','sometimes','never'].forEach(function(v){ %>
+                  <option value="<%= v %>" <%= (s.invoice_expected||'always')===v?'selected':'' %>><%= v %></option>
+                <% }); %>
+              </select>
+            </label>
+            <input class="input" name="reason" placeholder="why? (required for never)" value="<%= s.invoice_expected_reason || '' %>" style="min-width:220px;">
+            <input class="input" name="buys" placeholder="what we buy" value="<%= s.buys || '' %>" style="min-width:150px;">
+            <label style="font-size:12px;"><input type="checkbox" name="on_credit" <%= s.on_credit?'checked':'' %>> on credit</label>
+            <select name="credit_terms" class="input">
+              <option value="">— terms —</option>
+              <% ['net_14','net_30','eom_30','on_receipt','prepay'].forEach(function(v){ %>
+                <option value="<%= v %>" <%= s.credit_terms===v?'selected':'' %>><%= v.replace('_',' ') %></option>
+              <% }); %>
+            </select>
+            <select name="po_required" class="input">
+              <% ['never','over_threshold','always'].forEach(function(v){ %>
+                <option value="<%= v %>" <%= (s.po_required||'never')===v?'selected':'' %>>PO <%= v.replace('_',' ') %></option>
+              <% }); %>
+            </select>
+            <button class="btn" type="submit" style="font-size:12.5px;">Save</button>
+          </form>
+        </div>
+        <div>
+          <% if (!s.confirmed_at) { %>
+            <form method="post" action="/purchases/suppliers/<%= s.id %>/confirm" style="margin:0;">
+              <button class="btn btn-primary" type="submit" style="font-size:12.5px;">✓ Confirm</button>
+            </form>
+          <% } else { %>
+            <span class="muted" style="font-size:11.5px;">confirmed</span>
+          <% } %>
+        </div>
+      </div>
+    </div>
+  <% }); %>
+</div>
+
+<%- include('../partials/footer') %>

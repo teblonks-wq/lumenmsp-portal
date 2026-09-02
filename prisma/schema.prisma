@@ -2208,10 +2208,78 @@ model Supplier {
   portalUrl      String? @map("portal_url")    // their ticket portal
   typicalDays    Int?    @map("typical_days")  // how long they usually take — seeds the chase-by date
   escalationNote String? @map("escalation_note") // who to escalate to, and how
+  // ── Purchasing: the supplier master ────────────────────────────────────────────
+  // A supplier stops being a string guessed from a bank narrative and becomes a record a
+  // human confirmed once. Almost every wrong call the purchase ledger has made traces back
+  // to not having this: "terry o" as a supplier, Amazon as three suppliers, and the landlord
+  // sitting on the no-invoice-expected list as financing.
+  isPurchaseSupplier    Boolean   @default(false) @map("is_purchase_supplier")
+  buys                  String?                          // hardware | licence | connectivity | rent | fuel | subsistence | professional | other (comma list)
+  // invoiceExpected REPLACES the ignore list. 'never' must always carry a reason and a date
+  // to look at it again, so nothing is ever permanently exempt by accident.
+  invoiceExpected       String    @default("always") @map("invoice_expected")   // always | sometimes | never
+  invoiceExpectedReason String?   @map("invoice_expected_reason")
+  invoiceReviewOn       DateTime? @map("invoice_review_on")
+  invoiceSource         String?   @map("invoice_source")     // email | portal | download | none
+  credentialId          Int?      @map("credential_id")      // vault entry used to fetch portal-only invoices
+  cadenceDays           Int?      @map("cadence_days")
+  billingDay            Int?      @map("billing_day")
+  defaultQbAccountId    String?   @map("default_qb_account_id")
+  defaultQbAccountName  String?   @map("default_qb_account_name")
+  qbVendorId            String?   @map("qb_vendor_id")       // the same object the accountant sees
+  vatTreatment          String?   @map("vat_treatment")      // standard | exempt | reverse_charge | outside_scope
+  paymentMethod         String?   @map("payment_method")     // card | dd | transfer | paypal | credit
+  // Credit accounts. Terry, 2026-09-02: we hold credit with THREE suppliers only —
+  // Giacom Hardware, Adept Networks Swindon, All Trade. Everything else pays at the point
+  // of purchase, which is why "unpaid after 45 days" only means anything here.
+  onCredit              Boolean   @default(false) @map("on_credit")
+  creditLimit           Decimal?  @db.Decimal(12, 2) @map("credit_limit")
+  creditTerms           String?   @map("credit_terms")       // net_30 | eom_30 | net_14 | on_receipt | prepay
+  statementDay          Int?      @map("statement_day")
+  poRequired            String    @default("never") @map("po_required")  // always | over_threshold | never
+  poThreshold           Decimal?  @db.Decimal(12, 2) @map("po_threshold")
+  ownerUserId           Int?      @map("owner_user_id")
+  // A supplier is not trusted until a human confirms it. Unconfirmed rows can be proposed,
+  // matched against and displayed — they just cannot drive an automatic decision.
+  confirmedBy           Int?      @map("confirmed_by")
+  confirmedAt           DateTime? @map("confirmed_at")
+
+  aliases     SupplierAlias[]
+
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("suppliers")
+}
+
+// Every way one supplier has ever appeared to us: the bank narrative, the sending address,
+// the domain, the filename pattern, their VAT number, our account ref. This is the table
+// that collapses "Amazon", "Amazon.co.uk" and "Amazon J Tf" into one supplier permanently
+// instead of re-deciding it on every sweep.
+//
+// (kind, value) is UNIQUE — one alias can only ever point at one supplier, so a match is
+// never ambiguous. Claude may PROPOSE an alias; a human confirming it makes it permanent.
+model SupplierAlias {
+  id          Int       @id @default(autoincrement())
+  supplierId  Int       @map("supplier_id")
+  kind        String                                  // bank_narrative | email_address | email_domain | filename | vat_number | account_ref | display_name
+  value       String                                  // stored lower-cased and trimmed
+  match       String    @default("contains")          // exact | prefix | contains | regex
+  source      String    @default("human")             // human | claude | import
+  confidence  Int       @default(100)
+  status      String    @default("active")            // active | proposed | rejected
+  reason      String?                                 // why this alias exists, in plain words
+  seenCount   Int       @default(0) @map("seen_count")
+  lastSeenAt  DateTime? @map("last_seen_at")
+  createdBy   Int?      @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  supplier    Supplier  @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([kind, value])
+  @@index([supplierId])
+  @@index([status])
+  @@map("supplier_aliases")
 }
 
 // â”€â”€ Tasks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

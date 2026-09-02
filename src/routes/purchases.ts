@@ -18,6 +18,8 @@ import { replyToAnomaly, notesFor, listRules, setRuleStatus, conditionsOf, rules
 import { autoCategoriseOutstanding } from '../lib/purchase-match';
 import { parseAndStoreDoc } from '../lib/invoice-read';
 import { renderExpenseReportPdf, loadExpenseReport } from '../lib/expense-report';
+import { resolveSupplier, addAlias, setAliasStatus, ensureSupplier, confirmSupplier,
+         unresolvedSpend, seedFromProfiles, seedFromRules, seedCreditAccounts } from '../lib/supplier-master';
 import { graphSendMail, graphConfigured } from '../lib/graph';
 import { config } from '../config';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -201,6 +203,111 @@ router.get('/purchases/expenses', async (req: Request, res: Response) => {
     dupeDocs, dupeCount, bulkMaxFiles: BULK_MAX_FILES,
     notice: req.query.msg || null, error: req.query.err || null,
   });
+});
+
+
+// ── The supplier master ─────────────────────────────────────────────────────────
+// Phase 1 of the purchase re-model. Nothing downstream is trustworthy until this list is
+// right, so it gets its own screen and its own confirm queue rather than being a side
+// effect of matching.
+router.get('/purchases/suppliers', async (req: Request, res: Response) => {
+  const suppliers = (await pool.query(
+    `SELECT s.*, COUNT(a.id) FILTER (WHERE a.status='active')::int alias_count,
+            COUNT(a.id) FILTER (WHERE a.status='proposed')::int proposed_count
+       FROM suppliers s LEFT JOIN supplier_aliases a ON a.supplier_id = s.id
+      WHERE s.is_purchase_supplier = true
+      GROUP BY s.id ORDER BY s.on_credit DESC, s.confirmed_at IS NULL DESC, lower(s.name)`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  const aliases = (await pool.query(
+    `SELECT * FROM supplier_aliases ORDER BY supplier_id, kind, value`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  const bySupplier: Record<number, any[]> = {};
+  for (const a of aliases) (bySupplier[a.supplier_id] ||= []).push(a);
+  // The confirm queue — spend with no supplier behind it, biggest money first.
+  let unresolved: any[] = [];
+  try { unresolved = await unresolvedSpend(50); } catch { unresolved = []; }
+  res.render('purchases/suppliers', {
+    user: req.session.user!, suppliers, bySupplier, unresolved,
+    notice: req.query.msg || null, error: req.query.err || null,
+  });
+});
+
+// Seed from evidence we already hold: the sender rules written by hand for the mailbox
+// export, the bank descriptors recorded on matches a human already confirmed, and the three
+// credit accounts. Nothing here is invented, and everything lands UNCONFIRMED.
+router.post('/purchases/suppliers/seed', async (req: Request, res: Response) => {
+  let rules: any = null;
+  const candidates = [
+    path.join(process.cwd(), 'seed-data', 'invoice-rules.json'),
+    path.join(process.cwd(), 'ops', 'invoice-rules.json'),
+  ];
+  for (const c of candidates) { try { if (fs.existsSync(c)) { rules = JSON.parse(fs.readFileSync(c, 'utf8')); break; } } catch { /* keep looking */ } }
+  const credit = await seedCreditAccounts();
+  const fromProfiles = await seedFromProfiles();
+  const fromRules = rules ? await seedFromRules(rules) : { suppliers: 0, aliases: 0 };
+  await logActivity(req.session.user!.id, 'updated', 'invoices', 0,
+    `Purchases: seeded the supplier master (${fromProfiles.suppliers + fromRules.suppliers} suppliers, ${fromProfiles.aliases + fromRules.aliases} aliases)`);
+  res.redirect('/purchases/suppliers?msg=' + encodeURIComponent(
+    `Seeded ${credit} credit accounts, ${fromProfiles.suppliers} suppliers from confirmed matches and ${fromRules.suppliers} from the mailbox rules — ` +
+    `${fromProfiles.aliases + fromRules.aliases} aliases in total.` +
+    (rules ? '' : ' (No invoice-rules.json found on the server, so the sender rules were skipped.)')));
+});
+
+// Claim a piece of unresolved spend for a supplier — new or existing — and remember the
+// bank narrative that identified it, so it never has to be decided again.
+router.post('/purchases/suppliers/claim', async (req: Request, res: Response) => {
+  const b: any = req.body || {};
+  const label = String(b.label || '').trim();
+  if (!label) { res.redirect('/purchases/suppliers?err=' + encodeURIComponent('Nothing to claim.')); return; }
+  const existing = parseInt(String(b.supplier_id || ''), 10);
+  const id = existing ? existing : await ensureSupplier(String(b.name || label).trim());
+  const r = await addAlias(id, 'bank_narrative', label, {
+    match: 'contains', source: 'human', userId: req.session.user!.id,
+    reason: 'Claimed from unmatched spend on the supplier screen',
+  });
+  if (!r.ok && r.conflict) {
+    res.redirect('/purchases/suppliers?err=' + encodeURIComponent(`"${label}" already belongs to ${r.conflict}. One alias can only point at one supplier.`));
+    return;
+  }
+  await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Purchases: "${label}" is ${String(b.name || label)}`);
+  res.redirect('/purchases/suppliers?msg=' + encodeURIComponent(`"${label}" now resolves to a supplier.`));
+});
+
+router.post('/purchases/suppliers/:id/confirm', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (id) { await confirmSupplier(id, req.session.user!.id); await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Purchases: confirmed supplier #${id}`); }
+  res.redirect('/purchases/suppliers?msg=' + encodeURIComponent('Confirmed.'));
+});
+
+// The one field that replaces the ignore list. 'never' must carry a reason, so nothing is
+// ever permanently exempt from needing an invoice by accident — which is exactly how our
+// landlord ended up filed as financing.
+router.post('/purchases/suppliers/:id/settings', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const b: any = req.body || {};
+  const expected = ['always', 'sometimes', 'never'].includes(String(b.invoice_expected)) ? String(b.invoice_expected) : 'always';
+  const reason = String(b.reason || '').trim();
+  if (expected === 'never' && !reason) {
+    res.redirect('/purchases/suppliers?err=' + encodeURIComponent('Say WHY no invoice is expected. A supplier exempted without a reason is how the landlord ended up on the ignore list as financing.'));
+    return;
+  }
+  await pool.query(
+    `UPDATE suppliers SET invoice_expected=$1, invoice_expected_reason=$2, on_credit=$3,
+            credit_terms=NULLIF($4,''), po_required=$5, buys=NULLIF($6,''), updated_at=NOW()
+      WHERE id=$7`,
+    [expected, reason || null, String(b.on_credit) === 'on', String(b.credit_terms || ''),
+     ['always', 'over_threshold', 'never'].includes(String(b.po_required)) ? String(b.po_required) : 'never',
+     String(b.buys || ''), id]
+  ).catch(() => {});
+  await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Purchases: supplier #${id} — invoice expected: ${expected}${reason ? ' (' + reason + ')' : ''}`);
+  res.redirect('/purchases/suppliers?msg=' + encodeURIComponent('Saved.'));
+});
+
+router.post('/purchases/suppliers/alias/:id/:action', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const action = String(req.params.action);
+  if (id && (action === 'active' || action === 'rejected')) await setAliasStatus(id, action, req.session.user!.id);
+  res.redirect('/purchases/suppliers?msg=' + encodeURIComponent(action === 'active' ? 'Alias confirmed.' : 'Alias removed.'));
 });
 
 // Stream a pooled invoice/receipt inline so it previews in the lightbox (finance-gated).
