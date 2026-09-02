@@ -52,7 +52,7 @@
   <div class="card-header" style="padding:16px 20px 12px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
     <div>
       <h2 style="margin:0;">What needs looking at <% if (anoms.length) { %><span class="muted">(<%= anoms.length %>)</span><% } %></h2>
-      <p class="muted" style="font-size:12px;margin:4px 0 0;">Checked overnight. Bills nobody paid, payments with no bill behind them, prices that moved, and anything Claude noticed while reading an invoice.</p>
+      <p class="muted" style="font-size:12px;margin:4px 0 0;">Checked overnight. Bills nobody paid, payments with no bill behind them, prices that moved, and anything Claude noticed while reading an invoice. Reply to one and it comes off this list.</p>
     </div>
     <div style="display:flex;gap:8px;">
       <form method="post" action="/purchases/anomalies/refresh" style="margin:0;"><button class="btn" type="submit" title="Re-check the ledger now instead of waiting for tonight">↻ Check now</button></form>
@@ -71,12 +71,14 @@
           <div class="an-title"><%= a.title %></div>
           <% if (a.detail) { %><div class="an-detail"><%= a.detail %></div><% } %>
           <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
-            <% if (a.document_id) { %><a class="btn" href="/purchases/doc/<%= a.document_id %>/view" target="_blank" style="font-size:11px;padding:2px 8px;">Open invoice</a><% } %>
+            <% if (a.document_id) { %><button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="anPeek(<%= a.document_id %>, this)">👁 Preview</button>
+            <a class="btn" href="/purchases/doc/<%= a.document_id %>/view" target="_blank" style="font-size:11px;padding:2px 8px;">Open invoice</a><% } %>
             <% if (a.txn_id) { %><a class="btn" href="/purchases/expenses" style="font-size:11px;padding:2px 8px;">Go to expenses</a><% } %>
             <button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="anToggle(<%= a.id %>)" title="Tell it what you know. It will consider what you say and, if it is a standing instruction, offer to remember it.">💬 Reply<% var th=(notes||{})[a.id]||[]; if (th.length) { %> (<%= th.length %>)<% } %></button>
             <form method="post" action="/purchases/anomalies/<%= a.id %>/dismiss" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:2px 8px;" title="Stop showing me this. A REPLY is usually better — it keeps the reason, so the same thing does not come back next month.">Dismiss</button></form>
           </div>
 
+          <% if (a.document_id) { %><div id="an-pk-<%= a.document_id %>" style="display:none;margin-top:8px;"></div><% } %>
           <% var thread = (notes||{})[a.id] || []; %>
           <div id="an-th-<%= a.id %>" style="display:<%= (open === a.id || thread.length) ? 'block' : 'none' %>;margin-top:10px;border-left:2px solid var(--line);padding-left:12px;">
             <% thread.forEach(function(n){ %>
@@ -122,8 +124,57 @@
   <% } %>
 </div>
 
+<% var ans = answered || []; %>
+<% if (ans.length) { %>
+<div class="card" style="padding:0;margin-bottom:18px;">
+  <div class="card-header" style="padding:16px 20px 12px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+    <div>
+      <h2 style="margin:0;">Answered <span class="muted">(<%= ans.length %>)</span></h2>
+      <p class="muted" style="font-size:12px;margin:4px 0 0;">Off the worklist because you replied. Nothing is lost &mdash; the conversation is kept, and any one of these can go back on the list.</p>
+    </div>
+    <button class="btn" type="button" onclick="var e=document.getElementById('anAnswered');e.style.display=(e.style.display==='none'?'block':'none');this.textContent=(e.style.display==='none'?'Show':'Hide');">Show</button>
+  </div>
+  <div id="anAnswered" style="display:none;">
+    <% ans.forEach(function(a){ var th=(notes||{})[a.id]||[]; var last=th.length?th[th.length-1]:null; %>
+    <div class="an-row">
+      <span class="an-tag an-low"><%= KIND[a.kind] || a.kind %></span>
+      <div class="an-body">
+        <div class="an-title" style="font-weight:500;"><%= a.title %></div>
+        <% if (last) { %><div class="an-detail"><strong><%= last.is_claude ? 'Claude' : (last.author_name || 'You') %>:</strong> <%= String(last.body).slice(0,180) %><%= String(last.body).length>180?'…':'' %></div><% } %>
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <% if (a.document_id) { %><button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="anPeek(<%= a.document_id %>, this)">👁 Preview</button><% } %>
+          <button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="anToggle(<%= a.id %>)">💬 Conversation (<%= th.length %>)</button>
+          <form method="post" action="/purchases/anomalies/<%= a.id %>/reopen" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:2px 8px;" title="That answer did not settle it after all">↩ Back on the list</button></form>
+        </div>
+        <% if (a.document_id) { %><div id="an-pk-<%= a.document_id %>" style="display:none;margin-top:8px;"></div><% } %>
+        <div id="an-th-<%= a.id %>" style="display:none;margin-top:10px;border-left:2px solid var(--line);padding-left:12px;">
+          <% th.forEach(function(n){ %>
+            <div style="margin-bottom:8px;">
+              <div style="font-size:11px;font-weight:700;color:<%= n.is_claude ? 'var(--blue)' : 'var(--navy)' %>;"><%= n.is_claude ? 'Claude' : (n.author_name || 'Colleague') %></div>
+              <div style="font-size:12.5px;white-space:pre-wrap;"><%= n.body %></div>
+            </div>
+          <% }); %>
+        </div>
+      </div>
+      <% if (a.amount != null) { %><div class="an-amt" style="font-weight:500;"><%= amt(a.amount) %></div><% } %>
+    </div>
+    <% }); %>
+  </div>
+</div>
+<% } %>
+
 <script>
   function anToggle(id){ var el=document.getElementById('an-th-'+id); if(el) el.style.display = (el.style.display==='none'?'block':'none'); }
+  // Read the invoice without leaving the list. Judging a finding means looking at the
+  // document, and a new tab per finding is not looking at it.
+  function anPeek(docId, btn){
+    var box = document.getElementById('an-pk-' + docId); if (!box) return;
+    if (box.style.display !== 'none') { box.style.display = 'none'; box.innerHTML = ''; btn.textContent = '👁 Preview'; return; }
+    box.style.display = 'block';
+    btn.textContent = '👁 Hide';
+    box.innerHTML = '<iframe src="/purchases/doc/' + docId + '/view#toolbar=0&navpanes=0" ' +
+      'style="width:100%;height:460px;border:1px solid var(--line);border-radius:8px;background:#fff;" loading="lazy"></iframe>';
+  }
   // Reading the invoice and thinking about it takes a few seconds, and a button that looks
   // idle gets pressed again. On 2 Sep that turned one answer into seven and produced eight
   // rewordings of the same rule. One submission per form, and it says it is working.

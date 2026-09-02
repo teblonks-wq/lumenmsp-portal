@@ -229,6 +229,8 @@ export async function refreshAnomalies(): Promise<{ raised: number; resolved: nu
   // Anything of an owned kind that is open and was not re-raised has been dealt with.
   // Dismissed rows are never touched — a human's decision is not undone by a sweep.
   const keys = found.map((f) => f.key);
+  // Only OPEN rows are resolved. 'answered' and 'dismissed' are human decisions and a sweep
+  // does not get to overwrite either of them.
   const res = await pool.query(
     `UPDATE purchase_anomalies SET status='resolved'
       WHERE status='open' AND kind = ANY($1) AND NOT (dedupe_key = ANY($2))`,

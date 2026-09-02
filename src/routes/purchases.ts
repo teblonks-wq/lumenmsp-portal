@@ -13,7 +13,7 @@ import { hashFile, findByHash, assessAndStore, rescanAllDuplicates, backfillHash
 import { attachDocToTxn } from '../lib/purchase-inbox';
 import { aiReadUnreadable, aiReadInvoiceDoc } from '../lib/purchase-agent';
 import { refreshAnomalies, listAnomalies, dismissAnomaly, sendAnomalyDigest } from '../lib/purchase-anomalies';
-import { replyToAnomaly, notesFor, listRules, setRuleStatus, conditionsOf } from '../lib/purchase-rules';
+import { replyToAnomaly, notesFor, listRules, setRuleStatus, conditionsOf, rulesFiledUnderAPerson } from '../lib/purchase-rules';
 import { autoCategoriseOutstanding } from '../lib/purchase-match';
 import { parseAndStoreDoc } from '../lib/invoice-read';
 import { renderExpenseReportPdf, loadExpenseReport } from '../lib/expense-report';
@@ -112,8 +112,11 @@ router.get('/purchases', async (req: Request, res: Response) => {
   // The anomaly list is what Terry and Natalie work from, so it is on the screen they land
   // on rather than behind a tab. Read only — the nightly sweep does the computing.
   const anomalies = await listAnomalies('open');
+  // Answered findings are kept, with their conversation, behind a heading — off the worklist
+  // but never thrown away.
+  const answered = await listAnomalies('answered');
   const [notesRaw, rules] = await Promise.all([
-    notesFor(anomalies.map((a: any) => a.id)),
+    notesFor(anomalies.concat(answered).map((a: any) => a.id)),
     listRules(),
   ]);
   // Conditions are parsed here so the view never has to touch JSON.
@@ -122,7 +125,7 @@ router.get('/purchases', async (req: Request, res: Response) => {
     notes[Number(k)] = notesRaw[Number(k)].map((n: any) => ({ ...n, conditionList: conditionsOf(n) }));
   }
   res.render('purchases/index', {
-    user: req.session.user!, toDo, anomalies, notes, rules,
+    user: req.session.user!, toDo, anomalies, answered, notes, rules,
     open: req.query.open ? parseInt(String(req.query.open), 10) : null,
     notice: req.query.msg || null, error: req.query.err || null,
   });
@@ -494,6 +497,14 @@ router.post('/purchases/anomalies/:id/reply', async (req: Request, res: Response
   }
 });
 
+// Put an answered finding back on the worklist — for when the answer turned out not to
+// settle it after all.
+router.post('/purchases/anomalies/:id/reopen', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (id) await pool.query("UPDATE purchase_anomalies SET status='open' WHERE id=$1 AND status='answered'", [id]);
+  res.redirect('/purchases?open=' + id + '&msg=' + encodeURIComponent('Back on the list.'));
+});
+
 // A proposed rule does nothing until this is clicked. Accepting a suppress rule is
 // deliberately creating a blind spot, so it is a human's decision, never Claude's.
 router.post('/purchases/rules/:id/:decision(accept|reject)', async (req: Request, res: Response) => {
@@ -526,12 +537,28 @@ router.post('/purchases/rules/:id/off', async (req: Request, res: Response) => {
 // Every rule in one place — live, waiting, and turned down. Terry asked for somewhere to
 // review them after eight near-identical ones were proposed at once on 2 Sep.
 router.get('/purchases/rules', async (req: Request, res: Response) => {
-  const rules = await listRules();
+  const [rules, misfiled] = await Promise.all([listRules(), rulesFiledUnderAPerson()]);
+  const badIds = new Set(misfiled.map((r: any) => r.id));
   res.render('purchases/rules', {
     user: req.session.user!,
-    rules: rules.map((r: any) => ({ ...r, conditionList: conditionsOf(r) })),
+    rules: rules.map((r: any) => ({ ...r, conditionList: conditionsOf(r), misfiled: badIds.has(r.id) })),
+    misfiledCount: badIds.size,
     notice: req.query.msg || null, error: req.query.err || null,
   });
+});
+
+// Clear out every rule that was filed under a colleague's name instead of a supplier.
+// They can never match anything, so they are not a judgement call — they are debris.
+router.post('/purchases/rules/purge-misfiled', async (req: Request, res: Response) => {
+  const bad = await rulesFiledUnderAPerson();
+  if (!bad.length) { res.redirect('/purchases/rules?msg=' + encodeURIComponent('Nothing to clear.')); return; }
+  const ids = bad.map((r: any) => r.id);
+  await pool.query('UPDATE purchase_anomaly_notes SET rule_id=NULL WHERE rule_id = ANY($1)', [ids]);
+  await pool.query('DELETE FROM purchase_rules WHERE id = ANY($1)', [ids]);
+  await logActivity(req.session.user!.id, 'deleted', 'invoices', 0, `Purchase rules: cleared ${ids.length} filed under a person's name`);
+  try { await refreshAnomalies(); } catch { /* the nightly sweep will catch up */ }
+  res.redirect('/purchases/rules?msg=' + encodeURIComponent(
+    `Cleared ${ids.length} rule(s) that were filed against a person rather than a supplier. Re-answer those findings and the new rules will attach to the right supplier.`));
 });
 
 // Remove a rule outright — for tidying up duplicates, which is different from switching a

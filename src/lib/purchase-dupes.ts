@@ -30,15 +30,41 @@ export function hashFile(filePath: string): string | null {
 const GENERIC_DOMAINS = /^(gmail|outlook|hotmail|yahoo|icloud|me|live|aol|msn)$/i;
 const NOISE = /\b(ltd|limited|plc|llp|uk|com|co|www|inc|invoices?|inv|billing|accounts?|finance|noreply|no-reply|donotreply|statement|receipt|bill|copy|scan|final)\b/gi;
 
+// OUR OWN domains. A message from one of these is somebody here FORWARDING a supplier's
+// invoice — it is not a supplier. Getting this wrong is not cosmetic: on 2 Sep every invoice
+// Terry forwarded was keyed to the supplier "terry o", which meant
+//   • the rules he wrote were attached to "terry o" and could never match a real supplier,
+//     so the same questions kept being asked however many rules he accepted;
+//   • the learned profiles were pooled under him rather than per supplier;
+//   • and Claude, seeing the sender and the payee share a name, started writing about a
+//     "potential conflict of interest or self-billing arrangement" about its own user.
+const INTERNAL_DOMAINS = /(?:^|\.)(?:lumensolutions|lumenmsp|lumen-msp)\.co\.uk$/i;
+
+export function isInternalSender(email: string | null | undefined): boolean {
+  const dom = String(email || '').split('@')[1];
+  return !!dom && INTERNAL_DOMAINS.test(dom.trim().toLowerCase());
+}
+
+/** Who the invoice is FROM — which is what the document says, not who emailed it.
+ *  Order: the supplier Claude read off the page, then an EXTERNAL sender, then the filename. */
 export function supplierKey(doc: any): string {
   const parts: string[] = [];
-  if (doc.from_name) parts.push(String(doc.from_name));
-  if (doc.from_email) {
-    const dom = (String(doc.from_email).split('@')[1] || '').split('.')[0];
-    if (dom && !GENERIC_DOMAINS.test(dom)) parts.push(dom);
+
+  // 1. What the invoice itself says. Always right when we have it.
+  if (doc.ai_supplier) parts.push(String(doc.ai_supplier));
+
+  // 2. The sender — but only when the sender is not us.
+  if (!parts.length && !isInternalSender(doc.from_email)) {
+    if (doc.from_name) parts.push(String(doc.from_name));
+    if (doc.from_email) {
+      const dom = (String(doc.from_email).split('@')[1] || '').split('.')[0];
+      if (dom && !GENERIC_DOMAINS.test(dom)) parts.push(dom);
+    }
   }
-  // Manual/bulk uploads carry no sender — the filename is all we have.
+
+  // 3. A forward, a bulk upload, or a sender that told us nothing: the filename is what is left.
   if (!parts.length && doc.file_name) parts.push(String(doc.file_name).replace(/\.[a-z0-9]+$/i, ''));
+
   return parts.join(' ')
     .toLowerCase()
     .replace(NOISE, ' ')
@@ -82,8 +108,10 @@ export async function assessDuplicate(doc: any): Promise<DupeVerdict> {
   const others = (await pool.query(
     `SELECT d.id, d.from_name, d.from_email, d.file_name, d.parsed_invoice_no, d.parsed_amount,
             d.parsed_date, d.status, d.bank_transaction_id, d.received_at, d.created_at,
+            a.ai_supplier,
             t.booked_at AS txn_booked_at, t.counterparty AS txn_payee, t.amount AS txn_amount
        FROM purchase_documents d
+       LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
        LEFT JOIN bank_transactions t ON t.id = d.bank_transaction_id
       WHERE d.id <> $1
         AND (d.parsed_invoice_no IS NOT NULL OR d.parsed_amount IS NOT NULL)
@@ -99,18 +127,40 @@ export async function assessDuplicate(doc: any): Promise<DupeVerdict> {
     const sameSupplier = !!key && !!oKey && (key === oKey || key.includes(oKey) || oKey.includes(key));
     const sameAmount = amount != null && oAmt != null && Math.abs(amount - oAmt) < 0.005;
 
+    // ── The veto: DIFFERENT INVOICE NUMBERS MEAN DIFFERENT INVOICES ──────────────
+    // Not a hint to weigh — a fact. A supplier does not issue one invoice under two
+    // numbers. Without this, every subscription and every monthly rent looks like a
+    // duplicate of itself: Anthropic TXPMYYAL-0003 and -0004 are both £90 a month apart,
+    // and Gemini House rent INV-2179 and INV-2267 are both £855. (Reported live 2 Sep.)
+    if (invNo && oInv && invNo !== oInv) continue;
+
+    // Same again for the date. Two invoices bearing different dates are two bills, however
+    // alike the amounts. Only applied when BOTH were read — an unread date proves nothing.
+    const bothDated = !!String(doc.parsed_date || '').trim() && !!String(o.parsed_date || '').trim();
+    if (bothDated && !sameDate(doc.parsed_date, o.parsed_date)) continue;
+
     let reason: string | null = null, strength = 0;
     if (invNo && oInv && invNo === oInv) {
       // An invoice number repeating is the strongest signal there is; with the amount
       // agreeing too it is as close to certain as this can get without a human.
       reason = 'same invoice number ' + (doc.parsed_invoice_no || invNo) + (sameAmount ? ' and same total' : '');
       strength = sameAmount ? 4 : 3;
-    } else if (sameSupplier && sameAmount && sameDate(doc.parsed_date, o.parsed_date)) {
+    } else if (sameSupplier && sameAmount && bothDated) {
+      // Same supplier, same total, same date, and neither carries a number that separates
+      // them — that is a genuine duplicate rather than a recurring charge.
       reason = 'same supplier, same total and same invoice date';
       strength = 3;
-    } else if (sameSupplier && sameAmount) {
-      // Could equally be a genuine repeat monthly charge — flag, never block.
-      reason = 'same supplier and same total (could be a repeat monthly bill)';
+    } else if (sameSupplier && sameAmount && !invNo && !oInv) {
+      // Neither document gave up an invoice number or a date, so there is nothing left to
+      // tell a duplicate from a repeat monthly charge. Worth a human's eye, nothing more.
+      reason = 'same supplier and same total, and neither invoice gave a number or a date to tell them apart';
+      strength = 2;
+    } else if (sameSupplier && sameAmount && o.status === 'attached') {
+      // The earlier copy has ALREADY BEEN PAID. Nothing above ruled these out as the same
+      // invoice — the numbers do not contradict and the dates do not contradict — so this
+      // is the one case worth a little noise, because the error it prevents is paying a
+      // bill twice. Deliberately more willing to ask than the branches above.
+      reason = 'same supplier and same total as an invoice already attached to a payment';
       strength = 2;
     }
     if (!reason) continue;
@@ -138,7 +188,9 @@ export async function assessDuplicate(doc: any): Promise<DupeVerdict> {
 // Assess one document and store the verdict. A human 'dismissed' verdict is sticky —
 // a rescan must never re-flag something Terry has already said is a separate bill.
 export async function assessAndStore(docId: number): Promise<DupeVerdict> {
-  const d = (await pool.query('SELECT * FROM purchase_documents WHERE id=$1', [docId])).rows[0];
+  const d = (await pool.query(
+    `SELECT d.*, a.ai_supplier FROM purchase_documents d
+       LEFT JOIN purchase_doc_ai a ON a.document_id = d.id WHERE d.id=$1`, [docId])).rows[0];
   if (!d) return { status: null, ofId: null, paidTxnId: null, reason: null };
   if (d.dupe_status === 'dismissed') return { status: null, ofId: null, paidTxnId: null, reason: null };
   const v = await assessDuplicate(d);

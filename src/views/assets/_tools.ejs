@@ -537,7 +537,7 @@
       <button type="button" data-mg="files">File transfer</button>
       <button type="button" data-mg="events">Event Viewer</button>
       <button type="button" data-mg="registry">Registry Editor</button>
-      <button type="button" data-mg="users">Users &amp; passwords</button>
+      <button type="button" data-mg="users">User Management</button>
     </div>
   </div>
 </div>
@@ -1204,7 +1204,9 @@
         ], null, function(x){
           return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-ad="' + esc(x.sam) + '" data-act="' + (x.enabled?'disable':'enable') + '">' +
                  (x.enabled?'Disable':'Enable') + '</button> ' +
-                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-ad="' + esc(x.sam) + '" data-act="resetpw">Reset password</button>';
+                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-ad="' + esc(x.sam) + '" data-act="resetpw">Reset password</button> ' +
+                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-ad="' + esc(x.sam) + '" data-act="setinfo"' +
+                 ' data-name="' + esc(x.name || x.sam) + '" data-desc="' + esc(x.description || '') + '">Job details</button>';
         });
         if (r.routedTo) {
           var n = document.createElement('p');
@@ -1219,8 +1221,66 @@
     document.getElementById('adLoad').addEventListener('click', loadAdUsers);
     document.getElementById('adQuery').addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); loadAdUsers(); } });
 
+    // Changing somebody's job details is a small FORM, not three prompts in a row. It writes
+    // to Active Directory, which for a hybrid customer is the master — the change syncs up to
+    // Microsoft 365 on its own. A box left blank means "leave that field alone".
+    function openJobDetails(btn){
+      var sam = btn.getAttribute('data-ad');
+      var who = btn.getAttribute('data-name') || sam;
+      var desc = btn.getAttribute('data-desc') || '';
+      var old = document.getElementById('adInfoForm');
+      if (old) old.remove();
+      var box = document.createElement('div');
+      box.id = 'adInfoForm';
+      box.style.cssText = 'margin:10px 0;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--chip-bg,#eef2f7);';
+      box.innerHTML =
+        '<div style="font-weight:700;font-size:13px;margin-bottom:2px;">Job details — ' + esc(who) + '</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-bottom:8px;">Writes to Active Directory. Anything left blank is left exactly as it is.</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">' +
+          '<div><label class="muted" style="font-size:11px;display:block;">Job title</label>' +
+            '<input class="input" id="adiTitle" style="width:100%;font-size:12.5px;" placeholder="e.g. Operations Manager"></div>' +
+          '<div><label class="muted" style="font-size:11px;display:block;">Department</label>' +
+            '<input class="input" id="adiDept" style="width:100%;font-size:12.5px;" placeholder="e.g. Finance"></div>' +
+          '<div><label class="muted" style="font-size:11px;display:block;">Description</label>' +
+            '<input class="input" id="adiDesc" style="width:100%;font-size:12.5px;"></div>' +
+        '</div>' +
+        '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;">' +
+          '<button class="btn btn-primary" id="adiSave" style="font-size:12px;padding:4px 12px;">Save to AD</button>' +
+          '<button class="btn" id="adiCancel" style="font-size:12px;padding:4px 12px;">Cancel</button>' +
+          '<span class="muted" id="adiMsg" style="font-size:11.5px;"></span>' +
+        '</div>';
+      usersResult.insertBefore(box, usersResult.firstChild);
+      document.getElementById('adiDesc').value = desc;
+      document.getElementById('adiTitle').focus();
+      document.getElementById('adiCancel').addEventListener('click', function(){ box.remove(); });
+      document.getElementById('adiSave').addEventListener('click', function(){
+        var t = document.getElementById('adiTitle').value.trim();
+        var d = document.getElementById('adiDept').value.trim();
+        var c = document.getElementById('adiDesc').value.trim();
+        // Only send what changed. Sending the description back unchanged would still write it.
+        var body = { sam: sam };
+        if (t) body.title = t;
+        if (d) body.department = d;
+        if (c && c !== desc) body.description = c;
+        if (!body.title && !body.department && !body.description) {
+          document.getElementById('adiMsg').textContent = 'Nothing to change.'; return;
+        }
+        var sv = document.getElementById('adiSave');
+        sv.disabled = true; sv.textContent = 'Saving…';
+        run('ad.user.setinfo', body, usersBusy).then(function(r){
+          if (r.status !== 'done') { document.getElementById('adiMsg').textContent = r.output || 'That did not complete.'; sv.disabled = false; sv.textContent = 'Save to AD'; return; }
+          box.remove();
+          loadAdUsers();
+        }).catch(function(err){
+          document.getElementById('adiMsg').textContent = err.message;
+          sv.disabled = false; sv.textContent = 'Save to AD';
+        });
+      });
+    }
+
     usersResult.addEventListener('click', function(e){
       var b = e.target.closest('[data-user],[data-ad]'); if (!b) return;
+      if (b.getAttribute('data-act') === 'setinfo') { openJobDetails(b); return; }
       var isAd = b.hasAttribute('data-ad');
       var who = isAd ? b.getAttribute('data-ad') : b.getAttribute('data-user');
       var act = b.getAttribute('data-act');
@@ -1644,7 +1704,7 @@
     var lbSheet = document.getElementById('lbSheet');
     var lbTitle = document.getElementById('lbTitle');
     var TOOL_TITLES = { console:'Console', software:'Software inventory', services:'Service Manager',
-      users:'Users & passwords', files:'File system', registry:'Registry Editor', patching:'Patch management',
+      users:'User Management', files:'File system', registry:'Registry Editor', patching:'Patch management',
       taskmgr:'Task Manager', events:'Event Viewer', script:'Run script', activity:'User activity' };
     var _showTool = showTool;
     showTool = function(k){ _showTool(k); if (lbTitle && TOOL_TITLES[k]) lbTitle.textContent = TOOL_TITLES[k]; };

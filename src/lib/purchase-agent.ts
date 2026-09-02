@@ -2,7 +2,7 @@ import fs from 'fs';
 import { pool } from '../db/pool';
 import { aiAskDoc, aiAskText, parseJsonAnswer, docKindFor, docMediaType } from './ai-compose';
 import { normaliseCounterparty, aliasTokensFor } from './purchase-match';
-import { supplierKey } from './purchase-dupes';
+import { supplierKey, isInternalSender } from './purchase-dupes';
 import { activeRules, contextFor } from './purchase-rules';
 
 // ── The Purchase Agent's reading and reasoning ───────────────────────────────────
@@ -40,6 +40,7 @@ const READ_SYSTEM = [
   'RULES:',
   '- gross is the amount the customer must PAY for THIS invoice, VAT included. On a statement showing an account balance carried forward, gross is this invoice only, never the running balance.',
   '- Use null, never a guess, for anything not clearly on the page. A wrong number is far worse than a missing one.',
+  '- supplier is the company that ISSUED the invoice, as printed on it. Never the person who emailed it and never our own company (Lumen IT Solutions / Lumen Solutions) — an invoice addressed TO us was forwarded by a colleague.',
   '- currency is the ISO code shown (GBP, USD, EUR). If the document shows $ with no other clue, say USD.',
   '- period is the service period the bill covers if stated (e.g. "1-31 Aug 2026"), else null.',
   '- summary is ONE short line naming what was actually bought.',
@@ -111,7 +112,9 @@ export async function aiReadUnreadable(limit = 40): Promise<{ read: number; fail
 // ── LEARN ───────────────────────────────────────────────────────────────────────
 // One confirmed match teaches one supplier. Called on every attach, whoever made it.
 export async function learnFromMatch(docId: number, txnId: number): Promise<void> {
-  const d = (await pool.query('SELECT * FROM purchase_documents WHERE id=$1', [docId])).rows[0];
+  const d = (await pool.query(
+    `SELECT d.*, a.ai_supplier FROM purchase_documents d
+       LEFT JOIN purchase_doc_ai a ON a.document_id = d.id WHERE d.id=$1`, [docId])).rows[0];
   const t = (await pool.query('SELECT * FROM bank_transactions WHERE id=$1', [txnId])).rows[0];
   if (!d || !t) return;
   const key = supplierKey(d);
@@ -159,7 +162,8 @@ export async function learnFromMatch(docId: number, txnId: number): Promise<void
        last_invoice_at= COALESCE(EXCLUDED.last_invoice_at, purchase_supplier_profiles.last_invoice_at),
        last_paid_at   = EXCLUDED.last_paid_at,
        updated_at     = NOW()`,
-    [key, d.from_name || d.from_email || null, JSON.stringify(descriptors), t.qb_account_id || null,
+    [key, d.ai_supplier || (isInternalSender(d.from_email) ? null : (d.from_name || d.from_email)) || null,
+     JSON.stringify(descriptors), t.qb_account_id || null,
      t.qb_account_name || null, amount, avgLag, cadence,
      invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate : null, t.booked_at, newAvg]
   ).catch((e) => console.error('[purchase-agent] learn failed:', e.message));
@@ -182,11 +186,21 @@ const JUDGE_SYSTEM = [
   '- Direct Debit suppliers collect up to about six weeks AFTER the invoice date. Some collect BEFORE it. A date gap is normal and is not evidence against a match.',
   '- Invoices billed in USD land on a GBP card at roughly 0.68-0.95 of the invoice total. An amount that is not equal is not automatically a mismatch.',
   '- LEARNED SUPPLIER FACTS are given to you where we have them. Prefer them over your own assumptions: they came from matches a human confirmed.',
+  'MATCH ON EVERYTHING YOU HAVE, NOT JUST THE AMOUNT:',
+  '- The bank reference often carries the supplier\'s invoice number or account number. That beats the amount.',
+  '- An account number shared across a supplier\'s invoices ties them together even when the totals differ wildly.',
+  '- What was BOUGHT matters: a hardware invoice and a monthly service charge from the same supplier are different payments even at similar amounts.',
+  '- The service PERIOD on the invoice tells you roughly when it would be collected.',
+  '- An amount that matches but whose supplier, period and reference all disagree is a coincidence, not a match. Say so and return null.',
   'HOW TO ANSWER:',
   '- txnId must be one of the candidate ids given, or null. Never invent an id.',
   '- confidence is your own honest number. Use 90+ ONLY when you would be comfortable with this being applied without anyone checking. If two candidates are equally good, say so in reason and cap confidence at 50.',
   '- null with a reason is a good answer. Leaving it for a human costs far less than a wrong link.',
-  '- concern: raise anything the human should see - the invoice appears already paid, the amount does not match anything, the supplier is not one we recognise, this looks like a credit note. Otherwise null.',
+  '- concern: raise anything the human should see - the invoice appears already paid, the amount does not match anything, this looks like a credit note. Otherwise null.',
+  'ABOUT THE SENDER — read this before writing a concern:',
+  '- Invoices reach this pool by being FORWARDED. A message from a lumensolutions.co.uk or lumenmsp.co.uk address is a COLLEAGUE forwarding a supplier invoice. It is not the supplier, and it is not evidence of anything.',
+  '- Never write about a named person\'s conduct. Do not raise conflicts of interest, self-billing, related parties, or suggest a payment is personal, on the basis of a name appearing in a sender field or a bank narrative. You cannot tell those things apart from here and the accusation lands on a real colleague.',
+  '- If you cannot tell who the supplier is, say the supplier is unclear and ask. That is the honest version of the same observation.',
 ].join('\n');
 
 export async function aiJudgeMatch(doc: any, candidates: any[], profile: any | null): Promise<AiMatchVerdict | null> {

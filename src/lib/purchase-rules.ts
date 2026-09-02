@@ -231,6 +231,10 @@ export async function replyToAnomaly(
     'INSERT INTO purchase_anomaly_notes (anomaly_id, is_claude, body, rule_id) VALUES ($1,true,$2,$3)',
     [anomalyId, replyText, ruleId]
   );
+  // Answering a finding takes it off the list. A worklist you have already dealt with is not
+  // a worklist, and with 157 open items the ones still needing thought are what matter. The
+  // conversation is kept and the finding is one click from coming back.
+  await pool.query("UPDATE purchase_anomalies SET status='answered' WHERE id=$1 AND status='open'", [anomalyId]);
   return { reply: replyText, ruleId, ruleBody };
 }
 
@@ -271,4 +275,25 @@ export function categoryRuleFor(rules: RuleRow[], supplierKey: string | null): {
 export function conditionsOf(rule: any): string[] {
   try { const v = JSON.parse(rule?.conditions || '[]'); return Array.isArray(v) ? v.map(String) : []; }
   catch { return []; }
+}
+
+// ── Repair: rules and profiles filed under the wrong "supplier" ─────────────────
+// Before 2 Sep, a forwarded invoice was keyed to the COLLEAGUE who forwarded it, so rules
+// and learned profiles piled up under a person's name. Those rules can never match a real
+// supplier, which is why the same questions kept coming back however many were accepted.
+// This finds them so they can be cleared out rather than sitting there looking effective.
+export async function rulesFiledUnderAPerson(): Promise<RuleRow[]> {
+  const people = (await pool.query(
+    `SELECT DISTINCT lower(split_part(email,'@',1)) AS k FROM users WHERE email IS NOT NULL`
+  ).catch(() => ({ rows: [] as any[] }))).rows.map((r: any) => String(r.k || ''));
+  const rules = await listRules();
+  return rules.filter((r) => {
+    const key = String(r.supplier_key || '').toLowerCase().trim();
+    if (!key) return false;
+    const first = key.split(' ')[0];
+    // "terry o" from "Terry O'Kelly" — first name plus a one-letter surname fragment is the
+    // signature of a person's name having been squeezed through the two-word supplier key.
+    if (/^[a-z]+ [a-z]$/.test(key)) return true;
+    return people.some((p) => p && (p.startsWith(first) || first.startsWith(p)));
+  });
 }

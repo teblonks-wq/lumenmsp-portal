@@ -79,6 +79,10 @@
     var all = Array.prototype.slice.call(folderIn.files || []);
     var keep = all.filter(function(f){ return OK.test(f.name); });
     var dropped = all.length - keep.length, over = 0;
+    // Something too big to be an invoice is skipped like any other non-invoice file. One
+    // oversized PDF in a folder of four hundred must not cost you the other 399.
+    var huge = keep.filter(function(f){ return f.size > MAXBYTES; });
+    keep = keep.filter(function(f){ return f.size <= MAXBYTES; });
     if (keep.length > MAX) { over = keep.length - MAX; keep = keep.slice(0, MAX); }
     // Rewriting the file list needs DataTransfer. Where that is unavailable the ORIGINAL
     // list is still what gets sent, so we must not pretend it was trimmed — sending an
@@ -93,6 +97,7 @@
     note.textContent = trimmed
       ? (keep.length + ' invoice file(s) found in the folder'
          + (dropped ? ', ' + dropped + ' other file(s) ignored' : '')
+         + (huge.length ? ', ' + huge.length + ' skipped as too big to be an invoice (' + huge.slice(0,3).map(function(f){return f.name;}).join(', ') + (huge.length>3?', …':'') + ')' : '')
          + (over ? ' — ' + over + ' over the ' + MAX + '-file limit were left out; upload the rest in a second pass' : ''))
       : (all.length + ' file(s) selected. This browser will not let the list be filtered, so everything in the folder is sent as-is'
          + (all.length > MAX ? ' — that is over the ' + MAX + '-file limit, so pick a smaller subfolder' : '') + '.');
@@ -109,26 +114,54 @@
       Array.prototype.forEach.call(inp.files || [], function(f){ list.push(f.webkitRelativePath || f.name); });
     });
     if (!list.length) { e.preventDefault(); alert('Choose one or more invoice files, or a folder.'); return; }
-    // Refuse here rather than let the server reject the whole batch after the upload.
+
+    // Anything too big to be an invoice is DROPPED from the upload, not treated as a reason
+    // to refuse the batch. Terry, 2 Sep: "it should ignore the file, not not upload."
+    var skipped = [], deferred = 0, rebuilt = true;
+    [fileIn, folderIn].forEach(function(inp){
+      var files = Array.prototype.slice.call(inp.files || []);
+      if (!files.length) return;
+      var ok = files.filter(function(f){
+        if (f.size > MAXBYTES) { skipped.push(f.name); return false; }
+        return true;
+      });
+      if (ok.length === files.length) return;               // nothing to drop on this input
+      try {
+        var dt = new DataTransfer();
+        ok.forEach(function(f){ dt.items.add(f); });
+        inp.files = dt.files;
+      } catch (err) { rebuilt = false; }
+    });
+
+    if (!rebuilt) {
+      // We know which files would fail but cannot remove them here, and sending them would
+      // have the server reject the whole batch. Say exactly that rather than fail silently.
+      e.preventDefault();
+      alert('These files are too big to be invoices and this browser will not let them be removed automatically:\n\n' +
+            skipped.slice(0,5).join('\n') + (skipped.length > 5 ? '\n…and ' + (skipped.length-5) + ' more' : '') +
+            '\n\nNothing has been sent. Take them out of the folder, or pick the files individually.');
+      return;
+    }
+
+    // Rebuild the list from what will ACTUALLY be sent — the order has to match the files.
+    list = [];
+    [fileIn, folderIn].forEach(function(inp){
+      Array.prototype.forEach.call(inp.files || [], function(f){ list.push(f.webkitRelativePath || f.name); });
+    });
     if (list.length > MAX) {
       e.preventDefault();
       alert(list.length + ' files selected, and the limit is ' + MAX + ' per upload.\n\nNothing has been sent. Pick a subfolder — a year or a supplier at a time — and repeat.');
       return;
     }
-    var big = [];
-    [fileIn, folderIn].forEach(function(inp){
-      Array.prototype.forEach.call(inp.files || [], function(f){ if (f.size > MAXBYTES) big.push(f.name); });
-    });
-    if (big.length) {
+    if (!list.length) {
       e.preventDefault();
-      alert(big.length + ' file(s) are larger than ' + Math.round(MAXBYTES/1024/1024) + ' MB, which is bigger than any invoice should be:\n\n' +
-            big.slice(0,5).join('\n') + (big.length > 5 ? '\n…and ' + (big.length-5) + ' more' : '') +
-            '\n\nNothing has been sent. Take those out and try again.');
+      alert('Every file selected was too big to be an invoice, so there is nothing to upload:\n\n' + skipped.slice(0,5).join('\n'));
       return;
     }
     document.getElementById('pxRelPaths').value = JSON.stringify(list);
     btn.disabled = true; btn.textContent = 'Uploading ' + list.length + ' file(s)…';
-    note.textContent = 'Uploading and reading ' + list.length + ' invoice(s) — this can take a minute or two on a big folder. Leave the page open.';
+    note.textContent = 'Uploading and reading ' + list.length + ' invoice(s) — this can take a minute or two on a big folder. Leave the page open.'
+      + (skipped.length ? ' Skipped ' + skipped.length + ' file(s) too big to be an invoice: ' + skipped.slice(0,3).join(', ') + (skipped.length>3 ? ', …' : '') + '.' : '');
   });
 })();
 </script>

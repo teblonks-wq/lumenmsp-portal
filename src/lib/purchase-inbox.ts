@@ -180,7 +180,10 @@ export async function autoMatchInvoices(opts?: { useAi?: boolean }): Promise<Aut
   // the free rules have had their go.
   const useAi = opts?.useAi ?? ((await getSetting(GROUP, 'ai_matching')) !== '0');
   const docs = (await pool.query(
-    "SELECT * FROM purchase_documents WHERE status <> 'attached' AND archived_at IS NULL ORDER BY received_at DESC NULLS LAST"
+    `SELECT d.*, a.ai_supplier FROM purchase_documents d
+       LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
+      WHERE d.status <> 'attached' AND d.archived_at IS NULL
+      ORDER BY d.received_at DESC NULLS LAST`
   )).rows;
   let matched = 0, byClaude = 0, suggested = 0, aiRead = 0;
   for (const d of docs) {

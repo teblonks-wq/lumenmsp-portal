@@ -33,6 +33,7 @@
           <% } else { %><span class="muted">— not stated —</span><% } %>
         </td>
         <td style="font-size:12px;"><%= r.scope==='global' ? 'the whole ledger' : (r.supplier_key || '—') %>
+          <% if (r.misfiled) { %><br><span style="font-size:10.5px;color:var(--bad-fg);font-weight:700;">that is a person, not a supplier</span><% } %>
           <% if (r.anomaly_kind) { %><br><span class="muted" style="font-size:11px;"><%= r.anomaly_kind %></span><% } %></td>
         <td><span class="badge" style="font-size:10px;"><%= kindLabel(r.kind) %></span></td>
         <td class="muted" style="font-size:12px;max-width:240px;"><%= r.reason || '' %></td>
@@ -49,6 +50,16 @@
       <% }); %>
     </tbody>
   </table></div>
+</div>
+<% } %>
+
+<% if (misfiledCount) { %>
+<div class="card" style="margin-bottom:16px;border-left:3px solid var(--bad-fg);">
+  <h2 style="margin:0 0 4px;font-size:15px;">⚠ <%= misfiledCount %> rule<%= misfiledCount===1?'':'s' %> filed against a person, not a supplier</h2>
+  <p class="muted" style="font-size:12.5px;margin:0 0 10px;">Invoices reach the pool by being forwarded, and until now the agent treated the <em>colleague who forwarded it</em> as the supplier. Rules attached to a person can never match a real supplier &mdash; which is why the same questions kept coming back however many rules were accepted. They are marked below.</p>
+  <form method="post" action="/purchases/rules/purge-misfiled" style="margin:0;" onsubmit="return confirm('Clear every rule filed against a person? They cannot match anything. You can answer those findings again and the new rules will attach to the right supplier.');">
+    <button class="btn btn-primary" type="submit">Clear them out</button>
+  </form>
 </div>
 <% } %>
 

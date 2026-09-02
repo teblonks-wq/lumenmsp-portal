@@ -75,7 +75,15 @@ const KINDS: Record<string, { label: string; ad?: boolean; destructive?: boolean
   'ad.user.disable': { label: 'Disabled an AD account', ad: true, destructive: true },
   'ad.user.enable': { label: 'Enabled an AD account', ad: true, destructive: true },
   'ad.user.resetpw': { label: 'Reset an AD password', ad: true, destructive: true },
+  'ad.user.setinfo': { label: "Changed an AD user's job details", ad: true, destructive: true },
 };
+
+/** A PowerShell single-quoted literal. Doubling the quote is the ONLY escape inside '...',
+ *  and nothing else is interpreted there — no expansion, no backtick escapes. Values reach
+ *  a domain controller, so this is the boundary that matters. */
+function psq(v: string): string {
+  return "'" + String(v == null ? '' : v).replace(/'/g, "''") + "'";
+}
 
 /// The agent row for an asset — matched on customer + serial, hostname as fallback.
 async function deviceForAsset(assetId: number): Promise<any | null> {
@@ -119,6 +127,10 @@ function generatePassword(): string {
 router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const assetId = parseInt(String(req.params.id), 10);
   const kind = String((req.body || {}).kind || '');
+  // Some tools are a FRIENDLY name for a script we build here; the agent sees shell.powershell.
+  // Same pattern as Windows Updates on/off in Automation — no new agent capability, nothing
+  // to roll out to 192 machines, and the script never comes off the browser.
+  let wireKind = kind;
   const spec = KINDS[kind];
   if (!spec) { res.status(400).json({ ok: false, error: 'Unknown tool.' }); return; }
 
@@ -162,6 +174,36 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
       payload.transfer_id = String(b.transfer_id || '').replace(/[^a-f0-9]/gi, '').slice(0, 32);
       payload.dest = String(b.dest || '').slice(0, 500);
       payload.expand = b.expand === '1' || b.expand === true ? '1' : '0';
+    }
+    if (kind === 'ad.user.setinfo') {
+      const sam = String(b.sam || '').trim();
+      if (!sam) { res.status(400).json({ ok: false, error: 'No account name given.' }); return; }
+      // Only the fields actually typed are touched. A blank box means "leave it alone",
+      // never "blank it out" — quietly clearing somebody's department because a box was
+      // empty is exactly the kind of damage a bulk tool should not be able to do.
+      const sets: string[] = [];
+      const changed: string[] = [];
+      const fields: Array<[string, string, string]> = [
+        ['title', 'Title', String(b.title || '').trim()],
+        ['department', 'Department', String(b.department || '').trim()],
+        ['description', 'Description', String(b.description || '').trim()],
+      ];
+      for (const [key, adName, val] of fields) {
+        if (!val) continue;
+        sets.push(`-${adName} ${psq(val.slice(0, 200))}`);
+        changed.push(`${key} to "${val.slice(0, 60)}"`);
+      }
+      if (!sets.length) { res.status(400).json({ ok: false, error: 'Nothing to change — fill in at least one field.' }); return; }
+      payload.script = [
+        'Import-Module ActiveDirectory -ErrorAction Stop',
+        `Set-ADUser -Identity ${psq(sam)} ${sets.join(' ')} -ErrorAction Stop`,
+        `$u = Get-ADUser -Identity ${psq(sam)} -Properties Title,Department,Description`,
+        '"$($u.SamAccountName) updated. Title: $($u.Title); Department: $($u.Department); Description: $($u.Description)"',
+      ].join('\r\n');
+      payload.run_as = 'system';
+      payload.setinfo_for = sam;
+      payload.setinfo_changed = changed.join(', ');
+      wireKind = 'shell.powershell';
     }
     if (kind === 'winget.search' || kind === 'choco.search') payload.q = String(b.q || '').slice(0, 120);
     if (kind.startsWith('choco.') && kind !== 'choco.search' && kind !== 'choco.bootstrap') {
@@ -247,13 +289,14 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
 
     const ins = await pool.query(
       `INSERT INTO agent_commands (device_id, kind, payload, requested_by) VALUES ($1,$2,$3,$4) RETURNING id`,
-      [device.id, kind, JSON.stringify(payload), req.session.user!.id]);
+      [device.id, wireKind, JSON.stringify(payload), req.session.user!.id]);
     const commandId = ins.rows[0].id;
 
     // Audit BEFORE the result comes back, and never record the generated password.
-    const target = payload.name || payload.sam || payload.path || '';
+    const target = payload.name || payload.sam || payload.setinfo_for || payload.path || '';
     await logActivity(req.session.user!.id, 'agent_tool', 'customer_assets', assetId,
       `${spec.label} on ${device.hostname || 'device'}${target ? ' (' + target + ')' : ''}` +
+      (kind === 'ad.user.setinfo' ? ' — set ' + payload.setinfo_changed : '') +
       (kind.startsWith('shell.') ? ` [as ${payload.run_as}]: ` + String(payload.script).slice(0, 200) : ''));
 
     wakeAgent(device.id);   // long-poll returns immediately instead of waiting out its timer
