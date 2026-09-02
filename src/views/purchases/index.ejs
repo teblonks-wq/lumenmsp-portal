@@ -69,10 +69,42 @@
         <div class="an-body">
           <div class="an-title"><%= a.title %></div>
           <% if (a.detail) { %><div class="an-detail"><%= a.detail %></div><% } %>
-          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
             <% if (a.document_id) { %><a class="btn" href="/purchases/doc/<%= a.document_id %>/view" target="_blank" style="font-size:11px;padding:2px 8px;">Open invoice</a><% } %>
             <% if (a.txn_id) { %><a class="btn" href="/purchases/expenses" style="font-size:11px;padding:2px 8px;">Go to expenses</a><% } %>
-            <form method="post" action="/purchases/anomalies/<%= a.id %>/dismiss" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:2px 8px;" title="Understood — stop showing me this">Dismiss</button></form>
+            <button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="anToggle(<%= a.id %>)" title="Tell it what you know. It will consider what you say and, if it is a standing instruction, offer to remember it.">💬 Reply<% var th=(notes||{})[a.id]||[]; if (th.length) { %> (<%= th.length %>)<% } %></button>
+            <form method="post" action="/purchases/anomalies/<%= a.id %>/dismiss" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:2px 8px;" title="Stop showing me this. A REPLY is usually better — it keeps the reason, so the same thing does not come back next month.">Dismiss</button></form>
+          </div>
+
+          <% var thread = (notes||{})[a.id] || []; %>
+          <div id="an-th-<%= a.id %>" style="display:<%= (open === a.id || thread.length) ? 'block' : 'none' %>;margin-top:10px;border-left:2px solid var(--line);padding-left:12px;">
+            <% thread.forEach(function(n){ %>
+              <div style="margin-bottom:8px;">
+                <div style="font-size:11px;font-weight:700;color:<%= n.is_claude ? 'var(--blue)' : 'var(--navy)' %>;"><%= n.is_claude ? 'Claude' : (n.author_name || 'Colleague') %></div>
+                <div style="font-size:12.5px;white-space:pre-wrap;"><%= n.body %></div>
+                <% if (n.rule_id && n.rule_body) { %>
+                  <div style="margin-top:6px;padding:8px 10px;border-radius:8px;background:var(--chip-bg,#eef2f7);">
+                    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:var(--muted);">
+                      Proposed rule<%= n.rule_kind === 'suppress' ? ' — stops a finding' : ' — adds context' %>
+                    </div>
+                    <div style="font-size:12.5px;margin:3px 0 6px;"><%= n.rule_body %></div>
+                    <% if (n.rule_status === 'proposed') { %>
+                      <% if (n.rule_kind === 'suppress') { %><div class="muted" style="font-size:11px;margin-bottom:6px;">Accepting this creates a deliberate blind spot — you will stop being told about it.</div><% } %>
+                      <div style="display:flex;gap:6px;">
+                        <form method="post" action="/purchases/rules/<%= n.rule_id %>/accept" style="margin:0;"><button class="btn btn-primary" type="submit" style="font-size:11px;padding:3px 8px;">Add to rules</button></form>
+                        <form method="post" action="/purchases/rules/<%= n.rule_id %>/reject" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;">No</button></form>
+                      </div>
+                    <% } else { %>
+                      <span class="badge" style="font-size:10px;"><%= n.rule_status === 'active' ? '✓ in your rules' : 'not added' %></span>
+                    <% } %>
+                  </div>
+                <% } %>
+              </div>
+            <% }); %>
+            <form method="post" action="/purchases/anomalies/<%= a.id %>/reply" style="margin:6px 0 0;display:flex;gap:6px;align-items:flex-start;">
+              <textarea class="input" name="text" rows="2" required placeholder="Tell it what you know — e.g. &quot;the rent is collected quarterly, not monthly&quot;" style="flex:1;font-size:12.5px;resize:vertical;"></textarea>
+              <button class="btn" type="submit" style="font-size:11px;padding:5px 10px;">Send</button>
+            </form>
           </div>
         </div>
         <% if (a.amount != null) { %><div class="an-amt"><%= amt(a.amount) %></div><% } %>
@@ -80,5 +112,37 @@
     <% }); }); %>
   <% } %>
 </div>
+
+<script>
+  function anToggle(id){ var el=document.getElementById('an-th-'+id); if(el) el.style.display = (el.style.display==='none'?'block':'none'); }
+</script>
+
+<% var liveRules = (rules||[]).filter(function(r){ return r.status==='active'; }); %>
+<% if (liveRules.length) { %>
+<div class="card" style="padding:0;margin-bottom:18px;">
+  <div class="card-header" style="padding:16px 20px 12px;">
+    <h2 style="margin:0;">Your rules <span class="muted">(<%= liveRules.length %>)</span></h2>
+    <p class="muted" style="font-size:12px;margin:4px 0 0;">What you have told the agent, in your words. A <strong>context</strong> rule makes it judge better; a <strong>stops a finding</strong> rule is a deliberate blind spot. Switch one off and whatever it was hiding comes back on the next check.</p>
+  </div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Rule</th><th>Applies to</th><th>Type</th><th>Because you said</th><th></th></tr></thead>
+    <tbody>
+      <% liveRules.forEach(function(r){ %>
+      <tr>
+        <td style="font-size:13px;"><%= r.body %></td>
+        <td style="font-size:12px;"><%= r.scope === 'global' ? 'the whole ledger' : (r.supplier_key || '—') %><% if (r.anomaly_kind) { %><br><span class="muted" style="font-size:11px;"><%= r.anomaly_kind %></span><% } %></td>
+        <td><span class="badge" style="font-size:10px;"><%= r.kind === 'suppress' ? 'stops a finding' : 'context' %></span></td>
+        <td class="muted" style="font-size:12px;max-width:280px;"><%= r.reason || '' %></td>
+        <td style="white-space:nowrap;">
+          <form method="post" action="/purchases/rules/<%= r.id %>/off" style="margin:0;" onsubmit="return confirm('Switch this rule off? Anything it was hiding will start appearing again.');">
+            <button class="btn" type="submit" style="font-size:11px;padding:3px 8px;">Switch off</button>
+          </form>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
 
 <%- include('../partials/footer') %>

@@ -33,6 +33,8 @@ export const CHANGELOG: ChangelogEntry[] = [
         'Our own agent is blocked for the same reason: it updates itself, and pushing it as a package races the updater.',
         'Every MSI already uploaded can be brought into the catalogue in one click, so nothing that used to be deployable stopped being deployable.',
         'An uploaded MSI can be installed but not updated or removed this way - an MSI uninstall needs the product code from each machine. It says so at the moment you pick it, rather than refusing once the task is filled in.',
+        'The catalogue proposes what your own estate is already running. Those WinGet ids come off the machines\' own patch scans, so they are real ids rather than ones typed from memory - which is the failure that matters, because a wrong id is silently useless and a plausible wrong one is worse. Each suggestion shows how many machines run it, and adding one is a click.',
+        'Software already in the catalogue stops being suggested, and Bitdefender, MeshCentral and our own agent never appear in the list at all.',
       ] },
       { area: 'Purchase Agent', items: [
         'Claude now reads the invoices nothing else can. A scan, a photo, or a PDF whose text is really a picture used to arrive with no figures at all and sit in the pool doing nothing. Claude looks at the page and reads the supplier, the invoice number, the date, and the net, VAT and gross off it.',

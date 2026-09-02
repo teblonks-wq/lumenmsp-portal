@@ -4,6 +4,7 @@ import { getSetting } from './settings';
 import { graphConfigured, graphSendMail } from './graph';
 import { classifyNoInvoice, normaliseCounterparty } from './purchase-match';
 import { getInvoiceMailbox } from './purchase-inbox';
+import { activeRules, suppressedBy } from './purchase-rules';
 
 // ── The Purchase Agent's anomaly list ────────────────────────────────────────────
 // A worklist, not a log. Every finding is one row keyed by what it IS, so a condition
@@ -191,11 +192,26 @@ async function findVatMismatches(): Promise<Finding[]> {
 // as it reads, so it is NOT in this list and is never auto-resolved from here.
 const OWNED_KINDS = ['already_paid', 'unpaid_invoice', 'payment_no_invoice', 'price_jump', 'missing_bill', 'new_supplier', 'vat_mismatch'];
 
-export async function refreshAnomalies(): Promise<{ raised: number; resolved: number; open: number }> {
-  const found: Finding[] = [];
+export async function refreshAnomalies(): Promise<{ raised: number; resolved: number; open: number; suppressed: number }> {
+  const all: Finding[] = [];
   for (const fn of [findAlreadyPaid, findUnpaidInvoices, findPaymentsWithoutInvoice, findPriceJumps, findMissingBills, findNewSuppliers, findVatMismatches]) {
-    try { found.push(...await fn()); }
+    try { all.push(...await fn()); }
     catch (e) { console.error('[purchase-anomalies] detector failed:', (e as Error).message); }
+  }
+
+  // Rules a human accepted after answering a finding. A suppress rule is a deliberate blind
+  // spot, so it is applied here and NOWHERE ELSE — one place to look when something expected
+  // stops appearing. 'already_paid' can never be suppressed: paying a bill twice is the one
+  // finding no standing instruction should be able to hide.
+  const rules = await activeRules();
+  const found: Finding[] = [];
+  let suppressed = 0;
+  for (const f of all) {
+    if (f.kind !== 'already_paid') {
+      const r = suppressedBy(rules, f.kind, f.supplierKey ?? null);
+      if (r) { suppressed++; continue; }
+    }
+    found.push(f);
   }
 
   for (const f of found) {
@@ -220,7 +236,7 @@ export async function refreshAnomalies(): Promise<{ raised: number; resolved: nu
   ).catch(() => ({ rowCount: 0 }));
 
   const open = Number((await pool.query("SELECT COUNT(*)::int n FROM purchase_anomalies WHERE status='open'").catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n);
-  return { raised: found.length, resolved: res.rowCount || 0, open };
+  return { raised: found.length, resolved: res.rowCount || 0, open, suppressed };
 }
 
 export async function listAnomalies(status = 'open'): Promise<any[]> {

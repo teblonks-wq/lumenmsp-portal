@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
@@ -13,6 +13,7 @@ import { hashFile, findByHash, assessAndStore, rescanAllDuplicates, backfillHash
 import { attachDocToTxn } from '../lib/purchase-inbox';
 import { aiReadUnreadable, aiReadInvoiceDoc } from '../lib/purchase-agent';
 import { refreshAnomalies, listAnomalies, dismissAnomaly, sendAnomalyDigest } from '../lib/purchase-anomalies';
+import { replyToAnomaly, notesFor, listRules, setRuleStatus } from '../lib/purchase-rules';
 import { autoCategoriseOutstanding } from '../lib/purchase-match';
 import { parseAndStoreDoc } from '../lib/invoice-read';
 import { renderExpenseReportPdf, loadExpenseReport } from '../lib/expense-report';
@@ -34,6 +35,30 @@ const upload = multer({
 });
 import { PURCHASE_DOCS_DIR } from '../lib/purchase-inbox';
 const BULK_MAX_FILES = 1000;
+const BULK_MAX_BYTES = 25 * 1024 * 1024;
+
+// Multer runs as middleware BEFORE the route handler, so anything it rejects — too many
+// files, one file too big — never reaches the handler's try/catch and surfaces as a bare
+// "Internal Server Error" with nothing to act on. (Seen live 2026-09-02 on a folder upload.)
+// This wraps it so every failure comes back as a sentence saying what happened and what to
+// do, and so the part-written temp files are cleaned up rather than left on disk.
+function bulkUpload(req: Request, res: Response, next: NextFunction): void {
+  docUpload.array('files', BULK_MAX_FILES)(req, res, (err: any) => {
+    if (!err) { next(); return; }
+    for (const f of ((req.files as any[]) || [])) { try { fs.unlinkSync(f.path); } catch { /* nothing to clean */ } }
+    const code = err && err.code;
+    const msg =
+      code === 'LIMIT_FILE_COUNT'
+        ? `That folder holds more than ${BULK_MAX_FILES} invoice files. Nothing was added. Upload it in parts — pick a subfolder at a time, or a year at a time.`
+      : code === 'LIMIT_FILE_SIZE'
+        ? `One of those files is bigger than ${Math.round(BULK_MAX_BYTES / 1024 / 1024)} MB, which is larger than any invoice should be. Nothing was added — take that file out and try again.`
+      : code === 'LIMIT_UNEXPECTED_FILE'
+        ? 'The browser sent a file the upload was not expecting. Nothing was added — reload the page and pick the folder again.'
+      : `The upload failed before anything was read: ${String(err.message || code || 'unknown error')}. Nothing was added.`;
+    console.error('[purchases] bulk upload rejected:', code || err);
+    res.redirect('/purchases/expenses?view=inbox&err=' + encodeURIComponent(msg));
+  });
+}
 const docUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => { fs.mkdirSync(PURCHASE_DOCS_DIR, { recursive: true }); cb(null, PURCHASE_DOCS_DIR); },
@@ -42,7 +67,7 @@ const docUpload = multer({
   // Bulk folder uploads walk a whole tree, so the caps are per-BATCH, not per-invoice:
   // up to 1,000 files and 25 MB each (scanned invoices are big). The browser filters the
   // tree down to invoice-shaped files before anything is sent.
-  limits: { fileSize: 25 * 1024 * 1024, files: BULK_MAX_FILES },
+  limits: { fileSize: BULK_MAX_BYTES, files: BULK_MAX_FILES },
 });
 // Cached QB expense categories — QB is slow and was being hit on every page render.
 let _catsCache: { at: number; cats: any[]; qbOn: boolean } | null = null;
@@ -87,8 +112,13 @@ router.get('/purchases', async (req: Request, res: Response) => {
   // The anomaly list is what Terry and Natalie work from, so it is on the screen they land
   // on rather than behind a tab. Read only — the nightly sweep does the computing.
   const anomalies = await listAnomalies('open');
+  const [notes, rules] = await Promise.all([
+    notesFor(anomalies.map((a: any) => a.id)),
+    listRules(),
+  ]);
   res.render('purchases/index', {
-    user: req.session.user!, toDo, anomalies,
+    user: req.session.user!, toDo, anomalies, notes, rules,
+    open: req.query.open ? parseInt(String(req.query.open), 10) : null,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
@@ -242,7 +272,7 @@ router.post('/purchases/doc/:id/unarchive', async (req: Request, res: Response) 
 //     bill is indistinguishable from a duplicate without a human.
 // The result is a summary, not a bare count: on a folder backload you need to know what
 // was skipped and what needs a second look.
-router.post('/purchases/inbox/upload', docUpload.array('files', BULK_MAX_FILES), async (req: Request, res: Response) => {
+router.post('/purchases/inbox/upload', bulkUpload, async (req: Request, res: Response) => {
   const files = (req.files as any[]) || [];
   // The browser sends the tree position of each file alongside it, in the same order, so a
   // bulk-uploaded invoice still says which subfolder it came from.
@@ -296,6 +326,11 @@ router.post('/purchases/inbox/upload', docUpload.array('files', BULK_MAX_FILES),
     await logActivity(req.session.user!.id, 'created', 'invoices', 0,
       `Purchase inbox: bulk upload added ${added} invoice(s), skipped ${skipped} exact duplicate(s), flagged ${flagged + paidWarn}`);
   }
+  if (!added && !skipped && failed) {
+    res.redirect('/purchases/expenses?view=inbox&err=' + encodeURIComponent(
+      `None of the ${failed} file(s) could be added. The server log has the reason — pm2 logs lumenmsp-portal.`));
+    return;
+  }
   const bits = [`Added ${added} invoice(s)`];
   if (skipped) bits.push(`skipped ${skipped} exact duplicate${skipped === 1 ? '' : 's'}${skippedNames.length ? ' (' + skippedNames.join(', ') + (skipped > skippedNames.length ? ', …' : '') + ')' : ''}`);
   if (paidWarn) bits.push(`${paidWarn} look ALREADY PAID`);
@@ -320,6 +355,53 @@ router.post('/purchases/inbox/rescan-dupes', async (req: Request, res: Response)
   } catch (e: any) {
     res.redirect('/purchases/expenses?view=duplicates&err=' + encodeURIComponent(e.message || 'Duplicate rescan failed.'));
   }
+});
+
+// Bulk actions on the Duplicates tab. A folder backload produces duplicates in batches, not
+// one at a time, so clearing them one row at a time is the wrong shape of work.
+//
+// "separate bill" is sticky (a rescan never re-flags those), "archive" keeps the document but
+// takes it out of the inbox, and "delete" removes the file and the row for good. Delete
+// REFUSES anything already attached to a payment — that is the receipt for a real expense,
+// and no bulk action should be able to take it away by accident.
+router.post('/purchases/inbox/dupes/bulk', async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const action = String(b.action || '');
+  // Sent as one comma-separated field. The rows already contain their own forms, and a form
+  // cannot legally nest inside another, so the selection is collected by script into a
+  // standalone form rather than by wrapping the tables.
+  const raw = Array.isArray(b.ids) ? b.ids.join(',') : String(b.ids || '');
+  const ids = raw.split(',').map((v: string) => parseInt(v.trim(), 10)).filter(Boolean).slice(0, 2000);
+  if (!ids.length) { res.redirect('/purchases/expenses?view=duplicates&err=' + encodeURIComponent('Nothing was selected.')); return; }
+
+  let done = 0, refused = 0;
+  if (action === 'separate') {
+    const r = await pool.query("UPDATE purchase_documents SET dupe_status='dismissed', dupe_reason=NULL WHERE id = ANY($1)", [ids]);
+    done = r.rowCount || 0;
+  } else if (action === 'archive') {
+    const r = await pool.query("UPDATE purchase_documents SET archived_at=NOW() WHERE id = ANY($1) AND archived_at IS NULL", [ids]);
+    done = r.rowCount || 0;
+  } else if (action === 'delete') {
+    const rows = (await pool.query('SELECT id, file_path, status FROM purchase_documents WHERE id = ANY($1)', [ids])).rows;
+    const deletable = rows.filter((d: any) => d.status !== 'attached');
+    refused = rows.length - deletable.length;
+    for (const d of deletable) {
+      if (d.file_path) { try { fs.unlinkSync(d.file_path); } catch { /* already gone */ } }
+    }
+    if (deletable.length) {
+      const r = await pool.query('DELETE FROM purchase_documents WHERE id = ANY($1)', [deletable.map((d: any) => d.id)]);
+      done = r.rowCount || 0;
+    }
+  } else {
+    res.redirect('/purchases/expenses?view=duplicates&err=' + encodeURIComponent('Unknown action.')); return;
+  }
+
+  await logActivity(req.session.user!.id, action === 'delete' ? 'deleted' : 'updated', 'invoices', 0,
+    `Purchase duplicates: ${action} on ${done} document(s)${refused ? `, ${refused} refused (attached to a payment)` : ''}`);
+  const word = action === 'delete' ? 'Deleted' : action === 'archive' ? 'Archived' : 'Marked as separate bills';
+  res.redirect('/purchases/expenses?view=duplicates&msg=' + encodeURIComponent(
+    `${word}: ${done} document(s)` +
+    (refused ? `. ${refused} left alone because ${refused === 1 ? 'it is' : 'they are'} attached to a payment — unlink first if you really mean to remove ${refused === 1 ? 'it' : 'them'}.` : '.')));
 });
 
 // Accept a match Claude proposed but was not confident enough to apply. This is the
@@ -373,7 +455,8 @@ router.post('/purchases/doc/:id/ai-read', async (req: Request, res: Response) =>
 router.post('/purchases/anomalies/refresh', async (req: Request, res: Response) => {
   try {
     const r = await refreshAnomalies();
-    res.redirect('/purchases?msg=' + encodeURIComponent(`Checked the ledger: ${r.open} open item(s)${r.resolved ? `, ${r.resolved} no longer apply` : ''}.`));
+    res.redirect('/purchases?msg=' + encodeURIComponent(
+      `Checked the ledger: ${r.open} open item(s)${r.resolved ? `, ${r.resolved} no longer apply` : ''}${r.suppressed ? `, ${r.suppressed} held back by your rules` : ''}.`));
   } catch (e: any) {
     res.redirect('/purchases?err=' + encodeURIComponent(e.message || 'Anomaly check failed.'));
   }
@@ -383,6 +466,44 @@ router.post('/purchases/anomalies/:id/dismiss', async (req: Request, res: Respon
   const id = parseInt(String(req.params.id), 10);
   if (id) await dismissAnomaly(id, req.session.user!.id);
   res.redirect('/purchases?msg=' + encodeURIComponent('Dismissed — it will not come back.'));
+});
+
+// Answer a finding in your own words. Claude reads the answer against what it knows,
+// replies, and where the answer is a standing instruction it PROPOSES a rule — which does
+// nothing until a person accepts it.
+router.post('/purchases/anomalies/:id/reply', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const text = String((req.body || {}).text || '').trim();
+  if (!id || !text) { res.redirect('/purchases?err=' + encodeURIComponent('Write something first.')); return; }
+  try {
+    const r = await replyToAnomaly(id, text, req.session.user!.id, req.session.user!.displayName || 'A colleague');
+    await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Purchase anomaly #${id}: replied${r.ruleId ? ' (rule proposed)' : ''}`);
+    res.redirect('/purchases?open=' + id + '&msg=' + encodeURIComponent(
+      r.ruleId ? 'Claude has replied and proposed a rule — accept it and it starts applying.' : 'Claude has replied.'));
+  } catch (e: any) {
+    res.redirect('/purchases?open=' + id + '&err=' + encodeURIComponent(e.message || 'Could not send that.'));
+  }
+});
+
+// A proposed rule does nothing until this is clicked. Accepting a suppress rule is
+// deliberately creating a blind spot, so it is a human's decision, never Claude's.
+router.post('/purchases/rules/:id/:decision(accept|reject)', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const accept = req.params.decision === 'accept';
+  if (id) {
+    await setRuleStatus(id, accept ? 'active' : 'rejected');
+    await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Purchase rule #${id} ${accept ? 'accepted' : 'rejected'}`);
+  }
+  res.redirect('/purchases?msg=' + encodeURIComponent(accept
+    ? 'Rule accepted — it applies from the next check.'
+    : 'Rule rejected — nothing changed.'));
+});
+
+// Switch a live rule back off. Its findings start appearing again on the next sweep.
+router.post('/purchases/rules/:id/off', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (id) await setRuleStatus(id, 'rejected');
+  res.redirect('/purchases?msg=' + encodeURIComponent('Rule switched off — anything it was hiding will come back on the next check.'));
 });
 
 // Send the Monday digest now (the cron sends it at 07:30 on a Monday).

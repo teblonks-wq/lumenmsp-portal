@@ -69,19 +69,33 @@
   var form = document.getElementById('pxUploadForm'); if (!form) return;
   var OK = /\.(pdf|png|jpe?g|webp|tiff?|html?)$/i;
   var MAX = <%= bulkMaxFiles %>;
+  var MAXBYTES = 25 * 1024 * 1024;
   var fileIn = document.getElementById('pxFiles'), folderIn = document.getElementById('pxFolder');
   var note = document.getElementById('pxPickNote'), btn = document.getElementById('pxUploadBtn');
   // A folder tree is full of things that are not invoices. Filter it in the browser so only
   // invoice-shaped files are ever uploaded — and so the count shown is the real one.
+  var trimmed = true;   // false = the browser would not let us shrink the list
   folderIn.addEventListener('change', function(){
     var all = Array.prototype.slice.call(folderIn.files || []);
     var keep = all.filter(function(f){ return OK.test(f.name); });
     var dropped = all.length - keep.length, over = 0;
     if (keep.length > MAX) { over = keep.length - MAX; keep = keep.slice(0, MAX); }
-    try { var dt = new DataTransfer(); keep.forEach(function(f){ dt.items.add(f); }); folderIn.files = dt.files; } catch(e) {}
-    note.textContent = keep.length + ' invoice file(s) found in the folder'
-      + (dropped ? ', ' + dropped + ' other file(s) ignored' : '')
-      + (over ? ' — ' + over + ' over the ' + MAX + '-file limit were left out; upload the rest in a second pass' : '');
+    // Rewriting the file list needs DataTransfer. Where that is unavailable the ORIGINAL
+    // list is still what gets sent, so we must not pretend it was trimmed — sending an
+    // untrimmed tree is what produced a bare Internal Server Error on 2 Sep.
+    trimmed = false;
+    try {
+      var dt = new DataTransfer();
+      keep.forEach(function(f){ dt.items.add(f); });
+      folderIn.files = dt.files;
+      trimmed = true;
+    } catch(e) { trimmed = false; }
+    note.textContent = trimmed
+      ? (keep.length + ' invoice file(s) found in the folder'
+         + (dropped ? ', ' + dropped + ' other file(s) ignored' : '')
+         + (over ? ' — ' + over + ' over the ' + MAX + '-file limit were left out; upload the rest in a second pass' : ''))
+      : (all.length + ' file(s) selected. This browser will not let the list be filtered, so everything in the folder is sent as-is'
+         + (all.length > MAX ? ' — that is over the ' + MAX + '-file limit, so pick a smaller subfolder' : '') + '.');
   });
   fileIn.addEventListener('change', function(){
     var n = fileIn.files ? fileIn.files.length : 0;
@@ -95,6 +109,23 @@
       Array.prototype.forEach.call(inp.files || [], function(f){ list.push(f.webkitRelativePath || f.name); });
     });
     if (!list.length) { e.preventDefault(); alert('Choose one or more invoice files, or a folder.'); return; }
+    // Refuse here rather than let the server reject the whole batch after the upload.
+    if (list.length > MAX) {
+      e.preventDefault();
+      alert(list.length + ' files selected, and the limit is ' + MAX + ' per upload.\n\nNothing has been sent. Pick a subfolder — a year or a supplier at a time — and repeat.');
+      return;
+    }
+    var big = [];
+    [fileIn, folderIn].forEach(function(inp){
+      Array.prototype.forEach.call(inp.files || [], function(f){ if (f.size > MAXBYTES) big.push(f.name); });
+    });
+    if (big.length) {
+      e.preventDefault();
+      alert(big.length + ' file(s) are larger than ' + Math.round(MAXBYTES/1024/1024) + ' MB, which is bigger than any invoice should be:\n\n' +
+            big.slice(0,5).join('\n') + (big.length > 5 ? '\n…and ' + (big.length-5) + ' more' : '') +
+            '\n\nNothing has been sent. Take those out and try again.');
+      return;
+    }
     document.getElementById('pxRelPaths').value = JSON.stringify(list);
     btn.disabled = true; btn.textContent = 'Uploading ' + list.length + ' file(s)…';
     note.textContent = 'Uploading and reading ' + list.length + ' invoice(s) — this can take a minute or two on a big folder. Leave the page open.';
@@ -172,15 +203,35 @@
   <div class="empty-state">No duplicates flagged. If you&rsquo;ve just switched this on, hit <strong>Re-check the whole pool</strong> above &mdash; documents pooled before today have never been checked.</div>
 <% } %>
 
+<% if ((dupeDocs||[]).length) { %>
+<!-- The selection is gathered by script into this standalone form: every row already
+     carries its own form, and a form cannot nest inside another. -->
+<form method="post" action="/purchases/inbox/dupes/bulk" id="dupeBulkForm" style="display:none;">
+  <input type="hidden" name="ids" id="dupeIds">
+  <input type="hidden" name="action" id="dupeAction">
+</form>
+<div class="card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+  <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:0;cursor:pointer;">
+    <input type="checkbox" id="dupeAll"> Select all
+  </label>
+  <span class="muted" style="font-size:12.5px;" id="dupeCount">none selected</span>
+  <div style="flex:1;"></div>
+  <button class="btn" type="button" data-bulk="separate" disabled title="These are genuinely separate bills — they will not be flagged again">Separate bills</button>
+  <button class="btn" type="button" data-bulk="archive" disabled title="Keep the document but take it out of the inbox">Archive</button>
+  <button class="btn" type="button" data-bulk="delete" disabled style="color:var(--bad-fg);" title="Remove the file and the record for good">Delete</button>
+</div>
+<% } %>
+
 <% if (paidDupes.length) { %>
 <div class="card" style="padding:0;margin-bottom:16px;border-left:3px solid var(--bad-fg);">
   <div class="card-header" style="padding:16px 20px 0;"><h2 style="margin:0;">⚠ Looks already paid <span class="muted">(<%= paidDupes.length %>)</span></h2>
     <p class="muted" style="font-size:12px;margin:4px 0 0;">An earlier copy of this invoice is already attached to a payment. Paying this one pays the bill twice.</p></div>
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>Invoice</th><th>Read as</th><th>Already paid</th><th>Why flagged</th><th></th></tr></thead>
+    <thead><tr><th style="width:28px;"></th><th>Invoice</th><th>Read as</th><th>Already paid</th><th>Why flagged</th><th></th></tr></thead>
     <tbody>
     <% paidDupes.forEach(function(d){ %>
       <tr>
+        <td><input type="checkbox" class="dupeChk" value="<%= d.id %>"></td>
         <td><strong><%= d.file_name %></strong><% if (d.rel_path) { %><br><span class="muted" style="font-size:11px;">📁 <%= d.rel_path %></span><% } %><br><span class="muted" style="font-size:11px;"><%= d.from_name || d.from_email || 'Manual upload' %> · <%= dt(d.received_at || d.created_at) %></span></td>
         <td><% if (d.parsed_amount) { %><strong>£<%= Number(d.parsed_amount).toFixed(2) %></strong><% } else { %><span class="muted">no total read</span><% } %><% if (d.parsed_invoice_no) { %><br><span class="muted" style="font-size:11px;">Inv <%= d.parsed_invoice_no %></span><% } %><% if (d.parse_status==='no_text') { %><br><span class="muted" style="font-size:11px;">scanned — no text</span><% } %></td>
         <td><% if (d.paid_payee) { %><strong><%= d.paid_payee %></strong><br><span class="muted" style="font-size:11px;"><%= money(d.paid_amount) %> · <%= d.paid_at ? new Date(d.paid_at).toLocaleDateString('en-GB') : '' %></span><% } else { %><span class="muted">—</span><% } %></td>
@@ -203,10 +254,11 @@
   <div class="card-header" style="padding:16px 20px 0;"><h2 style="margin:0;">Possible duplicates <span class="muted">(<%= maybeDupes.length %>)</span></h2>
     <p class="muted" style="font-size:12px;margin:4px 0 0;">Neither copy has been paid yet. Keep one, delete the other &mdash; or mark it a separate bill if it&rsquo;s a genuine repeat charge.</p></div>
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>Invoice</th><th>Read as</th><th>Looks like</th><th>Why flagged</th><th></th></tr></thead>
+    <thead><tr><th style="width:28px;"></th><th>Invoice</th><th>Read as</th><th>Looks like</th><th>Why flagged</th><th></th></tr></thead>
     <tbody>
     <% maybeDupes.forEach(function(d){ %>
       <tr>
+        <td><input type="checkbox" class="dupeChk" value="<%= d.id %>"></td>
         <td><strong><%= d.file_name %></strong><% if (d.rel_path) { %><br><span class="muted" style="font-size:11px;">📁 <%= d.rel_path %></span><% } %><br><span class="muted" style="font-size:11px;"><%= d.from_name || d.from_email || 'Manual upload' %> · <%= dt(d.received_at || d.created_at) %></span></td>
         <td><% if (d.parsed_amount) { %><strong>£<%= Number(d.parsed_amount).toFixed(2) %></strong><% } else { %><span class="muted">no total read</span><% } %><% if (d.parsed_invoice_no) { %><br><span class="muted" style="font-size:11px;">Inv <%= d.parsed_invoice_no %></span><% } %></td>
         <td><% if (d.dupe_of_name) { %><%= d.dupe_of_name %><% if (d.dupe_of_rel) { %><br><span class="muted" style="font-size:11px;">📁 <%= d.dupe_of_rel %></span><% } %><% } else { %><span class="muted">—</span><% } %></td>
@@ -222,6 +274,39 @@
     </tbody>
   </table></div>
 </div>
+<% } %>
+
+<% if ((dupeDocs||[]).length) { %>
+<script>
+(function(){
+  var form = document.getElementById('dupeBulkForm'); if (!form) return;
+  var all   = document.getElementById('dupeAll');
+  var count = document.getElementById('dupeCount');
+  var btns  = Array.prototype.slice.call(document.querySelectorAll('[data-bulk]'));
+  function boxes(){ return Array.prototype.slice.call(document.querySelectorAll('.dupeChk')); }
+  function chosen(){ return boxes().filter(function(b){ return b.checked; }); }
+  function sync(){
+    var n = chosen().length;
+    btns.forEach(function(b){ b.disabled = n === 0; });
+    count.textContent = n === 0 ? 'none selected' : (n + ' selected');
+    if (all) all.checked = n > 0 && n === boxes().length;
+  }
+  if (all) all.addEventListener('change', function(){ boxes().forEach(function(b){ b.checked = all.checked; }); sync(); });
+  boxes().forEach(function(b){ b.addEventListener('change', sync); });
+  btns.forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var ids = chosen().map(function(b){ return b.value; });
+      if (!ids.length) return;
+      var act = btn.getAttribute('data-bulk');
+      if (act === 'delete' && !confirm('Delete ' + ids.length + ' invoice(s) for good? Anything already attached to a payment is left alone.')) return;
+      document.getElementById('dupeIds').value = ids.join(',');
+      document.getElementById('dupeAction').value = act;
+      form.submit();
+    });
+  });
+  sync();
+})();
+</script>
 <% } %>
 
 <% } else if (view==='suppliers') { %>

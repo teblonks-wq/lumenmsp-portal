@@ -3,6 +3,7 @@ import { pool } from '../db/pool';
 import { aiAskDoc, aiAskText, parseJsonAnswer, docKindFor, docMediaType } from './ai-compose';
 import { normaliseCounterparty, aliasTokensFor } from './purchase-match';
 import { supplierKey } from './purchase-dupes';
+import { activeRules, contextFor } from './purchase-rules';
 
 // ── The Purchase Agent's reading and reasoning ───────────────────────────────────
 // Step one of a purchase agent that eventually runs the ledger end to end. Three jobs,
@@ -215,6 +216,16 @@ export async function aiJudgeMatch(doc: any, candidates: any[], profile: any | n
     if (profile.cadence_days != null) lines.push(`  Bills roughly every ${profile.cadence_days} day(s)`);
     if (profile.qb_account_name) lines.push(`  Normally categorised as: ${profile.qb_account_name}`);
   }
+  // Things a person has TOLD us about this supplier, which we could never have worked out.
+  // These outrank anything inferred: a human's word closes it.
+  try {
+    const told = contextFor(await activeRules(), supplierKey(doc));
+    if (told.length) {
+      lines.push('');
+      lines.push('WHAT WE HAVE BEEN TOLD (a person said this — believe it over your own inference)');
+      told.forEach((t) => lines.push('  ' + t));
+    }
+  } catch { /* rules are an enhancement, never a blocker */ }
   lines.push('');
   lines.push('CANDIDATE PAYMENTS (money out, unmatched)');
   for (const c of candidates) {

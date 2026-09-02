@@ -1376,6 +1376,51 @@ model PurchaseAnomaly {
 }
 
 // â”€â”€ Purchase Ledger — split a single bank transaction across several categories â”€â”€â”€â”€â”€
+// ── Purchase Ledger — the conversation on an anomaly ────────────────────────────
+// Terry or Natalie answer a finding in their own words ("MBNA is my personal card", "the
+// rent is collected quarterly"); Claude reads the answer against what it knows and replies,
+// and where the answer contains a standing instruction it PROPOSES a rule. The proposal is
+// never applied on its own — a mis-generalised rule silently blinds the anomaly list, which
+// is worse than the finding it removed.
+model PurchaseAnomalyNote {
+  id         Int      @id @default(autoincrement())
+  anomalyId  Int      @map("anomaly_id")
+  isClaude   Boolean  @default(false) @map("is_claude")
+  authorId   Int?     @map("author_id")     // null when Claude wrote it
+  authorName String?  @map("author_name")
+  body       String
+  ruleId     Int?     @map("rule_id")       // the rule this reply proposed, if any
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([anomalyId])
+  @@map("purchase_anomaly_notes")
+}
+
+// ── Purchase Ledger — standing rules, in a human's words ────────────────────────
+// What a person has told the agent that it could not have worked out. Two jobs:
+//   • suppress — stop raising a finding that has been answered ("this is expected")
+//   • context  — a fact handed to Claude whenever it judges that supplier
+// Every rule records WHO said it and WHY, and can be switched off. A rule is PROPOSED by
+// Claude from a reply and only becomes active when a person accepts it.
+model PurchaseRule {
+  id          Int       @id @default(autoincrement())
+  scope       String    @default("supplier")  // supplier | global
+  supplierKey String?   @map("supplier_key")
+  kind        String    // suppress | context
+  anomalyKind String?   @map("anomaly_kind")  // which finding it suppresses (null = all)
+  body        String                          // the rule, in plain words
+  reason      String?                         // what the person actually said
+  status      String    @default("proposed")  // proposed | active | rejected
+  fromAnomaly Int?      @map("from_anomaly")
+  createdBy   Int?      @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  activatedAt DateTime? @map("activated_at")
+
+  @@index([status])
+  @@index([supplierKey])
+  @@map("purchase_rules")
+}
+
 model BankTransactionSplit {
   id             Int      @id @default(autoincrement())
   transactionId  Int      @map("transaction_id")

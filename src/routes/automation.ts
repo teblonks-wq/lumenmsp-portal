@@ -6,7 +6,7 @@ import {
 } from '../lib/automation';
 import { listScripts } from '../lib/scripts';
 import { logActivity } from '../lib/activity';
-import { listCatalogue, getCatalogueItem, saveCatalogueItem, setCatalogueActive, backfillFromPackages, blockedReason } from '../lib/software-catalogue';
+import { listCatalogue, getCatalogueItem, saveCatalogueItem, setCatalogueActive, backfillFromPackages, blockedReason, suggestFromEstate } from '../lib/software-catalogue';
 
 const router = Router();
 
@@ -153,13 +153,14 @@ router.post('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req
 // lib/software-catalogue.ts — they have their own pipelines and a generic push produces an
 // endpoint nobody manages.
 router.get('/automation/catalogue', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const [items, packages] = await Promise.all([
+  const [items, packages, suggestions] = await Promise.all([
     listCatalogue(true),
     pool.query('SELECT id, name, version, url FROM agent_packages ORDER BY name'),
+    suggestFromEstate(),
   ]);
   const edit = req.query.edit ? await getCatalogueItem(parseInt(String(req.query.edit), 10)) : null;
   res.render('automation/catalogue', {
-    user: req.session.user!, items, packages: packages.rows, edit,
+    user: req.session.user!, items, packages: packages.rows, edit, suggestions,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
@@ -185,6 +186,21 @@ router.post('/automation/catalogue/:id(\\d+)/active', requireAuth, requireAdmin,
   const on = String((req.body || {}).active) === '1';
   if (id) await setCatalogueActive(id, on);
   res.redirect('/automation/catalogue?msg=' + encodeURIComponent(on ? 'Back in the catalogue.' : 'Retired — it can no longer be scheduled.'));
+});
+
+// Add a WinGet suggestion straight from the estate list. The id came from a machine's own
+// patch scan, so it is a real id rather than one typed from memory — the whole point.
+router.post('/automation/catalogue/add-suggested', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const r = await saveCatalogueItem({
+    name: String(b.name || '').slice(0, 120),
+    category: 'From the estate',
+    source: 'winget',
+    packageRef: String(b.package_ref || ''),
+    notes: b.devices ? `Seen on ${String(b.devices)} machine(s) when it was added.` : null,
+  }, req.session.user!.id);
+  if (!r.ok) { res.redirect('/automation/catalogue?err=' + encodeURIComponent(r.error || 'Could not add that.')); return; }
+  res.redirect('/automation/catalogue?msg=' + encodeURIComponent(`Added ${String(b.name || 'it')} to the catalogue.`));
 });
 
 // Bring every MSI already uploaded into the catalogue, so nothing that used to be

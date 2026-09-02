@@ -151,6 +151,118 @@ export async function dispatchFor(item: CatalogueItem, verb: 'install' | 'upgrad
   } };
 }
 
+// ── Looking software up, live ───────────────────────────────────────────────────
+// Terry, 2 Sep 2026: look the software up rather than typing ids from memory.
+//
+// The search runs ON ONE OF OUR OWN MACHINES via the agent's `winget.search` /
+// `choco.search`, NOT against a public web API. That is deliberate and it is the better
+// answer: the machine searches THE SAME SOURCE the install will use, so an id that appears
+// in the results is an id that will actually install. A public feed can disagree with what
+// a given machine's configured sources hold, and would have us confidently offering an id
+// that then fails on every endpoint.
+//
+// The cost is that it is asynchronous and needs one machine online. Worth it.
+
+export interface LookupHit { packageRef: string; name: string; version: string | null }
+
+/** `winget search` prints a fixed-width table. Column POSITIONS come from the header row —
+ *  splitting on whitespace destroys names like "Google Chrome" and "Microsoft .NET Runtime". */
+export function parseWingetSearch(output: string): LookupHit[] {
+  const lines = String(output || '').split(/\r?\n/);
+  const hdr = lines.findIndex((l) => /(^|\s)Name\s+Id\s+Version/.test(l));
+  if (hdr < 0) return [];
+  const head = lines[hdr];
+  const iName = head.indexOf('Name');
+  const iId = head.indexOf('Id', iName);
+  const iVer = head.indexOf('Version', iId);
+  // The column after Version is Match or Source depending on the query; either ends Version.
+  const iNext = Math.min(
+    ...[head.indexOf('Match', iVer), head.indexOf('Source', iVer)].filter((n) => n > iVer).concat([head.length])
+  );
+  if (iName < 0 || iId < 0 || iVer < 0) return [];
+
+  const out: LookupHit[] = [];
+  for (let i = hdr + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.trim()) continue;
+    if (/^[-─\s]+$/.test(l)) continue;           // the rule under the header
+    if (/^\s*\[winget exit code/.test(l)) continue;
+    const name = l.slice(iName, iId).trim();
+    const id = l.slice(iId, iVer).trim();
+    const version = l.slice(iVer, iNext).trim();
+    if (!id || !name) continue;
+    if (/^-+$/.test(id)) continue;
+    out.push({ packageRef: id, name, version: version || null });
+  }
+  return out;
+}
+
+/** `choco search X --limit-output` prints `id|version` per line — no table to parse. */
+export function parseChocoSearch(output: string): LookupHit[] {
+  const out: LookupHit[] = [];
+  for (const l of String(output || '').split(/\r?\n/)) {
+    const line = l.trim();
+    if (!line || !line.includes('|')) continue;
+    if (/^\d+\s+packages?\s+found/i.test(line)) continue;
+    const [id, version] = line.split('|');
+    if (!id || !id.trim()) continue;
+    out.push({ packageRef: id.trim(), name: id.trim(), version: (version || '').trim() || null });
+  }
+  return out;
+}
+
+/** Results, minus what we already hold and minus anything that must never be deployed here. */
+export async function filterLookupHits(hits: LookupHit[]): Promise<LookupHit[]> {
+  const have = new Set<string>();
+  for (const r of (await pool.query("SELECT lower(package_ref) AS r FROM software_catalogue WHERE package_ref IS NOT NULL")
+    .catch(() => ({ rows: [] as any[] }))).rows) have.add(r.r);
+  const seen = new Set<string>();
+  return hits.filter((h) => {
+    const k = h.packageRef.toLowerCase();
+    if (have.has(k) || seen.has(k)) return false;
+    if (blockedReason(h.name, h.packageRef)) return false;
+    seen.add(k);
+    return true;
+  }).slice(0, 40);
+}
+
+// ── Suggestions from the estate ─────────────────────────────────────────────────
+// Terry, 2 Sep 2026: in practice almost everything will come from WinGet. So the job is to
+// stop anyone typing package ids from memory — a wrong id is silently useless, and a
+// plausible-but-wrong one is worse.
+//
+// We already hold real WinGet ids for software actually running on these machines: the
+// patch scan namespaces them into `device_patches.update_id` as "winget:Google.Chrome".
+// Those ids are better than anything typed, because a machine has already resolved them.
+// So the catalogue proposes what the estate is running, with the number of machines behind
+// each one, and adding it is a click rather than a lookup.
+export interface Suggestion { packageRef: string; title: string; devices: number }
+
+export async function suggestFromEstate(limit = 60): Promise<Suggestion[]> {
+  const rows = (await pool.query(
+    `SELECT replace(p.update_id, 'winget:', '') AS package_ref,
+            max(p.title)                        AS title,
+            count(DISTINCT p.device_id)::int    AS devices
+       FROM device_patches p
+      WHERE p.source = 'winget'
+        AND p.update_id LIKE 'winget:%'
+        AND length(replace(p.update_id, 'winget:', '')) > 2
+      GROUP BY 1
+      ORDER BY devices DESC, title
+      LIMIT $1`, [limit]
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+
+  // Anything already in the catalogue is not a suggestion, however it got there.
+  const have = new Set<string>();
+  for (const r of (await pool.query("SELECT lower(package_ref) AS r FROM software_catalogue WHERE package_ref IS NOT NULL")
+    .catch(() => ({ rows: [] as any[] }))).rows) have.add(r.r);
+
+  return rows
+    .filter((r: any) => !have.has(String(r.package_ref).toLowerCase()))
+    .filter((r: any) => !blockedReason(r.title || '', r.package_ref))
+    .map((r: any) => ({ packageRef: r.package_ref, title: r.title || r.package_ref, devices: r.devices }));
+}
+
 // ── Backfill ────────────────────────────────────────────────────────────────────
 // Every MSI already uploaded becomes a catalogue entry, so switching Automation over to the
 // catalogue does not make anything that used to be deployable disappear. Idempotent, and it

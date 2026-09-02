@@ -22,6 +22,26 @@
   </p>
 </div>
 
+<% if (!edit && (suggestions||[]).length) { %>
+<div class="card" style="margin-bottom:16px;">
+  <h2 style="margin:0 0 4px;font-size:16px;">Already on your estate <span class="muted">(<%= suggestions.length %>)</span></h2>
+  <p class="muted" style="font-size:12.5px;margin:0 0 12px;">These WinGet ids came off your own machines' patch scans, so they are real — no typing, nothing to get wrong. The count is how many machines are running it today. Adding one only makes it deployable; it installs nothing.</p>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;">
+    <% suggestions.slice(0,40).forEach(function(sg){ %>
+    <form method="post" action="/automation/catalogue/add-suggested" style="margin:0;">
+      <input type="hidden" name="package_ref" value="<%= sg.packageRef %>">
+      <input type="hidden" name="name" value="<%= sg.title %>">
+      <input type="hidden" name="devices" value="<%= sg.devices %>">
+      <button class="btn" type="submit" style="font-size:12px;padding:5px 10px;text-align:left;" title="Add <%= sg.packageRef %> to the catalogue">
+        + <%= sg.title %> <span class="muted">· <%= sg.devices %></span>
+      </button>
+    </form>
+    <% }); %>
+  </div>
+  <% if (suggestions.length > 40) { %><p class="muted" style="font-size:11px;margin:10px 0 0;">Showing the 40 most widespread of <%= suggestions.length %>. The rest appear as these are added.</p><% } %>
+</div>
+<% } %>
+
 <div class="card" style="margin-bottom:16px;">
   <h2 style="margin:0 0 10px;font-size:16px;"><%= edit ? 'Edit ' + edit.name : 'Add software' %></h2>
   <form method="post" action="/automation/catalogue" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-items:start;">
@@ -33,7 +53,7 @@
     <div><label class="muted" style="font-size:11px;display:block;">Category</label>
       <input class="input" name="category" value="<%= edit ? edit.category : 'General' %>" placeholder="Browsers" style="width:100%;font-size:13px;"></div>
 
-    <div><label class="muted" style="font-size:11px;display:block;">Installs from *</label>
+    <div><label class="muted" style="font-size:11px;display:block;">Installs from * <span class="muted">— WinGet unless there's a reason</span></label>
       <select class="input" name="source" id="scSource" style="width:100%;font-size:13px;">
         <option value="winget" <%= edit && edit.source==='winget' ? 'selected' : '' %>>WinGet</option>
         <option value="choco"  <%= edit && edit.source==='choco'  ? 'selected' : '' %>>Chocolatey</option>
