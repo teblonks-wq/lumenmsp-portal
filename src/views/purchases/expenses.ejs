@@ -230,8 +230,8 @@
 %>
 <div class="card" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
   <div style="flex:1;min-width:260px;">
-    <h2 style="margin:0 0 4px;font-size:16px;">Possible duplicate invoices</h2>
-    <p class="muted" style="font-size:12px;margin:0;">Byte-identical files are skipped on arrival and never reach this list. What lands here is the harder case &mdash; the <em>same invoice</em> arriving as a <em>different file</em>. Nothing is deleted automatically: a genuine repeat monthly bill looks exactly like a duplicate, so every one of these gets your eye.</p>
+    <h2 style="margin:0 0 4px;font-size:16px;">Documents that may say the same thing twice</h2>
+    <p class="muted" style="font-size:12px;margin:0;">Identical files are skipped on arrival and never reach this list. What lands here needs a word choosing: the <strong>same invoice</strong> arriving twice is duplication; an <strong>invoice and its own receipt</strong> is one purchase documented twice; a <strong>repeat of a regular charge</strong> is two real bills. Only the first can cost you money, and nothing is ever deleted automatically.</p>
   </div>
   <form method="post" action="/purchases/inbox/rescan-dupes" style="margin:0;"><button class="btn" type="submit" title="Re-check every pooled document. Safe to run any time.">↻ Re-check the whole pool</button></form>
   <a class="btn" href="/purchases/log" title="Every decision made about the ledger">📖 Decision log</a>

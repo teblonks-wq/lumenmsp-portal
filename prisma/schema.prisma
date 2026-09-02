@@ -1449,7 +1449,7 @@ model PurchaseRule {
   id          Int       @id @default(autoincrement())
   scope       String    @default("supplier")  // supplier | global
   supplierKey String?   @map("supplier_key")
-  kind        String    // suppress | context
+  kind        String    // suppress | context | category
   anomalyKind String?   @map("anomaly_kind")  // which finding it suppresses (null = all)
   body        String                          // the rule in one plain sentence
   // The rule broken into the conditions it actually applies, so a person can see exactly

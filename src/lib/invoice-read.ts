@@ -69,6 +69,26 @@ export function parseInvoiceFields(text: string): ParsedInvoice {
   return { amount: amount && amount > 0 ? amount : null, invoiceNo, date, status: 'ok' };
 }
 
+/** The filename often carries a FULLER reference than the document text does — a Stripe
+ *  invoice reads "BF13A7E2" on the page but is filed as "Invoice-BF13A7E2-52562.pdf", and the
+ *  suffix is the part that actually identifies the invoice. When the filename holds a longer
+ *  reference that begins with what we read, prefer it. (Found 2 Sep: five months of Stripe
+ *  invoices all recorded as the same "number".) */
+export function betterInvoiceNo(parsed: string | null, fileName: string): string | null {
+  const base = String(parsed || '').trim();
+  const name = String(fileName || '');
+  if (!base || !name) return parsed;
+  // Look for the reference we read, immediately followed by MORE of the same reference.
+  // Anchoring on the base itself rather than tokenising the filename matters: the token
+  // here is "Invoice-BF13A7E2-52562", which does not begin with "BF13A7E2" at all.
+  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = name.match(new RegExp(esc + '[-_/]?[A-Za-z0-9]+', 'i'));
+  if (!m) return parsed;
+  const found = m[0].replace(/[-_/.]+$/, '');
+  return found.length > base.length ? found : parsed;
+}
+
+
 // Parse one pooled document and store the extracted fields. Best-effort.
 export async function parseAndStoreDoc(doc: { id: number; file_path: string; content_type: string | null; file_name: string }): Promise<number | null> {
   let parsed: ParsedInvoice;
@@ -81,7 +101,7 @@ export async function parseAndStoreDoc(doc: { id: number; file_path: string; con
   }
   await pool.query(
     'UPDATE purchase_documents SET parsed_amount=$1, parsed_invoice_no=$2, parsed_date=$3, parse_status=$4 WHERE id=$5',
-    [parsed.amount, parsed.invoiceNo, parsed.date, parsed.status, doc.id]
+    [parsed.amount, betterInvoiceNo(parsed.invoiceNo, doc.file_name), parsed.date, parsed.status, doc.id]
   );
   return parsed.amount;
 }

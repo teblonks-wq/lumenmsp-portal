@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import { pool } from '../db/pool';
+import { Relation, phrase, isAlarming } from './purchase-terms';
 
 // ── Purchase-ledger duplicate detection ──────────────────────────────────────────
 // Two different problems, deliberately handled differently:
@@ -77,6 +78,34 @@ export function supplierKey(doc: any): string {
     .join(' ');
 }
 
+// ── A reference shared by many invoices is not an invoice number ────────────────
+// Found live 2 Sep by reading the whole duplicates list: "BF13A7E2" was recorded as the
+// invoice number on Stripe invoices in March, April, May, June AND August, and "0FD3D5D9"
+// on every RoboShadow one. They are ACCOUNT ids — the real numbers are BF13A7E2-52562,
+// -55795, -59075. Treating the shared prefix as an invoice number made five months of
+// separate bills look like one invoice paid five times.
+//
+// No supplier-specific rule can catch this; the data says it instead. A value appearing on
+// three or more documents cannot be identifying one of them, so it is not used as evidence.
+const SHARED_MIN = 3;
+let _sharedCache: Set<string> | null = null;
+let _sharedAt = 0;
+
+async function sharedReferences(): Promise<Set<string>> {
+  if (_sharedCache && Date.now() - _sharedAt < 60_000) return _sharedCache;
+  const rows = (await pool.query(
+    `SELECT upper(regexp_replace(parsed_invoice_no,'[^A-Za-z0-9]','','g')) AS n, COUNT(*)::int c
+       FROM purchase_documents
+      WHERE parsed_invoice_no IS NOT NULL AND parsed_invoice_no <> ''
+      GROUP BY 1 HAVING COUNT(*) >= $1`, [SHARED_MIN]
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  _sharedCache = new Set(rows.map((r: any) => r.n));
+  _sharedAt = Date.now();
+  return _sharedCache;
+}
+
+export function invalidateSharedReferences(): void { _sharedCache = null; }
+
 // Invoice numbers are only comparable once stripped of separators and case.
 function normInvNo(v: any): string { return String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
 
@@ -84,6 +113,15 @@ function normInvNo(v: any): string { return String(v || '').toUpperCase().replac
 function sameDate(a: any, b: any): boolean {
   const x = String(a || '').trim().toLowerCase(), y = String(b || '').trim().toLowerCase();
   return !!x && x === y;
+}
+
+// A RECEIPT and the INVOICE it pays are the same purchase documented twice. That is worth
+// noticing — you only want one of them on the ledger — but it is NOT the "you are about to
+// pay this twice" case, and dressing it up as one wastes the alarm. Seen live 2 Sep: an
+// Anthropic receipt and its own invoice, same charge id, flagged as a double payment.
+const RECEIPT_NAME = /\breceipts?\b/i;
+function isReceipt(doc: any): boolean {
+  return RECEIPT_NAME.test(String(doc?.file_name || '')) || String(doc?.ai_doc_type || '') === 'receipt';
 }
 
 export interface DupeVerdict {
@@ -105,10 +143,14 @@ export async function assessDuplicate(doc: any): Promise<DupeVerdict> {
   // filename alone produces false positives on every monthly bill.
   if (!invNo && amount == null) return none;
 
+  // A reference used across many documents identifies the ACCOUNT, not this invoice.
+  const shared = await sharedReferences();
+  const invNoUsable = !!invNo && !shared.has(invNo);
+
   const others = (await pool.query(
     `SELECT d.id, d.from_name, d.from_email, d.file_name, d.parsed_invoice_no, d.parsed_amount,
             d.parsed_date, d.status, d.bank_transaction_id, d.received_at, d.created_at,
-            a.ai_supplier,
+            a.ai_supplier, a.ai_doc_type,
             t.booked_at AS txn_booked_at, t.counterparty AS txn_payee, t.amount AS txn_amount
        FROM purchase_documents d
        LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
@@ -132,7 +174,7 @@ export async function assessDuplicate(doc: any): Promise<DupeVerdict> {
     // numbers. Without this, every subscription and every monthly rent looks like a
     // duplicate of itself: Anthropic TXPMYYAL-0003 and -0004 are both £90 a month apart,
     // and Gemini House rent INV-2179 and INV-2267 are both £855. (Reported live 2 Sep.)
-    if (invNo && oInv && invNo !== oInv) continue;
+    if (invNoUsable && oInv && !shared.has(oInv) && invNo !== oInv) continue;
 
     // Same again for the date. Two invoices bearing different dates are two bills, however
     // alike the amounts. Only applied when BOTH were read — an unread date proves nothing.
@@ -140,7 +182,7 @@ export async function assessDuplicate(doc: any): Promise<DupeVerdict> {
     if (bothDated && !sameDate(doc.parsed_date, o.parsed_date)) continue;
 
     let reason: string | null = null, strength = 0;
-    if (invNo && oInv && invNo === oInv) {
+    if (invNoUsable && oInv && !shared.has(oInv) && invNo === oInv) {
       // An invoice number repeating is the strongest signal there is; with the amount
       // agreeing too it is as close to certain as this can get without a human.
       reason = 'same invoice number ' + (doc.parsed_invoice_no || invNo) + (sameAmount ? ' and same total' : '');
@@ -150,7 +192,7 @@ export async function assessDuplicate(doc: any): Promise<DupeVerdict> {
       // them — that is a genuine duplicate rather than a recurring charge.
       reason = 'same supplier, same total and same invoice date';
       strength = 3;
-    } else if (sameSupplier && sameAmount && !invNo && !oInv) {
+    } else if (sameSupplier && sameAmount && !invNoUsable && !oInv) {
       // Neither document gave up an invoice number or a date, so there is nothing left to
       // tell a duplicate from a repeat monthly charge. Worth a human's eye, nothing more.
       reason = 'same supplier and same total, and neither invoice gave a number or a date to tell them apart';
@@ -172,24 +214,43 @@ export async function assessDuplicate(doc: any): Promise<DupeVerdict> {
 
   if (!best) return none;
   const o = best.row;
+
+  // Name the RELATION rather than reaching for the nearest word. An invoice and its own
+  // receipt are one purchase; a repeat of a regular charge is two real bills; only the same
+  // invoice arriving twice is duplication. See lib/purchase-terms.ts.
+  const rel: Relation = isReceipt(doc) !== isReceipt(o)
+    ? 'same_purchase'
+    : (best.strength >= 3 ? 'same_invoice' : 'coincidence');
+
+  if (!isAlarming(rel)) {
+    const which = rel === 'same_purchase'
+      ? (isReceipt(doc) ? `this is the receipt for ${o.file_name}` : `this is the invoice for ${o.file_name}`)
+      : `${o.file_name} shares the total`;
+    return {
+      status: 'likely', ofId: o.id, paidTxnId: null,
+      reason: phrase(rel, 'likely', `${which}. ${best.reason}.`),
+    };
+  }
+
   if (o.status === 'attached' && o.bank_transaction_id) {
     const when = o.txn_booked_at ? new Date(o.txn_booked_at).toLocaleDateString('en-GB') : 'an earlier date';
+    // 'paid' is the loudest thing this system says, so it is reserved for the case that
+    // earns it: the SAME INVOICE, already attached to a payment. Anything softer says so.
     return {
       status: 'paid',
       ofId: o.id,
       paidTxnId: o.bank_transaction_id,
-      reason: 'Looks ALREADY PAID — ' + best.reason + '; the earlier copy (' + o.file_name + ') is attached to a payment to ' +
-        (o.txn_payee || 'a supplier') + ' on ' + when + '.',
+      reason: `Paying this would pay the bill twice — ${best.reason}, and that copy (${o.file_name}) is already attached to a payment to ${o.txn_payee || 'a supplier'} on ${when}.`,
     };
   }
-  return { status: 'likely', ofId: o.id, paidTxnId: null, reason: 'Possible duplicate of ' + o.file_name + ' — ' + best.reason + '.' };
+  return { status: 'likely', ofId: o.id, paidTxnId: null, reason: phrase('same_invoice', 'likely', `${o.file_name} — ${best.reason}.`) };
 }
 
 // Assess one document and store the verdict. A human 'dismissed' verdict is sticky —
 // a rescan must never re-flag something Terry has already said is a separate bill.
 export async function assessAndStore(docId: number): Promise<DupeVerdict> {
   const d = (await pool.query(
-    `SELECT d.*, a.ai_supplier FROM purchase_documents d
+    `SELECT d.*, a.ai_supplier, a.ai_doc_type FROM purchase_documents d
        LEFT JOIN purchase_doc_ai a ON a.document_id = d.id WHERE d.id=$1`, [docId])).rows[0];
   if (!d) return { status: null, ofId: null, paidTxnId: null, reason: null };
   if (d.dupe_status === 'dismissed') return { status: null, ofId: null, paidTxnId: null, reason: null };

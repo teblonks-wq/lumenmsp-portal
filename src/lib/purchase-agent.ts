@@ -232,6 +232,15 @@ const JUDGE_SYSTEM = [
   '- What was BOUGHT matters: a hardware invoice and a monthly service charge from the same supplier are different payments even at similar amounts.',
   '- The service PERIOD on the invoice tells you roughly when it would be collected.',
   '- An amount that matches but whose supplier, period and reference all disagree is a coincidence, not a match. Say so and return null.',
+  'USE THE RIGHT WORD. These are different things and calling them all "duplicate" is how this system was wrong for weeks:',
+  '  the same INVOICE arriving twice — real duplication, and money is at risk if one is already paid;',
+  '  an INVOICE AND ITS OWN RECEIPT — one purchase documented twice. Stripe, Anthropic and RoboShadow both send. NOT a second bill;',
+  '  a RECURRING CHARGE in a later period — two genuine bills that happen to be the same size;',
+  '  an ACCOUNT REFERENCE that several of a supplier\'s invoices share — it identifies the account, NOT this bill, and proves nothing.',
+  'WHAT DECIDES WHAT:',
+  '- Facts are settled before you see them and you may not overrule one: identical files, references that are equal or unequal, dates, arithmetic, whether a payee is on the ignore list. If a fact contradicts you, you are wrong.',
+  '- Yours is the judgement facts cannot reach: what this document IS, whether two documents are the same purchase, whether what was bought explains the size, whether an oddity matters at all.',
+  '- Say only what the evidence carries. "Worth checking" and "very probably" are available to you, and using the strongest words for a weak case is the failure to avoid.',
   'ABOUT RAISING A CONCERN OVER THE AMOUNT — read this before you do:',
   '- The learned range describes what this supplier has billed BEFORE. It is not a limit, and exceeding it is not a fault.',
   '- READ THE LINE ITEMS FIRST. A hardware purchase is not the same thing as a monthly service charge, and comparing one against the other tells you nothing. If the lines explain the size, there is no concern to raise.',
@@ -315,4 +324,51 @@ export async function aiJudgeMatch(doc: any, candidates: any[], profile: any | n
     reason: String(v.reason || '').slice(0, 600),
     concern: v.concern ? String(v.concern).slice(0, 400) : null,
   };
+}
+
+// ── Unlearning ──────────────────────────────────────────────────────────────────
+// A wrong match does not only put a document in the wrong place — it TEACHES. When Anthropic
+// invoices were wrongly matched to a personal transfer, "daniel okelly" was learned as one of
+// Anthropic's bank descriptors, so the wrong answer got easier to reach every time. Undoing
+// the link has to undo the lesson. (Terry, 2 Sep: "the daniel is still there".)
+export async function unlearnDescriptor(supplierKeyValue: string, counterparty: string | null): Promise<void> {
+  if (!supplierKeyValue || !counterparty) return;
+  const desc = normaliseCounterparty(counterparty);
+  if (!desc) return;
+  const rows = (await pool.query(
+    'SELECT id, descriptors FROM purchase_supplier_profiles WHERE supplier_key=$1', [supplierKeyValue]
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  for (const r of rows) {
+    let list: string[] = [];
+    try { list = r.descriptors ? JSON.parse(r.descriptors) : []; } catch { list = []; }
+    const kept = list.filter((d) => d !== desc);
+    if (kept.length === list.length) continue;
+    await pool.query(
+      'UPDATE purchase_supplier_profiles SET descriptors=$1, match_count = GREATEST(match_count - 1, 0), updated_at=NOW() WHERE id=$2',
+      [JSON.stringify(kept), r.id]
+    ).catch(() => {});
+  }
+}
+
+/** Throw the learned profiles away and rebuild them from the matches that ACTUALLY stand
+ *  right now. The honest reset: months of averages built on links since undone, or on the
+ *  old bug that filed every forwarded invoice under the colleague who forwarded it, cannot
+ *  be nudged back into shape one correction at a time. Nothing is lost — every profile is
+ *  derived data, and the confirmed matches are the source. */
+export async function rebuildSupplierProfiles(): Promise<{ cleared: number; rebuilt: number; skipped: number }> {
+  const cleared = Number((await pool.query('SELECT COUNT(*)::int c FROM purchase_supplier_profiles').catch(() => ({ rows: [{ c: 0 }] }))).rows[0].c);
+  await pool.query('DELETE FROM purchase_supplier_profiles').catch(() => {});
+  const pairs = (await pool.query(
+    `SELECT d.id AS doc_id, d.bank_transaction_id AS txn_id
+       FROM purchase_documents d
+       JOIN bank_transactions t ON t.id = d.bank_transaction_id
+      WHERE d.status = 'attached' AND d.bank_transaction_id IS NOT NULL
+      ORDER BY t.booked_at`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  let rebuilt = 0, skipped = 0;
+  for (const p of pairs) {
+    try { await learnFromMatch(p.doc_id, p.txn_id); rebuilt++; }
+    catch { skipped++; }
+  }
+  return { cleared, rebuilt, skipped };
 }
