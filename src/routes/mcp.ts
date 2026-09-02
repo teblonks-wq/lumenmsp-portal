@@ -240,7 +240,8 @@ const TOOLS: Tool[] = [
                 d.status, d.bank_transaction_id, d.dupe_status, d.dupe_of_id, d.dupe_reason,
                 d.suggest_txn_id, d.suggest_confidence, d.suggest_reason,
                 a.ai_supplier, a.ai_gross, a.ai_net, a.ai_vat, a.ai_currency, a.ai_period,
-                a.ai_summary, a.ai_kind, a.ai_lines, a.ai_billed_to, a.ai_to_us, a.ai_concerns,
+                a.ai_summary, a.ai_kind, a.ai_lines, a.ai_billed_to, a.ai_to_us, a.ai_doc_type, a.ai_concerns,
+                d.doc_type, d.doc_type_by,
                 t.counterparty AS paid_to, t.amount AS paid_amount, t.booked_at AS paid_at,
                 t.matched_by, t.match_confidence, t.match_reason, t.qb_account_name AS coded_to
            FROM purchase_documents d
@@ -364,7 +365,7 @@ const TOOLS: Tool[] = [
       type: 'object',
       properties: {
         status: { type: 'string', description: 'open | answered | dismissed | resolved. Default open.' },
-        kind: { type: 'string', description: 'already_paid | not_a_purchase (one of our own sales invoices in the purchase pile) | possible_duplicate | unpaid_invoice | payment_no_invoice | price_jump | missing_bill | new_supplier | vat_mismatch | ai_concern' },
+        kind: { type: 'string', description: 'already_paid | invoice_not_received (a supplier announced an invoice we do not hold) | not_a_purchase (one of our own sales invoices in the purchase pile) | possible_duplicate | unpaid_invoice | payment_no_invoice | price_jump | missing_bill | new_supplier | vat_mismatch | ai_concern' },
         with_conversation: { type: 'boolean', description: 'Include the full thread on each. Default true.' },
         limit: { type: 'number', description: 'Default 100, max 400.' },
       },

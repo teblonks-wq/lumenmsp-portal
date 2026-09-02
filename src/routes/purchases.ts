@@ -11,7 +11,7 @@ import { syncOpenBanking } from '../lib/openbanking';
 import { syncInvoiceInbox, getInvoiceMailbox, autoMatchInvoices } from '../lib/purchase-inbox';
 import { hashFile, findByHash, assessAndStore, rescanAllDuplicates, backfillHashes } from '../lib/purchase-dupes';
 import { attachDocToTxn, looksLikeStatement } from '../lib/purchase-inbox';
-import { normaliseCounterparty } from '../lib/purchase-match';
+import { normaliseCounterparty, invalidateIgnoreList, loadIgnoreList } from '../lib/purchase-match';
 import { aiReadUnreadable, aiReadInvoiceDoc } from '../lib/purchase-agent';
 import { refreshAnomalies, listAnomalies, dismissAnomaly, sendAnomalyDigest } from '../lib/purchase-anomalies';
 import { replyToAnomaly, notesFor, listRules, setRuleStatus, conditionsOf, rulesFiledUnderAPerson } from '../lib/purchase-rules';
@@ -345,14 +345,11 @@ router.post('/purchases/inbox/upload', bulkUpload, async (req: Request, res: Res
       const relDir = rel && rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : null;
 
       // A statement is not an invoice — it restates a balance made of invoices we already
-      // hold. Pooling one gives a total that matches nothing, or matches a payment and hides
-      // the real invoice behind it.
-      if (looksLikeStatement(displayName, null)) {
-        try { fs.unlinkSync(f.path); } catch { /* leave it */ }
-        statements++;
-        if (statementNames.length < 5) statementNames.push(displayName);
-        continue;
-      }
+      // hold, and matching one would hide the real invoice behind it. But it is NOT deleted:
+      // for tax we must be able to account for every document that arrived, and the filename
+      // is a guess. It is pooled, marked, kept out of matching, and a human can overrule it.
+      const isStatement = looksLikeStatement(displayName, null);
+      if (isStatement) { statements++; if (statementNames.length < 5) statementNames.push(displayName); }
 
       const hash = hashFile(f.path);
       if (hash) {
@@ -367,12 +364,15 @@ router.post('/purchases/inbox/upload', bulkUpload, async (req: Request, res: Res
       }
 
       const ins = await pool.query(
-        `INSERT INTO purchase_documents (source, from_name, subject, received_at, file_name, file_path, content_type, size_bytes, status, file_hash, rel_path, batch_id)
-         VALUES ('upload',$1,$2,NOW(),$3,$4,$5,$6,'new',$7,$8,$9) RETURNING id`,
-        [relDir ? 'Bulk upload — ' + relDir : 'Manual upload', displayName, displayName, f.path, f.mimetype || null, f.size || null, hash, relDir, batchId]
+        `INSERT INTO purchase_documents (source, from_name, subject, received_at, file_name, file_path, content_type, size_bytes, status, file_hash, rel_path, batch_id, doc_type, doc_type_by)
+         VALUES ('upload',$1,$2,NOW(),$3,$4,$5,$6,'new',$7,$8,$9,$10,$11) RETURNING id`,
+        [relDir ? 'Bulk upload — ' + relDir : 'Manual upload', displayName, displayName, f.path, f.mimetype || null, f.size || null, hash, relDir, batchId,
+         isStatement ? 'statement' : null, isStatement ? 'filename' : null]
       );
       const docId = ins.rows[0].id;
       added++;
+      // A statement is filed and left alone — not parsed, not matched, not duplicate-checked.
+      if (isStatement) continue;
       // Parse first — the duplicate check needs the invoice number and total to say anything.
       try { await parseAndStoreDoc({ id: docId, file_path: f.path, content_type: f.mimetype || null, file_name: displayName }); } catch { /* parse best-effort */ }
       try {
@@ -395,7 +395,7 @@ router.post('/purchases/inbox/upload', bulkUpload, async (req: Request, res: Res
     return;
   }
   const bits = [`Added ${added} invoice(s)`];
-  if (statements) bits.push(`ignored ${statements} statement${statements === 1 ? '' : 's'} (${statementNames.join(', ')}${statements > statementNames.length ? ', …' : ''}) — a statement is not an invoice`);
+  if (statements) bits.push(`filed ${statements} statement${statements === 1 ? '' : 's'} as not-an-invoice (${statementNames.join(', ')}${statements > statementNames.length ? ', …' : ''}) — kept, not deleted; say the word if one of them really is an invoice`);
   if (skipped) bits.push(`skipped ${skipped} exact duplicate${skipped === 1 ? '' : 's'}${skippedNames.length ? ' (' + skippedNames.join(', ') + (skipped > skippedNames.length ? ', …' : '') + ')' : ''}`);
   if (paidWarn) bits.push(`${paidWarn} look ALREADY PAID`);
   if (flagged) bits.push(`${flagged} possible duplicate${flagged === 1 ? '' : 's'}`);
@@ -692,14 +692,53 @@ router.post('/purchases/rules/:id/off', async (req: Request, res: Response) => {
 // Every rule in one place — live, waiting, and turned down. Terry asked for somewhere to
 // review them after eight near-identical ones were proposed at once on 2 Sep.
 router.get('/purchases/rules', async (req: Request, res: Response) => {
-  const [rules, misfiled] = await Promise.all([listRules(), rulesFiledUnderAPerson()]);
+  await loadIgnoreList();  // seeds the list on first visit so the screen is never empty
+  const [rules, misfiled, ignores] = await Promise.all([
+    listRules(), rulesFiledUnderAPerson(),
+    pool.query('SELECT * FROM purchase_ignore_rules ORDER BY is_active DESC, label').catch(() => ({ rows: [] as any[] })),
+  ]);
   const badIds = new Set(misfiled.map((r: any) => r.id));
   res.render('purchases/rules', {
     user: req.session.user!,
     rules: rules.map((r: any) => ({ ...r, conditionList: conditionsOf(r), misfiled: badIds.has(r.id) })),
-    misfiledCount: badIds.size,
+    misfiledCount: badIds.size, ignores: ignores.rows,
     notice: req.query.msg || null, error: req.query.err || null,
   });
+});
+
+// The ignore list — payees that will never produce an invoice. Adding one says "stop asking
+// me for an invoice from this payee", so it is the one place a payment may legitimately have
+// no document behind it. Everything else stays on the worklist, because for tax we must hold
+// an invoice for every real purchase.
+router.post('/purchases/ignore', async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const pattern = String(b.pattern || '').trim();
+  const label = String(b.label || '').trim();
+  if (!pattern || !label) { res.redirect('/purchases/rules?err=' + encodeURIComponent('Give both the payee text and what it is.')); return; }
+  if (b.is_regex === '1') {
+    try { new RegExp(pattern, 'i'); }
+    catch (e: any) { res.redirect('/purchases/rules?err=' + encodeURIComponent('That is not a valid pattern: ' + e.message)); return; }
+  }
+  await pool.query(
+    'INSERT INTO purchase_ignore_rules (pattern, label, reason, is_regex, is_active, created_by) VALUES ($1,$2,$3,$4,true,$5)',
+    [pattern.slice(0, 200), label.slice(0, 160), String(b.reason || '').slice(0, 300) || null, b.is_regex === '1', req.session.user!.id]
+  );
+  invalidateIgnoreList();
+  await logActivity(req.session.user!.id, 'created', 'purchase_agent', 0, `Purchase ignore list: added "${label}" (${pattern})`);
+  try { await refreshAnomalies(); } catch { /* nightly sweep will catch up */ }
+  res.redirect('/purchases/rules?msg=' + encodeURIComponent('Added to the ignore list — payments matching it will stop asking for an invoice.'));
+});
+
+router.post('/purchases/ignore/:id/toggle', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (id) {
+    const r = (await pool.query('UPDATE purchase_ignore_rules SET is_active = NOT is_active WHERE id=$1 RETURNING label, is_active', [id])).rows[0];
+    invalidateIgnoreList();
+    await logActivity(req.session.user!.id, 'updated', 'purchase_agent', id,
+      `Purchase ignore list: "${r?.label || id}" turned ${r?.is_active ? 'on' : 'off'}`);
+    try { await refreshAnomalies(); } catch { /* nightly sweep will catch up */ }
+  }
+  res.redirect('/purchases/rules?msg=' + encodeURIComponent('Ignore list updated — the ledger has been re-checked.'));
 });
 
 // Clear out every rule that was filed under a colleague's name instead of a supplier.
@@ -910,6 +949,51 @@ router.post('/purchases/txn/:id', upload.single('receipt'), async (req: Request,
     alsoCoded ? `Saved — and the same coding was applied to ${alsoCoded} other outstanding payment(s) to that payee.` : 'Saved'));
 });
 
+// Lock a run of payments in one go. Terry, 2 Sep: everything outstanding has to be locked
+// for the bookkeeper's year end, "but I don't want to not attach an invoice — keep being
+// consistent."
+//
+// So locking does NOT mean finished. A locked payment with no invoice behind it STILL shows
+// on the worklist as "no invoice" until one is attached — the `payment_no_invoice` detector
+// deliberately includes 'categorised'. The bookkeeper gets a coded, locked ledger today and
+// the missing paperwork stays visible and chaseable, which is the honest version of both.
+router.post('/purchases/txns/bulk-lock', async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const ids = String(b.ids || '').split(',').map((v: string) => parseInt(v.trim(), 10)).filter(Boolean).slice(0, 1000);
+  if (!ids.length) { res.redirect('/purchases/expenses?err=' + encodeURIComponent('Nothing was selected.')); return; }
+  const acctId = String(b.qb_account_id || '').trim() || null;
+  const acctName = String(b.qb_account_name || '').trim() || null;
+
+  // Only ever touch what is still outstanding, and never overwrite a category somebody
+  // already chose — a bulk action must not quietly recode considered work.
+  const r = acctId
+    ? await pool.query(
+        `UPDATE bank_transactions
+            SET qb_account_id = COALESCE(NULLIF(qb_account_id,''), $1),
+                qb_account_name = CASE WHEN COALESCE(qb_account_id,'') = '' THEN $2 ELSE qb_account_name END,
+                status = 'categorised', updated_at = NOW()
+          WHERE id = ANY($3) AND status = 'new' AND amount < 0`, [acctId, acctName, ids])
+    : await pool.query(
+        `UPDATE bank_transactions SET status='categorised', updated_at=NOW()
+          WHERE id = ANY($1) AND status = 'new' AND amount < 0
+            AND qb_account_id IS NOT NULL AND qb_account_id <> ''`, [ids]);
+
+  const locked = r.rowCount || 0;
+  const stillOpen = Number((await pool.query(
+    "SELECT COUNT(*)::int n FROM bank_transactions WHERE id = ANY($1) AND status='new'", [ids])).rows[0].n);
+  const noInvoice = Number((await pool.query(
+    "SELECT COUNT(*)::int n FROM bank_transactions WHERE id = ANY($1) AND attachment_path IS NULL", [ids])).rows[0].n);
+
+  await logActivity(req.session.user!.id, 'updated', 'purchase_agent', 0,
+    `Purchase: bulk-locked ${locked} payment(s)${acctName ? ' coded to ' + acctName : ''}; ${noInvoice} of them have no invoice attached yet`);
+  try { await refreshAnomalies(); } catch { /* nightly sweep will catch up */ }
+
+  res.redirect('/purchases/expenses?period=' + encodeURIComponent(String(b.period || '')) + '&msg=' + encodeURIComponent(
+    `Locked ${locked} payment(s).` +
+    (stillOpen ? ` ${stillOpen} were left alone because they still have no category — give them one first.` : '') +
+    (noInvoice ? ` ${noInvoice} still have no invoice attached — they stay on the worklist until one is, so nothing is lost.` : '')));
+});
+
 // Ignore / un-ignore a transaction (kept out of the reconcile list and the QB push).
 router.post('/purchases/txn/:id/ignore', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
@@ -983,7 +1067,20 @@ router.post('/purchases/txn/:id/unlink-invoice', async (req: Request, res: Respo
   if (id) {
     await pool.query('UPDATE bank_transactions SET attachment_path=NULL, attachment_name=NULL, matched_by=NULL, match_confidence=NULL, match_reason=NULL, matched_at=NULL, updated_at=NOW() WHERE id=$1', [id]);
     // If a pooled invoice was linked to it, return it to the inbox.
-    await pool.query("UPDATE purchase_documents SET status='new', bank_transaction_id=NULL WHERE bank_transaction_id=$1", [id]);
+    const freed = (await pool.query(
+      "UPDATE purchase_documents SET status='new', bank_transaction_id=NULL WHERE bank_transaction_id=$1 RETURNING id", [id])).rows;
+    // "Looks already paid" was computed from THIS link. Unlinking it makes that claim false,
+    // so every document flagged because of one of these must be judged again — otherwise the
+    // screen goes on asserting a payment that no longer exists. (Seen live 2 Sep: a wrongly
+    // matched £90 kept another invoice flagged as paid long after the link was undone.)
+    for (const f of freed) {
+      const dependents = (await pool.query(
+        "SELECT id FROM purchase_documents WHERE dupe_of_id=$1 AND dupe_status='paid'", [f.id])).rows;
+      for (const dep of dependents) { await assessAndStore(dep.id).catch(() => {}); }
+      await assessAndStore(f.id).catch(() => {});
+    }
+    await pool.query(
+      "UPDATE purchase_anomalies SET status='resolved' WHERE kind='already_paid' AND status='open' AND txn_id=$1", [id]).catch(() => {});
   }
   if (req.xhr || String(req.get('accept') || '').includes('application/json')) { res.json({ ok: true }); return; }
   res.redirect('/purchases/expenses?msg=' + encodeURIComponent('Invoice unlinked.'));

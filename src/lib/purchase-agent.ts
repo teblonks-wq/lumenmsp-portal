@@ -36,13 +36,21 @@ export interface AiInvoiceRead {
 const READ_SYSTEM = [
   'You read supplier invoices for a UK IT company and return structured facts. You are looking at the document itself.',
   'Return STRICT JSON only, no prose, with exactly these keys:',
-  '{"supplier":string|null,"billedTo":string|null,"addressedToUs":true|false|null,"invoiceNo":string|null,"date":"YYYY-MM-DD"|null,"net":number|null,"vat":number|null,"gross":number|null,"currency":string|null,"period":string|null,"summary":string|null,"lines":[{"description":string,"amount":number|null}],"kind":"hardware"|"service"|"subscription"|"licence"|"rent"|"other"|null,"concerns":string|null}',
+  '{"supplier":string|null,"billedTo":string|null,"addressedToUs":true|false|null,"invoiceNo":string|null,"date":"YYYY-MM-DD"|null,"net":number|null,"vat":number|null,"gross":number|null,"currency":string|null,"period":string|null,"summary":string|null,"lines":[{"description":string,"amount":number|null}],"kind":"hardware"|"service"|"subscription"|"licence"|"rent"|"other"|null,"docType":"invoice"|"credit_note"|"statement"|"notification"|"receipt"|"other","concerns":string|null}',
   'RULES:',
   '- gross is the amount the customer must PAY for THIS invoice, VAT included. On a statement showing an account balance carried forward, gross is this invoice only, never the running balance.',
   '- Use null, never a guess, for anything not clearly on the page. A wrong number is far worse than a missing one.',
   '- supplier is the company that ISSUED the invoice, as printed on it. Never the person who emailed it and never our own company (Lumen IT Solutions / Lumen Solutions) — an invoice addressed TO us was forwarded by a colleague.',
   '- currency is the ISO code shown (GBP, USD, EUR). If the document shows $ with no other clue, say USD.',
   '- period is the service period the bill covers if stated (e.g. "1-31 Aug 2026"), else null.',
+  '- docType: WHAT THIS DOCUMENT ACTUALLY IS. This matters more than anything else on the page:',
+  '    "invoice" — a demand for payment for goods or services. The only kind we owe money on.',
+  '    "statement" — a restatement of an account balance made up of invoices we already hold. Never pay one.',
+  '    "notification" — an email saying an invoice is READY or AVAILABLE, with a link, and no actual invoice on it. There is no document here, only a message about one.',
+  '    "credit_note" — money coming back, not going out.',
+  '    "receipt" — proof something was already paid.',
+  '- Judge docType by READING it, not by its title. Plenty of real invoices are headed "Statement", and plenty of notification emails say the word "Invoice" in large letters and contain nothing but a button.',
+  '- For a "notification", set gross to null unless a real total is printed. A figure quoted in a "your bill is ready" email is not an invoice total.',
   '- billedTo: the company the invoice is ADDRESSED TO — the "Bill to" / "Invoice to" / "Customer" name. Not the supplier.',
   '- addressedToUs: true when billedTo is Lumen IT Solutions, Lumen Solutions, LumenMSP or an obvious variant of our own name. FALSE when it is billed to somebody else — that means it is one of OUR OWN sales invoices sitting in the purchase pile, not something we owe. null only if the page does not say.',
   '- lines: the invoice LINE ITEMS, up to 10, each a short description and its amount. This is the most useful thing on the page — a total says nothing about what was bought, and the lines say everything. Empty array if the document has no itemised lines.',
@@ -79,18 +87,28 @@ export async function aiReadInvoiceDoc(doc: any): Promise<AiInvoiceRead | null> 
         .filter((l: any) => l.description)
     : [];
   await pool.query(
-    `INSERT INTO purchase_doc_ai (document_id, ai_supplier, ai_invoice_no, ai_date, ai_net, ai_vat, ai_gross, ai_currency, ai_period, ai_summary, ai_lines, ai_kind, ai_billed_to, ai_to_us, ai_concerns, read_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NOW())
+    `INSERT INTO purchase_doc_ai (document_id, ai_supplier, ai_invoice_no, ai_date, ai_net, ai_vat, ai_gross, ai_currency, ai_period, ai_summary, ai_lines, ai_kind, ai_billed_to, ai_to_us, ai_doc_type, ai_concerns, read_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
      ON CONFLICT (document_id) DO UPDATE SET ai_supplier=$2, ai_invoice_no=$3, ai_date=$4, ai_net=$5, ai_vat=$6,
        ai_gross=$7, ai_currency=$8, ai_period=$9, ai_summary=$10, ai_lines=$11, ai_kind=$12,
-       ai_billed_to=$13, ai_to_us=$14, ai_concerns=$15, read_at=NOW()`,
+       ai_billed_to=$13, ai_to_us=$14, ai_doc_type=$15, ai_concerns=$16, read_at=NOW()`,
     [doc.id, r.supplier || null, r.invoiceNo || null, r.date || null, num(r.net), num(r.vat), num(r.gross),
      r.currency || null, r.period || null, r.summary || null,
      lines.length ? JSON.stringify(lines) : null, (r as any).kind || null,
-     (r as any).billedTo || null, toUs === true ? true : toUs === false ? false : null, r.concerns || null]
+     (r as any).billedTo || null, toUs === true ? true : toUs === false ? false : null,
+     (r as any).docType || null, r.concerns || null]
   );
   // Feed what Claude read back into the columns the rest of the ledger already uses, but
   // NEVER overwrite a value the text parse read cleanly — that one came off the actual text.
+  // Reading the page beats guessing from the filename, in BOTH directions: a document named
+  // "statement" that turns out to be an invoice is corrected here, and so is the reverse.
+  const dt = String((r as any).docType || '');
+  if (dt) {
+    await pool.query(
+      "UPDATE purchase_documents SET doc_type=$2, doc_type_by='claude' WHERE id=$1 AND doc_type_by IS DISTINCT FROM 'human'",
+      [doc.id, dt === 'invoice' ? 'invoice' : dt]
+    ).catch(() => {});
+  }
   await pool.query(
     `UPDATE purchase_documents
         SET parsed_amount     = COALESCE(parsed_amount, $2),

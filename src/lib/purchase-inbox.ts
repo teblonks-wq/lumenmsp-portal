@@ -104,20 +104,22 @@ export async function syncInvoiceInbox(): Promise<{ fetched: number; pooled: num
         const atts = await graphListAttachments(mailbox, m.id);
         for (const a of atts) {
           if (!looksLikeInvoiceDoc(a.name, a.contentType, a.isInline)) continue;
-          if (looksLikeStatement(a.name, m.subject)) { console.log('[invoice-inbox] skipped a statement:', a.name); continue; }
+          const attIsStatement = looksLikeStatement(a.name, m.subject);
           const safe = (a.name || 'invoice').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80);
           const filename = Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '-' + safe;
           const dest = path.join(PURCHASE_DOCS_DIR, filename);
           try { fs.writeFileSync(dest, Buffer.from(a.base64, 'base64')); }
           catch (e) { console.error('[invoice-inbox] save failed:', a.name, (e as Error).message); attachFailed = true; await notifyImportFailure(m, 'Could not save attachment "' + a.name + '": ' + (e as Error).message); failed++; continue; }
           const ins = await pool.query(
-            `INSERT INTO purchase_documents (source, from_email, from_name, subject, received_at, file_name, file_path, content_type, size_bytes, status, graph_message_id)
-             VALUES ('email',$1,$2,$3,$4,$5,$6,$7,$8,'new',$9)
+            `INSERT INTO purchase_documents (source, from_email, from_name, subject, received_at, file_name, file_path, content_type, size_bytes, status, graph_message_id, doc_type, doc_type_by)
+             VALUES ('email',$1,$2,$3,$4,$5,$6,$7,$8,'new',$9,$10,$11)
              ON CONFLICT (graph_message_id, file_name) DO NOTHING RETURNING id`,
-            [m.from || null, m.fromName || null, m.subject || null, m.receivedDateTime, a.name, dest, a.contentType || null, a.size || null, m.id]
+            [m.from || null, m.fromName || null, m.subject || null, m.receivedDateTime, a.name, dest, a.contentType || null, a.size || null, m.id,
+             attIsStatement ? 'statement' : null, attIsStatement ? 'filename' : null]
           );
           if (ins.rowCount) {
             pooled++; docsForMsg++;
+            if (attIsStatement) continue;   // filed, but not read or matched
             try { await parseAndStoreDoc({ id: ins.rows[0].id, file_path: dest, content_type: a.contentType || null, file_name: a.name }); } catch { /* parse best-effort */ }
           }
         }
@@ -125,7 +127,7 @@ export async function syncInvoiceInbox(): Promise<{ fetched: number; pooled: num
       // No invoice attachment → the invoice is in the email body itself. Save the body as
       // an HTML document so it can be previewed and attached like any other invoice.
       // (Skipped if an attachment existed but failed to save — that already raised a notice.)
-      if (docsForMsg === 0 && !attachFailed && !looksLikeStatement(null, m.subject)) {
+      if (docsForMsg === 0 && !attachFailed) {
         const bodyHtml = (m.bodyHtml && m.bodyHtml.trim())
           ? m.bodyHtml
           : '<pre style="white-space:pre-wrap;font:14px/1.5 sans-serif;padding:16px;">' +
@@ -136,10 +138,11 @@ export async function syncInvoiceInbox(): Promise<{ fetched: number; pooled: num
           fs.writeFileSync(dest, bodyHtml);
           const bodyName = (m.subject ? m.subject.replace(/[^a-zA-Z0-9._ -]/g, '').slice(0, 60) + ' ' : '') + '(email body).html';
           const ins = await pool.query(
-            `INSERT INTO purchase_documents (source, from_email, from_name, subject, received_at, file_name, file_path, content_type, size_bytes, status, graph_message_id)
-             VALUES ('email',$1,$2,$3,$4,$5,$6,'text/html',$7,'new',$8)
+            `INSERT INTO purchase_documents (source, from_email, from_name, subject, received_at, file_name, file_path, content_type, size_bytes, status, graph_message_id, doc_type, doc_type_by)
+             VALUES ('email',$1,$2,$3,$4,$5,$6,'text/html',$7,'new',$8,$9,$10)
              ON CONFLICT (graph_message_id, file_name) DO NOTHING RETURNING id`,
-            [m.from || null, m.fromName || null, m.subject || null, m.receivedDateTime, bodyName, dest, Buffer.byteLength(bodyHtml), m.id]
+            [m.from || null, m.fromName || null, m.subject || null, m.receivedDateTime, bodyName, dest, Buffer.byteLength(bodyHtml), m.id,
+             looksLikeStatement(null, m.subject) ? 'statement' : null, looksLikeStatement(null, m.subject) ? 'filename' : null]
           );
           if (ins.rowCount) {
             pooled++;
@@ -200,6 +203,8 @@ export async function autoMatchInvoices(opts?: { useAi?: boolean }): Promise<Aut
         -- An invoice billed to a CUSTOMER is one of our own sales invoices in the wrong
         -- pile. Matching it to a payment would invent a purchase we never made.
         AND (a.ai_to_us IS NULL OR a.ai_to_us = true)
+        -- A statement or a "your invoice is ready" notification is not something to match.
+        AND (d.doc_type IS NULL OR d.doc_type = 'invoice')
       ORDER BY d.received_at DESC NULLS LAST`
   )).rows;
   let matched = 0, byClaude = 0, suggested = 0, aiRead = 0;

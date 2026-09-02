@@ -2,7 +2,7 @@ import cron from 'node-cron';
 import { pool } from '../db/pool';
 import { getSetting } from './settings';
 import { graphConfigured, graphSendMail } from './graph';
-import { classifyNoInvoice, normaliseCounterparty } from './purchase-match';
+import { classifyNoInvoice, classifyNoInvoiceLive, normaliseCounterparty } from './purchase-match';
 import { getInvoiceMailbox } from './purchase-inbox';
 import { activeRules, suppressedBy } from './purchase-rules';
 
@@ -47,6 +47,29 @@ async function findAlreadyPaid(): Promise<Finding[]> {
     title: `${r.file_name} looks ALREADY PAID` + (r.parsed_amount ? ` (${money(r.parsed_amount)})` : ''),
     detail: r.dupe_reason || `An earlier copy is attached to a payment to ${r.counterparty || 'a supplier'} on ${dISO(r.booked_at)}.`,
     amount: r.parsed_amount != null ? Number(r.parsed_amount) : null, documentId: r.id, txnId: r.dupe_paid_txn_id,
+  }));
+}
+
+// An email that announces an invoice but does not contain one. Terry, 2 Sep: "sometimes an
+// email says it is an invoice but it will say invoice click or whatever… to protect our
+// business we need every invoice for tax reasons unless we ignore it."
+//
+// So this is not noise to be filtered away — it is EVIDENCE OF AN INVOICE WE DO NOT HOLD.
+// The right response is to go and fetch it from the supplier's portal, and until somebody
+// does, it stays on the list.
+async function findMissingBehindNotification(): Promise<Finding[]> {
+  const rows = (await pool.query(
+    `SELECT d.id, d.file_name, d.subject, d.from_name, d.from_email, d.received_at, a.ai_supplier
+       FROM purchase_documents d
+       LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
+      WHERE d.archived_at IS NULL AND d.status <> 'attached'
+        AND (d.doc_type = 'notification' OR a.ai_doc_type = 'notification')`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  return rows.map((r: any) => ({
+    key: 'no_doc:' + r.id, kind: 'invoice_not_received', severity: 'medium' as const,
+    title: `${r.ai_supplier || r.from_name || 'A supplier'} said an invoice is ready — but we do not have it`,
+    detail: `"${String(r.subject || r.file_name).slice(0, 120)}" arrived ${dISO(r.received_at)} announcing an invoice, with no invoice on it. We need the document itself for tax, so somebody has to fetch it from the supplier's portal. This stays here until it arrives.`,
+    documentId: r.id,
   }));
 }
 
@@ -123,7 +146,8 @@ async function findPaymentsWithoutInvoice(): Promise<Finding[]> {
   const out: Finding[] = [];
   for (const r of rows) {
     const desc = (r.counterparty || '') + ' ' + (r.description || '');
-    if (classifyNoInvoice(desc)) continue; // HMRC, financing, payroll — no invoice is expected
+    // The ignore list is the ONLY reason money may leave with no invoice behind it.
+    if (await classifyNoInvoiceLive(desc)) continue;
     out.push({
       key: 'no_invoice:' + r.id, kind: 'payment_no_invoice', severity: 'medium',
       title: `${money(r.amount)} paid to ${r.counterparty || 'unknown'} with no invoice`,
@@ -197,7 +221,7 @@ async function findNewSuppliers(): Promise<Finding[]> {
   for (const r of rows) {
     const key = normaliseCounterparty(r.counterparty);
     if (!key || known.has(key) || seen.has(key)) continue;
-    if (classifyNoInvoice((r.counterparty || '') + ' ' + (r.description || ''))) continue;
+    if (await classifyNoInvoiceLive((r.counterparty || '') + ' ' + (r.description || ''))) continue;
     seen.add(key);
     out.push({
       key: 'new_supplier:' + key, kind: 'new_supplier', severity: 'info',
@@ -231,11 +255,11 @@ async function findVatMismatches(): Promise<Finding[]> {
 // Kinds this function is authoritative for. An open row of one of these kinds that is NOT
 // re-raised has stopped being true, so it resolves. 'ai_concern' is raised by the matcher
 // as it reads, so it is NOT in this list and is never auto-resolved from here.
-const OWNED_KINDS = ['already_paid', 'not_a_purchase', 'possible_duplicate', 'unpaid_invoice', 'payment_no_invoice', 'price_jump', 'missing_bill', 'new_supplier', 'vat_mismatch'];
+const OWNED_KINDS = ['already_paid', 'invoice_not_received', 'not_a_purchase', 'possible_duplicate', 'unpaid_invoice', 'payment_no_invoice', 'price_jump', 'missing_bill', 'new_supplier', 'vat_mismatch'];
 
 export async function refreshAnomalies(): Promise<{ raised: number; resolved: number; open: number; suppressed: number }> {
   const all: Finding[] = [];
-  for (const fn of [findAlreadyPaid, findNotOurPurchases, findPossibleDuplicates, findUnpaidInvoices, findPaymentsWithoutInvoice, findPriceJumps, findMissingBills, findNewSuppliers, findVatMismatches]) {
+  for (const fn of [findAlreadyPaid, findMissingBehindNotification, findNotOurPurchases, findPossibleDuplicates, findUnpaidInvoices, findPaymentsWithoutInvoice, findPriceJumps, findMissingBills, findNewSuppliers, findVatMismatches]) {
     try { all.push(...await fn()); }
     catch (e) { console.error('[purchase-anomalies] detector failed:', (e as Error).message); }
   }

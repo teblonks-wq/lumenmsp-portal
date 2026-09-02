@@ -1289,6 +1289,11 @@ model PurchaseDocument {
   dupePaidTxnId     Int?      @map("dupe_paid_txn_id")
   dupeReason        String?   @map("dupe_reason")
   // A match Claude proposed but was not confident enough to apply — one click accepts it.
+  // Kept, never deleted. For tax we must be able to account for every document that arrived,
+  // so something that turns out not to be an invoice is MARKED, not binned — and the mark
+  // can be undone by a human who disagrees.
+  docType           String?   @map("doc_type")        // invoice | statement | notification | credit_note | other
+  docTypeBy         String?   @map("doc_type_by")     // filename | claude | human
   suggestTxnId      Int?      @map("suggest_txn_id")
   suggestConfidence Int?      @map("suggest_confidence")
   suggestReason     String?   @map("suggest_reason")
@@ -1329,6 +1334,10 @@ model PurchaseDocAi {
   // never be matched to a payment or counted as money we owe.
   aiBilledTo   String?  @map("ai_billed_to")
   aiToUs       Boolean? @map("ai_to_us")        // null = could not tell
+  // WHAT KIND OF DOCUMENT this actually is, judged by reading it rather than by guessing
+  // from the filename. A statement, a "your invoice is ready" notification and a credit note
+  // are all not-an-invoice in different ways, and each needs handling differently.
+  aiDocType    String?  @map("ai_doc_type")     // invoice | credit_note | statement | notification | receipt | other
   aiConcerns   String?  @map("ai_concerns")    // anything that looked wrong on the face of it
   readAt       DateTime @default(now()) @map("read_at")
   @@map("purchase_doc_ai")
@@ -1393,6 +1402,23 @@ model PurchaseAnomaly {
 }
 
 // â”€â”€ Purchase Ledger — split a single bank transaction across several categories â”€â”€â”€â”€â”€
+// ── Purchase Ledger — payees we deliberately expect no invoice from ─────────────
+// Terry's "ignore list", like Pipe. Financing agreements, tax, payroll and card repayments
+// never produce a supplier invoice, so chasing one is noise for ever. This is the ONLY
+// legitimate reason for money to leave with no invoice behind it — everything else stays on
+// the list, because for tax we must hold an invoice for every purchase.
+model PurchaseIgnoreRule {
+  id        Int      @id @default(autoincrement())
+  pattern   String                     // matched against the payee, description and reference
+  label     String                     // what it is, in plain words
+  reason    String?                    // why no invoice is expected
+  isRegex   Boolean  @default(false) @map("is_regex")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdBy Int?     @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@map("purchase_ignore_rules")
+}
+
 // ── Purchase Ledger — the conversation on an anomaly ────────────────────────────
 // Terry or Natalie answer a finding in their own words ("MBNA is my personal card", "the
 // rent is collected quarterly"); Claude reads the answer against what it knows and replies,

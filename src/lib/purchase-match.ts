@@ -47,11 +47,67 @@ export function isFxBilled(hay: string): boolean { return FX_TOKEN.test(hay); }
 // Transactions that will NEVER have a supplier invoice — tax, financing, payroll,
 // transfers. classify() returns a label used to SUGGEST (never auto-apply) so the
 // reconcile screen can offer one-click "no invoice expected" handling.
-const NO_INVOICE_CLASSES: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /hmrc/i,                                              label: 'Tax (HMRC) — no invoice expected' },
-  { pattern: /pipe technologies|aventis capital(?!.*rent)|mbna|capitalise|debt revenue/i, label: 'Financing / card payment — agreement, not an invoice' },
-  { pattern: /gocardless.*fee/i,                                   label: 'GoCardless fees — invoice in GC dashboard' },
+// ── The ignore list ─────────────────────────────────────────────────────────────
+// Payees that will NEVER produce a supplier invoice: tax, financing agreements, card
+// repayments, payroll. Terry calls this the ignore list — "like Pipe". It is the ONLY
+// legitimate reason for money to leave with no invoice behind it; for tax we must hold an
+// invoice for every actual purchase, so everything not on this list stays on the worklist.
+//
+// These are the SEEDS. The live list lives in purchase_ignore_rules so it can be managed
+// without a deploy, and the seeds are inserted there once on first use.
+const NO_INVOICE_SEEDS: Array<{ pattern: string; label: string }> = [
+  { pattern: 'hmrc', label: 'Tax (HMRC) — no invoice expected' },
+  { pattern: 'pipe technologies', label: 'Pipe — financing agreement, not an invoice' },
+  { pattern: 'aventis capital(?!.*rent)', label: 'Financing — agreement, not an invoice' },
+  { pattern: 'mbna', label: 'Card repayment — statement, not an invoice' },
+  { pattern: 'capitalise', label: 'Financing — agreement, not an invoice' },
+  { pattern: 'debt revenue', label: 'Financing — agreement, not an invoice' },
+  { pattern: 'gocardless.*fee', label: 'GoCardless fees — invoice in the GC dashboard' },
 ];
+
+let _ignoreCache: Array<{ re: RegExp; label: string }> | null = null;
+let _ignoreAt = 0;
+
+/** The live ignore list, cached briefly. Seeded on first use so nothing is lost in the move
+ *  out of code, and a bad pattern is skipped rather than taking the sweep down with it. */
+export async function loadIgnoreList(): Promise<Array<{ re: RegExp; label: string }>> {
+  if (_ignoreCache && Date.now() - _ignoreAt < 60_000) return _ignoreCache;
+  try {
+    const n = Number((await pool.query('SELECT COUNT(*)::int c FROM purchase_ignore_rules')).rows[0].c);
+    if (!n) {
+      for (const sd of NO_INVOICE_SEEDS) {
+        await pool.query(
+          'INSERT INTO purchase_ignore_rules (pattern, label, reason, is_regex, is_active) VALUES ($1,$2,$3,true,true)',
+          [sd.pattern, sd.label, 'Seeded from the original built-in list']
+        ).catch(() => {});
+      }
+    }
+    const rows = (await pool.query('SELECT pattern, label, is_regex FROM purchase_ignore_rules WHERE is_active = true')).rows;
+    const out: Array<{ re: RegExp; label: string }> = [];
+    for (const r of rows) {
+      try { out.push({ re: new RegExp(r.is_regex ? r.pattern : r.pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), label: r.label }); }
+      catch { console.error('[purchase-match] ignoring a bad ignore-list pattern:', r.pattern); }
+    }
+    _ignoreCache = out; _ignoreAt = Date.now();
+    return out;
+  } catch {
+    // The table may not exist until the next deploy — fall back to the seeds rather than
+    // treating every payment as needing an invoice.
+    return NO_INVOICE_SEEDS.map((sd) => ({ re: new RegExp(sd.pattern, 'i'), label: sd.label }));
+  }
+}
+
+export function invalidateIgnoreList(): void { _ignoreCache = null; }
+
+/** Async form — consults the live list. */
+export async function classifyNoInvoiceLive(desc: string): Promise<string | null> {
+  for (const r of await loadIgnoreList()) if (r.re.test(desc)) return r.label;
+  return null;
+}
+
+const NO_INVOICE_CLASSES: Array<{ pattern: RegExp; label: string }> =
+  NO_INVOICE_SEEDS.map((sd) => ({ pattern: new RegExp(sd.pattern, 'i'), label: sd.label }));
+
 export function classifyNoInvoice(desc: string): string | null {
   for (const c of NO_INVOICE_CLASSES) if (c.pattern.test(desc)) return c.label;
   return null;

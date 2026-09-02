@@ -465,10 +465,26 @@
     <% } else { %><h2>Money out <span class="muted">(<%= shownTxns.length %> to reconcile)</span></h2><% } %>
     <input class="input card-filter" placeholder="🔍 search payee, ref, description…" style="max-width:280px;font-size:13px;padding:5px 8px;">
   </div>
+  <% if (!isRecon && !closed && shownTxns.length) { %>
+  <form method="post" action="/purchases/txns/bulk-lock" id="lockForm" style="display:none;">
+    <input type="hidden" name="ids" id="lockIds"><input type="hidden" name="period" value="<%= period %>">
+    <input type="hidden" name="qb_account_id" id="lockAcctId"><input type="hidden" name="qb_account_name" id="lockAcctName">
+  </form>
+  <div style="margin:0 20px 12px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;margin:0;cursor:pointer;"><input type="checkbox" id="lockAll"> Select all</label>
+    <span class="muted" style="font-size:12.5px;" id="lockCount">none selected</span>
+    <select class="input" id="lockCat" style="font-size:12.5px;padding:4px 8px;max-width:230px;">
+      <option value="">— keep each one's own category —</option>
+      <% (cats||[]).forEach(function(c){ %><option value="<%= c.id %>" data-name="<%= c.name %>"><%= c.name %></option><% }); %>
+    </select>
+    <button class="btn btn-primary" type="button" id="lockGo" disabled>🔒 Lock selected</button>
+    <span class="muted" style="font-size:11.5px;flex-basis:100%;">Locking codes them for the bookkeeper. Anything still missing an invoice <strong>stays on the worklist</strong> until one is attached — nothing is written off.</span>
+  </div>
+  <% } %>
   <div class="table-wrap"><table class="table">
-    <thead><tr><th>Date / time</th><th>Account</th><th>Payee</th><th>Description / ref</th><th style="text-align:right;">Amount</th><th>QB cost category</th><th>Receipt</th><th>Status</th></tr></thead>
+    <thead><tr><% if (!isRecon && !closed) { %><th style="width:26px;"></th><% } %><th>Date / time</th><th>Account</th><th>Payee</th><th>Description / ref</th><th style="text-align:right;">Amount</th><th>QB cost category</th><th>Receipt</th><th>Status</th></tr></thead>
     <tbody>
-      <% if (!shownTxns.length) { %><tr><td colspan="8"><div class="empty-state"><%= isRecon ? 'Nothing reconciled yet this period — categorise, push or ignore items on the Expenses tab and they land here.' : 'Nothing left to reconcile — import a bank CSV or check the Reconciled tab.' %></div></td></tr><% } %>
+      <% if (!shownTxns.length) { %><tr><td colspan="<%= (!isRecon && !closed) ? 9 : 8 %>"><div class="empty-state"><%= isRecon ? 'Nothing reconciled yet this period — categorise, push or ignore items on the Expenses tab and they land here.' : 'Nothing left to reconcile — import a bank CSV or check the Reconciled tab.' %></div></td></tr><% } %>
       <% (shownTxns).forEach(function(t){
          var ignored = t.status==='ignored';
          var pushed = t.status==='pushed';
@@ -483,6 +499,7 @@
          var remaining = total - allocated;
          var withInv = splits.filter(function(s){ return s.attachment_name; }).length; %>
       <tr id="txn-<%= t.id %>" style="<%= dim?'opacity:.55;':'' %>">
+        <% if (!isRecon && !closed) { %><td><% if (t.status==='new') { %><input type="checkbox" class="lockChk" value="<%= t.id %>" data-hascat="<%= (t.qb_account_id && t.qb_account_id!=='') ? '1':'0' %>"><% } %></td><% } %>
         <td class="muted" style="font-size:12px;white-space:nowrap;"><%= dt(t.booked_at) %></td>
         <td class="muted" style="font-size:12px;"><%= t.account_name || '—' %></td>
         <td><%= t.counterparty || '—' %></td>
@@ -885,6 +902,45 @@ function pxSeeClose(){
   document.body.style.overflow = '';
 }
 document.addEventListener('keydown', function(e){ if (e.key === 'Escape') pxSeeClose(); });
+</script>
+
+<script>
+(function(){
+  var form = document.getElementById('lockForm'); if (!form) return;
+  var all = document.getElementById('lockAll'), go = document.getElementById('lockGo');
+  var count = document.getElementById('lockCount'), cat = document.getElementById('lockCat');
+  function boxes(){ return Array.prototype.slice.call(document.querySelectorAll('.lockChk')); }
+  function chosen(){ return boxes().filter(function(b){ return b.checked; }); }
+  function sync(){
+    var n = chosen().length;
+    go.disabled = n === 0;
+    var noCat = chosen().filter(function(b){ return b.getAttribute('data-hascat') !== '1'; }).length;
+    count.textContent = n === 0 ? 'none selected'
+      : n + ' selected' + (noCat ? ' — ' + noCat + ' with no category yet' : '');
+    if (all) all.checked = n > 0 && n === boxes().length;
+  }
+  if (all) all.addEventListener('change', function(){ boxes().forEach(function(b){ b.checked = all.checked; }); sync(); });
+  boxes().forEach(function(b){ b.addEventListener('change', sync); });
+  go.addEventListener('click', function(){
+    var picked = chosen(); if (!picked.length) return;
+    var noCat = picked.filter(function(b){ return b.getAttribute('data-hascat') !== '1'; }).length;
+    var opt = cat.options[cat.selectedIndex];
+    var catId = cat.value, catName = catId ? (opt.getAttribute('data-name') || '') : '';
+    // Locking something with no category at all would hand the bookkeeper an uncoded row.
+    if (noCat && !catId) {
+      alert(noCat + ' of the selected payments have no category, and no category was chosen above.\n\nThey would be left unlocked. Pick a category to apply, or categorise them first.');
+      return;
+    }
+    if (!confirm('Lock ' + picked.length + ' payment(s)' + (catName ? ' and code the uncategorised ones to "' + catName + '"' : '') +
+                 '?\n\nAnything still without an invoice stays on the worklist until one is attached.')) return;
+    document.getElementById('lockIds').value = picked.map(function(b){ return b.value; }).join(',');
+    document.getElementById('lockAcctId').value = catId;
+    document.getElementById('lockAcctName').value = catName;
+    go.disabled = true; go.textContent = 'Locking…';
+    form.submit();
+  });
+  sync();
+})();
 </script>
 
 <%- include('../partials/footer') %>

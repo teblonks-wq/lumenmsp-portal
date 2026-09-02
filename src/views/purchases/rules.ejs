@@ -71,4 +71,41 @@
 <% ruleTable('Live', live, false) %>
 <% if (turned.length) { %><% ruleTable('Turned down or switched off', turned, false) %><% } %>
 
+<div class="card" style="padding:0;margin-bottom:18px;">
+  <div class="card-header" style="padding:16px 20px 12px;">
+    <h2 style="margin:0;">Ignore list <span class="muted">(<%= (ignores||[]).filter(function(i){return i.is_active;}).length %> live)</span></h2>
+    <p class="muted" style="font-size:12px;margin:4px 0 0;">Payees that will <strong>never</strong> produce a supplier invoice &mdash; tax, financing agreements like Pipe, card repayments, payroll. This is the only legitimate reason for money to leave with no invoice behind it. <strong>Everything not on this list stays on the worklist</strong>, because for tax we have to hold an invoice for every real purchase.</p>
+  </div>
+
+  <form method="post" action="/purchases/ignore" style="padding:0 20px 14px;display:grid;grid-template-columns:1.2fr 1.2fr 1.4fr auto auto;gap:10px;align-items:end;">
+    <div><label class="muted" style="font-size:11px;display:block;">Payee text *</label>
+      <input class="input" name="pattern" required placeholder="pipe technologies" style="width:100%;font-size:13px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">What it is *</label>
+      <input class="input" name="label" required placeholder="Pipe — financing agreement, not an invoice" style="width:100%;font-size:13px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Why no invoice is expected</label>
+      <input class="input" name="reason" placeholder="Repayment of a financing facility" style="width:100%;font-size:13px;"></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap;padding-bottom:6px;">
+      <input type="checkbox" name="is_regex" value="1"> pattern
+    </label>
+    <button class="btn btn-primary" type="submit">Add</button>
+  </form>
+
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>What it is</th><th>Matches</th><th>Why</th><th></th></tr></thead>
+    <tbody>
+      <% if (!(ignores||[]).length) { %><tr><td colspan="4"><div class="empty-state">Nothing ignored yet.</div></td></tr><% } %>
+      <% (ignores||[]).forEach(function(g){ %>
+      <tr<%= g.is_active ? '' : ' style="opacity:.5;"' %>>
+        <td style="font-size:13px;"><strong><%= g.label %></strong><% if (!g.is_active) { %> <span class="badge" style="font-size:10px;">off</span><% } %></td>
+        <td><code style="font-size:12px;"><%= g.pattern %></code><% if (g.is_regex) { %> <span class="muted" style="font-size:11px;">(pattern)</span><% } %></td>
+        <td class="muted" style="font-size:12px;max-width:280px;"><%= g.reason || '' %></td>
+        <td style="white-space:nowrap;">
+          <form method="post" action="/purchases/ignore/<%= g.id %>/toggle" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;"><%= g.is_active ? 'Turn off' : 'Turn on' %></button></form>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+
 <%- include('../partials/footer') %>
