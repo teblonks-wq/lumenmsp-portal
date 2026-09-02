@@ -39,7 +39,9 @@ function taskTable(rows, showProgress) { %>
           <td><a class="row-link" href="/automation/scheduled-tasks/<%= t.id %>"><strong><%= t.name %></strong></a>
             <% if (t.recurrence && t.recurrence !== 'none') { %><br><span class="muted" style="font-size:11px;">repeats <%= t.recurrence %> until <%= t.recurrence_end %></span><% } %></td>
           <td><%= actionLabel(t.action) %></td>
-          <td style="white-space:nowrap;"><%= t.condition === 'datetime' ? when(t.run_at) : condLabel(t.condition) %></td>
+          <td style="white-space:nowrap;"><%= t.condition === 'datetime' ? when(t.run_at)
+              : t.condition === 'window' ? when(t.run_at) + ' \u2192 ' + when(t.run_until)
+              : condLabel(t.condition) %></td>
           <td><%= t.devices %>
             <% if (showProgress && t.devices) { %><br><span class="au-prog"><%= t.done %> done<% if (t.failed) { %>, <%= t.failed %> failed<% } %></span><% } %></td>
           <td><span class="badge <%= sbadge(t.status) %>"><%= cap(t.status) %></span></td>

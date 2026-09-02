@@ -1207,6 +1207,11 @@ model BankTransaction {
   attachmentPath String?   @map("attachment_path") // uploaded invoice/receipt
   attachmentName String?   @map("attachment_name")
   status         String    @default("new") // new | categorised | submitted | pushed
+  // Match provenance — an auto-link must be distinguishable from a human one, and undoable.
+  matchedBy      String?   @map("matched_by")      // rules | claude | human
+  matchConfidence Int?     @map("match_confidence") // 0-100, Claude's own number
+  matchReason    String?   @map("match_reason")
+  matchedAt      DateTime? @map("matched_at")
   qbPurchaseId   String?   @map("qb_purchase_id")  // set when pushed to QuickBooks
   notes          String?
   createdAt      DateTime  @default(now()) @map("created_at")
@@ -1242,12 +1247,103 @@ model PurchaseDocument {
   categoryId        String?   @map("category_id")
   categoryName      String?   @map("category_name")
   archivedAt        DateTime? @map("archived_at")   // hidden from the inbox; still findable on the Archived tab
+  // Bulk upload + duplicate detection (Sep 2026). fileHash is the sha256 of the bytes —
+  // the exact-duplicate key. relPath keeps the subfolder a bulk-uploaded file came from so a
+  // folder tree stays readable; batchId groups one upload so its summary can be re-opened.
+  fileHash          String?   @map("file_hash")
+  relPath           String?   @map("rel_path")
+  batchId           String?   @map("batch_id")
+  // dupeStatus: null = clean | likely = same invoice arrived twice | paid = the earlier copy is
+  // already attached to a payment | dismissed = a human said it is genuinely a separate bill.
+  dupeStatus        String?   @map("dupe_status")
+  dupeOfId          Int?      @map("dupe_of_id")
+  dupePaidTxnId     Int?      @map("dupe_paid_txn_id")
+  dupeReason        String?   @map("dupe_reason")
+  // A match Claude proposed but was not confident enough to apply — one click accepts it.
+  suggestTxnId      Int?      @map("suggest_txn_id")
+  suggestConfidence Int?      @map("suggest_confidence")
+  suggestReason     String?   @map("suggest_reason")
+  aiReadStatus      String?   @map("ai_read_status")  // ok | failed | unreadable | null(=not tried)
   createdAt         DateTime  @default(now()) @map("created_at")
 
   @@unique([graphMessageId, fileName])
   @@index([status])
   @@index([archivedAt])
+  @@index([fileHash])
+  @@index([dupeStatus])
   @@map("purchase_documents")
+}
+
+// ── Purchase Ledger — what Claude read off an invoice it could SEE ───────────────
+// Populated only when the free text parse came back empty (a scan or photo) or when a
+// match was too ambiguous for the rules. `aiSupplier` is the supplier as it appears ON
+// THE INVOICE, which is often not who the bank statement names.
+model PurchaseDocAi {
+  id           Int      @id @default(autoincrement())
+  documentId   Int      @unique @map("document_id")
+  aiSupplier   String?  @map("ai_supplier")
+  aiInvoiceNo  String?  @map("ai_invoice_no")
+  aiDate       String?  @map("ai_date")
+  aiNet        Decimal? @db.Decimal(12, 2) @map("ai_net")
+  aiVat        Decimal? @db.Decimal(12, 2) @map("ai_vat")
+  aiGross      Decimal? @db.Decimal(12, 2) @map("ai_gross")
+  aiCurrency   String?  @map("ai_currency")
+  aiPeriod     String?  @map("ai_period")      // service period the bill covers, when stated
+  aiSummary    String?  @map("ai_summary")     // one line: what was actually bought
+  aiConcerns   String?  @map("ai_concerns")    // anything that looked wrong on the face of it
+  readAt       DateTime @default(now()) @map("read_at")
+  @@map("purchase_doc_ai")
+}
+
+// ── Purchase Ledger — what we have LEARNED about each supplier ───────────────────
+// Grown from confirmed matches, not hand-written. This is the memory that lets the
+// matcher recognise a supplier by the descriptor its processor puts on the statement,
+// know how long it takes to collect, and notice when a bill is the wrong size or late.
+model PurchaseSupplierProfile {
+  id             Int       @id @default(autoincrement())
+  supplierKey    String    @unique @map("supplier_key")  // normalised, the join key
+  displayName    String?   @map("display_name")
+  descriptors    String?   // JSON array of bank descriptors seen on confirmed matches
+  qbAccountId    String?   @map("qb_account_id")
+  qbAccountName  String?   @map("qb_account_name")
+  matchCount     Int       @default(0) @map("match_count")
+  lastAmount     Decimal?  @db.Decimal(12, 2) @map("last_amount")
+  avgAmount      Decimal?  @db.Decimal(12, 2) @map("avg_amount")
+  minAmount      Decimal?  @db.Decimal(12, 2) @map("min_amount")
+  maxAmount      Decimal?  @db.Decimal(12, 2) @map("max_amount")
+  avgLagDays     Int?      @map("avg_lag_days")   // invoice date -> money leaving the bank
+  cadenceDays    Int?      @map("cadence_days")   // typical gap between bills (30 = monthly)
+  lastInvoiceAt  DateTime? @map("last_invoice_at")
+  lastPaidAt     DateTime? @map("last_paid_at")
+  isFxBilled     Boolean   @default(false) @map("is_fx_billed")
+  notes          String?
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+  @@map("purchase_supplier_profiles")
+}
+
+// ── Purchase Ledger — the anomaly list Terry and Natalie work from ───────────────
+// One row per open question about the ledger. Rules raise most of them; Claude raises the
+// ones that need reading. `dedupeKey` keeps a recurring condition as ONE row that updates,
+// so the list is a worklist and not a log.
+model PurchaseAnomaly {
+  id          Int       @id @default(autoincrement())
+  dedupeKey   String    @unique @map("dedupe_key")
+  kind        String    // already_paid | unpaid_invoice | payment_no_invoice | price_jump | missing_bill | new_supplier | vat_mismatch | ai_concern
+  severity    String    @default("info") // high | medium | info
+  title       String
+  detail      String?
+  amount      Decimal?  @db.Decimal(12, 2)
+  documentId  Int?      @map("document_id")
+  txnId       Int?      @map("txn_id")
+  supplierKey String?   @map("supplier_key")
+  status      String    @default("open") // open | dismissed | resolved
+  dismissedBy Int?      @map("dismissed_by")
+  dismissedAt DateTime? @map("dismissed_at")
+  firstSeenAt DateTime  @default(now()) @map("first_seen_at")
+  lastSeenAt  DateTime  @default(now()) @updatedAt @map("last_seen_at")
+  @@index([status])
+  @@index([kind])
+  @@map("purchase_anomalies")
 }
 
 // â”€â”€ Purchase Ledger — split a single bank transaction across several categories â”€â”€â”€â”€â”€
@@ -3589,9 +3685,10 @@ model AutomationTask {
   action        String
   // Action arguments: { scriptId } | { packageId, packageName } | { delaySeconds }
   payload       Json?
-  // next_contact | datetime | after_reboot
+  // next_contact | datetime | after_reboot | window
   condition     String    @default("next_contact")
-  runAt         DateTime? @map("run_at")            // the datetime condition
+  runAt         DateTime? @map("run_at")            // the datetime condition; also the START of a window
+  runUntil      DateTime? @map("run_until")         // the END of a window — after this the task closes
   recurrence    String    @default("none")          // none | daily | weekdays | weekly | fortnightly | monthly
   recurrenceEnd String?   @map("recurrence_end")    // 'YYYY-MM-DD', inclusive
   seriesId      Int?      @map("series_id")

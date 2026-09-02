@@ -98,6 +98,7 @@ import { startRecurringBilling } from './lib/recurring-billing';
 import reviewRoutes, { startReviewReminders } from './routes/reviews';
 import { startMailSync } from './lib/mailsync';
 import { startInvoiceInbox } from './lib/purchase-inbox';
+import { startPurchaseAnomalies } from './lib/purchase-anomalies';
 import { startPostponeSweep } from './lib/postpone-sweep';
 import { startAutomationSweep } from './lib/automation';
 import { startLeaverSweep } from './lib/leaver';
@@ -488,6 +489,7 @@ server.listen(config.PORT, () => {
   console.log(`  ENV: ${config.NODE_ENV}`);
   startMailSync();
   startInvoiceInbox();
+  startPurchaseAnomalies();
   startPostponeSweep();
   startAutomationSweep();
   startLeaverSweep();

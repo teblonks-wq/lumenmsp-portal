@@ -32,6 +32,7 @@
 <form method="post" action="/automation/scheduled-tasks" id="ntForm">
 <input type="hidden" name="device_ids" id="ntDeviceIds">
 <input type="hidden" name="run_at_epoch" id="ntEpoch">
+<input type="hidden" name="run_until_epoch" id="ntEndEpoch">
 
 <div class="nt-wrap">
   <div class="nt-card">
@@ -101,6 +102,24 @@
         <input type="date" id="ntUntil" name="recurrence_end">
       </div>
     </div>
+
+    <div id="ntWindowWrap" class="hide">
+      <div class="nt-two">
+        <div>
+          <label for="ntWinStart">Starts</label>
+          <input type="datetime-local" id="ntWinStart">
+        </div>
+        <div>
+          <label for="ntWinEnd">Finishes</label>
+          <input type="datetime-local" id="ntWinEnd">
+        </div>
+      </div>
+      <p class="muted" style="margin:6px 0 0;font-size:12px;">
+        Each machine acts the moment it checks in after the start. At the finish the task
+        closes — anything that never checked in is recorded as having missed the window,
+        and is not actioned afterwards.
+      </p>
+    </div>
   </div>
 
   <div class="nt-card">
@@ -157,7 +176,9 @@
     var o = cond.options[cond.selectedIndex];
     document.getElementById('ntCondHelp').textContent = o.getAttribute('data-help') || '';
     var timed = cond.value === 'datetime';
+    var windowed = cond.value === 'window';
     show(document.getElementById('ntWhenWrap'), timed);
+    show(document.getElementById('ntWindowWrap'), windowed);
     // Repeating needs a clock to repeat against. Reset it rather than leave a hidden
     // value that would be refused on submit with no visible cause.
     if (!timed) repeat.value = 'none';
@@ -216,11 +237,22 @@
     // The browser reads datetime-local in ITS timezone, which for us is Europe/London.
     // Sending the epoch means the server never has to guess what the text meant.
     var w = document.getElementById('ntWhen');
+    var ws = document.getElementById('ntWinStart'), we = document.getElementById('ntWinEnd');
+    document.getElementById('ntEpoch').value = '';
+    document.getElementById('ntEndEpoch').value = '';
     if (cond.value === 'datetime') {
       if (!w.value) { e.preventDefault(); alert('Pick the date and time it should run.'); return; }
       document.getElementById('ntEpoch').value = Math.floor(new Date(w.value).getTime() / 1000);
-    } else {
-      document.getElementById('ntEpoch').value = '';
+    } else if (cond.value === 'window') {
+      if (!ws.value) { e.preventDefault(); alert('Pick the date and time the window starts.'); return; }
+      if (!we.value) { e.preventDefault(); alert('Pick the date and time the window finishes.'); return; }
+      var sEp = Math.floor(new Date(ws.value).getTime() / 1000);
+      var eEp = Math.floor(new Date(we.value).getTime() / 1000);
+      // Caught here as well as on the server, so the answer is instant rather than a
+      // round trip that loses the machines you just picked.
+      if (eEp <= sEp) { e.preventDefault(); alert('The finish has to be after the start.'); return; }
+      document.getElementById('ntEpoch').value = sEp;
+      document.getElementById('ntEndEpoch').value = eEp;
     }
     if (!Object.keys(picked).length) { e.preventDefault(); alert('Pick at least one machine.'); return; }
     var o = action.options[action.selectedIndex];

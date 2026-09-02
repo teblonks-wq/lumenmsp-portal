@@ -32,6 +32,10 @@ export interface CallEventRow {
   call_id?:          string | null;
   extno?:            string | null;
   direction?:        string | null;
+  /** Talk time on THIS leg, seconds. Only the leg that answered carries one; every leg
+   *  that merely rang is 0 or null. Added 2026-09-01 — before that, call length did not
+   *  exist anywhere in Insights. */
+  duration_secs?:    number | null;
 }
 
 export interface JourneyStep { group: string; outcome: string; label?: string; }

@@ -35,6 +35,7 @@
   <a href="/purchases/expenses?period=<%= encodeURIComponent(period) %>" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='expenses'?'var(--blue)':'transparent' %>;color:<%= view==='expenses'?'var(--blue)':'var(--muted)' %>;font-weight:<%= view==='expenses'?'600':'400' %>;">Expenses</a>
   <a href="/purchases/expenses?view=reconciled&period=<%= encodeURIComponent(period) %>" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='reconciled'?'var(--blue)':'transparent' %>;color:<%= view==='reconciled'?'var(--blue)':'var(--muted)' %>;font-weight:<%= view==='reconciled'?'600':'400' %>;">Reconciled <% if (reconCount) { %><span class="badge badge-sent" style="font-size:10px;"><%= reconCount %></span><% } %></a>
   <a href="/purchases/expenses?view=inbox" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='inbox'?'var(--blue)':'transparent' %>;color:<%= view==='inbox'?'var(--blue)':'var(--muted)' %>;font-weight:<%= view==='inbox'?'600':'400' %>;">Invoice inbox <% if (inboxCount) { %><span class="badge badge-sent" style="font-size:10px;"><%= inboxCount %></span><% } %></a>
+  <a href="/purchases/expenses?view=duplicates" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='duplicates'?'var(--blue)':'transparent' %>;color:<%= view==='duplicates'?'var(--blue)':(dupeCount?'var(--bad-fg)':'var(--muted)') %>;font-weight:<%= view==='duplicates'?'600':'400' %>;">Duplicates <% if (dupeCount) { %><span class="badge badge-danger" style="font-size:10px;"><%= dupeCount %></span><% } %></a>
   <a href="/purchases/expenses?view=suppliers" style="padding:8px 16px;font-size:14px;text-decoration:none;border-bottom:2px solid <%= view==='suppliers'?'var(--blue)':'transparent' %>;color:<%= view==='suppliers'?'var(--blue)':'var(--muted)' %>;font-weight:<%= view==='suppliers'?'600':'400' %>;">Suppliers <% if ((suppliers||[]).length) { %><span class="badge badge-sent" style="font-size:10px;"><%= suppliers.length %></span><% } %></a>
 </div>
 
@@ -47,11 +48,59 @@
   </div>
   <form method="post" action="/purchases/inbox/sync" style="margin:0;"><button class="btn" type="submit" title="Pull the invoice mailbox now">↻ Sync mailbox</button></form>
   <form method="post" action="/purchases/inbox/automatch" style="margin:0;"><button class="btn" type="submit" title="Try to auto-match pooled invoices to transactions">🔗 Auto-match</button></form>
-  <form method="post" action="/purchases/inbox/upload" enctype="multipart/form-data" style="display:flex;gap:8px;align-items:flex-end;margin:0;">
-    <div><span class="muted" style="font-size:11px;display:block;">Upload invoice(s)</span><input type="file" name="files" accept=".pdf,.png,.jpg,.jpeg" multiple required style="font-size:12px;"></div>
-    <button class="btn btn-primary" type="submit">Add</button>
+  <form method="post" action="/purchases/inbox/rescan-dupes" style="margin:0;"><button class="btn" type="submit" title="Re-check every pooled document for duplicates and already-paid invoices. Safe to run any time — it never deletes anything.">🔎 Check for duplicates</button></form>
+  <form method="post" action="/purchases/inbox/ai-read" style="margin:0;"><button class="btn" type="submit" title="Have Claude LOOK at the invoices that have no readable text — scans, photos, and PDFs whose text is really a picture. Costs a small amount per invoice.">👁 Read the scans</button></form>
+</div>
+
+<!-- Bulk upload: single files, a multi-select, or a whole folder tree (subfolders included). -->
+<div class="card" style="margin-bottom:14px;">
+  <h2 style="margin:0 0 4px;font-size:16px;">Bulk upload</h2>
+  <p class="muted" style="font-size:12px;margin:0 0 10px;">Add invoices in bulk — pick individual files, or point it at a <strong>folder</strong> and it walks every subfolder inside. Non-invoice files are ignored, and anything byte-identical to something already pooled is skipped automatically. Up to <%= bulkMaxFiles %> files per go.</p>
+  <form method="post" action="/purchases/inbox/upload" enctype="multipart/form-data" id="pxUploadForm" style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin:0;">
+    <input type="hidden" name="rel_paths" id="pxRelPaths">
+    <div><span class="muted" style="font-size:11px;display:block;">Files</span><input type="file" name="files" id="pxFiles" accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.htm,.html" multiple style="font-size:12px;"></div>
+    <div><span class="muted" style="font-size:11px;display:block;">…or a whole folder (incl. subfolders)</span><input type="file" name="files" id="pxFolder" webkitdirectory directory multiple style="font-size:12px;"></div>
+    <button class="btn btn-primary" type="submit" id="pxUploadBtn">Add to inbox</button>
+    <div id="pxPickNote" class="muted" style="font-size:12px;flex-basis:100%;"></div>
   </form>
 </div>
+<script>
+(function(){
+  var form = document.getElementById('pxUploadForm'); if (!form) return;
+  var OK = /\.(pdf|png|jpe?g|webp|tiff?|html?)$/i;
+  var MAX = <%= bulkMaxFiles %>;
+  var fileIn = document.getElementById('pxFiles'), folderIn = document.getElementById('pxFolder');
+  var note = document.getElementById('pxPickNote'), btn = document.getElementById('pxUploadBtn');
+  // A folder tree is full of things that are not invoices. Filter it in the browser so only
+  // invoice-shaped files are ever uploaded — and so the count shown is the real one.
+  folderIn.addEventListener('change', function(){
+    var all = Array.prototype.slice.call(folderIn.files || []);
+    var keep = all.filter(function(f){ return OK.test(f.name); });
+    var dropped = all.length - keep.length, over = 0;
+    if (keep.length > MAX) { over = keep.length - MAX; keep = keep.slice(0, MAX); }
+    try { var dt = new DataTransfer(); keep.forEach(function(f){ dt.items.add(f); }); folderIn.files = dt.files; } catch(e) {}
+    note.textContent = keep.length + ' invoice file(s) found in the folder'
+      + (dropped ? ', ' + dropped + ' other file(s) ignored' : '')
+      + (over ? ' — ' + over + ' over the ' + MAX + '-file limit were left out; upload the rest in a second pass' : '');
+  });
+  fileIn.addEventListener('change', function(){
+    var n = fileIn.files ? fileIn.files.length : 0;
+    note.textContent = n ? (n + ' file(s) selected') : '';
+  });
+  form.addEventListener('submit', function(e){
+    // Send each file's position in the tree alongside it, in the same order, so a bulk-loaded
+    // invoice still records which subfolder it came from.
+    var list = [];
+    [fileIn, folderIn].forEach(function(inp){
+      Array.prototype.forEach.call(inp.files || [], function(f){ list.push(f.webkitRelativePath || f.name); });
+    });
+    if (!list.length) { e.preventDefault(); alert('Choose one or more invoice files, or a folder.'); return; }
+    document.getElementById('pxRelPaths').value = JSON.stringify(list);
+    btn.disabled = true; btn.textContent = 'Uploading ' + list.length + ' file(s)…';
+    note.textContent = 'Uploading and reading ' + list.length + ' invoice(s) — this can take a minute or two on a big folder. Leave the page open.';
+  });
+})();
+</script>
 
 <div style="display:flex;gap:8px;margin-bottom:12px;">
   <a class="btn <%= !showArchived ? 'btn-primary' : '' %>" href="/purchases/expenses?view=inbox">Inbox (<%= inboxCount %>)</a>
@@ -69,10 +118,30 @@
     <div class="px-doc-meta">
       <div class="px-doc-name" title="<%= d.file_name %>"><%= d.file_name %></div>
       <div class="muted" style="font-size:11px;"><%= d.from_name || d.from_email || (d.source==='upload'?'Manual upload':'—') %> · <%= dt(d.received_at || d.created_at) %></div>
+      <% if (d.rel_path) { %><div class="muted" style="font-size:11px;">📁 <%= d.rel_path %></div><% } %>
+      <% if (d.dupe_status==='paid') { %><div style="font-size:11px;color:var(--bad-fg);margin-top:3px;font-weight:600;">⚠ looks already paid — <a class="row-link" href="/purchases/expenses?view=duplicates">review</a></div>
+      <% } else if (d.dupe_status==='likely') { %><div style="font-size:11px;color:var(--warn-fg,#a86400);margin-top:3px;">⚠ possible duplicate — <a class="row-link" href="/purchases/expenses?view=duplicates">review</a></div><% } %>
       <% if (d.parsed_amount || d.parsed_invoice_no) { %><div style="font-size:14px;color:var(--navy);margin-top:3px;font-weight:600;"><% if (d.parsed_amount) { %>£<%= Number(d.parsed_amount).toFixed(2) %><% } %><% if (d.parsed_invoice_no) { %> · Inv <%= d.parsed_invoice_no %><% } %></div><% } %>
-      <% if (d.status==='attached') { %><div style="font-size:11px;color:var(--ok);margin-top:3px;">✓ attached to <%= d.txn_payee || ('txn '+d.bank_transaction_id) %><% if (d.txn_amount) { %> (<%= money(d.txn_amount) %>)<% } %></div><% } %>
+      <% if (d.ai_supplier || d.ai_summary) { %>
+        <div style="font-size:11px;color:var(--muted);margin-top:3px;">👁 read by Claude<% if (d.ai_supplier) { %>: <strong><%= d.ai_supplier %></strong><% } %><% if (d.ai_gross) { %> · £<%= Number(d.ai_gross).toFixed(2) %><% } %><% if (d.ai_period) { %> · <%= d.ai_period %><% } %></div>
+        <% if (d.ai_summary) { %><div style="font-size:11px;color:var(--muted);"><%= d.ai_summary %></div><% } %>
+        <% if (d.ai_concerns) { %><div style="font-size:11px;color:var(--warn-fg,#a86400);margin-top:2px;">⚠ <%= d.ai_concerns %></div><% } %>
+      <% } %>
+      <% if (d.status==='attached') { %><div style="font-size:11px;color:var(--ok);margin-top:3px;">✓ attached to <%= d.txn_payee || ('txn '+d.bank_transaction_id) %><% if (d.txn_amount) { %> (<%= money(d.txn_amount) %>)<% } %><% if (d.matched_by==='claude') { %> · <span title="<%= d.match_reason %>">matched by Claude<%= d.match_confidence ? ' ('+d.match_confidence+'%)' : '' %></span><% } else if (d.matched_by==='rules') { %> · <span title="<%= d.match_reason %>">matched automatically</span><% } %></div><% } %>
+      <% if (d.status!=='attached' && d.suggest_txn_id) { %>
+      <div style="margin-top:7px;padding:8px 10px;border-radius:8px;background:var(--chip-bg,#eef2f7);">
+        <div style="font-size:11px;font-weight:700;color:var(--navy);">Claude suggests this payment · <%= d.suggest_confidence %>% sure</div>
+        <div style="font-size:12px;margin-top:2px;"><strong><%= d.suggest_payee || ('txn '+d.suggest_txn_id) %></strong> <%= money(d.suggest_amount) %> · <%= d.suggest_booked_at ? new Date(d.suggest_booked_at).toLocaleDateString('en-GB') : '' %></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;"><%= d.suggest_reason %></div>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <form method="post" action="/purchases/doc/<%= d.id %>/accept-suggestion" style="margin:0;"><button class="btn btn-primary" type="submit" style="font-size:11px;padding:3px 8px;">Accept</button></form>
+          <form method="post" action="/purchases/doc/<%= d.id %>/reject-suggestion" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;">No</button></form>
+        </div>
+      </div>
+      <% } %>
       <div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap;">
         <a class="btn" href="/purchases/doc/<%= d.id %>/view" target="_blank" style="font-size:11px;padding:3px 8px;">Open</a>
+        <% if (!d.ai_supplier) { %><form method="post" action="/purchases/doc/<%= d.id %>/ai-read" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;" title="Have Claude look at this document and read the figures off it">👁 Read it</button></form><% } %>
         <% if (showArchived) { %>
         <form method="post" action="/purchases/doc/<%= d.id %>/unarchive" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;">↩ Unarchive</button></form>
         <% } else { %>
@@ -84,6 +153,76 @@
   </div>
   <% }); %>
 </div>
+
+<% } else if (view==='duplicates') { %>
+<!-- ───── Duplicates tab ───── -->
+<%
+  var paidDupes  = (dupeDocs||[]).filter(function(d){ return d.dupe_status==='paid'; });
+  var maybeDupes = (dupeDocs||[]).filter(function(d){ return d.dupe_status!=='paid'; });
+%>
+<div class="card" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;">
+  <div style="flex:1;min-width:260px;">
+    <h2 style="margin:0 0 4px;font-size:16px;">Possible duplicate invoices</h2>
+    <p class="muted" style="font-size:12px;margin:0;">Byte-identical files are skipped on arrival and never reach this list. What lands here is the harder case &mdash; the <em>same invoice</em> arriving as a <em>different file</em>. Nothing is deleted automatically: a genuine repeat monthly bill looks exactly like a duplicate, so every one of these gets your eye.</p>
+  </div>
+  <form method="post" action="/purchases/inbox/rescan-dupes" style="margin:0;"><button class="btn" type="submit" title="Re-check every pooled document. Safe to run any time.">↻ Re-check the whole pool</button></form>
+</div>
+
+<% if (!(dupeDocs||[]).length) { %>
+  <div class="empty-state">No duplicates flagged. If you&rsquo;ve just switched this on, hit <strong>Re-check the whole pool</strong> above &mdash; documents pooled before today have never been checked.</div>
+<% } %>
+
+<% if (paidDupes.length) { %>
+<div class="card" style="padding:0;margin-bottom:16px;border-left:3px solid var(--bad-fg);">
+  <div class="card-header" style="padding:16px 20px 0;"><h2 style="margin:0;">⚠ Looks already paid <span class="muted">(<%= paidDupes.length %>)</span></h2>
+    <p class="muted" style="font-size:12px;margin:4px 0 0;">An earlier copy of this invoice is already attached to a payment. Paying this one pays the bill twice.</p></div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Invoice</th><th>Read as</th><th>Already paid</th><th>Why flagged</th><th></th></tr></thead>
+    <tbody>
+    <% paidDupes.forEach(function(d){ %>
+      <tr>
+        <td><strong><%= d.file_name %></strong><% if (d.rel_path) { %><br><span class="muted" style="font-size:11px;">📁 <%= d.rel_path %></span><% } %><br><span class="muted" style="font-size:11px;"><%= d.from_name || d.from_email || 'Manual upload' %> · <%= dt(d.received_at || d.created_at) %></span></td>
+        <td><% if (d.parsed_amount) { %><strong>£<%= Number(d.parsed_amount).toFixed(2) %></strong><% } else { %><span class="muted">no total read</span><% } %><% if (d.parsed_invoice_no) { %><br><span class="muted" style="font-size:11px;">Inv <%= d.parsed_invoice_no %></span><% } %><% if (d.parse_status==='no_text') { %><br><span class="muted" style="font-size:11px;">scanned — no text</span><% } %></td>
+        <td><% if (d.paid_payee) { %><strong><%= d.paid_payee %></strong><br><span class="muted" style="font-size:11px;"><%= money(d.paid_amount) %> · <%= d.paid_at ? new Date(d.paid_at).toLocaleDateString('en-GB') : '' %></span><% } else { %><span class="muted">—</span><% } %></td>
+        <td style="font-size:12px;max-width:340px;"><%= d.dupe_reason %></td>
+        <td style="white-space:nowrap;">
+          <a class="btn" href="/purchases/doc/<%= d.id %>/view" target="_blank" style="font-size:11px;padding:3px 8px;">Open</a>
+          <% if (d.dupe_of_id) { %><a class="btn" href="/purchases/doc/<%= d.dupe_of_id %>/view" target="_blank" style="font-size:11px;padding:3px 8px;" title="<%= d.dupe_of_name %>">Open the earlier one</a><% } %>
+          <form method="post" action="/purchases/doc/<%= d.id %>/dupe-dismiss" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;" title="Not a duplicate — this is a separate bill. It will not be flagged again.">Separate bill</button></form>
+          <form method="post" action="/purchases/doc/<%= d.id %>/delete" onsubmit="return confirm('Delete this duplicate invoice from the pool?');" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);">Delete</button></form>
+        </td>
+      </tr>
+    <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<% if (maybeDupes.length) { %>
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:16px 20px 0;"><h2 style="margin:0;">Possible duplicates <span class="muted">(<%= maybeDupes.length %>)</span></h2>
+    <p class="muted" style="font-size:12px;margin:4px 0 0;">Neither copy has been paid yet. Keep one, delete the other &mdash; or mark it a separate bill if it&rsquo;s a genuine repeat charge.</p></div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Invoice</th><th>Read as</th><th>Looks like</th><th>Why flagged</th><th></th></tr></thead>
+    <tbody>
+    <% maybeDupes.forEach(function(d){ %>
+      <tr>
+        <td><strong><%= d.file_name %></strong><% if (d.rel_path) { %><br><span class="muted" style="font-size:11px;">📁 <%= d.rel_path %></span><% } %><br><span class="muted" style="font-size:11px;"><%= d.from_name || d.from_email || 'Manual upload' %> · <%= dt(d.received_at || d.created_at) %></span></td>
+        <td><% if (d.parsed_amount) { %><strong>£<%= Number(d.parsed_amount).toFixed(2) %></strong><% } else { %><span class="muted">no total read</span><% } %><% if (d.parsed_invoice_no) { %><br><span class="muted" style="font-size:11px;">Inv <%= d.parsed_invoice_no %></span><% } %></td>
+        <td><% if (d.dupe_of_name) { %><%= d.dupe_of_name %><% if (d.dupe_of_rel) { %><br><span class="muted" style="font-size:11px;">📁 <%= d.dupe_of_rel %></span><% } %><% } else { %><span class="muted">—</span><% } %></td>
+        <td style="font-size:12px;max-width:340px;"><%= d.dupe_reason %></td>
+        <td style="white-space:nowrap;">
+          <a class="btn" href="/purchases/doc/<%= d.id %>/view" target="_blank" style="font-size:11px;padding:3px 8px;">Open</a>
+          <% if (d.dupe_of_id) { %><a class="btn" href="/purchases/doc/<%= d.dupe_of_id %>/view" target="_blank" style="font-size:11px;padding:3px 8px;" title="<%= d.dupe_of_name %>">Open the other</a><% } %>
+          <form method="post" action="/purchases/doc/<%= d.id %>/dupe-dismiss" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;" title="Not a duplicate — this is a separate bill. It will not be flagged again.">Separate bill</button></form>
+          <form method="post" action="/purchases/doc/<%= d.id %>/delete" onsubmit="return confirm('Delete this duplicate invoice from the pool?');" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);">Delete</button></form>
+        </td>
+      </tr>
+    <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
 
 <% } else if (view==='suppliers') { %>
 <!-- ───────── Suppliers tab ───────── -->

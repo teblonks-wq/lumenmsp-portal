@@ -24,4 +24,61 @@
   </a>
 </div>
 
+
+<%
+  var anoms = anomalies || [];
+  var hi  = anoms.filter(function(a){ return a.severity==='high'; });
+  var mid = anoms.filter(function(a){ return a.severity==='medium'; });
+  var lo  = anoms.filter(function(a){ return a.severity!=='high' && a.severity!=='medium'; });
+  function amt(v){ if (v==null) return ''; var n=Math.abs(Number(v)||0); return '£'+n.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  var KIND = { already_paid:'Already paid', unpaid_invoice:'Not paid', payment_no_invoice:'No invoice',
+               price_jump:'Price up', missing_bill:'Bill missing', new_supplier:'New supplier',
+               vat_mismatch:'Figures', ai_concern:'Claude' };
+%>
+<style>
+  .an-row{display:flex;gap:12px;align-items:flex-start;padding:12px 16px;border-top:1px solid var(--line);}
+  .an-row:first-child{border-top:0;}
+  .an-tag{flex:0 0 auto;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;padding:3px 7px;border-radius:5px;white-space:nowrap;}
+  .an-high{background:var(--bad-bg,#fde8e8);color:var(--bad-fg,#a12626);}
+  .an-mid{background:#fdf3e2;color:#8a5a00;}
+  .an-low{background:var(--chip-bg,#eef2f7);color:var(--muted);}
+  .an-body{flex:1;min-width:0;}
+  .an-title{font-weight:600;font-size:14px;}
+  .an-detail{font-size:12.5px;color:var(--muted);margin-top:2px;}
+  .an-amt{font-weight:700;font-size:14px;white-space:nowrap;}
+</style>
+
+<div class="card" style="padding:0;margin-bottom:18px;<%= hi.length ? 'border-left:3px solid var(--bad-fg);' : '' %>">
+  <div class="card-header" style="padding:16px 20px 12px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+    <div>
+      <h2 style="margin:0;">What needs looking at <% if (anoms.length) { %><span class="muted">(<%= anoms.length %>)</span><% } %></h2>
+      <p class="muted" style="font-size:12px;margin:4px 0 0;">Checked overnight. Bills nobody paid, payments with no bill behind them, prices that moved, and anything Claude noticed while reading an invoice.</p>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <form method="post" action="/purchases/anomalies/refresh" style="margin:0;"><button class="btn" type="submit" title="Re-check the ledger now instead of waiting for tonight">↻ Check now</button></form>
+      <form method="post" action="/purchases/anomalies/digest" style="margin:0;"><button class="btn" type="submit" title="Email the open list now (it also goes out automatically on Monday morning)">✉ Email the list</button></form>
+    </div>
+  </div>
+
+  <% if (!anoms.length) { %>
+    <div class="empty-state" style="margin:0;padding:24px;">Nothing outstanding. Every invoice is matched, every payment has a bill behind it, and no supplier has changed its price.</div>
+  <% } else { %>
+    <% [['high',hi],['medium',mid],['info',lo]].forEach(function(grp){ grp[1].forEach(function(a){ %>
+      <div class="an-row">
+        <span class="an-tag <%= a.severity==='high'?'an-high':(a.severity==='medium'?'an-mid':'an-low') %>"><%= KIND[a.kind] || a.kind %></span>
+        <div class="an-body">
+          <div class="an-title"><%= a.title %></div>
+          <% if (a.detail) { %><div class="an-detail"><%= a.detail %></div><% } %>
+          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+            <% if (a.document_id) { %><a class="btn" href="/purchases/doc/<%= a.document_id %>/view" target="_blank" style="font-size:11px;padding:2px 8px;">Open invoice</a><% } %>
+            <% if (a.txn_id) { %><a class="btn" href="/purchases/expenses" style="font-size:11px;padding:2px 8px;">Go to expenses</a><% } %>
+            <form method="post" action="/purchases/anomalies/<%= a.id %>/dismiss" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:2px 8px;" title="Understood — stop showing me this">Dismiss</button></form>
+          </div>
+        </div>
+        <% if (a.amount != null) { %><div class="an-amt"><%= amt(a.amount) %></div><% } %>
+      </div>
+    <% }); }); %>
+  <% } %>
+</div>
+
 <%- include('../partials/footer') %>

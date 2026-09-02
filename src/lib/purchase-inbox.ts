@@ -6,6 +6,8 @@ import { graphConfigured, graphListInbox, graphListAttachments, GraphMessage, gr
 import { getSetting, setSetting } from './settings';
 import { parseAndStoreDoc } from './invoice-read';
 import { aliasTokensFor, isFxBilled, FX_MIN, FX_MAX } from './purchase-match';
+import { aiReadInvoiceDoc, aiJudgeMatch, learnFromMatch, getSupplierProfile } from './purchase-agent';
+import { supplierKey } from './purchase-dupes';
 
 // ── Invoice inbox ───────────────────────────────────────────────────────────────
 // Polls a DEDICATED mailbox (invoice@lumenmsp.co.uk) and pools any PDF/image
@@ -171,14 +173,31 @@ function supplierTokens(doc: any): string[] {
   return out;
 }
 
-export async function autoMatchInvoices(): Promise<{ matched: number; considered: number }> {
+export interface AutoMatchResult { matched: number; considered: number; byClaude: number; suggested: number; aiRead: number }
+
+export async function autoMatchInvoices(opts?: { useAi?: boolean }): Promise<AutoMatchResult> {
+  // Claude costs money per call, so it is opt-outable and only ever reached below, after
+  // the free rules have had their go.
+  const useAi = opts?.useAi ?? ((await getSetting(GROUP, 'ai_matching')) !== '0');
   const docs = (await pool.query(
-    "SELECT * FROM purchase_documents WHERE status <> 'attached' ORDER BY received_at DESC NULLS LAST"
+    "SELECT * FROM purchase_documents WHERE status <> 'attached' AND archived_at IS NULL ORDER BY received_at DESC NULLS LAST"
   )).rows;
-  let matched = 0;
+  let matched = 0, byClaude = 0, suggested = 0, aiRead = 0;
   for (const d of docs) {
     // Backfill: read the invoice text if we haven't yet, so we have its gross total.
-    if (!d.parse_status) { try { await parseAndStoreDoc(d); const r = await pool.query('SELECT parsed_amount FROM purchase_documents WHERE id=$1', [d.id]); d.parsed_amount = r.rows[0]?.parsed_amount; } catch { /* ignore */ } }
+    if (!d.parse_status) { try { await parseAndStoreDoc(d); const r = await pool.query('SELECT parsed_amount, parsed_invoice_no FROM purchase_documents WHERE id=$1', [d.id]); d.parsed_amount = r.rows[0]?.parsed_amount; d.parsed_invoice_no = r.rows[0]?.parsed_invoice_no; } catch { /* ignore */ } }
+    // A scan or photo yields no text at all, and nothing downstream can match on nothing.
+    // Have Claude LOOK at the document. This is the OCR step, and it runs once per document.
+    if (useAi && !d.ai_read_status && (d.parse_status === 'no_text' || d.parse_status === 'error' || d.parsed_amount == null)) {
+      try {
+        const r = await aiReadInvoiceDoc(d);
+        if (r) {
+          aiRead++;
+          const row = (await pool.query('SELECT parsed_amount, parsed_invoice_no, parsed_date FROM purchase_documents WHERE id=$1', [d.id])).rows[0];
+          if (row) { d.parsed_amount = row.parsed_amount; d.parsed_invoice_no = row.parsed_invoice_no; d.parsed_date = row.parsed_date; }
+        }
+      } catch (e) { console.error('[invoice-inbox] AI read failed:', (e as Error).message); }
+    }
     const tokens = supplierTokens(d);
     // Prefer the amount read off the invoice itself; fall back to the subject/filename.
     const amount = (d.parsed_amount != null ? Number(d.parsed_amount) : null) ?? extractAmount(d.subject || '') ?? extractAmount(d.file_name || '');
@@ -191,8 +210,15 @@ export async function autoMatchInvoices(): Promise<{ matched: number; considered
           AND booked_at BETWEEN $1::timestamp - INTERVAL '45 days' AND $1::timestamp + INTERVAL '45 days'`,
       [anchor]
     )).rows;
+    // Bank references often carry the supplier's own invoice number — the single strongest
+    // signal we have, and until Sep 2026 it was parsed off the PDF and then never used.
+    // Only trusted at 5+ characters: a 3-digit "042" collides with half the statement.
+    const invNo = String(d.parsed_invoice_no || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const invNoUsable = invNo.length >= 5;
     const scored = cands.map((t: any) => {
       const hay = ((t.counterparty || '') + ' ' + (t.description || '') + ' ' + (t.reference || '')).toLowerCase();
+      const hayAlnum = hay.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const invNoHit = invNoUsable && hayAlnum.includes(invNo);
       // The statement descriptor often names the PROCESSOR, not the supplier
       // (FastSpring→MSP360, BlueSnap→Atera, Aventis→rent, DWS→Giacom…). Fold the
       // alias tokens for this transaction into the supplier check.
@@ -208,8 +234,9 @@ export async function autoMatchInvoices(): Promise<{ matched: number; considered
       if (amountHit) score += 3;
       if (fxHit) score += 2;
       if (supplierHit) score += 2;
+      if (invNoHit) score += 4;
       if (days <= 14) score += 1;
-      return { t, score, amountHit, fxHit, supplierHit };
+      return { t, score, amountHit, fxHit, supplierHit, invNoHit };
     }).sort((a, b) => b.score - a.score);
 
     const best = scored[0];
@@ -220,16 +247,81 @@ export async function autoMatchInvoices(): Promise<{ matched: number; considered
     // FX-billed suppliers qualify on supplier + ratio when the fuzzy hit is unique.
     const exactAmountMatches = scored.filter((s) => s.amountHit).length;
     const fxMatches = scored.filter((s) => s.fxHit).length;
-    const confident = (best.amountHit
+    // The supplier's own invoice number appearing in the bank reference is decisive on its
+    // own, PROVIDED only one transaction carries it — two would mean the number is noise.
+    const invNoMatches = scored.filter((s) => s.invNoHit).length;
+    const confident = (best.invNoHit && invNoMatches === 1)
+      || (best.amountHit
       && (best.supplierHit || exactAmountMatches === 1)
       && (scored.length < 2 || best.score - scored[1].score >= 2))
       || (best.fxHit && fxMatches === 1 && (scored.length < 2 || best.score - scored[1].score >= 2));
-    if (!confident) continue;
-    await pool.query('UPDATE bank_transactions SET attachment_path=$1, attachment_name=$2, updated_at=NOW() WHERE id=$3', [d.file_path, d.file_name, best.t.id]);
-    await pool.query("UPDATE purchase_documents SET status='attached', bank_transaction_id=$1 WHERE id=$2", [best.t.id, d.id]);
-    matched++;
+    if (confident) {
+      const why = best.invNoHit ? `invoice number ${d.parsed_invoice_no} appears in the bank reference`
+        : best.amountHit ? 'invoice total matches the payment exactly' + (best.supplierHit ? ' and the supplier matches' : ' and no other payment in the window matches that total')
+        : 'supplier matches and the USD/GBP conversion is in range';
+      await attachDocToTxn(d, best.t.id, 'rules', null, why);
+      matched++;
+      continue;
+    }
+
+    // ── The rules could not settle it. Ask Claude. ────────────────────────────────
+    // Only reached for genuinely ambiguous documents, so this is a small fraction of the
+    // pool. Claude is given the invoice, the shortlist, and what we have LEARNED about
+    // this supplier from matches a human already confirmed.
+    if (!useAi || !scored.length) continue;
+    const shortlist = scored.slice(0, 10).map((sc) => sc.t);
+    let verdict = null as Awaited<ReturnType<typeof aiJudgeMatch>>;
+    try { verdict = await aiJudgeMatch(d, shortlist, await getSupplierProfile(supplierKey(d))); }
+    catch (e) { console.error('[invoice-inbox] AI judge failed:', (e as Error).message); }
+    if (!verdict) continue;
+
+    // Claude raising a concern is worth a human's eye whatever it decided about the match.
+    if (verdict.concern) {
+      await pool.query(
+        `INSERT INTO purchase_anomalies (dedupe_key, kind, severity, title, detail, amount, document_id, supplier_key, status, first_seen_at, last_seen_at)
+         VALUES ($1,'ai_concern','medium',$2,$3,$4,$5,$6,'open',NOW(),NOW())
+         ON CONFLICT (dedupe_key) DO UPDATE SET detail=EXCLUDED.detail, last_seen_at=NOW()`,
+        ['ai_concern:' + d.id, 'Claude flagged something on ' + (d.file_name || 'an invoice'), verdict.concern,
+         d.parsed_amount != null ? Number(d.parsed_amount) : null, d.id, supplierKey(d) || null]
+      ).catch(() => {});
+    }
+    if (!verdict.txnId) continue;
+
+    // A verdict does not get to overrule the arithmetic. If some OTHER payment is the
+    // unique exact match for this invoice total, Claude picking a different one is a
+    // contradiction, and a contradiction is a human's call, not an auto-attach.
+    const exactElsewhere = scored.some((sc) => sc.amountHit && sc.t.id !== verdict!.txnId) && exactAmountMatches === 1;
+    if (verdict.confidence >= 90 && !exactElsewhere) {
+      await attachDocToTxn(d, verdict.txnId, 'claude', verdict.confidence, verdict.reason);
+      matched++; byClaude++;
+    } else if (verdict.confidence >= 60) {
+      // Not sure enough to act. Propose it — one click on the screen accepts it.
+      await pool.query(
+        'UPDATE purchase_documents SET suggest_txn_id=$1, suggest_confidence=$2, suggest_reason=$3 WHERE id=$4',
+        [verdict.txnId, verdict.confidence, verdict.reason + (exactElsewhere ? ' [held back: another payment is the exact-amount match]' : ''), d.id]
+      ).catch(() => {});
+      suggested++;
+    }
   }
-  return { matched, considered: docs.length };
+  return { matched, considered: docs.length, byClaude, suggested, aiRead };
+}
+
+// The ONE place an invoice becomes attached to a payment, so provenance is always recorded
+// and the supplier profile always learns. Every caller — rules, Claude, a human clicking
+// Accept — comes through here.
+export async function attachDocToTxn(
+  doc: any, txnId: number, by: 'rules' | 'claude' | 'human', confidence: number | null, reason: string | null,
+): Promise<void> {
+  await pool.query(
+    `UPDATE bank_transactions SET attachment_path=$1, attachment_name=$2, matched_by=$3, match_confidence=$4,
+            match_reason=$5, matched_at=NOW(), updated_at=NOW() WHERE id=$6`,
+    [doc.file_path, doc.file_name, by, confidence, reason, txnId]
+  );
+  await pool.query(
+    "UPDATE purchase_documents SET status='attached', bank_transaction_id=$1, suggest_txn_id=NULL, suggest_confidence=NULL, suggest_reason=NULL WHERE id=$2",
+    [txnId, doc.id]
+  );
+  try { await learnFromMatch(doc.id, txnId); } catch (e) { console.error('[invoice-inbox] learn failed:', (e as Error).message); }
 }
 
 let _started = false;

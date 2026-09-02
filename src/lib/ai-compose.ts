@@ -526,6 +526,68 @@ async function callClaude(key: string, model: string, system: string, userText: 
   return text;
 }
 
+// ── Reading a document Claude can SEE ────────────────────────────────────────────
+// A scanned or photographed invoice has no extractable text, so `pdf-parse` returns
+// nothing and every text-based heuristic downstream is blind. Rather than install and
+// maintain an OCR stack on the App Server, we hand the file to Claude as a document (PDF)
+// or image block and let it read the page the way a person would. That covers scans,
+// photos, screenshots and the badly-generated PDFs that carry text as vector outlines.
+// Models differ on PDF support, so document reads use the STRONG model by default.
+export interface AiDocFile { media_type: string; data: string; kind: 'pdf' | 'image' }
+
+export function docKindFor(contentType: string | null, fileName: string): AiDocFile['kind'] | null {
+  const ct = (contentType || '').toLowerCase(), nm = (fileName || '').toLowerCase();
+  if (/\.pdf$/.test(nm) || ct.includes('pdf')) return 'pdf';
+  if (/\.(png|jpe?g|gif|webp)$/.test(nm) || /^image\/(png|jpeg|jpg|gif|webp)$/.test(ct)) return 'image';
+  return null; // tiff/heic/office files are not readable this way
+}
+
+export function docMediaType(kind: AiDocFile['kind'], contentType: string | null, fileName: string): string {
+  if (kind === 'pdf') return 'application/pdf';
+  const nm = (fileName || '').toLowerCase();
+  if (/\.png$/.test(nm)) return 'image/png';
+  if (/\.gif$/.test(nm)) return 'image/gif';
+  if (/\.webp$/.test(nm)) return 'image/webp';
+  if (/\.jpe?g$/.test(nm)) return 'image/jpeg';
+  const ct = (contentType || '').toLowerCase();
+  return /^image\/(png|jpeg|gif|webp)$/.test(ct) ? ct : 'image/jpeg';
+}
+
+export async function aiAskDoc(system: string, question: string, file: AiDocFile, maxTokens = 900): Promise<string> {
+  const key = await resolveKey();
+  if (!key) throw new Error('Claude is not configured - add your API key in Settings -> Integrations (or ANTHROPIC_API_KEY in the server .env).');
+  const model = ((await getSetting('anthropic', 'model_strong')) || '').trim() || 'claude-sonnet-4-6';
+  const block = file.kind === 'pdf'
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: file.data } }
+    : { type: 'image', source: { type: 'base64', media_type: file.media_type, data: file.data } };
+
+  let res: Response;
+  try {
+    res = await fetch(ANTHROPIC_URL, {
+      method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model, max_tokens: maxTokens, temperature: 0,
+        system,
+        messages: [{ role: 'user', content: [block, { type: 'text', text: question }] }],
+      }),
+    });
+  } catch (e: any) { throw new Error('Could not reach Claude: ' + (e.message || 'network error')); }
+
+  if (!res.ok) {
+    let detail = '';
+    try { const j: any = await res.json(); detail = j?.error?.message || ''; } catch { /* ignore */ }
+    if (res.status === 401) throw new Error('Claude rejected the API key (401) - check ANTHROPIC_API_KEY.');
+    if (res.status === 429) throw new Error('Claude rate/credit limit hit (429) - check your Anthropic billing.');
+    throw new Error(`Claude error ${res.status}${detail ? ': ' + detail : ''}`);
+  }
+  const data: any = await res.json();
+  const text = Array.isArray(data?.content)
+    ? data.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text).join('').trim() : '';
+  if (!text) throw new Error('Claude returned an empty message.');
+  return text;
+}
+
 export interface TicketReplyInput {
   draft: string;                // the engineer's rough/typed draft for the next reply
   context: string;              // the assembled ticket thread (chronological, labelled) incl. internal notes

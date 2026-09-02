@@ -117,6 +117,27 @@ export async function storeRaw(customerId: number, records: TollringCallRecord[]
   return added;
 }
 
+// Talk time was never carried onto call_events, so the journeys engine — and therefore
+// OneBoard, the exports and Ask Insights — has never been able to say how long a call
+// lasted. The figure is right there on the Tollring record (r.Duration); nothing had ever
+// asked for it. Added 2026-09-01.
+//
+// Safe to ALTER here: the INSIGHTS database is not Prisma-managed, so `prisma db push`
+// cannot drop it (see [[prisma-managed-column-gotcha]] — raw columns on the PORTAL pool
+// are a different and much worse story).
+let durationColumnReady = false;
+export async function ensureDurationColumn(): Promise<void> {
+  if (durationColumnReady) return;
+  try {
+    await db().query('ALTER TABLE call_events ADD COLUMN IF NOT EXISTS duration_secs INTEGER');
+    durationColumnReady = true;
+  } catch (e: any) {
+    // A sync that cannot add the column must still sync. The board simply shows no call
+    // length until this succeeds, which is the honest failure rather than a broken feed.
+    console.error('[tollring-sync] could not add call_events.duration_secs:', e?.message || e);
+  }
+}
+
 export async function deriveCallEvent(customerId: number, r: TollringCallRecord): Promise<boolean> {
   const eventDate = parseCallDate(r.Call_date);
   const dayStart  = new Date(eventDate);
@@ -127,8 +148,9 @@ export async function deriveCallEvent(customerId: number, r: TollringCallRecord)
   const res = await db().query(
     `INSERT INTO call_events
        (customer_id, event_datetime, report_start, report_end, group_name, outcome,
-        number_raw, number_normalised, ddi, wait_seconds, source_file, event_hash, call_id, extno, direction)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        number_raw, number_normalised, ddi, wait_seconds, source_file, event_hash, call_id, extno, direction,
+        duration_secs)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
      ON CONFLICT (event_hash) DO UPDATE SET
        group_name        = EXCLUDED.group_name,
        outcome           = EXCLUDED.outcome,
@@ -138,11 +160,16 @@ export async function deriveCallEvent(customerId: number, r: TollringCallRecord)
        wait_seconds      = EXCLUDED.wait_seconds,
        call_id           = EXCLUDED.call_id,
        extno             = EXCLUDED.extno,
-       direction         = EXCLUDED.direction`,
+       direction         = EXCLUDED.direction,
+       duration_secs     = EXCLUDED.duration_secs`,
     [
       customerId, eventDate, dayStart, dayEnd, r.Group_no || '', outcomeFromRecord(r),
       r.Number || '', normaliseNumber(r.Number || ''), r.Port || null, r.Ring_time || 0,
       'tollring-sync', makeHash(customerId, r.RecordId), r.CallId || null, r.Extno || null, r.Direction || null,
+      // Talk time for THIS leg. Only the leg that actually answered carries a duration;
+      // the rung-and-not-answered legs are 0, which is what makes "the answered leg's
+      // duration" the right thing to average later rather than a sum across legs.
+      r.Duration == null ? null : Number(r.Duration),
     ]
   );
   return (res.rowCount ?? 0) > 0;
@@ -203,6 +230,7 @@ async function ensureMinHistory(
 
 export async function syncCustomer(customerId: number, fromOverride?: Date): Promise<SyncResult> {
   await ensureRawTable();
+  await ensureDurationColumn();
 
   const custRes = await db().query(
     'SELECT id, name, icalls_api_url, icalls_api_token, icalls_api_username, last_synced_at FROM customers WHERE id = $1',

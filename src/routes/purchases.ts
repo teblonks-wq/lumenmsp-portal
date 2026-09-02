@@ -9,6 +9,10 @@ import { getSetting, setSetting } from '../lib/settings';
 import { QuickBooks } from '../lib/quickbooks';
 import { syncOpenBanking } from '../lib/openbanking';
 import { syncInvoiceInbox, getInvoiceMailbox, autoMatchInvoices } from '../lib/purchase-inbox';
+import { hashFile, findByHash, assessAndStore, rescanAllDuplicates, backfillHashes } from '../lib/purchase-dupes';
+import { attachDocToTxn } from '../lib/purchase-inbox';
+import { aiReadUnreadable, aiReadInvoiceDoc } from '../lib/purchase-agent';
+import { refreshAnomalies, listAnomalies, dismissAnomaly, sendAnomalyDigest } from '../lib/purchase-anomalies';
 import { autoCategoriseOutstanding } from '../lib/purchase-match';
 import { parseAndStoreDoc } from '../lib/invoice-read';
 import { renderExpenseReportPdf, loadExpenseReport } from '../lib/expense-report';
@@ -29,12 +33,16 @@ const upload = multer({
   limits: { fileSize: 15 * 1024 * 1024 },
 });
 import { PURCHASE_DOCS_DIR } from '../lib/purchase-inbox';
+const BULK_MAX_FILES = 1000;
 const docUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => { fs.mkdirSync(PURCHASE_DOCS_DIR, { recursive: true }); cb(null, PURCHASE_DOCS_DIR); },
     filename: (_req, file, cb) => cb(null, Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '-' + file.originalname.replace(/[^\w.\-]/g, '_')),
   }),
-  limits: { fileSize: 15 * 1024 * 1024 },
+  // Bulk folder uploads walk a whole tree, so the caps are per-BATCH, not per-invoice:
+  // up to 1,000 files and 25 MB each (scanned invoices are big). The browser filters the
+  // tree down to invoice-shaped files before anything is sent.
+  limits: { fileSize: 25 * 1024 * 1024, files: BULK_MAX_FILES },
 });
 // Cached QB expense categories — QB is slow and was being hit on every page render.
 let _catsCache: { at: number; cats: any[]; qbOn: boolean } | null = null;
@@ -76,7 +84,13 @@ const parseDate = (s: string): Date | null => {
 // ── Purchase Ledger hub ──────────────────────────────────────────────────────────
 router.get('/purchases', async (req: Request, res: Response) => {
   const toDo = Number((await pool.query("SELECT COUNT(*)::int n FROM bank_transactions WHERE status IN ('new','categorised') AND amount < 0").catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n);
-  res.render('purchases/index', { user: req.session.user!, toDo, notice: req.query.msg || null, error: req.query.err || null });
+  // The anomaly list is what Terry and Natalie work from, so it is on the screen they land
+  // on rather than behind a tab. Read only — the nightly sweep does the computing.
+  const anomalies = await listAnomalies('open');
+  res.render('purchases/index', {
+    user: req.session.user!, toDo, anomalies,
+    notice: req.query.msg || null, error: req.query.err || null,
+  });
 });
 
 // ── Expense Reconciliation (month by month, with close) ────────────────────────────
@@ -104,20 +118,38 @@ router.get('/purchases/expenses', async (req: Request, res: Response) => {
   // shows ones the user has filed away so the live inbox stays uncluttered.
   const showArchived = req.query.docs === 'archived';
   const docs = (await pool.query(
-    `SELECT d.*, t.counterparty AS txn_payee, t.amount AS txn_amount
-       FROM purchase_documents d LEFT JOIN bank_transactions t ON t.id = d.bank_transaction_id
+    `SELECT d.*, t.counterparty AS txn_payee, t.amount AS txn_amount, t.matched_by, t.match_confidence, t.match_reason,
+            a.ai_supplier, a.ai_gross, a.ai_summary, a.ai_concerns, a.ai_period,
+            st.counterparty AS suggest_payee, st.amount AS suggest_amount, st.booked_at AS suggest_booked_at
+       FROM purchase_documents d
+       LEFT JOIN bank_transactions t  ON t.id  = d.bank_transaction_id
+       LEFT JOIN bank_transactions st ON st.id = d.suggest_txn_id
+       LEFT JOIN purchase_doc_ai a    ON a.document_id = d.id
       WHERE d.archived_at IS ${showArchived ? 'NOT NULL' : 'NULL'}
-      ORDER BY d.status='attached', d.created_at DESC, d.id DESC`
+      ORDER BY d.suggest_txn_id IS NULL, d.status='attached', d.created_at DESC, d.id DESC`
   ).catch(() => ({ rows: [] }))).rows;
   const inboxCount = Number((await pool.query("SELECT COUNT(*)::int n FROM purchase_documents WHERE archived_at IS NULL AND status<>'attached'").catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n);
   const archivedCount = Number((await pool.query("SELECT COUNT(*)::int n FROM purchase_documents WHERE archived_at IS NOT NULL").catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n);
-  const view = ['inbox', 'reconciled', 'suppliers'].includes(String(req.query.view)) ? String(req.query.view) : 'expenses';
+  // Flagged possible duplicates — 'paid' (the earlier copy is already attached to a payment)
+  // leads, because that is the one that costs money if it slips through.
+  const dupeDocs = (await pool.query(
+    `SELECT d.*, o.file_name AS dupe_of_name, o.rel_path AS dupe_of_rel, o.status AS dupe_of_status,
+            t.counterparty AS paid_payee, t.amount AS paid_amount, t.booked_at AS paid_at
+       FROM purchase_documents d
+       LEFT JOIN purchase_documents o ON o.id = d.dupe_of_id
+       LEFT JOIN bank_transactions t ON t.id = d.dupe_paid_txn_id
+      WHERE d.dupe_status IN ('likely','paid')
+      ORDER BY d.dupe_status='likely', d.created_at DESC, d.id DESC`
+  ).catch(() => ({ rows: [] }))).rows;
+  const dupeCount = dupeDocs.length;
+  const view = ['inbox', 'reconciled', 'suppliers', 'duplicates'].includes(String(req.query.view)) ? String(req.query.view) : 'expenses';
   const qbPushEnabled = (await getSetting('purchases', 'qb_push_enabled')) === '1';
   // Supplier directory (address book of who we buy from) — name/address/phone etc.
   const suppliers = (await pool.query("SELECT * FROM suppliers WHERE is_active = true ORDER BY lower(name)").catch(() => ({ rows: [] }))).rows;
   res.render('purchases/expenses', {
     user: req.session.user!, txns, splitsByTxn, cats, qbOn, qbPushEnabled, period, months, closed, accounts,
     docs, inboxCount, archivedCount, showArchived, view, suppliers, invoiceMailbox: await getInvoiceMailbox(),
+    dupeDocs, dupeCount, bulkMaxFiles: BULK_MAX_FILES,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
@@ -161,13 +193,15 @@ router.post('/purchases/doc/:id/attach', async (req: Request, res: Response) => 
     await pool.query('UPDATE bank_transaction_splits SET attachment_path=$1, attachment_name=$2 WHERE id=$3', [d.file_path, d.file_name, splitId]);
     await pool.query("UPDATE purchase_documents SET status='attached', bank_transaction_id=$1 WHERE id=$2", [sp.transaction_id, id]);
   } else {
-    await pool.query('UPDATE bank_transactions SET attachment_path=$1, attachment_name=$2, updated_at=NOW() WHERE id=$3', [d.file_path, d.file_name, txnId]);
     // If the receipt was captured with a category (mobile logger) and the txn isn't
     // categorised yet, carry the category across.
     if (d.category_id) {
       await pool.query("UPDATE bank_transactions SET qb_account_id=$1, qb_account_name=$2 WHERE id=$3 AND (qb_account_id IS NULL OR qb_account_id='')", [d.category_id, d.category_name, txnId]);
     }
-    await pool.query("UPDATE purchase_documents SET status='attached', bank_transaction_id=$1 WHERE id=$2", [txnId, id]);
+    // One door for every match, so provenance is recorded and the supplier profile learns
+    // from a human's decision exactly as it does from an automatic one. A person choosing
+    // this link is the BEST training signal the agent gets.
+    await attachDocToTxn(d, txnId, 'human', null, 'Attached by ' + (req.session.user!.displayName || 'a user'));
   }
   await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Purchases: attached pooled invoice "${d.file_name}"`);
   if (req.xhr || String(req.get('accept') || '').includes('application/json')) { res.json({ ok: true }); return; }
@@ -199,27 +233,187 @@ router.post('/purchases/doc/:id/unarchive', async (req: Request, res: Response) 
   res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent('Restored to inbox.'));
 });
 
-// Manually drop an invoice/receipt into the pool (one that wasn't emailed in).
-router.post('/purchases/inbox/upload', docUpload.array('files', 10), async (req: Request, res: Response) => {
+// Drop invoices into the pool by hand — one file, a multi-select, or a WHOLE FOLDER TREE
+// (the browser's folder picker walks every subfolder and posts each file with its relative
+// path). Every file is sha256'd on arrival:
+//   • byte-identical to something already pooled  → SKIPPED, the temp file is removed;
+//   • otherwise imported, parsed, then duplicate-assessed and flagged if it looks like an
+//     invoice we already hold — flagged, never blocked, because a genuine repeat monthly
+//     bill is indistinguishable from a duplicate without a human.
+// The result is a summary, not a bare count: on a folder backload you need to know what
+// was skipped and what needs a second look.
+router.post('/purchases/inbox/upload', docUpload.array('files', BULK_MAX_FILES), async (req: Request, res: Response) => {
   const files = (req.files as any[]) || [];
-  let added = 0;
-  for (const f of files) {
-    const ins = await pool.query(
-      `INSERT INTO purchase_documents (source, from_name, subject, received_at, file_name, file_path, content_type, size_bytes, status)
-       VALUES ('upload',$1,$2,NOW(),$3,$4,$5,$6,'new') RETURNING id`,
-      ['Manual upload', f.originalname, f.originalname, f.path, f.mimetype || null, f.size || null]
-    );
-    added++;
-    try { await parseAndStoreDoc({ id: ins.rows[0].id, file_path: f.path, content_type: f.mimetype || null, file_name: f.originalname }); } catch { /* parse best-effort */ }
+  // The browser sends the tree position of each file alongside it, in the same order, so a
+  // bulk-uploaded invoice still says which subfolder it came from.
+  let relPaths: string[] = [];
+  try { const raw = (req.body && req.body.rel_paths) || ''; if (raw) relPaths = JSON.parse(String(raw)); } catch { relPaths = []; }
+  const batchId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+
+  let added = 0, skipped = 0, flagged = 0, paidWarn = 0, failed = 0;
+  const skippedNames: string[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    try {
+      const rel = (relPaths[i] && String(relPaths[i])) || null;
+      // Chrome puts the relative path in the filename for folder uploads; keep just the leaf
+      // for display and the full path for provenance.
+      const displayName = String(f.originalname || 'invoice').split(/[\\/]/).pop() || 'invoice';
+      const relDir = rel && rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : null;
+
+      const hash = hashFile(f.path);
+      if (hash) {
+        const existing = await findByHash(hash);
+        if (existing) {
+          // Exact same bytes — nothing to review, just don't pool it twice. Bin the upload.
+          try { fs.unlinkSync(f.path); } catch { /* leave it, harmless */ }
+          skipped++;
+          if (skippedNames.length < 5) skippedNames.push(displayName);
+          continue;
+        }
+      }
+
+      const ins = await pool.query(
+        `INSERT INTO purchase_documents (source, from_name, subject, received_at, file_name, file_path, content_type, size_bytes, status, file_hash, rel_path, batch_id)
+         VALUES ('upload',$1,$2,NOW(),$3,$4,$5,$6,'new',$7,$8,$9) RETURNING id`,
+        [relDir ? 'Bulk upload — ' + relDir : 'Manual upload', displayName, displayName, f.path, f.mimetype || null, f.size || null, hash, relDir, batchId]
+      );
+      const docId = ins.rows[0].id;
+      added++;
+      // Parse first — the duplicate check needs the invoice number and total to say anything.
+      try { await parseAndStoreDoc({ id: docId, file_path: f.path, content_type: f.mimetype || null, file_name: displayName }); } catch { /* parse best-effort */ }
+      try {
+        const v = await assessAndStore(docId);
+        if (v.status === 'paid') paidWarn++; else if (v.status === 'likely') flagged++;
+      } catch (e) { console.error('[purchases] dupe check failed for doc', docId, (e as Error).message); }
+    } catch (e) {
+      console.error('[purchases] bulk upload failed for', f && f.originalname, (e as Error).message);
+      failed++;
+    }
   }
-  res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent(`Added ${added} document(s) to the invoice inbox.`));
+
+  if (added) {
+    await logActivity(req.session.user!.id, 'created', 'invoices', 0,
+      `Purchase inbox: bulk upload added ${added} invoice(s), skipped ${skipped} exact duplicate(s), flagged ${flagged + paidWarn}`);
+  }
+  const bits = [`Added ${added} invoice(s)`];
+  if (skipped) bits.push(`skipped ${skipped} exact duplicate${skipped === 1 ? '' : 's'}${skippedNames.length ? ' (' + skippedNames.join(', ') + (skipped > skippedNames.length ? ', …' : '') + ')' : ''}`);
+  if (paidWarn) bits.push(`${paidWarn} look ALREADY PAID`);
+  if (flagged) bits.push(`${flagged} possible duplicate${flagged === 1 ? '' : 's'}`);
+  if (failed) bits.push(`${failed} failed`);
+  const tail = (flagged + paidWarn) ? ' — review them on the Duplicates tab.' : '.';
+  res.redirect('/purchases/expenses?view=' + ((flagged + paidWarn) ? 'duplicates' : 'inbox') + '&msg=' + encodeURIComponent(bits.join(', ') + tail));
+});
+
+// Re-check the WHOLE pool for duplicates. The pool predates this check, so the first run is
+// the one that finds what's already in there. Also backfills sha256 for older documents so
+// the exact-duplicate skip works against everything received before today.
+router.post('/purchases/inbox/rescan-dupes', async (req: Request, res: Response) => {
+  try {
+    const hashed = await backfillHashes();
+    const r = await rescanAllDuplicates();
+    await logActivity(req.session.user!.id, 'updated', 'invoices', 0,
+      `Purchase inbox: duplicate rescan — ${r.scanned} checked, ${r.likely} possible, ${r.paid} already-paid`);
+    const hashNote = hashed ? ` (fingerprinted ${hashed} older file(s))` : '';
+    res.redirect('/purchases/expenses?view=duplicates&msg=' + encodeURIComponent(
+      `Checked ${r.scanned} document(s)${hashNote}: ${r.paid} look already paid, ${r.likely} possible duplicate(s).`));
+  } catch (e: any) {
+    res.redirect('/purchases/expenses?view=duplicates&err=' + encodeURIComponent(e.message || 'Duplicate rescan failed.'));
+  }
+});
+
+// Accept a match Claude proposed but was not confident enough to apply. This is the
+// training signal that matters most — a human agreeing goes into the supplier profile.
+router.post('/purchases/doc/:id/accept-suggestion', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const d = id ? (await pool.query('SELECT * FROM purchase_documents WHERE id=$1', [id])).rows[0] : null;
+  if (!d || !d.suggest_txn_id) { res.redirect('/purchases/expenses?view=inbox&err=' + encodeURIComponent('That suggestion is no longer available.')); return; }
+  await attachDocToTxn(d, d.suggest_txn_id, 'human', d.suggest_confidence, 'Accepted Claude\'s suggestion: ' + (d.suggest_reason || ''));
+  await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Purchases: accepted Claude's suggested match for "${d.file_name}"`);
+  res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent('Match accepted — the supplier profile has learned from it.'));
+});
+
+// Reject a suggestion. The proposal is dropped; nothing is attached and nothing is learned.
+router.post('/purchases/doc/:id/reject-suggestion', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (id) await pool.query('UPDATE purchase_documents SET suggest_txn_id=NULL, suggest_confidence=NULL, suggest_reason=NULL WHERE id=$1', [id]);
+  res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent('Suggestion dismissed.'));
+});
+
+// Have Claude LOOK at the invoices no text parser could read — scans, photos, and PDFs
+// that carry their text as outlines. This is the OCR pass, and it runs once per document.
+router.post('/purchases/inbox/ai-read', async (req: Request, res: Response) => {
+  try {
+    const r = await aiReadUnreadable(40);
+    await logActivity(req.session.user!.id, 'updated', 'invoices', 0, `Purchases: Claude read ${r.read}/${r.considered} unreadable invoice(s)`);
+    res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent(
+      r.considered ? `Claude read ${r.read} of ${r.considered} invoice(s) that had no readable text${r.failed ? `; ${r.failed} could not be read` : ''}.`
+                   : 'Nothing needed reading — every pooled invoice already has its figures.'));
+  } catch (e: any) {
+    res.redirect('/purchases/expenses?view=inbox&err=' + encodeURIComponent(e.message || 'Claude could not read the invoices.'));
+  }
+});
+
+// Read ONE document with Claude, on demand from the inbox card.
+router.post('/purchases/doc/:id/ai-read', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const d = id ? (await pool.query('SELECT * FROM purchase_documents WHERE id=$1', [id])).rows[0] : null;
+  if (!d) { res.redirect('/purchases/expenses?view=inbox&err=' + encodeURIComponent('Document not found.')); return; }
+  try {
+    const r = await aiReadInvoiceDoc(d);
+    res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent(
+      r ? `Read: ${r.supplier || 'supplier not stated'}, ${r.gross != null ? '£' + Number(r.gross).toFixed(2) : 'no total found'}${r.invoiceNo ? ', invoice ' + r.invoiceNo : ''}.`
+        : 'Claude could not read that document.'));
+  } catch (e: any) {
+    res.redirect('/purchases/expenses?view=inbox&err=' + encodeURIComponent(e.message || 'Read failed.'));
+  }
+});
+
+// ── Anomalies ─────────────────────────────────────────────────────────────────────
+router.post('/purchases/anomalies/refresh', async (req: Request, res: Response) => {
+  try {
+    const r = await refreshAnomalies();
+    res.redirect('/purchases?msg=' + encodeURIComponent(`Checked the ledger: ${r.open} open item(s)${r.resolved ? `, ${r.resolved} no longer apply` : ''}.`));
+  } catch (e: any) {
+    res.redirect('/purchases?err=' + encodeURIComponent(e.message || 'Anomaly check failed.'));
+  }
+});
+
+router.post('/purchases/anomalies/:id/dismiss', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (id) await dismissAnomaly(id, req.session.user!.id);
+  res.redirect('/purchases?msg=' + encodeURIComponent('Dismissed — it will not come back.'));
+});
+
+// Send the Monday digest now (the cron sends it at 07:30 on a Monday).
+router.post('/purchases/anomalies/digest', async (req: Request, res: Response) => {
+  try {
+    const r = await sendAnomalyDigest();
+    res.redirect('/purchases?msg=' + encodeURIComponent(
+      r.sent ? `Digest sent to ${r.to} (${r.count} item(s)).`
+             : r.count ? 'Nothing was sent — no recipient is set, or Microsoft Graph is not configured.'
+                       : 'Nothing to send — the list is empty.'));
+  } catch (e: any) {
+    res.redirect('/purchases?err=' + encodeURIComponent(e.message || 'Digest failed.'));
+  }
+});
+
+// "This is a separate bill" — clears the flag for good. Sticky: a rescan never re-flags it.
+router.post('/purchases/doc/:id/dupe-dismiss', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (id) await pool.query("UPDATE purchase_documents SET dupe_status='dismissed', dupe_reason=NULL WHERE id=$1", [id]);
+  res.redirect('/purchases/expenses?view=duplicates&msg=' + encodeURIComponent('Marked as a separate bill — it will not be flagged again.'));
 });
 
 // Try to auto-match pooled invoices to bank transactions (amount + supplier + date).
 router.post('/purchases/inbox/automatch', async (_req: Request, res: Response) => {
   try {
     const r = await autoMatchInvoices();
-    res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent(`Auto-match: linked ${r.matched} invoice(s) to transactions.`));
+    const bits = [`linked ${r.matched} invoice(s)`];
+    if (r.byClaude) bits.push(`${r.byClaude} of them judged by Claude`);
+    if (r.aiRead) bits.push(`${r.aiRead} scanned invoice(s) read`);
+    if (r.suggested) bits.push(`${r.suggested} suggestion(s) waiting for you`);
+    res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent('Auto-match: ' + bits.join(', ') + '.'));
   } catch (e: any) {
     res.redirect('/purchases/expenses?view=inbox&err=' + encodeURIComponent(e.message || 'Auto-match failed.'));
   }
@@ -409,7 +603,7 @@ router.post('/purchases/txn/:id/unlock', async (req: Request, res: Response) => 
 router.post('/purchases/txn/:id/unlink-invoice', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (id) {
-    await pool.query('UPDATE bank_transactions SET attachment_path=NULL, attachment_name=NULL, updated_at=NOW() WHERE id=$1', [id]);
+    await pool.query('UPDATE bank_transactions SET attachment_path=NULL, attachment_name=NULL, matched_by=NULL, match_confidence=NULL, match_reason=NULL, matched_at=NULL, updated_at=NOW() WHERE id=$1', [id]);
     // If a pooled invoice was linked to it, return it to the inbox.
     await pool.query("UPDATE purchase_documents SET status='new', bank_transaction_id=NULL WHERE bank_transaction_id=$1", [id]);
   }

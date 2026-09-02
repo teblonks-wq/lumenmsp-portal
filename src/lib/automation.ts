@@ -109,16 +109,17 @@ $report -join "\`n"`;
 
 // ── Conditions ──────────────────────────────────────────────────────────────────
 
-export type ConditionKey = 'next_contact' | 'datetime' | 'after_reboot';
+export type ConditionKey = 'next_contact' | 'datetime' | 'after_reboot' | 'window';
 
 export const CONDITIONS: Array<{ key: ConditionKey; label: string; help: string }> = [
   { key: 'next_contact', label: 'Next contact', help: 'As soon as each machine next checks in. A machine that is off simply acts the moment it comes back.' },
   { key: 'datetime', label: 'Time and date', help: 'At a chosen moment. Machines that are off at the time act on their first check-in afterwards.' },
   { key: 'after_reboot', label: 'After next reboot', help: 'The first time each machine checks in having actually restarted since the task was created.' },
+  { key: 'window', label: 'Start and finish', help: 'A window to act in. From the start, each machine acts the moment it next checks in. At the finish the task closes — a machine that never appeared is recorded as having missed the window, never actioned hours later.' },
 ];
 
 export function isCondition(v: unknown): v is ConditionKey {
-  return v === 'next_contact' || v === 'datetime' || v === 'after_reboot';
+  return v === 'next_contact' || v === 'datetime' || v === 'after_reboot' || v === 'window';
 }
 
 export const RECURRENCES = ['none', 'daily', 'weekdays', 'weekly', 'fortnightly', 'monthly'] as const;
@@ -134,8 +135,10 @@ export interface TaskInput {
   name: string;
   action: string;
   condition: string;
-  /** Epoch seconds. Required when condition = 'datetime'. */
+  /** Epoch seconds. Required when condition = 'datetime', and the START when 'window'. */
   runAtEpoch?: number | null;
+  /** Epoch seconds. The FINISH. Required when condition = 'window'. */
+  runUntilEpoch?: number | null;
   recurrence?: string;
   /** 'YYYY-MM-DD' inclusive. Required when recurrence <> 'none'. */
   recurrenceEnd?: string | null;
@@ -187,17 +190,29 @@ export async function createTask(inp: TaskInput, userId: number | null, userName
   // each time — both would be a promise the scheduler cannot keep, so they are refused
   // rather than quietly accepted and silently run once.
   if (recurrence !== 'none' && inp.condition !== 'datetime') {
-    return { ok: false, error: 'A repeating task needs a time and date — "next contact" and "after next reboot" happen once.' };
+    return { ok: false, error: 'A repeating task needs a time and date — "next contact", "after next reboot" and "start and finish" happen once.' };
   }
 
   let runAt: Date | null = null;
-  if (inp.condition === 'datetime') {
+  let runUntil: Date | null = null;
+  if (inp.condition === 'datetime' || inp.condition === 'window') {
     const epoch = Math.round(Number(inp.runAtEpoch || 0));
-    if (!epoch) return { ok: false, error: 'Pick the date and time it should run.' };
+    if (!epoch) return { ok: false, error: inp.condition === 'window' ? 'Pick the date and time the window starts.' : 'Pick the date and time it should run.' };
     const now = Math.floor(Date.now() / 1000);
     if (epoch <= now) return { ok: false, error: 'That time has already passed — pick a moment in the future.' };
     if (epoch > now + 365 * 86400) return { ok: false, error: 'That is more than a year away.' };
     runAt = new Date(epoch * 1000);
+  }
+  if (inp.condition === 'window') {
+    // A window with no end is just "next contact" wearing a hat, and a backwards one would
+    // close before it opened — both are refused rather than quietly straightened out.
+    const endEpoch = Math.round(Number(inp.runUntilEpoch || 0));
+    if (!endEpoch) return { ok: false, error: 'Pick the date and time the window finishes.' };
+    const startEpoch = Math.round(Number(inp.runAtEpoch || 0));
+    if (endEpoch <= startEpoch) return { ok: false, error: 'The finish has to be after the start.' };
+    if (endEpoch - startEpoch < 300) return { ok: false, error: 'That window is under five minutes — machines check in on their own schedule and would never make it.' };
+    if (endEpoch - startEpoch > 31 * 86400) return { ok: false, error: 'That window is longer than a month. Use "next contact" if you simply want it to happen whenever each machine appears.' };
+    runUntil = new Date(endEpoch * 1000);
   }
   if (recurrence !== 'none' && !inp.recurrenceEnd) return { ok: false, error: 'A repeating task needs a date to repeat until.' };
 
@@ -247,13 +262,13 @@ export async function createTask(inp: TaskInput, userId: number | null, userName
       // $n has no inferable type and Postgres refuses to parse it.
       const t = day === null
         ? await client.query(
-          `INSERT INTO automation_tasks (name, action, payload, condition, run_at, recurrence, recurrence_end, series_id, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
-          [name, def.key, JSON.stringify({ ...payload, kind }), inp.condition, runAt,
+          `INSERT INTO automation_tasks (name, action, payload, condition, run_at, run_until, recurrence, recurrence_end, series_id, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+          [name, def.key, JSON.stringify({ ...payload, kind }), inp.condition, runAt, runUntil,
             recurrence, recurrence === 'none' ? null : inp.recurrenceEnd, firstId || null, userId])
         : await client.query(
-          `INSERT INTO automation_tasks (name, action, payload, condition, run_at, recurrence, recurrence_end, series_id, created_by)
-           SELECT $3::text,$4::text,$5::jsonb,$6::text,${OCCURRENCE_AT},$7::text,$8::text,$9::int,$10::int
+          `INSERT INTO automation_tasks (name, action, payload, condition, run_at, run_until, recurrence, recurrence_end, series_id, created_by)
+           SELECT $3::text,$4::text,$5::jsonb,$6::text,${OCCURRENCE_AT},NULL::timestamptz,$7::text,$8::text,$9::int,$10::int
             WHERE ${OCCURRENCE_AT} > NOW() RETURNING id`,
           [day, timeText, name, def.key, JSON.stringify({ ...payload, kind }), inp.condition,
             recurrence, recurrence === 'none' ? null : inp.recurrenceEnd, firstId || null, userId]);
@@ -280,7 +295,7 @@ export async function createTask(inp: TaskInput, userId: number | null, userName
       (recurrence === 'none' ? '' : `, repeating ${recurrence} until ${inp.recurrenceEnd}`));
 
     // Nothing to wait for on these two — arm the first occurrence straight away.
-    if (inp.condition !== 'datetime') await armTask(firstId).catch(() => {});
+    if (inp.condition !== 'datetime' && inp.condition !== 'window') await armTask(firstId).catch(() => {});
     return { ok: true, taskId: firstId, occurrences: made };
   } catch (e: any) {
     await client.query('ROLLBACK').catch(() => {});
@@ -371,6 +386,48 @@ export async function cancelTask(taskId: number, userId: number | null, wholeSer
   return { cancelled: ids.length, alreadyRunning: running };
 }
 
+/**
+ * Close windows whose finish has passed.
+ *
+ * This is what makes "start and finish" mean anything. Arming a window queues a command for
+ * every machine, and a queued command sits waiting however long it takes — so without this
+ * a window would be "next contact" with a later start, and a machine that came back on
+ * Monday would be rebooted on Monday. The finish has to WITHDRAW what was never collected.
+ *
+ * A command already running is out of our hands, exactly as in cancelTask. It is left to
+ * finish and reported honestly rather than pretended away.
+ */
+export async function expireWindows(): Promise<number> {
+  const due = (await pool.query(
+    `SELECT id, name FROM automation_tasks
+      WHERE condition='window' AND status IN ('scheduled','armed')
+        AND run_until IS NOT NULL AND run_until <= NOW()
+      LIMIT 200`)).rows;
+  if (!due.length) return 0;
+
+  for (const t of due) {
+    const withdrawn = await pool.query(
+      `UPDATE agent_commands SET status='expired', finished_at=NOW()
+        WHERE status='queued'
+          AND id IN (SELECT command_id FROM automation_task_devices WHERE task_id=$1 AND command_id IS NOT NULL)
+        RETURNING id`, [t.id]);
+    // The wording matters on the screen: these machines were not skipped by choice and did
+    // not fail, they simply never checked in while the window was open.
+    const missed = await pool.query(
+      `UPDATE automation_task_devices
+          SET status='skipped', error='Never checked in before the window closed', finished_at=NOW()
+        WHERE task_id=$1 AND status IN ('pending','queued') RETURNING id`, [t.id]);
+    await pool.query(
+      `UPDATE automation_tasks SET status='done', finished_at=NOW(), updated_at=NOW() WHERE id=$1`, [t.id]);
+    if (missed.rowCount) {
+      console.log(`[automation] window closed on task ${t.id} "${t.name}" — ${missed.rowCount} machine(s) missed it, ${withdrawn.rowCount} command(s) withdrawn`);
+    }
+    await logActivity(null, 'automation_window_closed', 'automation_tasks', t.id,
+      `The window on "${t.name}" closed — ${missed.rowCount ?? 0} machine(s) never checked in and were not actioned`).catch(() => {});
+  }
+  return due.length;
+}
+
 // ── The sweep ───────────────────────────────────────────────────────────────────
 
 /** Copy each command's outcome back onto its device row, and finish tasks that are done. */
@@ -410,13 +467,17 @@ export function startAutomationSweep(): void {
       const due = (await pool.query(
         `SELECT id FROM automation_tasks
           WHERE status='scheduled'
-            AND (condition <> 'datetime' OR (run_at IS NOT NULL AND run_at <= NOW()))
+            AND (condition NOT IN ('datetime','window') OR (run_at IS NOT NULL AND run_at <= NOW()))
           ORDER BY run_at NULLS FIRST LIMIT 50`)).rows;
       for (const d of due) {
         const r = await armTask(d.id);
         if (r.queued || r.skipped) console.log(`[automation] task ${d.id} armed — ${r.queued} queued, ${r.skipped} skipped`);
       }
+      // Reconcile FIRST so work that did complete is recorded as done, then close any
+      // window whose finish has passed — otherwise a machine that acted in the last minute
+      // of the window could be written off as having missed it.
       await reconcileTasks();
+      await expireWindows();
     } catch (e) { console.error('[automation] sweep failed:', (e as Error).message); }
   });
   console.log('[automation] sweep started — checking every minute');

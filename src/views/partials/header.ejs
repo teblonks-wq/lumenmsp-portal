@@ -286,6 +286,12 @@
   // load because it was the section you dip into rather than work out of - it now lives in
   // the launcher panel off the Portal wordmark instead, so there is nothing to force.)
   var ALWAYS_SHUT = {};
+  // What a brand-new browser sees: Operations open, everything else closed (Terry,
+  // 1 Sep — "when a user logs into portal all needs to be closed apart from operations").
+  // Only the DEFAULT changes: once somebody opens Finance, Finance stays open for them.
+  // This script runs on every page render, not on sign-in, so forcing every group shut
+  // here would re-collapse the sidebar on every click rather than once per login.
+  var DEFAULT_OPEN = { operations: true };
   var shut = {};
   try { shut = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { shut = {}; }
   document.querySelectorAll('.nav-section-btn').forEach(function (btn) {
@@ -298,7 +304,7 @@
       btn.setAttribute('aria-expanded', on ? 'false' : 'true');
     }
     apply(ALWAYS_SHUT[name] ? true
-      : Object.prototype.hasOwnProperty.call(shut, name) ? !!shut[name] : false);
+      : Object.prototype.hasOwnProperty.call(shut, name) ? !!shut[name] : !DEFAULT_OPEN[name]);
     btn.addEventListener('click', function () {
       var next = !grp.classList.contains('shut');
       apply(next);

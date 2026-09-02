@@ -1,6 +1,6 @@
 // App version + changelog. Bump APP_VERSION and prepend a new CHANGELOG entry on each release.
 // Minor work accumulates under the current version; ship a new MAJOR (v2, v3…) after a big batch.
-export const APP_VERSION = 'v4.7';
+export const APP_VERSION = 'v4.8';
 
 export interface ChangelogGroup { area: string; items: string[]; }
 export interface ChangelogEntry {
@@ -12,10 +12,40 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: 'v4.8',
+    date: '2026-09-02',
+    title: 'A folder of invoices in, and nothing paid twice',
+    groups: [
+      { area: 'Purchase Ledger', items: [
+        'Bulk upload. Point it at a folder and it walks every subfolder inside, taking the invoices and ignoring everything else. Up to a thousand files at a time, and each one remembers which folder it came from.',
+        'Every file arriving in the invoice pool is now fingerprinted. The same file arriving twice - re-uploaded, forwarded again, or caught in a folder load that overlaps an earlier one - is skipped and told to you, rather than sitting in the pool as a second copy of a bill you already have.',
+        'A new Duplicates tab for the harder case: the same invoice arriving as a different file. A supplier re-sends it, or the emailed PDF and a scanned copy both land. It is matched on the invoice number, the supplier, the total and the invoice date.',
+        'The one that matters is flagged separately and in red: LOOKS ALREADY PAID. The earlier copy of this invoice is already attached to a payment, so paying this one pays the bill twice.',
+        'Nothing is ever deleted or hidden on your say-so alone. A genuine repeat monthly charge for the same amount looks exactly like a duplicate, so a possible duplicate is imported and flagged, never blocked. "Separate bill" clears it for good and it is not raised again.',
+        'Check for duplicates re-reads the whole pool. Everything received before today has never been looked at, so the first run is the one that finds what is already in there.',
+        'Auto-match now reads the supplier\'s own invoice number off the invoice and looks for it in the bank reference. It was being extracted and then thrown away. Where a bank reference carries it, that alone settles the match - provided only one payment carries it.',
+      ] },
+      { area: 'Purchase Agent', items: [
+        'Claude now reads the invoices nothing else can. A scan, a photo, or a PDF whose text is really a picture used to arrive with no figures at all and sit in the pool doing nothing. Claude looks at the page and reads the supplier, the invoice number, the date, and the net, VAT and gross off it.',
+        'That is the OCR answer, and it needed nothing installed on the server. It also reads layout and context rather than only letters, so it knows which total is the one we have to pay - not the account balance carried forward.',
+        'When the rules cannot settle a match, Claude is asked. It gets the invoice, the shortlist of candidate payments, and everything we have learned about that supplier, and it answers with a verdict, a confidence and its reasoning.',
+        'Ninety per cent sure and nothing contradicting it, and the match is made - recorded as matched by Claude, with its reasoning, and undoable. Between sixty and ninety it proposes instead, and you accept it with one click. Below that it says nothing.',
+        'A verdict never overrules the arithmetic. If some other payment is the one exact match for the invoice total, Claude picking a different one is a contradiction, and a contradiction is a human\'s call.',
+        'Every confirmed match teaches the supplier. It learns the descriptors the processor puts on the statement, how long that supplier takes to collect, what it normally charges, and how often it bills. A human accepting a match is the strongest lesson it gets.',
+        'That memory is what makes the next match easy - and what makes an odd bill visible.',
+        'New on the Purchase Ledger screen: WHAT NEEDS LOOKING AT. Bills nobody paid, payments with no bill behind them, a supplier charging materially more than it normally does, a regular bill that did not arrive, a first payment to somebody new, invoice arithmetic that does not add up, and anything Claude flagged while reading.',
+        'It is a worklist, not a log. A finding that stops being true resolves itself, and one you dismiss stays dismissed. The list is checked overnight and emailed on a Monday morning, so nothing waits on somebody remembering to open the screen.',
+      ] },
+    ],
+  },
+  {
     version: 'v4.7',
     date: '2026-09-01',
     title: 'Automation, and a case that says the customer answered',
     groups: [
+      { area: 'Portal', items: [
+        'The sidebar now opens with Operations expanded and the other sections closed. Open one and it stays open for you - the sidebar still remembers how you like it, it just no longer starts with everything unfolded.',
+      ] },
       { area: 'Insights', items: [
         'OneBoard now shows how long callers waited - and it shows it twice, because there are two different numbers hiding in one. The wait before a call was answered, and the wait before a caller we lost gave up. Averaged together they make a figure that describes neither.',
         'Both waits carry the same up/down comparison as the other figures when a compare period is on, and both are in the CSV and the PDF.',
@@ -23,6 +53,8 @@ export const CHANGELOG: ChangelogEntry[] = [
         'Ask Insights also gets a whole-business roll-up for "altogether" questions, weighted by the calls behind each branch, so a forty-call site and a nine-hundred-call site are no longer treated as equals.',
       ] },
       { area: 'Automation', items: [
+        'A fourth condition: START AND FINISH. A window to act in - each machine acts the moment it checks in after the start, and at the finish the task closes. Anything that never checked in is recorded as having missed the window rather than being restarted at nine the next morning.',
+        'Closing a window withdraws the commands that were never collected. One already running on a machine is left alone and said so, exactly as cancelling has always behaved.',
         'Automation is a new section in the sidebar, holding Scheduled tasks, Scripts, Patching and Software. They were four separate ideas doing one job, and only two of them were findable.',
         'Scheduled tasks: restart, shut down, turn Windows Updates off or on, run a script from the library, or deploy a package - to one machine, a handful, or everything at a customer, at a moment you choose.',
         'Three conditions. NEXT CONTACT acts the moment each machine checks in. TIME AND DATE waits for the clock. AFTER NEXT REBOOT waits until the machine has actually restarted, which it knows from the machine\'s own boot time rather than from anything we assume.',

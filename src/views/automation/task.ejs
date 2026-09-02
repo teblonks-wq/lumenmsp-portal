@@ -58,7 +58,10 @@
 
 <dl class="tk-meta">
   <div><dt>Action</dt><dd><%= def ? def.label : cap(task.action) %></dd></div>
-  <div><dt>Condition</dt><dd><%= task.condition === 'next_contact' ? 'Next contact' : task.condition === 'after_reboot' ? 'After next reboot' : when(task.run_at) %></dd></div>
+  <div><dt>Condition</dt><dd><%= task.condition === 'next_contact' ? 'Next contact'
+      : task.condition === 'after_reboot' ? 'After next reboot'
+      : task.condition === 'window' ? 'Window \u00b7 ' + when(task.run_at) + ' until ' + when(task.run_until)
+      : when(task.run_at) %></dd></div>
   <% if (task.recurrence && task.recurrence !== 'none') { %>
     <div><dt>Repeats</dt><dd><%= cap(task.recurrence) %> until <%= task.recurrence_end %></dd></div>
   <% } %>

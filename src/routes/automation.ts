@@ -40,7 +40,7 @@ router.get('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req:
   // Read the outcomes back first, so the page is never a minute behind the sweep.
   await reconcileTasks().catch(() => {});
 
-  const SELECT = `SELECT t.id, t.name, t.action, t.condition, t.run_at, t.recurrence, t.recurrence_end,
+  const SELECT = `SELECT t.id, t.name, t.action, t.condition, t.run_at, t.run_until, t.recurrence, t.recurrence_end,
                          t.series_id, t.status, t.armed_at, t.finished_at, t.created_at,
                          u.display_name AS created_by_name,
                          (SELECT COUNT(*)::int FROM automation_task_devices d WHERE d.task_id=t.id) AS devices,
@@ -130,6 +130,7 @@ router.post('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req
     action: String(b.action || ''),
     condition: String(b.condition || 'next_contact'),
     runAtEpoch: epoch,
+    runUntilEpoch: parseInt(String(b.run_until_epoch || ''), 10) || null,
     recurrence: String(b.recurrence || 'none'),
     recurrenceEnd: String(b.recurrence_end || '') || null,
     deviceIds: ids,

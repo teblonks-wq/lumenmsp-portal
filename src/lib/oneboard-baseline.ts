@@ -36,7 +36,8 @@ export async function fetchRowsBetween(insCustomerId: number, fromTs: string, to
   if (!insightsPool) return [];
   const r = await insightsPool.query(
     `SELECT id, customer_id AS site_id, event_datetime, group_name, outcome,
-            number_raw, number_normalised, ddi, wait_seconds, source_file, call_id, extno, direction
+            number_raw, number_normalised, ddi, wait_seconds, source_file, call_id, extno, direction,
+            duration_secs
        FROM call_events
       WHERE customer_id = $1
         AND event_datetime >= $2 AND event_datetime < $3
