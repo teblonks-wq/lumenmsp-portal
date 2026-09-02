@@ -50,6 +50,28 @@ async function findAlreadyPaid(): Promise<Finding[]> {
   }));
 }
 
+// A possible duplicate — the same invoice arriving as a different file. Raised as a finding
+// like any other so it gets a conversation, and so answering it can teach a rule rather than
+// being a yes/no button that forgets why.
+async function findPossibleDuplicates(): Promise<Finding[]> {
+  const rows = (await pool.query(
+    `SELECT d.id, d.file_name, d.parsed_amount, d.dupe_reason, d.dupe_of_id,
+            a.ai_supplier, o.file_name AS other_name
+       FROM purchase_documents d
+       LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
+       LEFT JOIN purchase_documents o ON o.id = d.dupe_of_id
+      WHERE d.dupe_status = 'likely' AND d.status <> 'attached' AND d.archived_at IS NULL`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  return rows.map((r: any) => ({
+    key: 'dupe:' + r.id, kind: 'possible_duplicate', severity: 'medium' as const,
+    title: `${r.file_name} may be the same invoice as ${r.other_name || 'another one we hold'}`,
+    detail: r.dupe_reason || null,
+    amount: r.parsed_amount != null ? Number(r.parsed_amount) : null,
+    documentId: r.id,
+    supplierKey: r.ai_supplier ? String(r.ai_supplier).toLowerCase().split(' ').slice(0, 2).join(' ') : null,
+  }));
+}
+
 // An invoice we hold, with a total, that no payment has ever been matched to and that is
 // now old enough that a Direct Debit would have collected. Either it is unpaid, or the
 // payment is there and we failed to spot it. Both need a human.
@@ -98,9 +120,10 @@ async function findPaymentsWithoutInvoice(): Promise<Finding[]> {
 // learned from confirmed matches, so it only fires once we actually know what normal is.
 async function findPriceJumps(): Promise<Finding[]> {
   const rows = (await pool.query(
-    `SELECT p.supplier_key, p.display_name, p.avg_amount, p.last_amount, p.match_count, p.last_paid_at
+    `SELECT p.supplier_key, p.kind, p.display_name, p.avg_amount, p.last_amount, p.match_count, p.last_paid_at
        FROM purchase_supplier_profiles p
       WHERE p.match_count >= 3 AND p.avg_amount IS NOT NULL AND p.last_amount IS NOT NULL
+        AND p.kind <> 'unknown'
         AND p.last_amount > p.avg_amount * $1 AND p.last_amount - p.avg_amount >= $2
         AND p.last_paid_at > NOW() - INTERVAL '90 days'`,
     [PRICE_JUMP_RATIO, PRICE_JUMP_MIN_DELTA]
@@ -108,10 +131,10 @@ async function findPriceJumps(): Promise<Finding[]> {
   return rows.map((r: any) => {
     const pct = Math.round(((Number(r.last_amount) / Number(r.avg_amount)) - 1) * 100);
     return {
-      key: 'price_jump:' + r.supplier_key + ':' + Number(r.last_amount).toFixed(2),
+      key: 'price_jump:' + r.supplier_key + ':' + r.kind + ':' + Number(r.last_amount).toFixed(2),
       kind: 'price_jump', severity: 'medium' as const,
-      title: `${r.display_name || r.supplier_key} charged ${money(r.last_amount)} — ${pct}% above its usual`,
-      detail: `Average over ${r.match_count} previous bills is ${money(r.avg_amount)}. Last collected ${dISO(r.last_paid_at)}. Worth checking whether the sell price followed the buy price.`,
+      title: `${r.display_name || r.supplier_key} — ${r.kind} charge up ${pct}% to ${money(r.last_amount)}`,
+      detail: `Compared only against this supplier's other ${r.kind} bills (${r.match_count} of them, averaging ${money(r.avg_amount)}) — never against a different sort of spend. Last collected ${dISO(r.last_paid_at)}. Worth checking whether the sell price followed the buy price.`,
       amount: Number(r.last_amount), supplierKey: r.supplier_key,
     };
   });
@@ -190,11 +213,11 @@ async function findVatMismatches(): Promise<Finding[]> {
 // Kinds this function is authoritative for. An open row of one of these kinds that is NOT
 // re-raised has stopped being true, so it resolves. 'ai_concern' is raised by the matcher
 // as it reads, so it is NOT in this list and is never auto-resolved from here.
-const OWNED_KINDS = ['already_paid', 'unpaid_invoice', 'payment_no_invoice', 'price_jump', 'missing_bill', 'new_supplier', 'vat_mismatch'];
+const OWNED_KINDS = ['already_paid', 'possible_duplicate', 'unpaid_invoice', 'payment_no_invoice', 'price_jump', 'missing_bill', 'new_supplier', 'vat_mismatch'];
 
 export async function refreshAnomalies(): Promise<{ raised: number; resolved: number; open: number; suppressed: number }> {
   const all: Finding[] = [];
-  for (const fn of [findAlreadyPaid, findUnpaidInvoices, findPaymentsWithoutInvoice, findPriceJumps, findMissingBills, findNewSuppliers, findVatMismatches]) {
+  for (const fn of [findAlreadyPaid, findPossibleDuplicates, findUnpaidInvoices, findPaymentsWithoutInvoice, findPriceJumps, findMissingBills, findNewSuppliers, findVatMismatches]) {
     try { all.push(...await fn()); }
     catch (e) { console.error('[purchase-anomalies] detector failed:', (e as Error).message); }
   }

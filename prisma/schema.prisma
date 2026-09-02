@@ -1319,6 +1319,11 @@ model PurchaseDocAi {
   aiCurrency   String?  @map("ai_currency")
   aiPeriod     String?  @map("ai_period")      // service period the bill covers, when stated
   aiSummary    String?  @map("ai_summary")     // one line: what was actually bought
+  // The actual LINE ITEMS off the invoice. Without these the agent can only reason about a
+  // total, so "£10,505 is above this supplier's usual £4,540" is all it can ever say — even
+  // when the lines plainly read as hardware rather than a monthly service charge.
+  aiLines      String?  @map("ai_lines")       // JSON: [{description, amount}]
+  aiKind       String?  @map("ai_kind")        // what SORT of spend: hardware | service | subscription | licence | rent | other
   aiConcerns   String?  @map("ai_concerns")    // anything that looked wrong on the face of it
   readAt       DateTime @default(now()) @map("read_at")
   @@map("purchase_doc_ai")
@@ -1328,9 +1333,14 @@ model PurchaseDocAi {
 // Grown from confirmed matches, not hand-written. This is the memory that lets the
 // matcher recognise a supplier by the descriptor its processor puts on the statement,
 // know how long it takes to collect, and notice when a bill is the wrong size or late.
+// One profile per supplier PER KIND OF SPEND. A supplier's hardware purchases and its
+// monthly service charges are different things with different normal sizes and rhythms, and
+// pooling them produces the useless observation that a £10,000 hardware invoice is bigger
+// than a £200 monthly bill. Nothing is ever compared against a different kind of spend.
 model PurchaseSupplierProfile {
   id             Int       @id @default(autoincrement())
-  supplierKey    String    @unique @map("supplier_key")  // normalised, the join key
+  supplierKey    String    @map("supplier_key")  // normalised, the join key
+  kind           String    @default("unknown")   // hardware | service | subscription | licence | rent | other | unknown
   displayName    String?   @map("display_name")
   descriptors    String?   // JSON array of bank descriptors seen on confirmed matches
   qbAccountId    String?   @map("qb_account_id")
@@ -1347,6 +1357,8 @@ model PurchaseSupplierProfile {
   isFxBilled     Boolean   @default(false) @map("is_fx_billed")
   notes          String?
   updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+  @@unique([supplierKey, kind])
+  @@index([supplierKey])
   @@map("purchase_supplier_profiles")
 }
 

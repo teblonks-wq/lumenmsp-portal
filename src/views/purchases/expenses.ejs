@@ -230,6 +230,7 @@
     <p class="muted" style="font-size:12px;margin:0;">Byte-identical files are skipped on arrival and never reach this list. What lands here is the harder case &mdash; the <em>same invoice</em> arriving as a <em>different file</em>. Nothing is deleted automatically: a genuine repeat monthly bill looks exactly like a duplicate, so every one of these gets your eye.</p>
   </div>
   <form method="post" action="/purchases/inbox/rescan-dupes" style="margin:0;"><button class="btn" type="submit" title="Re-check every pooled document. Safe to run any time.">↻ Re-check the whole pool</button></form>
+  <a class="btn" href="/purchases/log" title="Every decision made about the ledger">📖 Decision log</a>
 </div>
 
 <% if (!(dupeDocs||[]).length) { %>
@@ -267,13 +268,18 @@
         <td><input type="checkbox" class="dupeChk" value="<%= d.id %>"></td>
         <td><strong><%= d.file_name %></strong><% if (d.rel_path) { %><br><span class="muted" style="font-size:11px;">📁 <%= d.rel_path %></span><% } %><br><span class="muted" style="font-size:11px;"><%= d.from_name || d.from_email || 'Manual upload' %> · <%= dt(d.received_at || d.created_at) %></span></td>
         <td><% if (d.parsed_amount) { %><strong>£<%= Number(d.parsed_amount).toFixed(2) %></strong><% } else { %><span class="muted">no total read</span><% } %><% if (d.parsed_invoice_no) { %><br><span class="muted" style="font-size:11px;">Inv <%= d.parsed_invoice_no %></span><% } %><% if (d.parse_status==='no_text') { %><br><span class="muted" style="font-size:11px;">scanned — no text</span><% } %></td>
-        <td><% if (d.paid_payee) { %><strong><%= d.paid_payee %></strong><br><span class="muted" style="font-size:11px;"><%= money(d.paid_amount) %> · <%= d.paid_at ? new Date(d.paid_at).toLocaleDateString('en-GB') : '' %></span><% } else { %><span class="muted">—</span><% } %></td>
+        <td><% if (d.paid_payee) { %><a class="row-link" href="/purchases/txn/<%= d.dupe_paid_txn_id %>/go" title="Open that payment on the right month and tab"><strong><%= d.paid_payee %></strong></a><br><span class="muted" style="font-size:11px;"><%= money(d.paid_amount) %> · <%= d.paid_at ? new Date(d.paid_at).toLocaleDateString('en-GB') : '' %></span><br><a class="btn" href="/purchases/txn/<%= d.dupe_paid_txn_id %>/go" style="font-size:11px;padding:2px 8px;margin-top:4px;">💷 Open the payment</a><% } else { %><span class="muted">—</span><% } %></td>
         <td style="font-size:12px;max-width:340px;"><%= d.dupe_reason %></td>
         <td style="white-space:nowrap;">
           <a class="btn" href="/purchases/doc/<%= d.id %>/view" target="_blank" style="font-size:11px;padding:3px 8px;">Open</a>
           <% if (d.dupe_of_id) { %><a class="btn" href="/purchases/doc/<%= d.dupe_of_id %>/view" target="_blank" style="font-size:11px;padding:3px 8px;" title="<%= d.dupe_of_name %>">Open the earlier one</a><% } %>
+          <button class="btn" type="button" style="font-size:11px;padding:3px 8px;" onclick="dupReply(<%= d.id %>)" title="Tell it what you know — it will consider it, act where the answer settles it, and offer to remember it">💬 Reply</button>
           <form method="post" action="/purchases/doc/<%= d.id %>/dupe-dismiss" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;" title="Not a duplicate — this is a separate bill. It will not be flagged again.">Separate bill</button></form>
-          <form method="post" action="/purchases/doc/<%= d.id %>/delete" onsubmit="return confirm('Delete this duplicate invoice from the pool?');" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);">Delete</button></form>
+          <form method="post" action="/purchases/doc/<%= d.id %>/delete" onsubmit="return confirm('Delete this duplicate invoice from the pool?');" style="display:inline;margin:0;"><input type="hidden" name="back" value="duplicates"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);">Delete</button></form>
+          <form method="post" action="/purchases/doc/<%= d.id %>/dupe-reply" id="dupf-<%= d.id %>" class="dupReplyForm" style="display:none;margin:6px 0 0;gap:6px;align-items:flex-start;">
+            <textarea class="input" name="text" rows="2" required placeholder="e.g. &quot;these are two different months&quot;" style="width:260px;font-size:12px;resize:vertical;"></textarea>
+            <button class="btn" type="submit" style="font-size:11px;padding:5px 10px;min-width:74px;">Send</button>
+          </form>
         </td>
       </tr>
     <% }); %>
@@ -299,8 +305,13 @@
         <td style="white-space:nowrap;">
           <a class="btn" href="/purchases/doc/<%= d.id %>/view" target="_blank" style="font-size:11px;padding:3px 8px;">Open</a>
           <% if (d.dupe_of_id) { %><a class="btn" href="/purchases/doc/<%= d.dupe_of_id %>/view" target="_blank" style="font-size:11px;padding:3px 8px;" title="<%= d.dupe_of_name %>">Open the other</a><% } %>
+          <button class="btn" type="button" style="font-size:11px;padding:3px 8px;" onclick="dupReply(<%= d.id %>)" title="Tell it what you know — it will consider it, act where the answer settles it, and offer to remember it">💬 Reply</button>
           <form method="post" action="/purchases/doc/<%= d.id %>/dupe-dismiss" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;" title="Not a duplicate — this is a separate bill. It will not be flagged again.">Separate bill</button></form>
-          <form method="post" action="/purchases/doc/<%= d.id %>/delete" onsubmit="return confirm('Delete this duplicate invoice from the pool?');" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);">Delete</button></form>
+          <form method="post" action="/purchases/doc/<%= d.id %>/delete" onsubmit="return confirm('Delete this duplicate invoice from the pool?');" style="display:inline;margin:0;"><input type="hidden" name="back" value="duplicates"><button class="btn" type="submit" style="font-size:11px;padding:3px 8px;color:var(--bad-fg);">Delete</button></form>
+          <form method="post" action="/purchases/doc/<%= d.id %>/dupe-reply" id="dupf-<%= d.id %>" class="dupReplyForm" style="display:none;margin:6px 0 0;gap:6px;align-items:flex-start;">
+            <textarea class="input" name="text" rows="2" required placeholder="e.g. &quot;these are two different months&quot;" style="width:260px;font-size:12px;resize:vertical;"></textarea>
+            <button class="btn" type="submit" style="font-size:11px;padding:5px 10px;min-width:74px;">Send</button>
+          </form>
         </td>
       </tr>
     <% }); %>
@@ -311,6 +322,21 @@
 
 <% if ((dupeDocs||[]).length) { %>
 <script>
+  function dupReply(id){
+    var f = document.getElementById('dupf-' + id); if (!f) return;
+    f.style.display = (f.style.display === 'none' ? 'flex' : 'none');
+    if (f.style.display === 'flex') f.querySelector('textarea').focus();
+  }
+  // One submission per form — the same trap that turned one answer into seven on 2 Sep.
+  Array.prototype.forEach.call(document.querySelectorAll('form.dupReplyForm'), function(f){
+    f.addEventListener('submit', function(e){
+      if (f.dataset.sent === '1') { e.preventDefault(); return; }
+      var ta = f.querySelector('textarea'); if (ta && !ta.value.trim()) return;
+      f.dataset.sent = '1';
+      var b = f.querySelector('button'); if (b) { b.disabled = true; b.textContent = 'Thinking…'; }
+      if (ta) ta.readOnly = true;
+    });
+  });
 (function(){
   var form = document.getElementById('dupeBulkForm'); if (!form) return;
   var all   = document.getElementById('dupeAll');
@@ -460,7 +486,7 @@
         <td style="text-align:right;font-weight:600;color:var(--bad-fg);"><%= money(t.amount) %></td>
         <% if (readonly) { %>
           <td class="muted" style="font-size:12px;"><% if (isSplit) { %><strong>Split</strong> · <%= splits.length %> categories<% } else { %><%= t.qb_account_name || '—' %><% } %></td>
-          <td class="muted" style="font-size:11px;"><% if (isSplit) { %><%= withInv %>/<%= splits.length %> with invoice<% } else if (t.attachment_name) { %>📎 <%= t.attachment_name %><% if (canEditAttach) { %> <button type="button" class="btn" onclick="pxUnlink(<%= t.id %>)" style="font-size:10px;padding:2px 6px;color:var(--bad-fg);">Unlink</button><% } %><% } else { %>—<% } %></td>
+          <td class="muted" style="font-size:11px;"><% if (isSplit) { %><%= withInv %>/<%= splits.length %> with invoice<% } else if (t.attachment_name) { %><button type="button" class="btn" onclick="pxSeeInvoice('/purchases/txn/<%= t.id %>/invoice','<%= (t.attachment_name||'').replace(/'/g,"\\'") %>')" style="font-size:10px;padding:2px 6px;" title="Preview the invoice attached to this payment">📎 <%= t.attachment_name %></button><% if (canEditAttach) { %> <button type="button" class="btn" onclick="pxUnlink(<%= t.id %>)" style="font-size:10px;padding:2px 6px;color:var(--bad-fg);">Unlink</button><% } %><% } else { %>—<% } %></td>
           <td><span class="badge <%= pushed?'badge-sent':(locked?'badge-active':'badge-inactive') %>" style="font-size:10px;"><%= locked?'locked':t.status %></span>
             <% if (locked) { %> <form class="px-ajax" method="post" action="/purchases/txn/<%= t.id %>/unlock" style="display:inline;margin:0;"><button class="btn" type="submit" style="font-size:10px;padding:2px 6px;">🔓 Unlock</button></form><% } %>
             <% if (ignored && !closed) { %> <form class="px-ajax" method="post" action="/purchases/txn/<%= t.id %>/ignore" style="display:inline;margin:0;"><input type="hidden" name="ignore" value="0"><button class="btn" type="submit" style="font-size:10px;padding:2px 6px;">Un-ignore</button></form><% } %>
@@ -485,7 +511,7 @@
               </select>
               <input type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png" style="font-size:11px;width:140px;">
               <button type="button" class="btn" onclick="pxOpenPicker(<%= t.id %>,'<%= (t.counterparty||'').replace(/'/g,"\\'") %>',<%= total %>)" title="Pick an invoice from the inbox" style="font-size:11px;padding:4px 8px;">📁 Inbox<% if (unattached.length) { %> (<%= unattached.length %>)<% } %></button>
-              <% if (t.attachment_name) { %><span class="muted" style="font-size:11px;">📎 <%= t.attachment_name %></span> <button type="button" class="btn" onclick="pxUnlink(<%= t.id %>)" style="font-size:10px;padding:2px 6px;color:var(--bad-fg);">Unlink</button><% } %>
+              <% if (t.attachment_name) { %><button type="button" class="btn" onclick="pxSeeInvoice('/purchases/txn/<%= t.id %>/invoice','<%= (t.attachment_name||'').replace(/'/g,"\\'") %>')" style="font-size:11px;padding:2px 8px;" title="Preview the invoice attached to this payment">👁 <%= t.attachment_name %></button> <button type="button" class="btn" onclick="pxUnlink(<%= t.id %>)" style="font-size:10px;padding:2px 6px;color:var(--bad-fg);">Unlink</button><% } %>
               <button class="btn btn-primary" type="submit" style="font-size:11px;padding:4px 9px;">Save &amp; lock</button>
               <button type="button" class="btn" onclick="pxToggleSplit(<%= t.id %>)" title="Split this payment across categories" style="font-size:11px;padding:4px 8px;">⇆ Split</button>
               <label class="muted" style="font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;margin-left:4px;" title="Ignore — kept out of the reconcile list and the QB push">
@@ -504,7 +530,7 @@
             <div class="px-splitline" data-split="<%= s.id %>" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
               <span>£</span><input type="number" step="0.01" class="input px-sl-amt" value="<%= Number(s.amount).toFixed(2) %>" style="width:110px;font-size:13px;">
               <select class="input px-sl-cat" style="min-width:200px;font-size:13px;"><option value="">— category —</option><% (cats||[]).forEach(function(c){ %><option value="<%= c.Id %>" <%= s.qb_account_id===c.Id?'selected':'' %>><%= c.Name %></option><% }); %></select>
-              <% if (s.attachment_name) { %><span class="muted" style="font-size:12px;">📎 <%= s.attachment_name %></span> <button type="button" class="btn" onclick="pxSplitUnlink(<%= s.id %>)" style="font-size:10px;padding:2px 6px;color:var(--bad-fg);">Unlink</button>
+              <% if (s.attachment_name) { %><button type="button" class="btn" onclick="pxSeeInvoice('/purchases/split/<%= s.id %>/invoice','<%= (s.attachment_name||'').replace(/'/g,"\\'") %>')" style="font-size:12px;padding:2px 8px;" title="Preview this split's invoice">👁 <%= s.attachment_name %></button> <button type="button" class="btn" onclick="pxSplitUnlink(<%= s.id %>)" style="font-size:10px;padding:2px 6px;color:var(--bad-fg);">Unlink</button>
               <% } else { %>
                 <form class="px-ajax" method="post" action="/purchases/split/<%= s.id %>/receipt" enctype="multipart/form-data" style="display:inline;margin:0;"><input type="file" name="receipt" accept=".pdf,.jpg,.jpeg,.png" onchange="this.form.requestSubmit()" style="font-size:11px;width:130px;"></form>
                 <button type="button" class="btn" onclick="pxOpenPickerSplit(<%= s.id %>,'<%= (t.counterparty||'').replace(/'/g,"\\'") %>',<%= Number(s.amount) %>)" style="font-size:11px;padding:4px 8px;">📁 Inbox</button>
@@ -812,6 +838,49 @@
       else if (s.splitId) pxOpenPickerSplit(s.splitId, s.payee, s.amount);
     } catch(e){}
   });
+</script>
+
+<script>
+// Landing on the right month is not enough — say WHICH row you came for.
+(function(){
+  var m = location.search.match(/[?&]txn=(\d+)/); if (!m) return;
+  var row = document.getElementById('txn-' + m[1]); if (!row) return;
+  row.scrollIntoView({ block: 'center' });
+  row.style.transition = 'background-color 1.2s ease';
+  row.style.backgroundColor = 'var(--chip-bg,#fff3cd)';
+  setTimeout(function(){ row.style.backgroundColor = ''; }, 3500);
+})();
+</script>
+
+<div id="pxSee" style="display:none;position:fixed;inset:0;background:rgba(2,6,23,.72);z-index:9999;padding:24px;" onclick="if(event.target===this)pxSeeClose()">
+  <div style="max-width:1000px;height:100%;margin:0 auto;display:flex;flex-direction:column;gap:8px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;color:#fff;">
+      <strong id="pxSeeName" style="font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></strong>
+      <span style="display:flex;gap:8px;">
+        <a class="btn" id="pxSeeOpen" href="#" target="_blank" style="font-size:12px;">Open in a tab</a>
+        <button class="btn" type="button" onclick="pxSeeClose()" style="font-size:12px;">Close</button>
+      </span>
+    </div>
+    <iframe id="pxSeeFrame" src="" style="flex:1;width:100%;border:0;border-radius:10px;background:#fff;"></iframe>
+  </div>
+</div>
+<script>
+// Preview the invoice behind a payment without leaving the reconcile screen. Judging whether
+// a payment is right means looking at the document, and until now a matched payment showed
+// only the filename as text.
+function pxSeeInvoice(url, name){
+  document.getElementById('pxSeeName').textContent = name || 'Invoice';
+  document.getElementById('pxSeeOpen').href = url;
+  document.getElementById('pxSeeFrame').src = url;
+  document.getElementById('pxSee').style.display = 'block';
+  document.body.style.overflow = 'hidden';
+}
+function pxSeeClose(){
+  document.getElementById('pxSee').style.display = 'none';
+  document.getElementById('pxSeeFrame').src = '';
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') pxSeeClose(); });
 </script>
 
 <%- include('../partials/footer') %>

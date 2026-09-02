@@ -1,0 +1,55 @@
+<%- include('../partials/header', { title: 'Decision log', user }) %>
+
+<%
+  function dt(x){ return x ? new Date(x).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : ''; }
+  // Group by day so a month reads as a sequence of working days, not 500 undifferentiated rows.
+  var byDay = {}; var order = [];
+  (rows||[]).forEach(function(r){
+    var d = new Date(r.created_at).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+    if (!byDay[d]) { byDay[d] = []; order.push(d); }
+    byDay[d].push(r);
+  });
+%>
+
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/purchases">← Purchase Ledger</a></p>
+    <h1>Decision log</h1>
+    <p class="muted" style="margin:0;">Every judgement made about the ledger &mdash; yours and Claude&rsquo;s. Built for the monthly review: what was flagged, what was answered, what became a rule, and what was thrown away.</p>
+  </div>
+  <form method="get" action="/purchases/log" style="margin:0;">
+    <span class="muted" style="font-size:11px;display:block;">Month</span>
+    <select class="input" name="month" onchange="this.form.submit()" style="font-size:14px;padding:6px 10px;">
+      <option value="">Everything</option>
+      <% (months||[]).forEach(function(m){ %><option value="<%= m %>" <%= m===month?'selected':'' %>><%= m %></option><% }); %>
+    </select>
+  </form>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<% if (!(rows||[]).length) { %>
+  <div class="empty-state">Nothing logged<%= month ? ' in ' + month : ' yet' %>. Decisions appear here as they are made &mdash; answering a finding, adding a rule, clearing a duplicate, accepting a match.</div>
+<% } else { %>
+  <p class="muted" style="font-size:12px;margin:0 0 12px;"><%= rows.length %> decision<%= rows.length===1?'':'s' %><%= rows.length===500 ? ' (the most recent 500 — narrow by month to see further back)' : '' %>.</p>
+  <% order.forEach(function(day){ %>
+  <div class="card" style="padding:0;margin-bottom:14px;">
+    <div class="card-header" style="padding:14px 20px 10px;"><h2 style="margin:0;font-size:15px;"><%= day %> <span class="muted">(<%= byDay[day].length %>)</span></h2></div>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th style="width:110px;">Time</th><th style="width:150px;">Who</th><th>Decision</th></tr></thead>
+      <tbody>
+        <% byDay[day].forEach(function(r){ %>
+        <tr>
+          <td class="muted" style="font-size:12px;white-space:nowrap;"><%= dt(r.created_at).split(', ')[1] || dt(r.created_at) %></td>
+          <td style="font-size:12.5px;"><%= r.who || 'the system' %></td>
+          <td style="font-size:13px;"><%= r.summary %></td>
+        </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  </div>
+  <% }); %>
+<% } %>
+
+<%- include('../partials/footer') %>

@@ -57,6 +57,7 @@
     <div style="display:flex;gap:8px;">
       <form method="post" action="/purchases/anomalies/refresh" style="margin:0;"><button class="btn" type="submit" title="Re-check the ledger now instead of waiting for tonight">↻ Check now</button></form>
       <form method="post" action="/purchases/anomalies/digest" style="margin:0;"><button class="btn" type="submit" title="Email the open list now (it also goes out automatically on Monday morning)">✉ Email the list</button></form>
+      <a class="btn" href="/purchases/log" title="Every decision made about the ledger">📖 Decision log</a>
       <a class="btn" href="/purchases/rules" title="Everything you have told the agent">📋 Rules<% var lr=(rules||[]).filter(function(r){return r.status==='active';}); if (lr.length) { %> (<%= lr.length %>)<% } %></a>
     </div>
   </div>
@@ -73,7 +74,7 @@
           <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
             <% if (a.document_id) { %><button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="anPeek(<%= a.document_id %>, this)">👁 Preview</button>
             <a class="btn" href="/purchases/doc/<%= a.document_id %>/view" target="_blank" style="font-size:11px;padding:2px 8px;">Open invoice</a><% } %>
-            <% if (a.txn_id) { %><a class="btn" href="/purchases/expenses" style="font-size:11px;padding:2px 8px;">Go to expenses</a><% } %>
+            <% if (a.txn_id) { %><a class="btn" href="/purchases/txn/<%= a.txn_id %>/go" style="font-size:11px;padding:2px 8px;" title="Open that payment on the right month and tab">💷 Open the payment</a><% } %>
             <button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="anToggle(<%= a.id %>)" title="Tell it what you know. It will consider what you say and, if it is a standing instruction, offer to remember it.">💬 Reply<% var th=(notes||{})[a.id]||[]; if (th.length) { %> (<%= th.length %>)<% } %></button>
             <form method="post" action="/purchases/anomalies/<%= a.id %>/dismiss" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:2px 8px;" title="Stop showing me this. A REPLY is usually better — it keeps the reason, so the same thing does not come back next month.">Dismiss</button></form>
           </div>

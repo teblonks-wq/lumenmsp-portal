@@ -274,7 +274,10 @@ export async function autoMatchInvoices(opts?: { useAi?: boolean }): Promise<Aut
     if (!useAi || !scored.length) continue;
     const shortlist = scored.slice(0, 10).map((sc) => sc.t);
     let verdict = null as Awaited<ReturnType<typeof aiJudgeMatch>>;
-    try { verdict = await aiJudgeMatch(d, shortlist, await getSupplierProfile(supplierKey(d))); }
+    try {
+      const aiRow = (await pool.query('SELECT ai_kind FROM purchase_doc_ai WHERE document_id=$1', [d.id]).catch(() => ({ rows: [] as any[] }))).rows[0];
+      verdict = await aiJudgeMatch(d, shortlist, await getSupplierProfile(supplierKey(d), aiRow?.ai_kind));
+    }
     catch (e) { console.error('[invoice-inbox] AI judge failed:', (e as Error).message); }
     if (!verdict) continue;
 

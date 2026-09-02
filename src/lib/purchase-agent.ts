@@ -36,7 +36,7 @@ export interface AiInvoiceRead {
 const READ_SYSTEM = [
   'You read supplier invoices for a UK IT company and return structured facts. You are looking at the document itself.',
   'Return STRICT JSON only, no prose, with exactly these keys:',
-  '{"supplier":string|null,"invoiceNo":string|null,"date":"YYYY-MM-DD"|null,"net":number|null,"vat":number|null,"gross":number|null,"currency":string|null,"period":string|null,"summary":string|null,"concerns":string|null}',
+  '{"supplier":string|null,"invoiceNo":string|null,"date":"YYYY-MM-DD"|null,"net":number|null,"vat":number|null,"gross":number|null,"currency":string|null,"period":string|null,"summary":string|null,"lines":[{"description":string,"amount":number|null}],"kind":"hardware"|"service"|"subscription"|"licence"|"rent"|"other"|null,"concerns":string|null}',
   'RULES:',
   '- gross is the amount the customer must PAY for THIS invoice, VAT included. On a statement showing an account balance carried forward, gross is this invoice only, never the running balance.',
   '- Use null, never a guess, for anything not clearly on the page. A wrong number is far worse than a missing one.',
@@ -44,6 +44,8 @@ const READ_SYSTEM = [
   '- currency is the ISO code shown (GBP, USD, EUR). If the document shows $ with no other clue, say USD.',
   '- period is the service period the bill covers if stated (e.g. "1-31 Aug 2026"), else null.',
   '- summary is ONE short line naming what was actually bought.',
+  '- lines: the invoice LINE ITEMS, up to 10, each a short description and its amount. This is the most useful thing on the page — a total says nothing about what was bought, and the lines say everything. Empty array if the document has no itemised lines.',
+  '- kind: what SORT of spend this is, judged from the lines. "hardware" for equipment purchases, "service" for labour or support, "subscription" or "licence" for recurring software, "rent" for property. Null only if the lines genuinely do not say.',
   '- concerns: anything wrong on the face of it - the arithmetic does not add up, it is a duplicate or copy, it is addressed to someone else, it is a credit note not an invoice, it is already marked paid. Otherwise null.',
 ].join('\n');
 
@@ -69,13 +71,19 @@ export async function aiReadInvoiceDoc(doc: any): Promise<AiInvoiceRead | null> 
   if (!r) { await setReadStatus(doc.id, 'failed'); return null; }
 
   const num = (v: any) => (v == null || v === '' || isNaN(Number(v)) ? null : Number(v));
+  const lines = Array.isArray((r as any).lines)
+    ? (r as any).lines.slice(0, 10)
+        .map((l: any) => ({ description: String(l?.description || '').slice(0, 200), amount: num(l?.amount) }))
+        .filter((l: any) => l.description)
+    : [];
   await pool.query(
-    `INSERT INTO purchase_doc_ai (document_id, ai_supplier, ai_invoice_no, ai_date, ai_net, ai_vat, ai_gross, ai_currency, ai_period, ai_summary, ai_concerns, read_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+    `INSERT INTO purchase_doc_ai (document_id, ai_supplier, ai_invoice_no, ai_date, ai_net, ai_vat, ai_gross, ai_currency, ai_period, ai_summary, ai_lines, ai_kind, ai_concerns, read_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
      ON CONFLICT (document_id) DO UPDATE SET ai_supplier=$2, ai_invoice_no=$3, ai_date=$4, ai_net=$5, ai_vat=$6,
-       ai_gross=$7, ai_currency=$8, ai_period=$9, ai_summary=$10, ai_concerns=$11, read_at=NOW()`,
+       ai_gross=$7, ai_currency=$8, ai_period=$9, ai_summary=$10, ai_lines=$11, ai_kind=$12, ai_concerns=$13, read_at=NOW()`,
     [doc.id, r.supplier || null, r.invoiceNo || null, r.date || null, num(r.net), num(r.vat), num(r.gross),
-     r.currency || null, r.period || null, r.summary || null, r.concerns || null]
+     r.currency || null, r.period || null, r.summary || null,
+     lines.length ? JSON.stringify(lines) : null, (r as any).kind || null, r.concerns || null]
   );
   // Feed what Claude read back into the columns the rest of the ledger already uses, but
   // NEVER overwrite a value the text parse read cleanly — that one came off the actual text.
@@ -119,6 +127,9 @@ export async function learnFromMatch(docId: number, txnId: number): Promise<void
   if (!d || !t) return;
   const key = supplierKey(d);
   if (!key) return;
+  // What SORT of spend this was. Learned separately, because a supplier's hardware and its
+  // monthly service charges have nothing useful to say about each other.
+  const kind = String(d.ai_kind || 'unknown');
 
   const descriptor = normaliseCounterparty(t.counterparty || t.description || '');
   const amount = Math.abs(Number(t.amount) || 0);
@@ -126,7 +137,7 @@ export async function learnFromMatch(docId: number, txnId: number): Promise<void
   const lagDays = invoiceDate && !isNaN(invoiceDate.getTime())
     ? Math.round((new Date(t.booked_at).getTime() - invoiceDate.getTime()) / 86400000) : null;
 
-  const prev = (await pool.query('SELECT * FROM purchase_supplier_profiles WHERE supplier_key=$1', [key])).rows[0];
+  const prev = (await pool.query('SELECT * FROM purchase_supplier_profiles WHERE supplier_key=$1 AND kind=$2', [key, kind])).rows[0];
   let descriptors: string[] = [];
   try { descriptors = prev?.descriptors ? JSON.parse(prev.descriptors) : []; } catch { descriptors = []; }
   if (descriptor && !descriptors.includes(descriptor)) descriptors.push(descriptor);
@@ -144,10 +155,10 @@ export async function learnFromMatch(docId: number, txnId: number): Promise<void
 
   await pool.query(
     `INSERT INTO purchase_supplier_profiles
-       (supplier_key, display_name, descriptors, qb_account_id, qb_account_name, match_count,
+       (supplier_key, kind, display_name, descriptors, qb_account_id, qb_account_name, match_count,
         last_amount, avg_amount, min_amount, max_amount, avg_lag_days, cadence_days, last_invoice_at, last_paid_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,1,$6,$6,$6,$6,$7,$8,$9,$10,NOW())
-     ON CONFLICT (supplier_key) DO UPDATE SET
+     VALUES ($1,$12,$2,$3,$4,$5,1,$6,$6,$6,$6,$7,$8,$9,$10,NOW())
+     ON CONFLICT (supplier_key, kind) DO UPDATE SET
        display_name   = COALESCE(purchase_supplier_profiles.display_name, EXCLUDED.display_name),
        descriptors    = EXCLUDED.descriptors,
        qb_account_id  = COALESCE(EXCLUDED.qb_account_id, purchase_supplier_profiles.qb_account_id),
@@ -165,14 +176,21 @@ export async function learnFromMatch(docId: number, txnId: number): Promise<void
     [key, d.ai_supplier || (isInternalSender(d.from_email) ? null : (d.from_name || d.from_email)) || null,
      JSON.stringify(descriptors), t.qb_account_id || null,
      t.qb_account_name || null, amount, avgLag, cadence,
-     invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate : null, t.booked_at, newAvg]
+     invoiceDate && !isNaN(invoiceDate.getTime()) ? invoiceDate : null, t.booked_at, newAvg, kind]
   ).catch((e) => console.error('[purchase-agent] learn failed:', e.message));
 }
 
-export async function getSupplierProfile(key: string): Promise<any | null> {
+/** The profile for this supplier AND this kind of spend. Never a different kind: comparing a
+ *  hardware purchase against a monthly service average is a category error, and it produces
+ *  exactly the schoolboy observation that "this is bigger than the biggest one so far". */
+export async function getSupplierProfile(key: string, kind?: string | null): Promise<any | null> {
   if (!key) return null;
-  return (await pool.query('SELECT * FROM purchase_supplier_profiles WHERE supplier_key=$1', [key])
-    .catch(() => ({ rows: [] as any[] }))).rows[0] || null;
+  const rows = (await pool.query('SELECT * FROM purchase_supplier_profiles WHERE supplier_key=$1', [key])
+    .catch(() => ({ rows: [] as any[] }))).rows;
+  if (!rows.length) return null;
+  const k = String(kind || 'unknown');
+  return rows.find((r: any) => r.kind === k)
+      || (k === 'unknown' ? rows.slice().sort((a: any, b: any) => b.match_count - a.match_count)[0] : null);
 }
 
 // ── JUDGE ───────────────────────────────────────────────────────────────────────
@@ -192,6 +210,10 @@ const JUDGE_SYSTEM = [
   '- What was BOUGHT matters: a hardware invoice and a monthly service charge from the same supplier are different payments even at similar amounts.',
   '- The service PERIOD on the invoice tells you roughly when it would be collected.',
   '- An amount that matches but whose supplier, period and reference all disagree is a coincidence, not a match. Say so and return null.',
+  'ABOUT RAISING A CONCERN OVER THE AMOUNT — read this before you do:',
+  '- The learned range describes what this supplier has billed BEFORE. It is not a limit, and exceeding it is not a fault.',
+  '- READ THE LINE ITEMS FIRST. A hardware purchase is not the same thing as a monthly service charge, and comparing one against the other tells you nothing. If the lines explain the size, there is no concern to raise.',
+  '- If WHAT WE HAVE BEEN TOLD already explains it — that this supplier also bills hardware, or ad-hoc work — then the matter is SETTLED and you must not raise it again. Repeating a concern a colleague has already answered is worse than saying nothing.',
   'HOW TO ANSWER:',
   '- txnId must be one of the candidate ids given, or null. Never invent an id.',
   '- confidence is your own honest number. Use 90+ ONLY when you would be comfortable with this being applied without anyone checking. If two candidates are equally good, say so in reason and cap confidence at 50.',
@@ -217,15 +239,24 @@ export async function aiJudgeMatch(doc: any, candidates: any[], profile: any | n
   if (ai) {
     lines.push(`  Claude read the document itself: supplier "${ai.ai_supplier || '-'}", ${money(ai.ai_gross)} gross (${money(ai.ai_net)} net + ${money(ai.ai_vat)} VAT), currency ${ai.ai_currency || '-'}, period ${ai.ai_period || '-'}`);
     if (ai.ai_summary) lines.push(`  What was bought: ${ai.ai_summary}`);
+    if (ai.ai_kind) lines.push(`  Sort of spend: ${ai.ai_kind}`);
+    try {
+      const items = JSON.parse(ai.ai_lines || '[]');
+      if (Array.isArray(items) && items.length) {
+        lines.push('  LINE ITEMS on this invoice:');
+        for (const it of items.slice(0, 10)) lines.push(`    - ${it.description}${it.amount != null ? ' — ' + money(it.amount) : ''}`);
+      }
+    } catch { /* no lines read */ }
     if (ai.ai_concerns) lines.push(`  Noted on the face of it: ${ai.ai_concerns}`);
   }
   if (profile) {
     let descs: string[] = [];
     try { descs = profile.descriptors ? JSON.parse(profile.descriptors) : []; } catch { /* ignore */ }
     lines.push('');
-    lines.push('LEARNED SUPPLIER FACTS (from matches a human confirmed)');
+    lines.push(`LEARNED FACTS — ${profile.kind === 'unknown' ? 'this supplier' : `this supplier's ${profile.kind} spend ONLY`} (from matches a human confirmed)`);
     lines.push(`  Seen ${profile.match_count} time(s). Bank descriptors used: ${descs.length ? descs.join(' | ') : 'none recorded'}`);
-    lines.push(`  Typical amount ${money(profile.avg_amount)} (range ${money(profile.min_amount)}-${money(profile.max_amount)}), last ${money(profile.last_amount)}`);
+    lines.push(`  Typical ${money(profile.avg_amount)} (seen ${money(profile.min_amount)}-${money(profile.max_amount)}), last ${money(profile.last_amount)}`);
+    lines.push('  These describe PAST bills of this kind. They are not a limit and exceeding them is not a fault.');
     if (profile.avg_lag_days != null) lines.push(`  Normally collects about ${profile.avg_lag_days} day(s) after the invoice date`);
     if (profile.cadence_days != null) lines.push(`  Bills roughly every ${profile.cadence_days} day(s)`);
     if (profile.qb_account_name) lines.push(`  Normally categorised as: ${profile.qb_account_name}`);

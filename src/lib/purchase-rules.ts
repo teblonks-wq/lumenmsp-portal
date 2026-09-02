@@ -63,13 +63,17 @@ const REPLY_SYSTEM = [
   'You are the purchase agent for a UK IT company (Lumen IT Solutions). A colleague has replied to a finding you raised about their purchase ledger.',
   'Read what they said, take it at face value — they know their own business far better than you do — and answer them.',
   'Return STRICT JSON only:',
-  '{"reply":string,"rule":null|{"kind":"suppress"|"context"|"category","scope":"supplier"|"global","anomalyKind":string|null,"body":string,"conditions":string[],"categoryName":string|null}}',
+  '{"reply":string,"duplicateVerdict":"separate"|"duplicate"|null,"rule":null|{"kind":"suppress"|"context"|"category","scope":"supplier"|"global","anomalyKind":string|null,"body":string,"conditions":string[],"categoryName":string|null}}',
   'THE REPLY — this is read on a busy screen, so:',
   '- TWO SENTENCES MAXIMUM. One is better. No preamble, no restating what they told you.',
   '- Say only what is NEW: what you now understand, or what you still need.',
   '- NEVER repeat a concern you have already raised earlier in this conversation. If you already asked for the invoice number, do not ask again.',
   '- NEVER claim you will do something you cannot do. You do not pay invoices, progress payments, chase suppliers or process anything. You read documents, match them to payments, and raise findings. Saying "I will progress this for payment" is a lie.',
   '- You may disagree, once, briefly.',
+  'duplicateVerdict — ONLY when the finding is about a possible duplicate, otherwise null:',
+  '- "separate" when they have told you these are two different bills. The flag is cleared and never raised on that document again.',
+  '- "duplicate" when they have confirmed it really is the same invoice twice. Say plainly in the reply that you have left the document in place for them to delete — you do not delete anything.',
+  '- null if they said neither.',
   'THE RULE — only when their answer is a STANDING instruction, not a one-off explanation:',
   '- "category" when they have told you how this kind of spend should be CODED ("these are Hardware Cost of Sale"). Set categoryName to the category they named, exactly as they said it. This is the most useful kind — prefer it whenever a coding is stated.',
   '- "context" records a fact for future judgements (how a supplier bills, who collects for whom, what a payment really is).',
@@ -138,7 +142,7 @@ async function alreadyRuled(supplierKey: string | null, kind: string, body: stri
   return rows.some((r: any) => similarity(r.body, body) >= SAME_RULE);
 }
 
-export interface ReplyResult { reply: string; ruleId: number | null; ruleBody: string | null; repeat?: boolean }
+export interface ReplyResult { reply: string; ruleId: number | null; ruleBody: string | null; repeat?: boolean; acted?: string | null }
 
 export async function replyToAnomaly(
   anomalyId: number, text: string, userId: number, userName: string,
@@ -227,6 +231,15 @@ export async function replyToAnomaly(
     }
   }
 
+  // Acting on what was said, where the answer settles it. Only ever in the safe direction:
+  // clearing a flag. Deleting somebody's invoice is never done on a sentence.
+  let acted: string | null = null;
+  const verdict = parsed && (parsed as any).duplicateVerdict;
+  if (a.document_id && (a.kind === 'possible_duplicate' || a.kind === 'already_paid') && verdict === 'separate') {
+    await pool.query("UPDATE purchase_documents SET dupe_status='dismissed', dupe_reason=NULL WHERE id=$1", [a.document_id]).catch(() => {});
+    acted = 'marked as a separate bill';
+  }
+
   await pool.query(
     'INSERT INTO purchase_anomaly_notes (anomaly_id, is_claude, body, rule_id) VALUES ($1,true,$2,$3)',
     [anomalyId, replyText, ruleId]
@@ -235,7 +248,7 @@ export async function replyToAnomaly(
   // a worklist, and with 157 open items the ones still needing thought are what matter. The
   // conversation is kept and the finding is one click from coming back.
   await pool.query("UPDATE purchase_anomalies SET status='answered' WHERE id=$1 AND status='open'", [anomalyId]);
-  return { reply: replyText, ruleId, ruleBody };
+  return { reply: replyText, ruleId, ruleBody, acted };
 }
 
 export async function notesFor(anomalyIds: number[]): Promise<Record<number, any[]>> {

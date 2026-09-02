@@ -11,6 +11,7 @@ import { syncOpenBanking } from '../lib/openbanking';
 import { syncInvoiceInbox, getInvoiceMailbox, autoMatchInvoices } from '../lib/purchase-inbox';
 import { hashFile, findByHash, assessAndStore, rescanAllDuplicates, backfillHashes } from '../lib/purchase-dupes';
 import { attachDocToTxn } from '../lib/purchase-inbox';
+import { normaliseCounterparty } from '../lib/purchase-match';
 import { aiReadUnreadable, aiReadInvoiceDoc } from '../lib/purchase-agent';
 import { refreshAnomalies, listAnomalies, dismissAnomaly, sendAnomalyDigest } from '../lib/purchase-anomalies';
 import { replyToAnomaly, notesFor, listRules, setRuleStatus, conditionsOf, rulesFiledUnderAPerson } from '../lib/purchase-rules';
@@ -217,6 +218,41 @@ router.get('/purchases/doc/:id/view', async (req: Request, res: Response) => {
   fs.createReadStream(d.file_path).pipe(res);
 });
 
+// Stream the invoice attached to a PAYMENT (or to one of its splits). Deliberately keyed on
+// the transaction rather than on a pooled document: a receipt logged from the mobile app is
+// attached straight to the payment and has no purchase_documents row at all, so a doc-id
+// route would show nothing for exactly the receipts most likely to be queried.
+function streamAttachment(res: Response, filePath: string | null, fileName: string | null): void {
+  if (!filePath || !fs.existsSync(filePath)) { res.status(404).send('That invoice file is no longer on disk.'); return; }
+  // The global CSP blocks framing; relax it for this one file so it previews in place.
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'self'");
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  const n = (fileName || '').toLowerCase();
+  const ct = /\.pdf$/.test(n) ? 'application/pdf'
+    : /\.png$/.test(n) ? 'image/png'
+    : /\.(jpe?g)$/.test(n) ? 'image/jpeg'
+    : /\.gif$/.test(n) ? 'image/gif'
+    : /\.webp$/.test(n) ? 'image/webp'
+    : /\.tiff?$/.test(n) ? 'image/tiff'
+    : /\.html?$/.test(n) ? 'text/html'
+    : 'application/octet-stream';
+  res.setHeader('Content-Type', ct);
+  res.setHeader('Content-Disposition', 'inline; filename="' + (fileName || 'invoice').replace(/[^\w.\-]/g, '_') + '"');
+  fs.createReadStream(filePath).pipe(res);
+}
+
+router.get('/purchases/txn/:id/invoice', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const t = id ? (await pool.query('SELECT attachment_path, attachment_name FROM bank_transactions WHERE id=$1', [id])).rows[0] : null;
+  streamAttachment(res, t?.attachment_path || null, t?.attachment_name || null);
+});
+
+router.get('/purchases/split/:id/invoice', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const sp = id ? (await pool.query('SELECT attachment_path, attachment_name FROM bank_transaction_splits WHERE id=$1', [id])).rows[0] : null;
+  streamAttachment(res, sp?.attachment_path || null, sp?.attachment_name || null);
+});
+
 // Attach a pooled invoice to a bank transaction (or a split) from the lightbox picker.
 router.post('/purchases/doc/:id/attach', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
@@ -254,7 +290,11 @@ router.post('/purchases/doc/:id/delete', async (req: Request, res: Response) => 
     if (d?.file_path) { try { fs.unlinkSync(d.file_path); } catch { /* already gone */ } }
     await pool.query('DELETE FROM purchase_documents WHERE id=$1', [id]);
   }
-  res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent('Invoice removed from inbox.'));
+  // Come back to the tab you were working in. Clearing duplicates is a run of small
+  // decisions, and being thrown to the inbox after each one loses your place every time.
+  const back = String((req.body || {}).back || '') === 'duplicates' ? 'duplicates' : 'inbox';
+  res.redirect(`/purchases/expenses?view=${back}&msg=` + encodeURIComponent(
+    back === 'duplicates' ? 'Duplicate deleted.' : 'Invoice removed from inbox.'));
 });
 
 // Archive a pooled invoice — hides it from the live inbox but keeps it on the Archived tab.
@@ -426,7 +466,10 @@ router.post('/purchases/doc/:id/accept-suggestion', async (req: Request, res: Re
 // Reject a suggestion. The proposal is dropped; nothing is attached and nothing is learned.
 router.post('/purchases/doc/:id/reject-suggestion', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
-  if (id) await pool.query('UPDATE purchase_documents SET suggest_txn_id=NULL, suggest_confidence=NULL, suggest_reason=NULL WHERE id=$1', [id]);
+  if (id) {
+    await pool.query('UPDATE purchase_documents SET suggest_txn_id=NULL, suggest_confidence=NULL, suggest_reason=NULL WHERE id=$1', [id]);
+    await logActivity(req.session.user!.id, 'updated', 'purchase_agent', id, `Purchase match suggestion #${id}: rejected`);
+  }
   res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent('Suggestion dismissed.'));
 });
 
@@ -472,7 +515,11 @@ router.post('/purchases/anomalies/refresh', async (req: Request, res: Response) 
 
 router.post('/purchases/anomalies/:id/dismiss', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
-  if (id) await dismissAnomaly(id, req.session.user!.id);
+  if (id) {
+    const a = (await pool.query('SELECT title FROM purchase_anomalies WHERE id=$1', [id])).rows[0];
+    await dismissAnomaly(id, req.session.user!.id);
+    await logActivity(req.session.user!.id, 'updated', 'purchase_agent', id, `Purchase finding dismissed: ${String(a?.title || id).slice(0, 80)}`);
+  }
   res.redirect('/purchases?msg=' + encodeURIComponent('Dismissed — it will not come back.'));
 });
 
@@ -501,8 +548,82 @@ router.post('/purchases/anomalies/:id/reply', async (req: Request, res: Response
 // settle it after all.
 router.post('/purchases/anomalies/:id/reopen', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
-  if (id) await pool.query("UPDATE purchase_anomalies SET status='open' WHERE id=$1 AND status='answered'", [id]);
+  if (id) {
+    await pool.query("UPDATE purchase_anomalies SET status='open' WHERE id=$1 AND status='answered'", [id]);
+    await logActivity(req.session.user!.id, 'updated', 'purchase_agent', id, `Purchase finding #${id}: put back on the list`);
+  }
   res.redirect('/purchases?open=' + id + '&msg=' + encodeURIComponent('Back on the list.'));
+});
+
+// Reply to a duplicate flag from the Duplicates tab. The finding for that document is found
+// (or made, if the nightly sweep has not run yet) so the conversation, the rules and the
+// decision log all work exactly as they do on the main worklist — one mechanism, not two.
+router.post('/purchases/doc/:id/dupe-reply', async (req: Request, res: Response) => {
+  const docId = parseInt(String(req.params.id), 10);
+  const text = String((req.body || {}).text || '').trim();
+  if (!docId || !text) { res.redirect('/purchases/expenses?view=duplicates&err=' + encodeURIComponent('Write something first.')); return; }
+  try {
+    const d = (await pool.query(
+      `SELECT d.*, a.ai_supplier, o.file_name AS other_name FROM purchase_documents d
+         LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
+         LEFT JOIN purchase_documents o ON o.id = d.dupe_of_id WHERE d.id=$1`, [docId])).rows[0];
+    if (!d) { res.redirect('/purchases/expenses?view=duplicates&err=' + encodeURIComponent('That invoice no longer exists.')); return; }
+    const key = d.dupe_status === 'paid' ? 'already_paid:' + docId : 'dupe:' + docId;
+    const kind = d.dupe_status === 'paid' ? 'already_paid' : 'possible_duplicate';
+    const ins = await pool.query(
+      `INSERT INTO purchase_anomalies (dedupe_key, kind, severity, title, detail, amount, document_id, supplier_key, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open')
+       ON CONFLICT (dedupe_key) DO UPDATE SET last_seen_at = NOW() RETURNING id`,
+      [key, kind, d.dupe_status === 'paid' ? 'high' : 'medium',
+       `${d.file_name} may be the same invoice as ${d.other_name || 'another one we hold'}`,
+       d.dupe_reason || null, d.parsed_amount != null ? Number(d.parsed_amount) : null, docId,
+       d.ai_supplier ? String(d.ai_supplier).toLowerCase().split(' ').slice(0, 2).join(' ') : null]
+    );
+    const r = await replyToAnomaly(ins.rows[0].id, text, req.session.user!.id, req.session.user!.displayName || 'A colleague');
+    if (r.repeat) { res.redirect('/purchases/expenses?view=duplicates&msg=' + encodeURIComponent('You just said that — nothing sent twice.')); return; }
+    await logActivity(req.session.user!.id, 'updated', 'purchase_agent', docId,
+      `Purchase duplicate "${String(d.file_name).slice(0, 60)}": replied${r.acted ? ' — ' + r.acted : ''}${r.ruleId ? ' (rule proposed)' : ''}`);
+    res.redirect('/purchases/expenses?view=duplicates&msg=' + encodeURIComponent(
+      (r.acted ? 'Claude replied and ' + r.acted + '. ' : 'Claude replied. ') +
+      (r.ruleId ? 'A rule is waiting on the Rules screen.' : '')));
+  } catch (e: any) {
+    res.redirect('/purchases/expenses?view=duplicates&err=' + encodeURIComponent(e.message || 'Could not send that.'));
+  }
+});
+
+// Open a payment from wherever it was mentioned. A finding names a transaction; a link to
+// "the expenses screen" is not a link to it — the screen shows ONE month, and a reconciled
+// payment is on a different tab again. This works out the month and the tab and goes there.
+router.get('/purchases/txn/:id/go', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const t = id ? (await pool.query(
+    "SELECT id, to_char(booked_at,'YYYY-MM') AS period, status FROM bank_transactions WHERE id=$1", [id]
+  ).catch(() => ({ rows: [] as any[] }))).rows[0] : null;
+  if (!t) { res.redirect('/purchases/expenses?err=' + encodeURIComponent('That payment is no longer on the ledger.')); return; }
+  // Reconciled work lives on its own tab, so a link to the Expenses tab would show nothing.
+  const done = ['categorised', 'pushed', 'ignored'].includes(String(t.status));
+  res.redirect(`/purchases/expenses?period=${encodeURIComponent(t.period)}` +
+    (done ? '&view=reconciled' : '') + `&txn=${t.id}#txn-${t.id}`);
+});
+
+// The decision log — every judgement anyone made, ours and Claude's, for the monthly review.
+router.get('/purchases/log', async (req: Request, res: Response) => {
+  const month = String(req.query.month || '').match(/^\d{4}-\d{2}$/) ? String(req.query.month) : null;
+  const months = (await pool.query(
+    `SELECT DISTINCT to_char(created_at,'YYYY-MM') AS m FROM activity_log
+      WHERE entity_type='purchase_agent' OR summary LIKE 'Purchase%' ORDER BY m DESC LIMIT 24`
+  ).catch(() => ({ rows: [] as any[] }))).rows.map((r: any) => r.m);
+  const rows = (await pool.query(
+    `SELECT l.*, u.display_name AS who FROM activity_log l
+       LEFT JOIN users u ON u.id = l.user_id
+      WHERE (l.entity_type='purchase_agent' OR l.summary LIKE 'Purchase%')
+        ${month ? "AND to_char(l.created_at,'YYYY-MM') = $1" : ''}
+      ORDER BY l.created_at DESC LIMIT 500`, month ? [month] : []
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  res.render('purchases/log', {
+    user: req.session.user!, rows, months, month,
+    notice: req.query.msg || null, error: req.query.err || null,
+  });
 });
 
 // A proposed rule does nothing until this is clicked. Accepting a suppress rule is
@@ -517,7 +638,23 @@ router.post('/purchases/rules/:id/:decision(accept|reject)', async (req: Request
     // A rule is not worth much if it only applies to the next thing that happens. Accepting
     // one re-runs the whole sweep NOW, so the entire list comes under it immediately —
     // that is what "add to rules" has to mean.
-    if (accept) { try { swept = await refreshAnomalies(); } catch (e) { console.error('[purchases] re-sweep after rule failed:', (e as Error).message); } }
+    if (accept) {
+      // Claude's concerns are frozen text, written when the invoice was read. A rule that
+      // answers them must clear them, or the screen keeps saying a thing you have already
+      // settled. Only that supplier's, and only ones nobody has replied to.
+      const r = (await pool.query('SELECT supplier_key, scope FROM purchase_rules WHERE id=$1', [id])).rows[0];
+      if (r) {
+        const cleared = await pool.query(
+          `UPDATE purchase_anomalies SET status='resolved'
+            WHERE status='open' AND kind='ai_concern'
+              AND ($1 = 'global' OR (supplier_key IS NOT NULL AND lower(supplier_key) = lower($2)))
+              AND NOT EXISTS (SELECT 1 FROM purchase_anomaly_notes n WHERE n.anomaly_id = purchase_anomalies.id)`,
+          [r.scope, r.supplier_key || '']
+        ).catch(() => ({ rowCount: 0 }));
+        if (cleared.rowCount) console.log(`[purchases] rule ${id} cleared ${cleared.rowCount} stale concern(s)`);
+      }
+      try { swept = await refreshAnomalies(); } catch (e) { console.error('[purchases] re-sweep after rule failed:', (e as Error).message); }
+    }
   }
   res.redirect('/purchases?msg=' + encodeURIComponent(accept
     ? 'Rule added' + (swept ? ` — the whole list has been re-checked under it: ${swept.open} still open${swept.suppressed ? `, ${swept.suppressed} now held back by your rules` : ''}.` : ' — it applies from the next check.')
@@ -589,7 +726,12 @@ router.post('/purchases/anomalies/digest', async (req: Request, res: Response) =
 // "This is a separate bill" — clears the flag for good. Sticky: a rescan never re-flags it.
 router.post('/purchases/doc/:id/dupe-dismiss', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
-  if (id) await pool.query("UPDATE purchase_documents SET dupe_status='dismissed', dupe_reason=NULL WHERE id=$1", [id]);
+  if (id) {
+    const d = (await pool.query('SELECT file_name FROM purchase_documents WHERE id=$1', [id])).rows[0];
+    await pool.query("UPDATE purchase_documents SET dupe_status='dismissed', dupe_reason=NULL WHERE id=$1", [id]);
+    await logActivity(req.session.user!.id, 'updated', 'purchase_agent', id,
+      `Purchase duplicate "${String(d?.file_name || id).slice(0, 60)}": marked a separate bill`);
+  }
   res.redirect('/purchases/expenses?view=duplicates&msg=' + encodeURIComponent('Marked as a separate bill — it will not be flagged again.'));
 });
 
@@ -716,8 +858,38 @@ router.post('/purchases/txn/:id', upload.single('receipt'), async (req: Request,
   fields.push(`status=CASE WHEN $${i} OR attachment_path IS NOT NULL THEN 'categorised' ELSE status END`); vals.push(lockNow);
   vals.push(id);
   await pool.query(`UPDATE bank_transactions SET ${fields.join(', ')}, updated_at=NOW() WHERE id=$${i + 1}`, vals);
-  if (req.xhr || String(req.get('accept') || '').includes('application/json')) { res.json({ ok: true }); return; }
-  res.redirect('/purchases/expenses?msg=' + encodeURIComponent('Saved'));
+
+  // Coding a payee ONCE should be enough. Terry, 2 Sep: "when I match Giacom Networks as
+  // Cloud Cost of Sale, why do I need to do it next time?" — so the moment a category is
+  // saved by hand it is carried to every other OUTSTANDING payment to the same payee.
+  // Deliberately narrow: only rows still untouched (status 'new', no category), never a
+  // locked, pushed or already-coded one, and the rows are left unlocked for a human pass.
+  let alsoCoded = 0;
+  if (acctId) {
+    try {
+      const me = (await pool.query('SELECT counterparty, description FROM bank_transactions WHERE id=$1', [id])).rows[0];
+      const key = normaliseCounterparty(me?.counterparty || me?.description || '');
+      if (key) {
+        const r = await pool.query(
+          `UPDATE bank_transactions SET qb_account_id=$1, qb_account_name=$2, updated_at=NOW()
+            WHERE amount < 0 AND status = 'new' AND id <> $3
+              AND (qb_account_id IS NULL OR qb_account_id = '')
+              AND counterparty IS NOT NULL
+              AND lower(regexp_replace(counterparty, '[^a-zA-Z ]', '', 'g')) LIKE '%' || $4 || '%'`,
+          [acctId, acctName, id, key]
+        );
+        alsoCoded = r.rowCount || 0;
+        if (alsoCoded) {
+          await logActivity(req.session.user!.id, 'updated', 'purchase_agent', id,
+            `Purchase coding "${acctName || acctId}" learned from ${me?.counterparty || 'a payee'} and applied to ${alsoCoded} other outstanding payment(s)`);
+        }
+      }
+    } catch (e) { console.error('[purchases] carrying the category across failed:', (e as Error).message); }
+  }
+
+  if (req.xhr || String(req.get('accept') || '').includes('application/json')) { res.json({ ok: true, alsoCoded }); return; }
+  res.redirect('/purchases/expenses?msg=' + encodeURIComponent(
+    alsoCoded ? `Saved — and the same coding was applied to ${alsoCoded} other outstanding payment(s) to that payee.` : 'Saved'));
 });
 
 // Ignore / un-ignore a transaction (kept out of the reconcile list and the QB push).
