@@ -25,6 +25,15 @@ export const CHANGELOG: ChangelogEntry[] = [
         'Check for duplicates re-reads the whole pool. Everything received before today has never been looked at, so the first run is the one that finds what is already in there.',
         'Auto-match now reads the supplier\'s own invoice number off the invoice and looks for it in the bank reference. It was being extracted and then thrown away. Where a bank reference carries it, that alone settles the match - provided only one payment carries it.',
       ] },
+      { area: 'Automation', items: [
+        'Deploy software now works from a CATALOGUE. Three sources behind one list: a WinGet package id, a Chocolatey package id, or one of our own uploaded MSIs - whichever suits that application.',
+        'Two new actions alongside it. Update software brings a chosen application up to date across a set of machines. Remove software takes it off them - marked as disruptive, because it is.',
+        'A fleet-wide install is not a place for free text. Only what somebody put in the catalogue can be scheduled, so a mistyped package id cannot land on two hundred machines.',
+        'Bitdefender and MeshCentral are refused here, deliberately and permanently. Bitdefender must go through GravityZone or the machine enrols nowhere and nobody manages it; the MeshCentral installer carries the certificate and group. They are blocked when you add them AND again when a task tries to send them - a row edited straight into the database still never reaches a machine.',
+        'Our own agent is blocked for the same reason: it updates itself, and pushing it as a package races the updater.',
+        'Every MSI already uploaded can be brought into the catalogue in one click, so nothing that used to be deployable stopped being deployable.',
+        'An uploaded MSI can be installed but not updated or removed this way - an MSI uninstall needs the product code from each machine. It says so at the moment you pick it, rather than refusing once the task is filled in.',
+      ] },
       { area: 'Purchase Agent', items: [
         'Claude now reads the invoices nothing else can. A scan, a photo, or a PDF whose text is really a picture used to arrive with no figures at all and sit in the pool doing nothing. Claude looks at the page and reads the supplier, the invoice number, the date, and the net, VAT and gross off it.',
         'That is the OCR answer, and it needed nothing installed on the server. It also reads layout and context rather than only letters, so it knows which total is the one we have to pay - not the account balance carried forward.',

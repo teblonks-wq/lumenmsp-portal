@@ -5,6 +5,8 @@ import {
   ACTIONS, CONDITIONS, RECURRENCES, actionDef, createTask, cancelTask, armTask, reconcileTasks,
 } from '../lib/automation';
 import { listScripts } from '../lib/scripts';
+import { logActivity } from '../lib/activity';
+import { listCatalogue, getCatalogueItem, saveCatalogueItem, setCatalogueActive, backfillFromPackages, blockedReason } from '../lib/software-catalogue';
 
 const router = Router();
 
@@ -80,19 +82,20 @@ router.get('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req:
 // ── New task ────────────────────────────────────────────────────────────────────
 
 router.get('/automation/scheduled-tasks/new', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const [scripts, packages, customers] = await Promise.all([
+  const [scripts, packages, customers, catalogue] = await Promise.all([
     listScripts(),
     pool.query('SELECT id, name, version FROM agent_packages ORDER BY name'),
     pool.query(
       `SELECT c.id, c.name, COUNT(ad.id)::int AS devices
          FROM customers c JOIN agent_devices ad ON ad.customer_id = c.id AND ad.revoked IS NOT TRUE
         WHERE c.deleted_at IS NULL GROUP BY c.id, c.name HAVING COUNT(ad.id) > 0 ORDER BY c.name`),
+    listCatalogue(),
   ]);
   res.render('automation/task-new', {
     user: req.session.user!,
     actions: ACTIONS, conditions: CONDITIONS, recurrences: RECURRENCES,
     scripts: scripts.filter((s) => s.osType === 'windows'),
-    packages: packages.rows, customers: customers.rows,
+    packages: packages.rows, customers: customers.rows, catalogue,
     notice: null, error: req.query.err || null,
   });
 });
@@ -136,12 +139,60 @@ router.post('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req
     deviceIds: ids,
     scriptId: parseInt(String(b.script_id || ''), 10) || null,
     packageId: parseInt(String(b.package_id || ''), 10) || null,
+    catalogueId: parseInt(String(b.catalogue_id || ''), 10) || null,
     delaySeconds: b.delay_seconds != null ? parseInt(String(b.delay_seconds), 10) : null,
   }, req.session.user!.id, req.session.user!.displayName);
 
   if (!r.ok) { res.redirect('/automation/scheduled-tasks/new?err=' + encodeURIComponent(r.error || 'Could not schedule that.')); return; }
   const extra = (r.occurrences || 1) > 1 ? ` — ${r.occurrences} occurrences scheduled.` : '';
   res.redirect(`/automation/scheduled-tasks/${r.taskId}?msg=` + encodeURIComponent('Scheduled.' + extra));
+});
+
+// ── Software catalogue ──────────────────────────────────────────────────────────
+// The vetted list Automation deploys from. Bitdefender and MeshCentral are refused here by
+// lib/software-catalogue.ts — they have their own pipelines and a generic push produces an
+// endpoint nobody manages.
+router.get('/automation/catalogue', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const [items, packages] = await Promise.all([
+    listCatalogue(true),
+    pool.query('SELECT id, name, version, url FROM agent_packages ORDER BY name'),
+  ]);
+  const edit = req.query.edit ? await getCatalogueItem(parseInt(String(req.query.edit), 10)) : null;
+  res.render('automation/catalogue', {
+    user: req.session.user!, items, packages: packages.rows, edit,
+    notice: req.query.msg || null, error: req.query.err || null,
+  });
+});
+
+router.post('/automation/catalogue', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const id = parseInt(String(b.id || ''), 10) || undefined;
+  const r = await saveCatalogueItem({
+    name: String(b.name || ''), publisher: String(b.publisher || '') || null,
+    category: String(b.category || '') || null, source: String(b.source || ''),
+    packageRef: String(b.package_ref || '') || null,
+    agentPackageId: parseInt(String(b.agent_package_id || ''), 10) || null,
+    installArgs: String(b.install_args || '') || null, notes: String(b.notes || '') || null,
+    sortOrder: parseInt(String(b.sort_order || ''), 10) || null,
+  }, req.session.user!.id, id);
+  if (!r.ok) { res.redirect('/automation/catalogue?err=' + encodeURIComponent(r.error || 'Could not save that.')); return; }
+  await logActivity(req.session.user!.id, id ? 'updated' : 'created', 'settings', 0, `Software catalogue: ${id ? 'updated' : 'added'} "${String(b.name || '').slice(0, 60)}"`);
+  res.redirect('/automation/catalogue?msg=' + encodeURIComponent(id ? 'Saved.' : 'Added to the catalogue.'));
+});
+
+router.post('/automation/catalogue/:id(\\d+)/active', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const on = String((req.body || {}).active) === '1';
+  if (id) await setCatalogueActive(id, on);
+  res.redirect('/automation/catalogue?msg=' + encodeURIComponent(on ? 'Back in the catalogue.' : 'Retired — it can no longer be scheduled.'));
+});
+
+// Bring every MSI already uploaded into the catalogue, so nothing that used to be
+// deployable stops being deployable. Idempotent; never imports blocked software.
+router.post('/automation/catalogue/backfill', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const r = await backfillFromPackages();
+  res.redirect('/automation/catalogue?msg=' + encodeURIComponent(
+    `Brought ${r.added} uploaded package(s) into the catalogue${r.skipped ? `; ${r.skipped} already there or not deployable this way` : ''}.`));
 });
 
 // ── One task ────────────────────────────────────────────────────────────────────

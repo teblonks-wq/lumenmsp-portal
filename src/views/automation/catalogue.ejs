@@ -1,0 +1,110 @@
+<%- include('../partials/header', { title: 'Software catalogue', user }) %>
+
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;">
+  <div><p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/automation">← Automation</a></p>
+    <h1>Software catalogue</h1>
+    <p class="muted" style="margin:0;">What Automation is allowed to deploy. Everything here was added on purpose — a fleet-wide install is not a place for free text.</p></div>
+  <form method="post" action="/automation/catalogue/backfill" style="margin:0;">
+    <button class="btn" type="submit" title="Bring every MSI already uploaded under Packages into the catalogue. Safe to run more than once.">↧ Import uploaded packages</button>
+  </form>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<div class="card" style="margin-bottom:16px;border-left:3px solid var(--bad-fg);">
+  <h2 style="margin:0 0 4px;font-size:15px;">Never deployed from here</h2>
+  <p class="muted" style="font-size:12.5px;margin:0;">
+    <strong>Bitdefender</strong> goes through GravityZone so each machine enrols into the right company and policy — a bare installer leaves an endpoint nobody manages.
+    <strong>MeshCentral</strong>'s installer carries the agent certificate and group, so a generic package either fails or attaches to the wrong group.
+    <strong>Our own agent</strong> updates itself; pushing it as a package races the updater.
+    These are refused when you add them and refused again when a task tries to send them — a row edited straight into the database still never reaches a machine.
+  </p>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+  <h2 style="margin:0 0 10px;font-size:16px;"><%= edit ? 'Edit ' + edit.name : 'Add software' %></h2>
+  <form method="post" action="/automation/catalogue" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-items:start;">
+    <% if (edit) { %><input type="hidden" name="id" value="<%= edit.id %>"><% } %>
+    <div><label class="muted" style="font-size:11px;display:block;">Name *</label>
+      <input class="input" name="name" required value="<%= edit ? edit.name : '' %>" placeholder="Google Chrome" style="width:100%;font-size:13px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Publisher</label>
+      <input class="input" name="publisher" value="<%= edit && edit.publisher ? edit.publisher : '' %>" placeholder="Google" style="width:100%;font-size:13px;"></div>
+    <div><label class="muted" style="font-size:11px;display:block;">Category</label>
+      <input class="input" name="category" value="<%= edit ? edit.category : 'General' %>" placeholder="Browsers" style="width:100%;font-size:13px;"></div>
+
+    <div><label class="muted" style="font-size:11px;display:block;">Installs from *</label>
+      <select class="input" name="source" id="scSource" style="width:100%;font-size:13px;">
+        <option value="winget" <%= edit && edit.source==='winget' ? 'selected' : '' %>>WinGet</option>
+        <option value="choco"  <%= edit && edit.source==='choco'  ? 'selected' : '' %>>Chocolatey</option>
+        <option value="package" <%= edit && edit.source==='package' ? 'selected' : '' %>>One of our uploaded MSIs</option>
+      </select></div>
+    <div id="scRefWrap"><label class="muted" style="font-size:11px;display:block;">Package id *</label>
+      <input class="input" name="package_ref" value="<%= edit && edit.package_ref ? edit.package_ref : '' %>" placeholder="Google.Chrome" style="width:100%;font-size:13px;">
+      <span class="muted" style="font-size:11px;">Exactly as the source spells it. <code>winget search</code> on any machine will tell you.</span></div>
+    <div id="scPkgWrap"><label class="muted" style="font-size:11px;display:block;">Uploaded package *</label>
+      <select class="input" name="agent_package_id" style="width:100%;font-size:13px;">
+        <option value="">— pick one —</option>
+        <% (packages||[]).forEach(function(p){ %><option value="<%= p.id %>" <%= edit && edit.agent_package_id===p.id ? 'selected' : '' %>><%= p.name %><%= p.version ? ' ' + p.version : '' %></option><% }); %>
+      </select></div>
+
+    <div><label class="muted" style="font-size:11px;display:block;">Install arguments</label>
+      <input class="input" name="install_args" value="<%= edit && edit.install_args ? edit.install_args : '' %>" placeholder="/qn /norestart" style="width:100%;font-size:13px;">
+      <span class="muted" style="font-size:11px;">MSIs only — WinGet and Chocolatey are already told to install silently.</span></div>
+    <div style="grid-column:2/4;"><label class="muted" style="font-size:11px;display:block;">Notes</label>
+      <input class="input" name="notes" value="<%= edit && edit.notes ? edit.notes : '' %>" placeholder="Licensing, who it is for, anything worth knowing before it goes out" style="width:100%;font-size:13px;"></div>
+
+    <div style="grid-column:1/4;display:flex;gap:8px;">
+      <button class="btn btn-primary" type="submit"><%= edit ? 'Save' : 'Add to catalogue' %></button>
+      <% if (edit) { %><a class="btn" href="/automation/catalogue">Cancel</a><% } %>
+    </div>
+  </form>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:16px 20px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+    <h2>In the catalogue <span class="muted">(<%= (items||[]).filter(function(i){return i.is_active;}).length %> live)</span></h2>
+    <input class="input card-filter" placeholder="🔍 search name, publisher, id…" style="max-width:280px;font-size:13px;padding:5px 8px;">
+  </div>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Software</th><th>Category</th><th>Installs from</th><th>Id / package</th><th>Notes</th><th></th></tr></thead>
+    <tbody>
+      <% if (!(items||[]).length) { %>
+        <tr><td colspan="6"><div class="empty-state">Nothing in the catalogue yet. Add something above, or bring your uploaded MSIs in with <strong>Import uploaded packages</strong>.</div></td></tr>
+      <% } %>
+      <% (items||[]).forEach(function(i){ %>
+      <tr<%= i.is_active ? '' : ' style="opacity:.55;"' %>>
+        <td><strong><%= i.name %></strong><% if (i.publisher) { %><br><span class="muted" style="font-size:11px;"><%= i.publisher %></span><% } %>
+          <% if (!i.is_active) { %><br><span class="badge" style="font-size:10px;">retired</span><% } %></td>
+        <td><%= i.category %></td>
+        <td><%= i.source === 'package' ? 'Our MSI' : (i.source === 'winget' ? 'WinGet' : 'Chocolatey') %></td>
+        <td><code style="font-size:12px;"><%= i.package_ref || ('package #' + (i.agent_package_id || '?')) %></code>
+          <% if (i.install_args) { %><br><span class="muted" style="font-size:11px;"><%= i.install_args %></span><% } %></td>
+        <td style="font-size:12px;max-width:280px;"><%= i.notes || '' %></td>
+        <td style="white-space:nowrap;">
+          <a class="btn" href="/automation/catalogue?edit=<%= i.id %>" style="font-size:11px;padding:3px 8px;">Edit</a>
+          <form method="post" action="/automation/catalogue/<%= i.id %>/active" style="display:inline;margin:0;">
+            <input type="hidden" name="active" value="<%= i.is_active ? '0' : '1' %>">
+            <button class="btn" type="submit" style="font-size:11px;padding:3px 8px;" title="<%= i.is_active ? 'Retire it — existing tasks are unaffected, but it can no longer be picked' : 'Put it back in the catalogue' %>"><%= i.is_active ? 'Retire' : 'Restore' %></button>
+          </form>
+        </td>
+      </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+
+<script>
+(function(){
+  var src = document.getElementById('scSource');
+  if (!src) return;
+  function sync(){
+    var isPkg = src.value === 'package';
+    document.getElementById('scRefWrap').style.display = isPkg ? 'none' : '';
+    document.getElementById('scPkgWrap').style.display = isPkg ? '' : 'none';
+  }
+  src.addEventListener('change', sync); sync();
+})();
+</script>
+
+<%- include('../partials/footer') %>

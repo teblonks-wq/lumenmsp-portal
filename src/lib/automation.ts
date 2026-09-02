@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { pool } from '../db/pool';
+import { getCatalogueItem, dispatchFor } from './software-catalogue';
 import { logActivity } from './activity';
 import { wakeAgent } from '../routes/agent-api';
 import { occurrenceDays } from './diary';
@@ -22,7 +23,8 @@ import { getScript } from './scripts';
 
 // ── Actions ─────────────────────────────────────────────────────────────────────
 
-export type ActionKey = 'power.restart' | 'power.shutdown' | 'wu.off' | 'wu.on' | 'script.run' | 'software.install';
+export type ActionKey = 'power.restart' | 'power.shutdown' | 'wu.off' | 'wu.on' | 'script.run'
+  | 'software.install' | 'software.upgrade' | 'software.uninstall';
 
 export interface ActionDef {
   key: ActionKey;
@@ -32,7 +34,7 @@ export interface ActionDef {
   /** The agent command kind this becomes. */
   kind: string;
   /** Extra thing the form must collect: a script, or a package. */
-  needs: 'none' | 'script' | 'package';
+  needs: 'none' | 'script' | 'package' | 'software';
   /** True if a signed-in user could lose work. Drives the warning on the form. */
   disruptive: boolean;
 }
@@ -48,8 +50,12 @@ export const ACTIONS: ActionDef[] = [
     consequence: 'Windows Update is set back to its normal automatic state and the policy key is removed.' },
   { key: 'script.run', label: 'Run a script', kind: 'shell.powershell', needs: 'script', disruptive: false,
     consequence: 'The script runs on each machine. What it does is whatever the script does - read its review first.' },
-  { key: 'software.install', label: 'Deploy software', kind: 'software.install', needs: 'package', disruptive: false,
-    consequence: 'The package is downloaded and installed silently on each machine.' },
+  { key: 'software.install', label: 'Deploy software', kind: 'software.install', needs: 'software', disruptive: false,
+    consequence: 'The software is installed silently on each machine, from the catalogue entry you pick. A machine that already has it is left alone.' },
+  { key: 'software.upgrade', label: 'Update software', kind: 'winget.upgrade', needs: 'software', disruptive: false,
+    consequence: 'Each machine updates that software to the latest version. A machine that does not have it installed is unaffected.' },
+  { key: 'software.uninstall', label: 'Remove software', kind: 'winget.uninstall', needs: 'software', disruptive: true,
+    consequence: 'The software is REMOVED from each machine, silently and without asking the person using it. Anything it was mid-way through is lost.' },
 ];
 
 export function actionDef(key: string): ActionDef | null {
@@ -145,6 +151,8 @@ export interface TaskInput {
   deviceIds: number[];
   scriptId?: number | null;
   packageId?: number | null;
+  /** software_catalogue.id — what "Deploy / Update / Remove software" acts on. */
+  catalogueId?: number | null;
   delaySeconds?: number | null;
 }
 
@@ -230,10 +238,18 @@ export async function createTask(inp: TaskInput, userId: number | null, userName
     }
     kind = s.fileType === 'bat' || s.fileType === 'cmd' ? 'shell.cmd' : 'shell.powershell';
     payload = { script: s.body, run_as: s.runAs === 'current_user' ? 'user' : 'system', script_id: s.id, script_name: s.name };
-  } else if (def.needs === 'package') {
-    const pkg = (await pool.query('SELECT id, name, url, install_args FROM agent_packages WHERE id=$1', [Number(inp.packageId || 0)])).rows[0];
-    if (!pkg) return { ok: false, error: 'Pick a package.' };
-    payload = { name: pkg.name, args: pkg.install_args || '/qn /norestart', package_id: pkg.id, url: pkg.url || null };
+  } else if (def.needs === 'software') {
+    // The catalogue decides BOTH what is deployable and how it installs — a WinGet id, a
+    // Chocolatey id, or one of our own MSIs — so the action's nominal `kind` is replaced by
+    // whatever that entry actually needs. dispatchFor() re-checks the never-deploy list; a
+    // row edited straight into the database must still never reach a machine.
+    const item = await getCatalogueItem(Number(inp.catalogueId || 0));
+    if (!item) return { ok: false, error: 'Pick some software from the catalogue.' };
+    const verb = def.key === 'software.upgrade' ? 'upgrade' : def.key === 'software.uninstall' ? 'uninstall' : 'install';
+    const d = await dispatchFor(item, verb);
+    if (!d.ok || !d.dispatch) return { ok: false, error: d.error || 'That software cannot be deployed from here.' };
+    kind = d.dispatch.kind;
+    payload = d.dispatch.payload;
   } else if (def.key === 'wu.off' || def.key === 'wu.on') {
     payload = { script: def.key === 'wu.off' ? WU_OFF_SCRIPT : WU_ON_SCRIPT, run_as: 'system', wu: def.key };
   } else {

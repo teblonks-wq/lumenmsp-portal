@@ -67,6 +67,23 @@
       </select>
     </div>
 
+    <div id="ntSoftwareWrap" class="hide">
+      <label for="ntSoftware">Software</label>
+      <select id="ntSoftware" name="catalogue_id">
+        <option value="">— pick from the catalogue —</option>
+        <%
+          var byCat = {};
+          (catalogue||[]).forEach(function(c){ (byCat[c.category] = byCat[c.category] || []).push(c); });
+          Object.keys(byCat).sort().forEach(function(cat){ %>
+          <optgroup label="<%= cat %>">
+            <% byCat[cat].forEach(function(c){ %><option value="<%= c.id %>" data-source="<%= c.source %>"><%= c.name %><%= c.publisher ? ' — ' + c.publisher : '' %> (<%= c.source === 'package' ? 'our MSI' : c.source %>)</option><% }); %>
+          </optgroup>
+        <% }); %>
+      </select>
+      <p class="nt-help">Only what is in the <a class="row-link" href="/automation/catalogue">software catalogue</a> can be sent to a fleet — a typo in a package id, typed once, lands on every machine you picked. Bitdefender and MeshCentral are deliberately not here: they have their own installers that carry the company, policy and certificate, and a generic push produces an endpoint nobody manages.</p>
+      <p class="nt-help" id="ntSoftwareMsiNote" style="display:none;">This one is one of our own uploaded MSIs. It can be installed, but not updated or removed this way — an MSI uninstall needs the product code from each machine.</p>
+    </div>
+
     <div id="ntDelayWrap" class="hide">
       <label for="ntDelay">Warning to the person at the machine</label>
       <select id="ntDelay" name="delay_seconds">
@@ -170,6 +187,7 @@
     document.getElementById('ntConsequence').textContent = o.getAttribute('data-consequence') || '';
     show(document.getElementById('ntScriptWrap'), needs === 'script');
     show(document.getElementById('ntPackageWrap'), needs === 'package');
+    show(document.getElementById('ntSoftwareWrap'), needs === 'software');
     show(document.getElementById('ntDelayWrap'), action.value.indexOf('power.') === 0);
   }
   function syncCondition(){
@@ -265,6 +283,23 @@
 
   syncAction(); syncCondition(); syncPicked(); load();
 })();
+
+  // An uploaded MSI can be installed but not updated or removed from here. Say so at the
+  // moment it is picked, rather than refusing after the task has been filled in.
+  (function(){
+    var sel = document.getElementById('ntSoftware'), note = document.getElementById('ntSoftwareMsiNote');
+    var act = document.getElementById('ntAction') || document.querySelector('select[name="action"]');
+    function sync(){
+      if (!sel || !note) return;
+      var o = sel.options[sel.selectedIndex];
+      var isMsi = !!o && o.getAttribute('data-source') === 'package';
+      var verb = act ? act.value : '';
+      note.style.display = (isMsi && (verb === 'software.upgrade' || verb === 'software.uninstall')) ? '' : 'none';
+    }
+    if (sel) sel.addEventListener('change', sync);
+    if (act) act.addEventListener('change', sync);
+    sync();
+  })();
 </script>
 
 <%- include('../partials/footer') %>

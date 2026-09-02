@@ -681,6 +681,35 @@ model AgentPackage {
   @@map("agent_packages")
 }
 
+// ── The software catalogue Automation deploys from ──────────────────────────────
+// A vetted list. Anything schedulable at a fleet has been added here on purpose, with a
+// source that says HOW it installs: a WinGet id, a Chocolatey id, or one of our own
+// uploaded MSIs. Nothing is deployable at scale that nobody put here.
+//
+// `protected` marks software that is managed by its OWN pipeline and must NEVER be pushed
+// from here - Bitdefender (GravityZone deploy) and MeshCentral (its own installer) above
+// all. That is enforced in code as well as by this flag; see lib/software-catalogue.ts.
+model SoftwareCatalogueItem {
+  id             Int      @id @default(autoincrement())
+  name           String
+  publisher      String?
+  category       String   @default("General")
+  source         String   // winget | choco | package
+  packageRef     String?  @map("package_ref")        // WinGet/Chocolatey package id
+  agentPackageId Int?     @map("agent_package_id")   // our own uploaded MSI, when source='package'
+  installArgs    String?  @map("install_args")
+  notes          String?
+  isActive       Boolean  @default(true) @map("is_active")
+  protected      Boolean  @default(false)            // managed elsewhere - never deployable here
+  sortOrder      Int      @default(100) @map("sort_order")
+  createdBy      Int?     @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([isActive])
+  @@map("software_catalogue")
+}
+
 model AgentCommand {
   id          Int       @id @default(autoincrement())
   deviceId    Int       @map("device_id")
