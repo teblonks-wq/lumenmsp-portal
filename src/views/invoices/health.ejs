@@ -31,12 +31,52 @@
     An issued, unpaid invoice showing <strong>nothing owed</strong> has simply never had its balance set &mdash; the column defaults to zero and none of the ten places that create or recalculate an invoice ever wrote it.
     Setting it to the total cannot lose anything, because there was nothing there. A part-payment balance written deliberately is left alone.
   </p>
+  <form method="post" action="/invoices/health/verify-qb" style="margin:0 0 10px;"
+        onsubmit="return confirm('Ask QuickBooks which invoice numbers it actually holds, and compare.\n\nNo invoices are created or changed in QuickBooks. Where the Portal claims an invoice is in QuickBooks and QuickBooks disagrees, the false link is cleared so the invoice can be sent again.');">
+    <button class="btn" type="submit">Ask QuickBooks what it actually has</button>
+  </form>
   <form method="post" action="/invoices/health/fix-balances" style="margin:0;"
         onsubmit="return confirm('Set the balance to the invoice total on every issued, unpaid invoice that currently shows nothing owed?\n\nPaid, void and part-paid invoices are not touched.');">
     <button class="btn btn-primary" type="submit">Set the missing balances</button>
   </form>
 </div>
 
+<div class="card" style="padding:0;margin-bottom:18px;">
+  <div class="card-header" style="padding:16px 20px 12px;">
+    <h2 style="margin:0;font-size:16px;">Never reached QuickBooks <span class="muted">(<%= (qbGap||[]).length %>)</span></h2>
+    <p class="muted" style="font-size:12px;margin:4px 0 0;">
+      Issued invoices with no QuickBooks record. The <strong>why</strong> column is the thing that was missing:
+      a bill run that could not push wrote &ldquo;QB skipped&rdquo; into an audit log and carried on, so an invoice that never went
+      looked exactly like one that did.
+    </p>
+  </div>
+  <% if (!(qbGap||[]).length) { %>
+    <div class="empty-state" style="margin:0;padding:22px;">Every issued invoice is in QuickBooks.</div>
+  <% } else { %>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Invoice</th><th>Customer</th><th style="text-align:right;">Total</th><th>Issued</th><th>Last attempt</th><th>Why it is not there</th></tr></thead>
+      <tbody>
+        <% qbGap.forEach(function(g){ %>
+          <tr>
+            <td><a class="row-link" href="/invoices/<%= g.id %>"><%= g.invoice_number || ('#' + g.id) %></a></td>
+            <td class="muted"><%= g.customer_name || '—' %></td>
+            <td style="text-align:right;"><%= money(g.total) %></td>
+            <td class="muted"><%= g.issue_date ? new Date(g.issue_date).toLocaleDateString('en-GB') : '—' %></td>
+            <td class="muted" style="font-size:12px;">
+              <% if (g.qb_push_state) { %><span class="badge"><%= g.qb_push_state %></span> <%= g.qb_push_at ? new Date(g.qb_push_at).toLocaleDateString('en-GB') : '' %>
+              <% } else { %><span class="muted">never tried</span><% } %>
+            </td>
+            <td class="h-why">
+              <% if (g.qb_push_error) { %><%= g.qb_push_error %>
+              <% } else if (!g.qb_push_state) { %>Nothing has ever attempted to send this one.
+              <% } else { %>Recorded as <%= g.qb_push_state %>, but QuickBooks holds no id for it.<% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  <% } %>
+</div>
 <div class="card" style="padding:0;">
   <div class="card-header" style="padding:16px 20px 12px;">
     <h2 style="margin:0;font-size:16px;">Contradictions <span class="muted">(<%= (rows||[]).length %>)</span></h2>

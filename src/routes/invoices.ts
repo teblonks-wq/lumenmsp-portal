@@ -7,7 +7,7 @@ import { notify } from '../lib/notifications';
 import { renderInvoicePdf, loadInvoiceForRender, renderInvoiceHtml } from '../lib/invoice-pdf';
 import { htmlToPdf } from '../lib/pdf';
 import { emailInvoiceAction, pushInvoiceToQBAction, submitInvoiceToGCAction, remindInvoiceAction } from './integrations';
-import { backfillInvoiceBalances, balanceContradictions } from '../lib/invoice-balance';
+import { backfillInvoiceBalances, balanceContradictions, invoicesNotInQb, verifyAgainstQuickBooks } from '../lib/invoice-balance';
 import { sendMail } from '../lib/mailer';
 import { invoiceEmailHtml } from '../lib/emails';
 import { invoiceViewUrl } from '../lib/invoice-link';
@@ -99,6 +99,7 @@ async function saveItemsAndTotals(client: any, invoiceId: number, body: any): Pr
 // the wrong half wins.
 router.get('/invoices/health', async (req: Request, res: Response) => {
   const rows = await balanceContradictions();
+  const qbGap = await invoicesNotInQb();
   const owed = (await pool.query(
     `SELECT COALESCE(SUM(balance),0)::float v FROM invoices
       WHERE deleted_at IS NULL AND status NOT IN ('draft','void') AND payment_status NOT IN ('paid','void')`
@@ -108,7 +109,7 @@ router.get('/invoices/health', async (req: Request, res: Response) => {
       WHERE deleted_at IS NULL AND status NOT IN ('draft','void') AND quickbooks_invoice_id IS NULL`
   ).catch(() => ({ rows: [{ n: 0, v: 0 }] }))).rows[0];
   res.render('invoices/health', {
-    user: req.session.user!, rows, owed, notInQb,
+    user: req.session.user!, rows, owed, notInQb, qbGap,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
@@ -124,6 +125,22 @@ router.post('/invoices/health/fix-balances', async (req: Request, res: Response)
     r.fixed
       ? `Set the balance on ${r.fixed} invoice(s) — £${r.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} that was showing as nothing owed.`
       : 'Nothing to fix — every unpaid invoice already shows what is owed.'));
+});
+
+// Ask QuickBooks what it actually holds, rather than trusting our own column.
+router.post('/invoices/health/verify-qb', async (req: Request, res: Response) => {
+  try {
+    const v = await verifyAgainstQuickBooks();
+    const bits = [`checked ${v.checked}`, `${v.matched} confirmed in QuickBooks`];
+    if (v.missing.length) bits.push(`${v.missing.length} claimed to be there but are NOT — link cleared so they can be sent again`);
+    if (v.mismatch.length) bits.push(`${v.mismatch.length} held under a different id`);
+    if (v.absent.length) bits.push(`${v.absent.length} genuinely not in QuickBooks`);
+    await logActivity(req.session.user!.id, 'updated', 'invoices', 0, 'Invoices: verified against QuickBooks — ' + bits.join(', '));
+    const bad = v.missing.length || v.mismatch.length;
+    res.redirect('/invoices/health?' + (bad ? 'err' : 'msg') + '=' + encodeURIComponent(bits.join(' · ')));
+  } catch (e: any) {
+    res.redirect('/invoices/health?err=' + encodeURIComponent(e.message || 'Could not reach QuickBooks.'));
+  }
 });
 
 router.get('/invoices', requireAuth, async (req: Request, res: Response) => {

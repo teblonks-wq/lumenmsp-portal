@@ -829,7 +829,7 @@ router.post('/invoices/:id/push-to-qb', requireAuth, async (req: Request, res: R
   const inv = r.rows[0];
   if (!inv.cust_id) { res.redirect('/invoices/' + id + '?err=' + encodeURIComponent('Invoice has no customer.')); return; }
   const qb = await QuickBooks.load();
-  if (!qb.isConnected()) { res.redirect('/invoices/' + id + '?err=' + encodeURIComponent('QuickBooks not connected.')); return; }
+  if (!qb.isConnected()) { await noteQbPush(id, 'skipped', 'QuickBooks is not connected, so nothing was sent.'); res.redirect('/invoices/' + id + '?err=' + encodeURIComponent('QuickBooks not connected.')); return; }
   try {
     let qbCust = inv.quickbooks_customer_id;
     if (!qbCust) {
@@ -839,8 +839,9 @@ router.post('/invoices/:id/push-to-qb', requireAuth, async (req: Request, res: R
     const items = (await pool.query('SELECT * FROM invoice_items WHERE invoice_id=$1 ORDER BY sort_order', [id])).rows;
     const qbInvId = await qb.pushInvoice(inv, items, qbCust);
     await pool.query('UPDATE invoices SET quickbooks_invoice_id=$1 WHERE id=$2', [qbInvId, id]);
+    await noteQbPush(id, 'pushed', null);
     res.redirect('/invoices/' + id + '?msg=' + encodeURIComponent('Pushed to QuickBooks'));
-  } catch (e: any) { res.redirect('/invoices/' + id + '?err=' + encodeURIComponent(e.message)); }
+  } catch (e: any) { await noteQbPush(id, 'failed', e.message); res.redirect('/invoices/' + id + '?err=' + encodeURIComponent(e.message)); }
 });
 
 // ── Complete an invoice: email finance contact + push to QB + submit for payment ─
@@ -888,24 +889,26 @@ export async function completeInvoice(id: number, userId: number): Promise<strin
   // 2. Push/amend in QuickBooks (re-Complete after an edit syncs the change).
   try {
     const qb = await QuickBooks.load();
-    if (!qb.isConnected()) { results.push('QB not connected'); }
+    if (!qb.isConnected()) { results.push('QB not connected'); await noteQbPush(id, 'skipped', 'QuickBooks is not connected, so nothing was sent.'); }
     else {
       let qbCust = inv.quickbooks_customer_id;
       if (!qbCust && inv.cust_id) { qbCust = await qb.findOrCreateCustomer({ name: inv.name, email: inv.email, phone: inv.phone, website: inv.website }); await pool.query('UPDATE customers SET quickbooks_customer_id=$1 WHERE id=$2', [qbCust, inv.cust_id]); }
-      if (!qbCust) { results.push('no QB customer'); }
+      if (!qbCust) { results.push('no QB customer'); await noteQbPush(id, 'skipped', 'This customer has no QuickBooks record and one could not be created.'); }
       else {
         const items = (await pool.query('SELECT * FROM invoice_items WHERE invoice_id=$1 ORDER BY sort_order', [id])).rows;
         if (inv.quickbooks_invoice_id) {
           await qb.updateInvoice(inv, items, qbCust, inv.quickbooks_invoice_id);
+          await noteQbPush(id, 'amended', null);
           results.push('amended in QB');
         } else {
           const qbId = await qb.pushInvoice(inv, items, qbCust);
           await pool.query('UPDATE invoices SET quickbooks_invoice_id=$1 WHERE id=$2', [qbId, id]);
+          await noteQbPush(id, 'pushed', null);
           results.push('pushed to QB');
         }
       }
     }
-  } catch (e: any) { results.push('QB failed: ' + e.message); }
+  } catch (e: any) { await noteQbPush(id, 'failed', e.message); results.push('QB failed: ' + e.message); }
 
   // 3. Direct Debit: collect if there's a mandate; if NOT, email the customer a DD-setup invite.
   try {
@@ -975,18 +978,43 @@ export async function emailInvoiceAction(id: number, userId: number): Promise<st
   return 'emailed ' + to;
 }
 
+// Every outcome — including the quiet ones — is written to the invoice itself. A push that
+// could not happen is not the same as a push that did, and until now both looked identical
+// from every screen in the Portal.
+async function noteQbPush(id: number, state: 'pushed' | 'amended' | 'skipped' | 'failed', why?: string | null): Promise<void> {
+  await pool.query(
+    'UPDATE invoices SET qb_push_state=$2, qb_push_error=$3, qb_push_at=NOW() WHERE id=$1',
+    [id, state, why ? String(why).slice(0, 400) : null]
+  ).catch(() => { /* the record of what happened must never break what happened */ });
+}
+
 export async function pushInvoiceToQBAction(id: number): Promise<string> {
   const inv = await loadInvForAction(id); if (!inv) return 'not found';
   const qb = await QuickBooks.load();
-  if (!qb.isConnected()) return 'QB not connected';
+  if (!qb.isConnected()) { await noteQbPush(id, 'skipped', 'QuickBooks is not connected, so nothing was sent.'); return 'QB not connected'; }
   let qbCust = inv.quickbooks_customer_id;
   if (!qbCust && inv.cust_id) { qbCust = await qb.findOrCreateCustomer({ name: inv.name, email: inv.email, phone: inv.phone, website: inv.website }); await pool.query('UPDATE customers SET quickbooks_customer_id=$1 WHERE id=$2', [qbCust, inv.cust_id]); }
-  if (!qbCust) return 'no QB customer';
+  if (!qbCust) {
+    await noteQbPush(id, 'skipped', 'This customer has no QuickBooks record and one could not be created, so the invoice was never sent.');
+    return 'no QB customer';
+  }
   const items = (await pool.query('SELECT * FROM invoice_items WHERE invoice_id=$1 ORDER BY sort_order', [id])).rows;
-  if (inv.quickbooks_invoice_id) { await qb.updateInvoice(inv, items, qbCust, inv.quickbooks_invoice_id); return 'amended in QB'; }
-  const qbId = await qb.pushInvoice(inv, items, qbCust);
-  await pool.query('UPDATE invoices SET quickbooks_invoice_id=$1 WHERE id=$2', [qbId, id]);
-  return 'pushed to QB';
+  try {
+    if (inv.quickbooks_invoice_id) {
+      await qb.updateInvoice(inv, items, qbCust, inv.quickbooks_invoice_id);
+      await noteQbPush(id, 'amended', null);
+      return 'amended in QB';
+    }
+    const qbId = await qb.pushInvoice(inv, items, qbCust);
+    await pool.query('UPDATE invoices SET quickbooks_invoice_id=$1 WHERE id=$2', [qbId, id]);
+    await noteQbPush(id, 'pushed', null);
+    return 'pushed to QB';
+  } catch (e: any) {
+    // QuickBooks refusing an invoice is the single most useful thing it ever tells us, and it
+    // was being thrown away. It is kept on the invoice now, in QuickBooks' own words.
+    await noteQbPush(id, 'failed', e?.message || 'QuickBooks rejected the invoice.');
+    throw e;
+  }
 }
 
 export async function submitInvoiceToGCAction(id: number): Promise<string> {
@@ -1024,11 +1052,30 @@ export async function remindInvoiceAction(id: number, userId: number): Promise<s
   return 'reminder sent ' + to;
 }
 
+// ── Did any step of Complete actually fail? ─────────────────────────────────────
+// completeInvoice returns a list of plain-English step results, and BOTH callers used to
+// treat "it returned something" as success. So "Complete — emailed dave@… · QB not connected
+// · submitted for payment" was shown as a GREEN banner, and Batch Complete counted that
+// invoice in its "20/20 done". An invoice that never reached QuickBooks looked exactly like
+// one that did. 2026-09-03, Terry: "invoices when we send to QB are not getting there and
+// show no error."
+const STEP_FAILED = /(not connected|no QB customer|failed|not emailed|no finance contact|not configured|no mandate)/i;
+export function failedSteps(results: string[]): string[] {
+  return (results || []).filter((r) => STEP_FAILED.test(r));
+}
+
 router.post('/invoices/:id/complete', requireAuth, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const results = await completeInvoice(id, req.session.user!.id);
   if (!results) { res.status(404).render('error', { message: 'Invoice not found.' }); return; }
-  res.redirect('/invoices/' + id + '?msg=' + encodeURIComponent('Complete — ' + results.join(' · ')));
+  const bad = failedSteps(results);
+  // Red when something did not happen, green only when everything did. The steps that
+  // worked are still listed, so it is clear what DID go through.
+  const param = bad.length ? 'err' : 'msg';
+  const text = bad.length
+    ? `Completed with problems — ${bad.join(' · ')}. (Also: ${results.filter((r) => !bad.includes(r)).join(' · ') || 'nothing else ran'}.)`
+    : 'Complete — ' + results.join(' · ');
+  res.redirect('/invoices/' + id + '?' + param + '=' + encodeURIComponent(text));
 });
 
 // Batch Complete — runs Complete (email + QB + GoCardless) over a set of selected invoices.
@@ -1043,7 +1090,17 @@ async function runBatchComplete(ids: number[], userId: number): Promise<void> {
   const status = { running: true, total: ids.length, done: 0, ok: 0, errs: [] as string[], startedAt: new Date().toISOString(), finishedAt: null as string | null };
   await setSetting('invoices', 'batch_status', JSON.stringify(status));
   for (const id of ids) {
-    try { const r = await completeInvoice(id, userId); if (r) status.ok++; else status.errs.push('#' + id + ' not found'); }
+    try {
+      const r = await completeInvoice(id, userId);
+      if (!r) { status.errs.push('#' + id + ' not found'); }
+      else {
+        const bad = failedSteps(r);
+        // Returning a list is not the same as succeeding. Counting it as done was how a run
+        // could report "20/20" with not one invoice in QuickBooks.
+        if (bad.length) status.errs.push('#' + id + ': ' + bad.join('; '));
+        else status.ok++;
+      }
+    }
     catch (e: any) { status.errs.push('#' + id + ': ' + (e.message || 'error')); }
     status.done++;
     // Persist progress every few invoices so the poller sees movement.

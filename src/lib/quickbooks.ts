@@ -243,6 +243,29 @@ export class QuickBooks {
     return this.uploadAttachable(purchaseId, 'Purchase', filePath, fileName, contentType);
   }
 
+  // ── Does QuickBooks actually have it? ─────────────────────────────────────────
+  // The Portal has been trusting its own quickbooks_invoice_id column to answer "is this in
+  // QuickBooks?" — and the invoice screen says "✓ In QuickBooks" purely on that column being
+  // non-empty. An id set by an old import, or by a push that was later voided in QB, makes
+  // the Portal claim an invoice is there when it is not, and hides the button that would
+  // send it. Nothing ever asked QuickBooks.
+  //
+  // This asks. One paged query over DocNumbers, no writes, no AI.
+  async listInvoiceDocNumbers(sinceIso?: string): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const where = sinceIso ? ` WHERE TxnDate >= '${sinceIso}'` : '';
+    let start = 1;
+    for (;;) {
+      const d = await this.query(`SELECT Id, DocNumber FROM Invoice${where} ORDER BY TxnDate STARTPOSITION ${start} MAXRESULTS 500`);
+      const invs: any[] = d?.QueryResponse?.Invoice || [];
+      if (!invs.length) break;
+      for (const qi of invs) if (qi.DocNumber) out.set(String(qi.DocNumber).trim(), String(qi.Id));
+      start += invs.length;
+      if (invs.length < 500) break;
+    }
+    return out;
+  }
+
   // Historic Purchases (expenses) — payee + expense account per line. Used by the
   // purchase ledger's auto-categoriser to learn "how was this payee coded before?".
   // Pages through QB (100/page) up to a sane cap; best-effort on a per-page basis.

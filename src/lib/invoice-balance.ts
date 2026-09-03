@@ -95,3 +95,76 @@ export async function balanceContradictions(): Promise<Contradiction[]> {
   ).catch(() => ({ rows: [] as any[] }))).rows;
   return rows;
 }
+
+// ── Invoices that never reached QuickBooks, and why ─────────────────────────────
+// "Not in QuickBooks" was previously only answerable as a filter, and it could not tell you
+// the reason. Now every push records its outcome on the invoice, so the ones that quietly
+// did not go can say so themselves — and the ones nobody has ever tried are distinguished
+// from the ones that were tried and refused.
+export interface QbGap {
+  id: number; invoice_number: string; customer_name: string | null; total: string;
+  issue_date: string | null; qb_push_state: string | null; qb_push_error: string | null; qb_push_at: string | null;
+}
+
+export async function invoicesNotInQb(): Promise<QbGap[]> {
+  return (await pool.query(
+    `SELECT i.id, i.invoice_number, c.name AS customer_name, i.total, i.issue_date,
+            i.qb_push_state, i.qb_push_error, i.qb_push_at
+       FROM invoices i LEFT JOIN customers c ON c.id = i.customer_id
+      WHERE i.deleted_at IS NULL
+        AND i.status NOT IN ('draft', 'void')
+        AND i.quickbooks_invoice_id IS NULL
+      ORDER BY i.issue_date DESC NULLS LAST, i.total DESC NULLS LAST`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+}
+
+// ── Reconcile the Portal against QuickBooks itself ──────────────────────────────
+// "Is this in QuickBooks?" has only ever been answered by our own column. This asks
+// QuickBooks. Three answers matter and they are all different:
+//   missing  — we think it is there, QuickBooks has never heard of it. The dangerous one:
+//              the screen says "✓ In QuickBooks" and hides the button that would send it.
+//   absent   — we know it is not there. Confirms the gap is real, not a stale column.
+//   mismatch — QuickBooks has that invoice number under a DIFFERENT id than we recorded.
+export interface QbVerify {
+  checked: number; matched: number;
+  missing: Array<{ id: number; invoice_number: string; total: string; qb_id: string }>;
+  mismatch: Array<{ id: number; invoice_number: string; ours: string; theirs: string }>;
+  absent: Array<{ id: number; invoice_number: string; total: string }>;
+}
+
+export async function verifyAgainstQuickBooks(): Promise<QbVerify> {
+  const { QuickBooks } = await import('./quickbooks');
+  const qb = await QuickBooks.load();
+  if (!qb.isConnected()) throw new Error('QuickBooks is not connected, so there is nothing to compare against.');
+  const theirs = await qb.listInvoiceDocNumbers();
+  const ours = (await pool.query(
+    `SELECT id, invoice_number, total, quickbooks_invoice_id FROM invoices
+      WHERE deleted_at IS NULL AND status NOT IN ('draft','void') AND invoice_number IS NOT NULL`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+
+  const out: QbVerify = { checked: ours.length, matched: 0, missing: [], mismatch: [], absent: [] };
+  for (const i of ours) {
+    const num = String(i.invoice_number).trim();
+    const theirId = theirs.get(num);
+    if (i.quickbooks_invoice_id) {
+      if (!theirId) out.missing.push({ id: i.id, invoice_number: num, total: i.total, qb_id: String(i.quickbooks_invoice_id) });
+      else if (String(theirId) !== String(i.quickbooks_invoice_id)) out.mismatch.push({ id: i.id, invoice_number: num, ours: String(i.quickbooks_invoice_id), theirs: String(theirId) });
+      else out.matched++;
+    } else if (theirId) {
+      // It IS in QuickBooks; we simply never recorded the link. Safe to repair.
+      await pool.query('UPDATE invoices SET quickbooks_invoice_id=$1 WHERE id=$2', [theirId, i.id]).catch(() => {});
+      out.matched++;
+    } else {
+      out.absent.push({ id: i.id, invoice_number: num, total: i.total });
+    }
+  }
+  // A claim of "in QuickBooks" that QuickBooks contradicts is cleared, so the invoice shows
+  // its Push button again instead of a tick that is not true.
+  for (const m of out.missing) {
+    await pool.query(
+      "UPDATE invoices SET quickbooks_invoice_id=NULL, qb_push_state='failed', qb_push_error=$2, qb_push_at=NOW() WHERE id=$1",
+      [m.id, 'The Portal recorded a QuickBooks id (' + m.qb_id + ') but QuickBooks has no invoice with this number. The link has been cleared so it can be sent again.']
+    ).catch(() => {});
+  }
+  return out;
+}

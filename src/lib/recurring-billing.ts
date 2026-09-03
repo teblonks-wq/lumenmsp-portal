@@ -171,7 +171,19 @@ export async function generateFromTemplate(templateId: number, userId: number | 
   )).rows[0];
 
   if (tpl.auto_send) { try { await autoEmail(inv); actions.push('emailed'); } catch (e: any) { actions.push('email failed: ' + e.message); } }
-  if (tpl.auto_qb)   { try { const id = await autoQb(inv); actions.push(id ? 'pushed to QB' : 'QB skipped'); } catch (e: any) { actions.push('QB failed: ' + e.message); } }
+  // 'QB skipped' used to go into the activity log and nowhere else, so a bill run that never
+  // reached QuickBooks looked exactly like one that did. The reason is now recorded on the
+  // invoice, where anyone looking at that invoice will find it.
+  if (tpl.auto_qb) {
+    try {
+      const r = await autoQb(inv);
+      if (r.id) { await noteQb(inv.id, 'pushed', null); actions.push('pushed to QB'); }
+      else { await noteQb(inv.id, 'skipped', r.why); actions.push('QB skipped: ' + r.why); }
+    } catch (e: any) {
+      await noteQb(inv.id, 'failed', e.message);
+      actions.push('QB failed: ' + e.message);
+    }
+  }
   if (tpl.auto_gc)   { try { const ok = await autoGc(inv); actions.push(ok ? 'submitted to GoCardless' : 'GC skipped'); } catch (e: any) { actions.push('GC failed: ' + e.message); } }
 
   await logActivity(userId, 'created', 'invoices', invoiceId, `Recurring: ${actions.join(', ')} (from #${templateId})`);
@@ -200,16 +212,24 @@ async function autoEmail(inv: any): Promise<void> {
   await pool.query('UPDATE invoices SET emailed_at=NOW() WHERE id=$1', [inv.id]);
 }
 
-async function autoQb(inv: any): Promise<string | null> {
+async function noteQb(id: number, state: 'pushed' | 'skipped' | 'failed', why?: string | null): Promise<void> {
+  await pool.query(
+    'UPDATE invoices SET qb_push_state=$2, qb_push_error=$3, qb_push_at=NOW() WHERE id=$1',
+    [id, state, why ? String(why).slice(0, 400) : null]
+  ).catch(() => { /* never break the bill run to record what the bill run did */ });
+}
+
+// Returns WHY as well as whether. A silent null was the whole problem.
+async function autoQb(inv: any): Promise<{ id: string | null; why: string }> {
   const qb = await QuickBooks.load();
-  if (!qb.isConnected()) return null;
+  if (!qb.isConnected()) return { id: null, why: 'QuickBooks is not connected, so nothing was sent.' };
   let qbCust = inv.quickbooks_customer_id;
   if (!qbCust && inv.customer_id) { qbCust = await qb.findOrCreateCustomer({ name: inv.name, email: inv.email, phone: inv.phone, website: inv.website }); await pool.query('UPDATE customers SET quickbooks_customer_id=$1 WHERE id=$2', [qbCust, inv.customer_id]); }
-  if (!qbCust) return null;
+  if (!qbCust) return { id: null, why: 'This customer has no QuickBooks record and one could not be created.' };
   const items = (await pool.query('SELECT * FROM invoice_items WHERE invoice_id=$1 ORDER BY sort_order', [inv.id])).rows;
   const qbId = await qb.pushInvoice(inv, items, qbCust);
   await pool.query('UPDATE invoices SET quickbooks_invoice_id=$1 WHERE id=$2', [qbId, inv.id]);
-  return qbId;
+  return { id: qbId, why: '' };
 }
 
 async function autoGc(inv: any): Promise<boolean> {

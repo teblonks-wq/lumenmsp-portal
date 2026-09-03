@@ -1783,6 +1783,16 @@ model Invoice {
   dueDay              Int?      @map("due_day")   // day of month due / issue date (e.g. 1, next month)
   autoSend            Boolean   @default(false) @map("auto_send")
   autoQb              Boolean   @default(false) @map("auto_qb")
+  // ── Did it actually reach QuickBooks? ──────────────────────────────────────────
+  // 2026-09-03, Terry: "invoices when we send to QB are not getting there and show no error."
+  // They didn't show an error because there was nowhere for one to live. The recurring bill
+  // run pushed the string 'QB skipped' into the activity log and moved on — QuickBooks not
+  // connected, or the customer having no QuickBooks record, both looked like success from
+  // every screen. The outcome now lives ON THE INVOICE, so the invoice can say what happened
+  // to it and why.
+  qbPushState         String?   @map("qb_push_state")   // pushed | amended | skipped | failed
+  qbPushError         String?   @map("qb_push_error")   // the reason, in the words a person needs
+  qbPushAt            DateTime? @map("qb_push_at")
   autoGc              Boolean   @default(false) @map("auto_gc")
   lastGeneratedAt     DateTime? @map("last_generated_at")
   notes               String?
