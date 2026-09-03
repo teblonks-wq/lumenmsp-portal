@@ -638,7 +638,15 @@ function invoiceLocked(inv: any): boolean {
 //
 // The lock exists for a good reason — the customer and QuickBooks already hold the document —
 // so this does not remove it. It suspends it, for THIRTY MINUTES, for ONE invoice, behind a
-// passphrase, with the reason and the person recorded on the row. It expires by itself.
+// passphrase, with the person and the time recorded on the row. It expires by itself.
+//
+// A TYPED REASON was required at first and has been dropped (Terry, 3 Sep 2026: "I just need
+// to click the locked symbol, enter a passcode, make the changes and lock it again"). Two
+// reasons it was not worth keeping: it sat next to a password box, so Chrome read it as a
+// username field and autofilled an email address into it — an audit trail recording
+// "ladmin@lumenmsp.co.uk" as the reason is worse than none. And who, when and what changed
+// are all still recorded without anybody having to type. unlock_reason stays on the row so
+// a reason can come back later without a migration.
 //
 // The passphrase is stored as a bcrypt hash in settings ('invoices' / 'unlock_hash'), never in
 // this file and never in the repository. Set it with /invoices/unlock-passphrase.
@@ -651,14 +659,10 @@ async function unlockHash(): Promise<string> {
 router.post('/invoices/:id/unlock', requireAuth, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const pass = String((req.body || {}).passphrase || '');
-  const reason = String((req.body || {}).reason || '').trim();
+  const reason = String((req.body || {}).reason || '').trim();   // optional; no longer asked for
   const hash = await unlockHash();
   if (!hash) {
     res.redirect('/invoices/' + id + '?err=' + encodeURIComponent('No unlock passphrase has been set yet. An administrator can set one under Settings.'));
-    return;
-  }
-  if (!reason) {
-    res.redirect('/invoices/' + id + '?err=' + encodeURIComponent('Say why this invoice is being unlocked — it is recorded against it.'));
     return;
   }
   let ok = false;
@@ -673,12 +677,12 @@ router.post('/invoices/:id/unlock', requireAuth, async (req: Request, res: Respo
     `UPDATE invoices SET unlocked_by=$2, unlocked_at=NOW(),
             unlocked_until = NOW() + ($3 || ' minutes')::interval, unlock_reason=$4
       WHERE id=$1`,
-    [id, req.session.user!.id, String(UNLOCK_MINUTES), reason.slice(0, 300)]
+    [id, req.session.user!.id, String(UNLOCK_MINUTES), reason ? reason.slice(0, 300) : null]
   ).catch(() => {});
   await logActivity(req.session.user!.id, 'updated', 'invoices', id,
-    `Invoices: unlocked invoice #${id} for ${UNLOCK_MINUTES} minutes — ${reason}`);
+    `Invoices: unlocked invoice #${id} for ${UNLOCK_MINUTES} minutes${reason ? ' — ' + reason : ''}`);
   res.redirect('/invoices/' + id + '/edit?msg=' + encodeURIComponent(
-    `Unlocked for ${UNLOCK_MINUTES} minutes. The reason and your name are recorded on the invoice, and it re-locks itself.`));
+    `Unlocked for ${UNLOCK_MINUTES} minutes — it re-locks itself, or press Lock again now when you have finished.`));
 });
 
 // Re-lock immediately, rather than waiting the thirty minutes out.

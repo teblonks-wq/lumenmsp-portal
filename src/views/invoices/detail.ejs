@@ -219,14 +219,16 @@
 <% } else if (_locked) { %>
   <details class="card" style="margin-bottom:14px;">
     <summary style="cursor:pointer;font-weight:600;font-size:14px;">🔒 This invoice is locked &mdash; unlock it to edit</summary>
-    <p class="muted" style="font-size:12px;margin:8px 0 10px;">
-      It is locked because the customer and QuickBooks already hold it, so it must not be silently rewritten.
-      Unlocking suspends that for <strong>30 minutes</strong>, on this invoice only. Your name and your reason are recorded against it, and it re-locks itself.
-    </p>
-    <form method="post" action="/invoices/<%= invoice.id %>/unlock" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-      <input class="input" name="reason" placeholder="Why does it need changing?" required style="min-width:280px;font-size:13px;">
-      <input class="input" name="passphrase" type="password" placeholder="Unlock passphrase" required autocomplete="off" style="max-width:190px;font-size:13px;">
-      <button class="btn" type="submit">Unlock for 30 minutes</button>
+    <%# One box. The reason field was dropped because it sat beside a password input, so
+        Chrome treated it as a username and autofilled an email address into the audit trail.
+        autocomplete="new-password" and the password-manager opt-outs stop this one being
+        filled the same way. Who and when are still recorded — they need no typing. %>
+    <form method="post" action="/invoices/<%= invoice.id %>/unlock" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+      <input class="input" name="passphrase" type="password" placeholder="Passcode" required
+             autocomplete="new-password" data-lpignore="true" data-1p-ignore data-bwignore
+             style="max-width:190px;font-size:13px;">
+      <button class="btn" type="submit">Unlock</button>
+      <span class="muted" style="font-size:11.5px;">Unlocks for 30 minutes, this invoice only. It re-locks itself.</span>
     </form>
   </details>
 <% } %>

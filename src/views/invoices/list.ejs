@@ -77,6 +77,23 @@
   var _folded = 0;
   [source, paid, dd, (typeof gc!=='undefined'?gc:''), (typeof qb!=='undefined'?qb:''), (typeof recurring!=='undefined'?recurring:''), (typeof emailed!=='undefined'?emailed:'')].forEach(function(v){ if (v) _folded++; });
 %>
+<%
+  // What is actually filtering the list, in words. Filters are STICKY — they survive an
+  // action and coming back through the nav — so arriving at a narrowed list is normal and
+  // must never be silent. This drives both the toolbar button and the banner below.
+  var _v = function (n) { return (typeof n !== 'undefined' && n) ? n : ''; };
+  var _filterBits = [];
+  if (status) _filterBits.push('Status: ' + status.charAt(0).toUpperCase() + status.slice(1));
+  if (search) _filterBits.push('Search "' + search + '"');
+  if (period && period.key) _filterBits.push(period.label);
+  if (source) _filterBits.push({ legacy: 'From QuickBooks', portal: 'Raised here', nocustomer: 'No customer' }[source] || source);
+  if (paid) _filterBits.push(paid === 'paid' ? 'Paid' : 'Unpaid / part-paid');
+  if (_v(dd)) _filterBits.push(dd === 'yes' ? 'On Direct Debit' : 'Not on Direct Debit');
+  if (_v(gc)) _filterBits.push(gc === 'yes' ? 'Sent to GoCardless' : 'Not sent to GoCardless');
+  if (_v(qb)) _filterBits.push(qb === 'yes' ? 'In QuickBooks' : 'Not in QuickBooks');
+  if (_v(emailed)) _filterBits.push(emailed === 'yes' ? 'Emailed' : 'Not emailed');
+  if (_v(recurring) === 'yes') _filterBits.push('Templates, not invoices');
+%>
 <!-- Toolbar: search + period stay out; everything else folds into one Filters panel -->
 <form method="get" action="/invoices" class="toolbar" autocomplete="off">
   <input type="hidden" name="status" value="<%= status %>">
@@ -145,7 +162,7 @@
     </div>
   </div>
   <button class="btn" type="submit">Search</button>
-  <% if (status||search||source||paid||dd||gc||qb||emailed||recurring||(period&&period.from)) { %><a class="btn" href="/invoices?clear=1" title="Filters stay set until you clear them">Clear all</a><% } %>
+  <% if (_filterBits.length) { %><a class="btn" href="/invoices?clear=1" title="Filters stay set until you clear them">Clear filters</a><% } %>
 </form>
 <script>
   (function(){
@@ -159,6 +176,16 @@
 <script>
   function invPeriodToggle(){ var v=document.getElementById('inv-period').value; document.querySelectorAll('.inv-custom').forEach(function(e){ e.style.display = v==='custom'?'':'none'; }); }
 </script>
+
+<% if (_filterBits.length) { %>
+<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px;padding:9px 14px;border:1px solid var(--warn-line,#fde68a);background:var(--tint-warn,#fffbeb);border-radius:9px;">
+  <span style="font-size:13px;color:var(--warn-deep,#92400e);">
+    <strong>You are looking at a filtered list</strong> &mdash; <%= _filterBits.join(' · ') %>.
+    <span class="muted" style="color:var(--warn-deep,#92400e);opacity:.8;">The totals above follow the filter.</span>
+  </span>
+  <a class="btn" href="/invoices?clear=1" style="margin-left:auto;background:var(--card,#fff);">Clear filters</a>
+</div>
+<% } %>
 
 <div id="batchStatus" style="display:none;margin-bottom:10px;padding:10px 14px;border-radius:8px;border:1px solid var(--info-line);background:var(--tint-info);font-size:13px;"></div>
 <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
