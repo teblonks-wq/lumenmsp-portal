@@ -47,7 +47,7 @@
     <p class="muted" style="font-size:12px;margin:0;">Supplier invoices emailed to <strong><%= invoiceMailbox %></strong> pool here. Attach one to a transaction from the Expenses tab (the 📁 picker next to Browse), or upload one manually.</p>
   </div>
   <form method="post" action="/purchases/inbox/sync" style="margin:0;"><button class="btn" type="submit" title="Pull the invoice mailbox now">↻ Sync mailbox</button></form>
-  <form method="post" action="/purchases/inbox/automatch" style="margin:0;"><button class="btn" type="submit" title="Try to auto-match pooled invoices to transactions">🔗 Auto-match</button></form>
+  <form method="post" action="/purchases/inbox/automatch" style="margin:0;" onsubmit="return pxConfirmSpend(this)"><button class="btn" type="submit" title="Try to auto-match pooled invoices to transactions. Tells you what it will cost before it runs.">🔗 Auto-match</button></form>
   <form method="post" action="/purchases/inbox/rescan-dupes" style="margin:0;"><button class="btn" type="submit" title="Re-check every pooled document for duplicates and already-paid invoices. Safe to run any time — it never deletes anything.">🔎 Check for duplicates</button></form>
   <form method="post" action="/purchases/inbox/ai-read" style="margin:0;"><button class="btn" type="submit" title="Have Claude LOOK at the invoices that have no readable text — scans, photos, and PDFs whose text is really a picture. Costs a small amount per invoice.">👁 Read the scans</button></form>
 </div>
@@ -174,6 +174,12 @@
   <a class="btn <%= !showArchived ? 'btn-primary' : '' %>" href="/purchases/expenses?view=inbox">Inbox (<%= inboxCount %>)</a>
   <a class="btn <%= showArchived ? 'btn-primary' : '' %>" href="/purchases/expenses?view=inbox&docs=archived">Archived (<%= archivedCount %>)</a>
   <% var jc = typeof junkCount !== 'undefined' ? junkCount : 0; var jr = (typeof junkRows !== 'undefined' ? junkRows : []); %>
+  <% if (!showArchived && inboxCount) { %>
+    <form method="post" action="/purchases/inbox/reset" style="margin:0;"
+          onsubmit="return confirm('Clear <%= inboxCount %> document(s) that are not attached to a payment?\n\nThey are ARCHIVED, not deleted — everything lands on the Archived tab and Restore puts any of it back. Only invoices attached to a payment stay in the inbox.\n\nUse this before re-processing the mailbox and re-uploading.');">
+      <button class="btn" type="submit" title="Archive everything not attached to a payment, so the mailbox and an upload can refill a clean inbox">↺ Start the inbox again (<%= inboxCount %>)</button>
+    </form>
+  <% } %>
   <% if (!showArchived && jc) { %>
     <% var TN = { statement:'statements', sales_invoice:'our own sales invoices', not_a_purchase:'not purchases', notification:'notifications', contract:'contracts' };
        var summary = jr.map(function(r){ return r.n + ' ' + (TN[r.t] || r.t); }).join(', '); %>
@@ -464,7 +470,7 @@
   </form>
   <form method="post" action="/purchases/sync" style="margin:0;"><button class="btn" type="submit" title="Pull live from Open Banking (needs provider keys)">↻ Sync Open Banking</button></form>
   <form method="post" action="/purchases/autocategorise" style="margin:0;"><button class="btn" type="submit" title="Fill categories on all outstanding transactions from how each payee was coded before (ledger history + QuickBooks history). Nothing is locked — review then save.">🏷 Auto-categorise</button></form>
-  <form method="post" action="/purchases/inbox/automatch" style="margin:0;"><button class="btn" type="submit" title="Try to auto-match pooled invoices to transactions (supplier aliases, DD collection lag, USD card billing)">🔗 Auto-match invoices</button></form>
+  <form method="post" action="/purchases/inbox/automatch" style="margin:0;" onsubmit="return pxConfirmSpend(this)"><button class="btn" type="submit" title="Try to auto-match pooled invoices to transactions. Tells you what it will cost before it runs.">🔗 Auto-match invoices</button></form>
   <% if (!(accounts||[]).length) { %><span class="muted" style="font-size:12px;margin-left:auto;">No accounts yet — add them in <a class="row-link" href="/purchases/settings">Admin → Purchase Ledger</a>.</span><% } else { %><a class="row-link" href="/purchases/settings" style="margin-left:auto;font-size:12px;">Manage accounts / bookkeeper →</a><% } %>
 </div>
 <% } %>
@@ -953,4 +959,30 @@ document.addEventListener('keydown', function(e){ if (e.key === 'Escape') pxSeeC
 })();
 </script>
 
+
+<script>
+  // Nothing on this screen spends money without saying how much first. Asked of the server,
+  // not guessed in the browser, and the run is only allowed once a person has agreed to it.
+  var pxSpendOk = false;
+  function pxConfirmSpend(form){
+    if (pxSpendOk) { pxSpendOk = false; return true; }
+    var btn = form.querySelector('button');
+    var was = btn.textContent; btn.disabled = true; btn.textContent = 'Checking…';
+    fetch('/purchases/inbox/automatch/estimate', { headers: { 'Accept':'application/json' } })
+      .then(function(r){ return r.json(); })
+      .then(function(e){
+        btn.disabled = false; btn.textContent = was;
+        if (!e.ok) { alert('Could not work out what this would cost: ' + (e.error || 'unknown')); return; }
+        if (!e.calls) { pxSpendOk = true; form.submit(); return; }   // free — nothing has changed
+        var msg = e.calls + ' paid call' + (e.calls === 1 ? '' : 's') +
+                  ' — about $' + e.usd.toFixed(2) + '.\n\n' +
+                  e.toRead + ' document(s) to read, ' + e.toJudge + ' to judge.' +
+                  (e.capped ? '\n\nThis run stops at 120 calls; the rest waits for the next one.' : '') +
+                  '\n\nGo ahead?';
+        if (confirm(msg)) { pxSpendOk = true; form.submit(); }
+      })
+      .catch(function(){ btn.disabled = false; btn.textContent = was; alert('Could not reach the Portal to check the cost.'); });
+    return false;
+  }
+</script>
 <%- include('../partials/footer') %>

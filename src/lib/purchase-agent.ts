@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { pool } from '../db/pool';
 import { aiAskDoc, aiAskText, parseJsonAnswer, docKindFor, docMediaType } from './ai-compose';
+import { extractText } from './invoice-read';
 import { normaliseCounterparty, aliasTokensFor } from './purchase-match';
 import { supplierKey, isInternalSender } from './purchase-dupes';
 import { activeRules, contextFor } from './purchase-rules';
@@ -58,26 +59,67 @@ const READ_SYSTEM = [
   '- concerns: anything wrong on the face of it - the arithmetic does not add up, it is a duplicate or copy, it is addressed to someone else, it is a credit note not an invoice, it is already marked paid. Otherwise null.',
 ].join('\n');
 
-export async function aiReadInvoiceDoc(doc: any): Promise<AiInvoiceRead | null> {
+// ── The ladder ──────────────────────────────────────────────────────────────────
+// Terry, 2026-09-03: "dont see why simply scanning an email needs sonnet."
+//
+// It does not, and it never did. The bill came from firing the VISION path at documents
+// that already had perfectly good text in them, because the trigger was "our regex could
+// not find a total" rather than "there is nothing here to read". Measured on the September
+// slice: 348 of 363 documents had an extractable text layer. Only 15 genuinely needed eyes.
+//
+// So four rungs, and we only climb when the one below fails:
+//   1. pdf-parse the text                        free
+//   2. regex the fields out of that text         free
+//   3. text exists but no total → HAIKU on TEXT  ~$0.0006   (no file goes up)
+//   4. no text at all → SONNET on the DOCUMENT   ~$0.01-0.10 (the whole file goes up)
+//
+// Rung 3 is the one that was missing, and it is 20-50× cheaper than rung 4 for exactly the
+// same answer on a document that can be read as words.
+const MAX_TEXT_CHARS = 12000;   // an invoice is one or two pages; more than this is a statement
+
+// Rung 3 — the words. No file leaves the server; the extracted text goes to the cheap model.
+async function readViaText(doc: any): Promise<AiInvoiceRead | null> {
+  let text = '';
+  try { text = await extractText(doc.file_path, doc.content_type, doc.file_name); }
+  catch { return null; }
+  if (!text || text.trim().length < 40) return null;   // genuinely nothing to read — climb
+  const raw = await aiAskText(READ_SYSTEM, text.slice(0, MAX_TEXT_CHARS), 900).catch(() => '');
+  if (!raw) return null;
+  const r = parseJsonAnswer<AiInvoiceRead | null>(raw, null);
+  // A read that found neither a supplier nor a total has not really read anything, so we
+  // let it fall through to the page rather than banking a hollow answer.
+  if (!r || (r.gross == null && !r.supplier)) return null;
+  return r;
+}
+
+// Rung 4 — the page. The whole file goes up. Reserved for documents with no text at all.
+async function readViaVision(doc: any): Promise<AiInvoiceRead | null> {
   const kind = docKindFor(doc.content_type, doc.file_name);
   if (!kind) { await setReadStatus(doc.id, 'unreadable'); return null; }
   let buf: Buffer;
   try { buf = fs.readFileSync(doc.file_path); }
   catch (e) { console.error('[purchase-agent] cannot read file', doc.file_path, (e as Error).message); await setReadStatus(doc.id, 'failed'); return null; }
   if (buf.length > MAX_DOC_BYTES) { await setReadStatus(doc.id, 'unreadable'); return null; }
-
   let raw: string;
   try {
     raw = await aiAskDoc(READ_SYSTEM, 'Read this invoice and return the JSON.', {
       kind, media_type: docMediaType(kind, doc.content_type, doc.file_name), data: buf.toString('base64'),
     }, 900);
   } catch (e) {
-    console.error('[purchase-agent] Claude read failed for doc', doc.id, (e as Error).message);
+    console.error('[purchase-agent] document read failed for doc', doc.id, (e as Error).message);
     await setReadStatus(doc.id, 'failed');
     return null;
   }
   const r = parseJsonAnswer<AiInvoiceRead | null>(raw, null);
   if (!r) { await setReadStatus(doc.id, 'failed'); return null; }
+  return r;
+}
+
+export async function aiReadInvoiceDoc(doc: any): Promise<AiInvoiceRead | null> {
+  // Words first, always. The page only when there are no words.
+  let r = await readViaText(doc);
+  if (!r) r = await readViaVision(doc);
+  if (!r) return null;
 
   const num = (v: any) => (v == null || v === '' || isNaN(Number(v)) ? null : Number(v));
   const toUs = (r as any).addressedToUs;

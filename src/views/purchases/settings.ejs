@@ -42,6 +42,28 @@
       <input type="checkbox" name="qb_push_enabled" <%= qbPushEnabled ? 'checked' : '' %>> Enable push to QuickBooks
     </label>
   </div>
+  <div class="card" style="margin-bottom:14px;">
+    <h2 style="margin:0 0 4px;font-size:16px;">Reading and matching with the Portal's AI</h2>
+    <p class="muted" style="font-size:12px;margin:0 0 10px;">
+      Every invoice read and every match judged is a paid call. With this off, the Portal still imports, de-duplicates,
+      matches on rules, categorises and reports &mdash; it simply stops reading documents and weighing up candidates.
+      <strong>On 2&ndash;3 September this cost $288 in two days</strong> against a $12 monthly baseline, because a sweep re-judged
+      every unattached document every time it ran. A document is now judged once per question and never re-asked.
+    </p>
+    <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
+      <input type="checkbox" name="ai_matching" <%= (typeof aiMatching === 'undefined' || aiMatching) ? 'checked' : '' %>> Let the Portal read and judge
+    </label>
+    <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <label style="font-size:13px;">Most paid calls in a day
+        <input class="input" type="number" name="ai_daily_cap" min="0" max="5000" step="10"
+               value="<%= typeof aiDailyCap === 'undefined' ? 400 : aiDailyCap %>" style="width:110px;margin-left:6px;">
+      </label>
+      <span class="muted" style="font-size:12px;">
+        <strong><%= typeof aiCallsToday === 'undefined' ? 0 : aiCallsToday %></strong> used today.
+        A single sweep also stops at 120 calls whatever this is set to.
+      </span>
+    </div>
+  </div>
   <button class="btn btn-primary" type="submit">Save settings</button>
 </form>
 

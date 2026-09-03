@@ -1,4 +1,5 @@
 import { getSetting } from './settings';
+import { recordAiCall, callerFeature } from './ai-meter';
 
 // Turn rough dictated/typed notes into a clean, ready-to-send business message using Claude
 // (Anthropic Messages API). Voice-to-text happens client-side (Web Speech API); this is the
@@ -402,6 +403,8 @@ async function callClaudeCached(
     }],
   };
 
+  const __t0 = Date.now();
+  const __feature = callerFeature();
   let res: Response;
   try {
     res = await fetch(ANTHROPIC_URL, {
@@ -414,18 +417,28 @@ async function callClaudeCached(
       body: JSON.stringify(body),
     });
   } catch (e: any) {
+    // A call that never reached Claude still tells us something was TRYING to spend.
+    void recordAiCall({ feature: __feature, model, ms: Date.now() - __t0, ok: false, error: e?.message || 'network error' });
     throw new Error('Could not reach Claude: ' + (e.message || 'network error'));
   }
 
   if (!res.ok) {
     let detail = '';
     try { const j: any = await res.json(); detail = j?.error?.message || ''; } catch { /* ignore */ }
+    void recordAiCall({ feature: __feature, model, ms: Date.now() - __t0, ok: false, error: `HTTP ${res.status}${detail ? ': ' + detail : ''}` });
     if (res.status === 401) throw new Error('Claude rejected the API key (401) - check ANTHROPIC_API_KEY.');
     if (res.status === 429) throw new Error('Claude rate/credit limit hit (429) - check your Anthropic billing.');
     throw new Error(`Claude error ${res.status}${detail ? ': ' + detail : ''}`);
   }
 
   const data: any = await res.json();
+  {
+    const u = data?.usage || {};
+    void recordAiCall({ feature: __feature, model, ms: Date.now() - __t0, ok: true, usage: {
+      inputTokens: Number(u.input_tokens || 0), outputTokens: Number(u.output_tokens || 0),
+      cacheReadTokens: Number(u.cache_read_input_tokens || 0), cacheCreationTokens: Number(u.cache_creation_input_tokens || 0),
+    } });
+  }
   const text = Array.isArray(data?.content)
     ? data.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text).join('').trim()
     : '';
@@ -489,6 +502,8 @@ async function callClaude(key: string, model: string, system: string, userText: 
         { type: 'text', text: userText },
       ]
     : userText;
+  const __t0 = Date.now();
+  const __feature = callerFeature();
   let res: Response;
   try {
     res = await fetch(ANTHROPIC_URL, {
@@ -507,18 +522,28 @@ async function callClaude(key: string, model: string, system: string, userText: 
       }),
     });
   } catch (e: any) {
+    // A call that never reached Claude still tells us something was TRYING to spend.
+    void recordAiCall({ feature: __feature, model, ms: Date.now() - __t0, ok: false, error: e?.message || 'network error' });
     throw new Error('Could not reach Claude: ' + (e.message || 'network error'));
   }
 
   if (!res.ok) {
     let detail = '';
     try { const j: any = await res.json(); detail = j?.error?.message || ''; } catch { /* ignore */ }
+    void recordAiCall({ feature: __feature, model, ms: Date.now() - __t0, ok: false, error: `HTTP ${res.status}${detail ? ': ' + detail : ''}` });
     if (res.status === 401) throw new Error('Claude rejected the API key (401) - check ANTHROPIC_API_KEY.');
     if (res.status === 429) throw new Error('Claude rate/credit limit hit (429) - check your Anthropic billing.');
     throw new Error(`Claude error ${res.status}${detail ? ': ' + detail : ''}`);
   }
 
   const data: any = await res.json();
+  {
+    const u = data?.usage || {};
+    void recordAiCall({ feature: __feature, model, ms: Date.now() - __t0, ok: true, usage: {
+      inputTokens: Number(u.input_tokens || 0), outputTokens: Number(u.output_tokens || 0),
+      cacheReadTokens: Number(u.cache_read_input_tokens || 0), cacheCreationTokens: Number(u.cache_creation_input_tokens || 0),
+    } });
+  }
   const text = Array.isArray(data?.content)
     ? data.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text).join('').trim()
     : '';
@@ -561,6 +586,8 @@ export async function aiAskDoc(system: string, question: string, file: AiDocFile
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: file.data } }
     : { type: 'image', source: { type: 'base64', media_type: file.media_type, data: file.data } };
 
+  const __t0 = Date.now();
+  const __feature = callerFeature();
   let res: Response;
   try {
     res = await fetch(ANTHROPIC_URL, {
@@ -572,16 +599,29 @@ export async function aiAskDoc(system: string, question: string, file: AiDocFile
         messages: [{ role: 'user', content: [block, { type: 'text', text: question }] }],
       }),
     });
-  } catch (e: any) { throw new Error('Could not reach Claude: ' + (e.message || 'network error')); }
+  } catch (e: any) {
+    void recordAiCall({ feature: __feature, model, ms: Date.now() - __t0, ok: false, error: e?.message || 'network error' });
+    throw new Error('Could not reach Claude: ' + (e.message || 'network error'));
+  }
 
   if (!res.ok) {
     let detail = '';
     try { const j: any = await res.json(); detail = j?.error?.message || ''; } catch { /* ignore */ }
+    void recordAiCall({ feature: __feature, model, ms: Date.now() - __t0, ok: false, error: `HTTP ${res.status}${detail ? ': ' + detail : ''}` });
     if (res.status === 401) throw new Error('Claude rejected the API key (401) - check ANTHROPIC_API_KEY.');
     if (res.status === 429) throw new Error('Claude rate/credit limit hit (429) - check your Anthropic billing.');
     throw new Error(`Claude error ${res.status}${detail ? ': ' + detail : ''}`);
   }
   const data: any = await res.json();
+  {
+    // The document read is the expensive one — a whole PDF goes up as input. Metering it is
+    // the difference between "the Portal spent $288" and "reading invoices spent $288".
+    const u = data?.usage || {};
+    void recordAiCall({ feature: __feature, model, ms: Date.now() - __t0, ok: true, usage: {
+      inputTokens: Number(u.input_tokens || 0), outputTokens: Number(u.output_tokens || 0),
+      cacheReadTokens: Number(u.cache_read_input_tokens || 0), cacheCreationTokens: Number(u.cache_creation_input_tokens || 0),
+    } });
+  }
   const text = Array.isArray(data?.content)
     ? data.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text).join('').trim() : '';
   if (!text) throw new Error('Claude returned an empty message.');

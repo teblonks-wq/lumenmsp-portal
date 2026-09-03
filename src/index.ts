@@ -31,6 +31,7 @@ import { startRenewalScheduler } from './lib/contract-renewals';
 import bureauRoutes from './routes/bureau';
 import packageRoutes from './routes/packages';
 import purchaseRoutes from './routes/purchases';
+import aiUsageRoutes from './routes/ai-usage';
 import mobileRoutes from './routes/mobile';
 import myRoutes, { ensureCustomerPortalColumn } from './routes/my';
 import signupRoutes, { bootstrapSelfSignup } from './routes/signup';
@@ -78,6 +79,7 @@ import aiRoutes from './routes/ai';
 import tvRoutes from './routes/tv';
 import { ensureChatTables } from './lib/chat';
 import { ensureAlertsTable } from './lib/alerts';
+import { ensureInvoiceBalanceGuard } from './lib/invoice-balance';
 import { ensureSocialsTables } from './lib/socials';
 import { startGiacomStatus } from './lib/giacom-status';
 import { startUnifiPoll } from './lib/unifi';
@@ -417,6 +419,7 @@ app.use('/', toolsRoutes);
 app.use('/', bureauRoutes);
 app.use('/', packageRoutes);
 app.use('/', purchaseRoutes);
+app.use('/', aiUsageRoutes);
 app.use('/', mobileRoutes);
 app.use('/', myRoutes);           // customer portal (/my) — requireCustomer-guarded inside
 app.use('/', credentialRoutes);
@@ -521,6 +524,7 @@ server.listen(config.PORT, () => {
     .catch((e) => console.error('self-signup bootstrap failed:', e.message)); // public self-registration
   ensureChatTables().catch((e) => console.error('ensureChatTables failed:', e.message)); // website live-chat
   ensureAlertsTable().catch((e) => console.error('ensureAlertsTable failed:', e.message)); // N3twrx alerts
+  ensureInvoiceBalanceGuard().catch((e) => console.error('[invoices] balance guard failed:', e.message));
   ensureItReportTables().catch((e) => console.error('ensureItReportTables failed:', e.message)); // Monthly IT Snapshot config/runs/notes
   startItReportScheduler(); // Monthly IT Snapshot: 00:00 on the 1st, previous month
   ensureDmarcTables().catch((e) => console.error('ensureDmarcTables failed:', e.message)); // LITS-DMARC domains/reports/records

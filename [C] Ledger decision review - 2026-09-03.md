@@ -92,3 +92,67 @@ looked complete.
 
 Rules 1, 3, 5 and 8 are pure logic and can be enforced as absolute vetoes today. They account
 for **all nine** wrong decisions on their own.
+
+---
+
+# Part 2 — the 233 flagged concerns, reviewed
+
+**Verdict: I agree with almost every observation. I disagree with almost every one being a
+flag.** About twenty of the 233 should ever have reached a person.
+
+| what the concern actually says | n | where it belongs |
+|---|---|---|
+| "this is a statement, not an invoice" | 54 | Auto-classify and archive. The rule exists at intake and was never applied to documents already in the pool |
+| "no matching payment in the candidate set" | 36+ | A **state**, not a flag. An invoice waiting for its payment is mid-flight, not faulty |
+| "cannot read a total / number / date" | 35 | A **re-read queue**. Retry it; ask a human only when re-reading fails |
+| "billed to someone else / this is a sales invoice" | 9 | Already-built `ai_to_us` check, never wired to the queue |
+| "supplier cannot be identified" | 5 | The supplier master's confirm queue |
+| "not a payable invoice at all" | 13 | Should never have entered the pool |
+| **learned supplier profile is contaminated** | 3 | **Real. Needs a person** |
+| **outside the learned range for this supplier** | 2 | **Real. Needs a person** |
+| **personal expense on the company account** | 4 | **Real. Needs a person** |
+
+## The root cause is upstream of the agent
+
+The bulk upload took a **Downloads folder** into the invoice pool. So the matching queue now
+contains `IT_Apprentice_Quiz.pdf`, `AMR_001_Reports_4443.pdf`, `Site Performance — Didcot.pdf`,
+a **2019** Tollring API specification, Starling bank statements, and `Q-2048.pdf` — one of our
+own quotes, which was read as *"a £860.00 wages invoice"*.
+
+Claude read every one of them carefully and wrote a sensible paragraph about each. That work
+was wasted before it began, because none of them are purchase invoices. **The fix is a gate,
+not a better reader:** nothing enters the matching queue unless it classifies as an invoice or
+receipt AND is billed to Lumen. That single gate removes roughly 100 of the 233.
+
+## The four catches that justify the whole exercise
+
+1. **A personal expense on the company account.** Four invoices from a bridal hair supplier,
+   addressed to Terry personally, sitting in the company purchase pool — INV-0054, 0055, 0056.
+   Claude flagged each one and refused to match any of them: *"should not be paid from company
+   funds and warrants review before any action is taken."* Correct, and correctly cautious.
+
+2. **It caught the contaminated supplier profiles before I did.** On a Giacom invoice:
+   *"the learned bank descriptors span many unrelated payees (Zoho, Atera, Starlink, Disney
+   Plus, etc.), which suggests this invoice may have been bulk-uploaded without clear supplier
+   attribution."* On a Microsoft one: *"typical £443.49, categorised as 'Wages', descriptors
+   spanning Disney Plus, Starlink, eBay."* That is the agent reporting that its own memory is
+   corrupt — exactly what you want it to do, and it was ignored.
+
+3. **An £11,750 invoice with no number and a 2025 date** against a supplier whose learned
+   ceiling is £4,859.77.
+
+4. **A 2019 document** uploaded as a 2026 invoice.
+
+## What this changes
+
+The agent's **judgement** is sound — better than the rules engine's by a wide margin. What
+fails is everything around it: what it is asked to look at, and what happens to what it says.
+
+- **Gate the queue.** Invoice or receipt, billed to Lumen, or it does not enter.
+- **A concern that names a mechanical condition triggers the mechanism**, it does not raise a
+  flag. Statement → archive. Unreadable → re-read. Not ours → sales pile. No payment yet → a
+  state on the purchase.
+- **A concern about the agent's own learned facts is high severity**, not medium. It means the
+  memory is wrong, and everything downstream of it is suspect.
+- **Rebuild every supplier profile** once the master is confirmed. At least three are known to
+  be aggregating unrelated payees, and those are only the ones it noticed itself.

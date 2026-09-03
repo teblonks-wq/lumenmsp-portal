@@ -7,6 +7,7 @@ import { notify } from '../lib/notifications';
 import { renderInvoicePdf, loadInvoiceForRender, renderInvoiceHtml } from '../lib/invoice-pdf';
 import { htmlToPdf } from '../lib/pdf';
 import { emailInvoiceAction, pushInvoiceToQBAction, submitInvoiceToGCAction, remindInvoiceAction } from './integrations';
+import { backfillInvoiceBalances, balanceContradictions } from '../lib/invoice-balance';
 import { sendMail } from '../lib/mailer';
 import { invoiceEmailHtml } from '../lib/emails';
 import { invoiceViewUrl } from '../lib/invoice-link';
@@ -92,6 +93,39 @@ async function saveItemsAndTotals(client: any, invoiceId: number, body: any): Pr
 }
 
 // ── List ───────────────────────────────────────────────────────────────────────
+// ── Where the books disagree with themselves ────────────────────────────────────
+// Every invoice whose status and payment status tell different stories. Shown rather than
+// silently repaired: a contradiction is information, and guessing which half is right is how
+// the wrong half wins.
+router.get('/invoices/health', async (req: Request, res: Response) => {
+  const rows = await balanceContradictions();
+  const owed = (await pool.query(
+    `SELECT COALESCE(SUM(balance),0)::float v FROM invoices
+      WHERE deleted_at IS NULL AND status NOT IN ('draft','void') AND payment_status NOT IN ('paid','void')`
+  ).catch(() => ({ rows: [{ v: 0 }] }))).rows[0].v;
+  const notInQb = (await pool.query(
+    `SELECT COUNT(*)::int n, COALESCE(SUM(total),0)::float v FROM invoices
+      WHERE deleted_at IS NULL AND status NOT IN ('draft','void') AND quickbooks_invoice_id IS NULL`
+  ).catch(() => ({ rows: [{ n: 0, v: 0 }] }))).rows[0];
+  res.render('invoices/health', {
+    user: req.session.user!, rows, owed, notInQb,
+    notice: req.query.msg || null, error: req.query.err || null,
+  });
+});
+
+// The one repair that is safe to make automatically: an issued, unpaid invoice showing
+// nothing owed has simply never had its balance set. Setting it to the total cannot lose
+// information, because there was none there.
+router.post('/invoices/health/fix-balances', async (req: Request, res: Response) => {
+  const r = await backfillInvoiceBalances();
+  await logActivity(req.session.user!.id, 'updated', 'invoices', 0,
+    `Invoices: set the balance on ${r.fixed} unpaid invoice(s) that were showing nothing owed`);
+  res.redirect('/invoices/health?msg=' + encodeURIComponent(
+    r.fixed
+      ? `Set the balance on ${r.fixed} invoice(s) — £${r.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} that was showing as nothing owed.`
+      : 'Nothing to fix — every unpaid invoice already shows what is owed.'));
+});
+
 router.get('/invoices', requireAuth, async (req: Request, res: Response) => {
   const user = req.session.user!;
   const status = ((req.query.status as string) || '').trim();

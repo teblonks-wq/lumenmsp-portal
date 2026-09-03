@@ -1305,6 +1305,16 @@ model PurchaseDocument {
   suggestConfidence Int?      @map("suggest_confidence")
   suggestReason     String?   @map("suggest_reason")
   aiReadStatus      String?   @map("ai_read_status")  // ok | failed | unreadable | null(=not tried)
+  // ── The judge guard ────────────────────────────────────────────────────────────
+  // Reading a document was always guarded by aiReadStatus, so each one was OCR'd once.
+  // JUDGING was not, so every sweep sent every unattached document back to the model with
+  // its ten candidate payments and paid for the same verdict again. Six deploys on
+  // 2026-09-02, each followed by a rescan, plus the nightly, came to $288 in two days.
+  //
+  // aiJudgeKey is a fingerprint of the QUESTION — the document's own figures plus the
+  // candidate payments it was weighed against. Same question, same answer, no call.
+  aiJudgeKey        String?   @map("ai_judge_key")
+  aiJudgedAt        DateTime? @map("ai_judged_at")
   createdAt         DateTime  @default(now()) @map("created_at")
 
   @@unique([graphMessageId, fileName])
@@ -2282,6 +2292,36 @@ model Supplier {
 //   • manual — someone justified this particular payment.
 //
 // Superseded rather than edited, so the history of what was claimed, and when, survives.
+// ── Every paid call the Portal makes ────────────────────────────────────────────
+// 2026-09-03. $288 in two days against a $12 monthly baseline, and the only place to see it
+// was Anthropic's own console — which reports by API key, so it could say "the Portal" but
+// never "the purchase matcher" or "ticket categorisation". The Portal now meters itself:
+// one row per call, attributed to the feature that made it, priced at the time it was made.
+//
+// Written best-effort. A failure to record must never fail the call it was recording.
+model AiCall {
+  id            Int      @id @default(autoincrement())
+  feature       String                                  // purchase_judge | purchase_read | ticket_category | insights_ask | ...
+  model         String
+  okay          Boolean  @default(true)
+  errorText     String?  @map("error_text")
+  inputTokens        Int @default(0) @map("input_tokens")
+  outputTokens       Int @default(0) @map("output_tokens")
+  cacheReadTokens    Int @default(0) @map("cache_read_tokens")
+  cacheCreateTokens  Int @default(0) @map("cache_create_tokens")
+  // Priced when the call was made, so a later price change never rewrites history.
+  costUsd       Decimal  @default(0) @db.Decimal(12, 6) @map("cost_usd")
+  ms            Int      @default(0)
+  refType       String?  @map("ref_type")               // document | ticket | customer | ...
+  refId         Int?     @map("ref_id")
+  userId        Int?     @map("user_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([feature])
+  @@map("ai_calls")
+}
+
 model PurchaseJustification {
   id            Int      @id @default(autoincrement())
   transactionId Int?     @map("transaction_id")

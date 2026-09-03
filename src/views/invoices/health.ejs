@@ -1,0 +1,67 @@
+<%- include('../partials/header', { title: 'Invoice health', user }) %>
+
+<div class="page-header"><h1>Invoice health</h1>
+  <p class="muted">Where the books disagree with themselves &mdash; and what is not in QuickBooks. Nothing here is repaired behind your back; a contradiction is information.</p></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:940px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:940px;"><%= error %></div><% } %>
+
+<style>
+  .h-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin-bottom:18px;}
+  .h-tile{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;}
+  .h-num{font-size:25px;font-weight:800;letter-spacing:-.5px;}
+  .h-lab{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:700;}
+  .h-why{font-size:12.5px;color:var(--muted);}
+</style>
+
+<% function money(v){ var n=Number(v)||0; return '£'+n.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); } %>
+
+<div class="h-tiles">
+  <div class="h-tile"><div class="h-lab">Showing as owed</div><div class="h-num"><%= money(owed) %></div>
+    <div class="muted" style="font-size:12px;">Across every issued, unpaid invoice</div></div>
+  <div class="h-tile"><div class="h-lab">Not in QuickBooks</div><div class="h-num"><%= notInQb.n %></div>
+    <div class="muted" style="font-size:12px;"><%= money(notInQb.v) %> &mdash; <a class="row-link" href="/invoices?qb=no">see them</a></div></div>
+  <div class="h-tile"><div class="h-lab">Contradictions</div><div class="h-num"><%= (rows||[]).length %></div>
+    <div class="muted" style="font-size:12px;">Rows whose two answers disagree</div></div>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+  <h2 style="margin:0 0 4px;font-size:16px;">The safe repair</h2>
+  <p class="muted" style="font-size:12px;margin:0 0 10px;">
+    An issued, unpaid invoice showing <strong>nothing owed</strong> has simply never had its balance set &mdash; the column defaults to zero and none of the ten places that create or recalculate an invoice ever wrote it.
+    Setting it to the total cannot lose anything, because there was nothing there. A part-payment balance written deliberately is left alone.
+  </p>
+  <form method="post" action="/invoices/health/fix-balances" style="margin:0;"
+        onsubmit="return confirm('Set the balance to the invoice total on every issued, unpaid invoice that currently shows nothing owed?\n\nPaid, void and part-paid invoices are not touched.');">
+    <button class="btn btn-primary" type="submit">Set the missing balances</button>
+  </form>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:16px 20px 12px;">
+    <h2 style="margin:0;font-size:16px;">Contradictions <span class="muted">(<%= (rows||[]).length %>)</span></h2>
+    <p class="muted" style="font-size:12px;margin:4px 0 0;">Biggest first. Each row is a question, not a fault to be swept away.</p>
+  </div>
+  <% if (!(rows||[]).length) { %>
+    <div class="empty-state" style="margin:0;padding:22px;">Every invoice agrees with itself.</div>
+  <% } else { %>
+    <div class="table-wrap"><table class="table">
+      <thead><tr><th>Invoice</th><th>Customer</th><th style="text-align:right;">Total</th><th style="text-align:right;">Balance</th><th>Status</th><th>Payment</th><th>What disagrees</th></tr></thead>
+      <tbody>
+        <% rows.forEach(function(r){ %>
+          <tr>
+            <td><a class="row-link" href="/invoices/<%= r.id %>"><%= r.invoice_number || ('#' + r.id) %></a></td>
+            <td class="muted"><%= r.customer_name || '—' %></td>
+            <td style="text-align:right;"><%= money(r.total) %></td>
+            <td style="text-align:right;<%= (Number(r.balance)||0) === 0 ? 'color:var(--bad-fg,#a12626);font-weight:700;' : '' %>"><%= money(r.balance) %></td>
+            <td><span class="badge"><%= r.status %></span></td>
+            <td><span class="badge"><%= r.payment_status %></span></td>
+            <td class="h-why"><%= r.why %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table></div>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>

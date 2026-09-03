@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import cron from 'node-cron';
 import { pool } from '../db/pool';
 import { graphConfigured, graphListInbox, graphListAttachments, GraphMessage, graphSendMail } from './graph';
@@ -190,7 +191,7 @@ function supplierTokens(doc: any): string[] {
   return out;
 }
 
-export interface AutoMatchResult { matched: number; considered: number; byClaude: number; suggested: number; aiRead: number }
+export interface AutoMatchResult { matched: number; considered: number; byClaude: number; suggested: number; aiRead: number; aiCalls: number; skippedForBudget: boolean }
 
 
 // One line a person can triage without opening anything: what was noticed, on whose invoice.
@@ -202,10 +203,65 @@ function concernTitle(concern: string, d: any): string {
   return short ? `${who}: ${short}` : `The Portal noticed something on ${who}`;
 }
 
+// ── Spending guards ─────────────────────────────────────────────────────────────
+// 2026-09-03. Six deploys the previous day, each followed by a rescan, plus the nightly,
+// re-judged every unattached document every time and cost $288 in two days against a $12
+// monthly baseline. Reading was guarded and behaved; judging was not.
+//
+// Three guards, and the first two are hard limits rather than good intentions:
+//   MAX_AI_CALLS_PER_RUN  — no single sweep can cost more than a few pounds, ever.
+//   ai_daily_cap          — no day can, either, however many times a sweep is triggered.
+//   the judge key         — the same question is never asked twice.
+const MAX_AI_CALLS_PER_RUN = 120;
+const DEFAULT_DAILY_CAP = 400;
+
+async function aiCallsToday(): Promise<number> {
+  const r = await pool.query(
+    `SELECT COUNT(*)::int n FROM purchase_documents
+      WHERE ai_judged_at >= date_trunc('day', NOW())`
+  ).catch(() => ({ rows: [{ n: 0 }] }));
+  return Number(r.rows[0]?.n || 0);
+}
+
+// A fingerprint of the QUESTION, not the answer: this document's own figures, and the
+// candidate payments it is being weighed against. If neither has changed, the verdict
+// cannot have changed either, so there is nothing to pay for.
+function judgeKey(d: any, candidates: any[]): string {
+  const doc = [d.id, d.parsed_amount, d.parsed_invoice_no, d.ai_read_status, d.parse_status].join('|');
+  const cand = candidates.map((t: any) => `${t.id}:${t.amount}`).sort().join(',');
+  return crypto.createHash('sha1').update(doc + '#' + cand).digest('hex').slice(0, 32);
+}
+
+// ── Know the bill before you press the button ───────────────────────────────────
+// How many paid calls a sweep would make, and roughly what it would cost, WITHOUT making
+// any of them. Counted the same way the run counts: a document is only judged when its
+// question has changed, so a second run over an unchanged pool estimates zero.
+export interface MatchEstimate { toJudge: number; toRead: number; calls: number; usd: number; capped: boolean }
+
+export async function estimateAutoMatch(): Promise<MatchEstimate> {
+  const q = async (sql: string) => Number((await pool.query(sql).catch(() => ({ rows: [{ n: 0 }] }))).rows[0]?.n || 0);
+  const base = `FROM purchase_documents d LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
+                 WHERE d.status <> 'attached' AND d.archived_at IS NULL
+                   AND (a.ai_to_us IS NULL OR a.ai_to_us = true)
+                   AND (d.doc_type IS NULL OR d.doc_type = 'invoice')`;
+  const toJudge = await q(`SELECT COUNT(*)::int n ${base} AND d.ai_judge_key IS NULL`);
+  const toRead = await q(`SELECT COUNT(*)::int n ${base} AND d.ai_read_status IS NULL
+                            AND (d.parse_status IN ('no_text','error') OR d.parsed_amount IS NULL)`);
+  const wanted = toJudge + toRead;
+  const calls = Math.min(wanted, MAX_AI_CALLS_PER_RUN);
+  // Measured, not guessed: the 2026-09-02 run averaged ~$0.05 a call across reads and
+  // judgements on Sonnet. Deliberately rounded UP, so a surprise is always a pleasant one.
+  const usd = calls * 0.05;
+  return { toJudge, toRead, calls, usd, capped: wanted > MAX_AI_CALLS_PER_RUN };
+}
 export async function autoMatchInvoices(opts?: { useAi?: boolean }): Promise<AutoMatchResult> {
   // Claude costs money per call, so it is opt-outable and only ever reached below, after
   // the free rules have had their go.
-  const useAi = opts?.useAi ?? ((await getSetting(GROUP, 'ai_matching')) !== '0');
+  // OFF unless somebody has deliberately turned it on. It used to default ON, so a fresh
+  // database, a restored backup or a cleared settings row all silently started spending.
+  // 2026-09-03, Terry: "we dont just have 300 to spend on random api calls - we need to be
+  // sure and steadfast of what we do." A default that spends money is not steadfast.
+  const useAi = opts?.useAi ?? ((await getSetting(GROUP, 'ai_matching')) === '1');
   const docs = (await pool.query(
     `SELECT d.*, a.ai_supplier, a.ai_to_us, a.ai_billed_to FROM purchase_documents d
        LEFT JOIN purchase_doc_ai a ON a.document_id = d.id
@@ -218,12 +274,21 @@ export async function autoMatchInvoices(opts?: { useAi?: boolean }): Promise<Aut
       ORDER BY d.received_at DESC NULLS LAST`
   )).rows;
   let matched = 0, byClaude = 0, suggested = 0, aiRead = 0;
+  // Every paid call in this run — reads and judgements together — counted against the caps.
+  let aiCalls = 0;
+  const dailyCap = Number((await getSetting(GROUP, 'ai_daily_cap')) || DEFAULT_DAILY_CAP);
+  let spentToday = useAi ? await aiCallsToday() : 0;
+  const budgetLeft = () => aiCalls < MAX_AI_CALLS_PER_RUN && (spentToday + aiCalls) < dailyCap;
+  if (useAi && !budgetLeft()) {
+    console.warn(`[invoice-inbox] AI matching skipped — ${spentToday} calls already made today (cap ${dailyCap}).`);
+  }
   for (const d of docs) {
     // Backfill: read the invoice text if we haven't yet, so we have its gross total.
     if (!d.parse_status) { try { await parseAndStoreDoc(d); const r = await pool.query('SELECT parsed_amount, parsed_invoice_no FROM purchase_documents WHERE id=$1', [d.id]); d.parsed_amount = r.rows[0]?.parsed_amount; d.parsed_invoice_no = r.rows[0]?.parsed_invoice_no; } catch { /* ignore */ } }
     // A scan or photo yields no text at all, and nothing downstream can match on nothing.
     // Have Claude LOOK at the document. This is the OCR step, and it runs once per document.
-    if (useAi && !d.ai_read_status && (d.parse_status === 'no_text' || d.parse_status === 'error' || d.parsed_amount == null)) {
+    if (useAi && budgetLeft() && !d.ai_read_status && (d.parse_status === 'no_text' || d.parse_status === 'error' || d.parsed_amount == null)) {
+      aiCalls++;
       try {
         const r = await aiReadInvoiceDoc(d);
         if (r) {
@@ -305,12 +370,28 @@ export async function autoMatchInvoices(opts?: { useAi?: boolean }): Promise<Aut
     // this supplier from matches a human already confirmed.
     if (!useAi || !scored.length) continue;
     const shortlist = scored.slice(0, 10).map((sc) => sc.t);
+
+    // ── Ask once ──────────────────────────────────────────────────────────────────
+    // The same document against the same candidate payments is the same question, and it
+    // already has an answer. Before this guard existed, every sweep re-asked every one of
+    // them: $288 in two days for verdicts we had already bought.
+    const key = judgeKey(d, shortlist);
+    if (d.ai_judge_key === key) continue;
+    if (!budgetLeft()) {
+      console.warn(`[invoice-inbox] budget reached — ${aiCalls} calls this run, stopping before doc ${d.id}.`);
+      break;
+    }
+
     let verdict = null as Awaited<ReturnType<typeof aiJudgeMatch>>;
     try {
+      aiCalls++;
       const aiRow = (await pool.query('SELECT ai_kind FROM purchase_doc_ai WHERE document_id=$1', [d.id]).catch(() => ({ rows: [] as any[] }))).rows[0];
       verdict = await aiJudgeMatch(d, shortlist, await getSupplierProfile(supplierKey(d), aiRow?.ai_kind));
     }
     catch (e) { console.error('[invoice-inbox] AI judge failed:', (e as Error).message); }
+    // Recorded whatever the answer was — including "no match". A question that came back
+    // empty is still a question we have paid for, and asking it again changes nothing.
+    await pool.query('UPDATE purchase_documents SET ai_judge_key=$1, ai_judged_at=NOW() WHERE id=$2', [key, d.id]).catch(() => {});
     if (!verdict) continue;
 
     // Claude raising a concern is worth a human's eye whatever it decided about the match.
@@ -344,7 +425,9 @@ export async function autoMatchInvoices(opts?: { useAi?: boolean }): Promise<Aut
       suggested++;
     }
   }
-  return { matched, considered: docs.length, byClaude, suggested, aiRead };
+  if (useAi && aiCalls) console.log(`[invoice-inbox] ${aiCalls} paid AI call(s) this run; ${spentToday + aiCalls} today (cap ${dailyCap}).`);
+  return { matched, considered: docs.length, byClaude, suggested, aiRead,
+           aiCalls, skippedForBudget: useAi && !budgetLeft() };
 }
 
 // The ONE place an invoice becomes attached to a payment, so provenance is always recorded

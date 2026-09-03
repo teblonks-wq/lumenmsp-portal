@@ -8,7 +8,7 @@ import { logActivity } from '../lib/activity';
 import { getSetting, setSetting } from '../lib/settings';
 import { QuickBooks } from '../lib/quickbooks';
 import { syncOpenBanking } from '../lib/openbanking';
-import { syncInvoiceInbox, getInvoiceMailbox, autoMatchInvoices } from '../lib/purchase-inbox';
+import { syncInvoiceInbox, getInvoiceMailbox, autoMatchInvoices, estimateAutoMatch } from '../lib/purchase-inbox';
 import { hashFile, findByHash, assessAndStore, rescanAllDuplicates, backfillHashes } from '../lib/purchase-dupes';
 import { attachDocToTxn, looksLikeStatement } from '../lib/purchase-inbox';
 import { normaliseCounterparty, invalidateIgnoreList, loadIgnoreList } from '../lib/purchase-match';
@@ -456,6 +456,33 @@ router.post('/purchases/inbox/clear-non-invoices', async (req: Request, res: Res
     `Purchases: cleared ${r.rowCount || 0} non-invoices from the inbox (${parts})`);
   res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent(
     `Cleared ${r.rowCount || 0} from the inbox — ${parts}. Nothing was deleted: it is all on the Archived tab and Restore puts any of it back.`));
+});
+
+// Start the inbox again. Everything not attached to a payment is ARCHIVED — not deleted —
+// so the pool holds only documents that are doing a job, and the mailbox and an upload can
+// refill it cleanly. Terry, 2026-09-03: "we need to clear the invoice inbox - only leave
+// what is current attached."
+//
+// Nothing is destroyed, because the standing rule has not changed: we keep every invoice for
+// tax reasons. Archived is a tab, and Restore puts any of it back.
+router.post('/purchases/inbox/reset', async (req: Request, res: Response) => {
+  const rows = (await pool.query(
+    `SELECT id FROM purchase_documents WHERE archived_at IS NULL AND status <> 'attached'`
+  ).catch(() => ({ rows: [] as any[] }))).rows;
+  if (!rows.length) {
+    res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent('The inbox is already clear — everything in it is attached to a payment.'));
+    return;
+  }
+  const ids = rows.map((r: any) => r.id);
+  const r = await pool.query('UPDATE purchase_documents SET archived_at=NOW() WHERE id = ANY($1)', [ids]).catch(() => ({ rowCount: 0 }));
+  // Their findings go with them; a finding about an archived document is nobody's job.
+  await pool.query(
+    "UPDATE purchase_anomalies SET status='resolved' WHERE document_id = ANY($1) AND status='open'", [ids]
+  ).catch(() => {});
+  await logActivity(req.session.user!.id, 'updated', 'invoices', 0,
+    `Purchases: cleared ${r.rowCount || 0} unattached document(s) from the inbox (archived, not deleted)`);
+  res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent(
+    `Cleared ${r.rowCount || 0} document(s). Only invoices attached to a payment are left. Nothing was deleted — it is all on the Archived tab.`));
 });
 
 // Restore an archived invoice back into the live inbox.
@@ -994,14 +1021,26 @@ router.post('/purchases/doc/:id/dupe-dismiss', async (req: Request, res: Respons
   res.redirect('/purchases/expenses?view=duplicates&msg=' + encodeURIComponent('Marked as a separate bill — it will not be flagged again.'));
 });
 
+// What a run would cost, before anyone presses anything. Asked by the button itself.
+router.get('/purchases/inbox/automatch/estimate', async (_req: Request, res: Response) => {
+  try { res.json({ ok: true, ...(await estimateAutoMatch()) }); }
+  catch (e: any) { res.json({ ok: false, error: e.message || 'Could not estimate.' }); }
+});
+
 // Try to auto-match pooled invoices to bank transactions (amount + supplier + date).
 router.post('/purchases/inbox/automatch', async (_req: Request, res: Response) => {
   try {
+    const before = await estimateAutoMatch();
     const r = await autoMatchInvoices();
     const bits = [`linked ${r.matched} invoice(s)`];
-    if (r.byClaude) bits.push(`${r.byClaude} of them judged by Claude`);
+    if (r.byClaude) bits.push(`${r.byClaude} of them judged by the Portal`);
     if (r.aiRead) bits.push(`${r.aiRead} scanned invoice(s) read`);
     if (r.suggested) bits.push(`${r.suggested} suggestion(s) waiting for you`);
+    // What it actually spent, said out loud, every time. Nobody should have to go to a
+    // third-party console to find out what a button on their own screen just cost them.
+    if (r.aiCalls) bits.push(`${r.aiCalls} paid call(s), about $${(r.aiCalls * 0.05).toFixed(2)}`);
+    else if (before.calls) bits.push('no paid calls — nothing had changed since the last run');
+    if (r.skippedForBudget) bits.push('stopped at the daily limit — run it again tomorrow or raise the cap in Settings');
     res.redirect('/purchases/expenses?view=inbox&msg=' + encodeURIComponent('Auto-match: ' + bits.join(', ') + '.'));
   } catch (e: any) {
     res.redirect('/purchases/expenses?view=inbox&err=' + encodeURIComponent(e.message || 'Auto-match failed.'));
@@ -1370,6 +1409,11 @@ router.get('/purchases/settings', async (req: Request, res: Response) => {
     invoiceMailbox: await getInvoiceMailbox(),
     extraCategories: (await getExtraCategories()).map((c) => c.Name).join('\n'),
     qbPushEnabled: (await getSetting('purchases', 'qb_push_enabled')) === '1',
+    aiMatching: (await getSetting('purchases', 'ai_matching')) !== '0',
+    aiDailyCap: Number((await getSetting('purchases', 'ai_daily_cap')) || 400),
+    aiCallsToday: Number((await pool.query(
+      "SELECT COUNT(*)::int n FROM purchase_documents WHERE ai_judged_at >= date_trunc('day', NOW())"
+    ).catch(() => ({ rows: [{ n: 0 }] }))).rows[0].n),
     notice: req.query.msg || null,
   });
 });
@@ -1468,6 +1512,13 @@ router.post('/purchases/settings', async (req: Request, res: Response) => {
   if (b.invoice_mailbox !== undefined) await setSetting('purchases', 'invoice_mailbox', String(b.invoice_mailbox || '').trim());
   if (b.extra_categories !== undefined) await setSetting('purchases', 'extra_categories', String(b.extra_categories || '').trim());
   if (b.back !== undefined) await setSetting('purchases', 'qb_push_enabled', b.qb_push_enabled === 'on' ? '1' : '0');
+  // The paid half of matching, switchable from the screen. It used to need a psql session on
+  // the App Server to turn off, which is not where you want to be at £100 a day.
+  if (b.back !== undefined) await setSetting('purchases', 'ai_matching', b.ai_matching === 'on' ? '1' : '0');
+  if (String(b.ai_daily_cap || '').trim()) {
+    const cap = Math.max(0, Math.min(5000, parseInt(String(b.ai_daily_cap), 10) || 0));
+    await setSetting('purchases', 'ai_daily_cap', String(cap));
+  }
   await logActivity(req.session.user!.id, 'updated', 'invoices', 0, 'Purchases: settings updated');
   const back = String(b.back || '/purchases/settings');
   res.redirect(back + (back.indexOf('?') >= 0 ? '&' : '?') + 'msg=' + encodeURIComponent('Settings saved'));

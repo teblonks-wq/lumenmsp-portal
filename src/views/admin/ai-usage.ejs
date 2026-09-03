@@ -1,0 +1,142 @@
+<%- include('../partials/header', { title: 'AI usage', user }) %>
+
+<div class="page-header"><h1>AI usage</h1>
+  <p class="muted">What the Portal is spending, and which feature is spending it. Anthropic's own console can only tell you that an API key spent money &mdash; this tells you what for.</p></div>
+
+<% if (notice) { %><div class="alert alert-success" style="max-width:900px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-danger" style="max-width:900px;"><%= error %></div><% } %>
+
+<style>
+  .u-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px;}
+  .u-tile{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;}
+  .u-num{font-size:26px;font-weight:800;letter-spacing:-.5px;}
+  .u-lab{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:700;}
+  .u-bar{height:9px;border-radius:5px;background:var(--surface-2);overflow:hidden;}
+  .u-bar span{display:block;height:100%;background:linear-gradient(90deg,var(--blue),#6366f1);}
+  .u-row{display:grid;grid-template-columns:1fr 90px 110px 90px;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--line);font-size:13.5px;}
+  .u-row:first-child{border-top:0;}
+  .u-name{font-weight:600;}
+  .u-money{text-align:right;font-weight:700;font-variant-numeric:tabular-nums;}
+  .u-dim{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums;}
+  .u-spark{display:flex;align-items:flex-end;gap:2px;height:70px;}
+  .u-spark i{flex:1;background:var(--blue);border-radius:2px 2px 0 0;min-height:1px;display:block;}
+  .u-spark i.hot{background:var(--bad-fg,#a12626);}
+</style>
+
+<%
+  function usd(v){ var n=Number(v)||0; return '$' + n.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function num(v){ return (Number(v)||0).toLocaleString('en-GB'); }
+  var LABEL = { purchase_judge:'Purchase — matching', purchase_read:'Purchase — reading documents',
+                purchase_rules:'Purchase — rules and replies', ticket_category:'Tickets — auto-category',
+                ticket_ask:'Tickets — Ask Portal', insights_ask:'Insights — Ask Insights',
+                call_report:'Call reports', it_report:'IT reports', marketing:'Marketing drafts',
+                compose:'Message compose and polish', gpo_review:'Group policy review',
+                script_review:'Script review', finance_agent:'Finance agent', device_ask:'Device questions',
+                mcp:'MCP (Claude working alongside you)', loc:'Location lookups', other:'Unattributed' };
+  var maxDay = 0; (byDay||[]).forEach(function(d){ if (d.cost > maxDay) maxDay = d.cost; });
+  var maxFeat = 0; (byFeature||[]).forEach(function(f){ if (f.cost > maxFeat) maxFeat = f.cost; });
+%>
+
+<div class="u-tiles">
+  <div class="u-tile"><div class="u-lab">Today</div><div class="u-num"><%= usd(totals.today) %></div>
+    <div class="muted" style="font-size:12px;"><%= num(totals.callsToday) %> call<%= totals.callsToday===1?'':'s' %><% if (totals.failedToday) { %> · <%= num(totals.failedToday) %> failed<% } %></div></div>
+  <div class="u-tile"><div class="u-lab">Last 7 days</div><div class="u-num"><%= usd(totals.week) %></div></div>
+  <div class="u-tile"><div class="u-lab">Last 30 days</div><div class="u-num"><%= usd(totals.month) %></div>
+    <% if (monthlyBudget > 0) { %>
+      <div class="u-bar" style="margin-top:8px;"><span style="width:<%= Math.min(100, Math.round(totals.month / monthlyBudget * 100)) %>%;"></span></div>
+      <div class="muted" style="font-size:11.5px;margin-top:4px;"><%= Math.round(totals.month / monthlyBudget * 100) %>% of your <%= usd(monthlyBudget) %> budget</div>
+    <% } else { %><div class="muted" style="font-size:12px;">No budget set</div><% } %>
+  </div>
+</div>
+
+<% if (!(byFeature||[]).length) { %>
+  <div class="card"><div class="empty-state" style="margin:0;padding:22px;">
+    Nothing metered yet. Every call from here on is recorded &mdash; feature, model, tokens and cost.
+    Calls made before this page existed are not, so the first few days will read low.
+  </div></div>
+<% } %>
+
+<% if ((byDay||[]).length) { %>
+<div class="card" style="margin-bottom:18px;">
+  <h2 style="margin:0 0 2px;font-size:16px;">Day by day</h2>
+  <p class="muted" style="font-size:12px;margin:0 0 12px;">A tall red bar is a day something ran that should not have.</p>
+  <div class="u-spark">
+    <% byDay.forEach(function(d){ var h = maxDay ? Math.max(1, Math.round(d.cost / maxDay * 68)) : 1; %>
+      <i class="<%= (maxDay && d.cost > maxDay * 0.6) ? 'hot' : '' %>" style="height:<%= h %>px;" title="<%= d.day %> — <%= usd(d.cost) %> over <%= num(d.calls) %> calls"></i>
+    <% }); %>
+  </div>
+  <div class="muted" style="font-size:11.5px;margin-top:6px;display:flex;justify-content:space-between;">
+    <span><%= byDay[0].day %></span><span><%= byDay[byDay.length-1].day %></span>
+  </div>
+</div>
+<% } %>
+
+<div class="card" style="margin-bottom:18px;">
+  <h2 style="margin:0 0 2px;font-size:16px;">Where it goes</h2>
+  <p class="muted" style="font-size:12px;margin:0 0 12px;">Last <%= days %> days, dearest first.</p>
+  <% (byFeature||[]).forEach(function(f){ %>
+    <div class="u-row">
+      <div>
+        <div class="u-name"><%= LABEL[f.label] || f.label %></div>
+        <div class="u-bar" style="margin-top:5px;"><span style="width:<%= maxFeat ? Math.max(2, Math.round(f.cost / maxFeat * 100)) : 0 %>%;"></span></div>
+      </div>
+      <div class="u-dim"><%= num(f.calls) %> calls</div>
+      <div class="u-dim"><%= num(f.inTokens) %> in</div>
+      <div class="u-money"><%= usd(f.cost) %></div>
+    </div>
+  <% }); %>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+  <h2 style="margin:0 0 2px;font-size:16px;">Switches</h2>
+  <p class="muted" style="font-size:12px;margin:0 0 12px;">The two things that can spend on their own, and a budget to measure against. Turning either off leaves everything else working.</p>
+  <form method="post" action="/admin/ai-usage/settings" style="display:flex;gap:18px;flex-wrap:wrap;align-items:center;">
+    <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
+      <input type="checkbox" name="ai_matching" <%= aiMatching ? 'checked' : '' %>> Purchase reading and matching
+    </label>
+    <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:14px;">
+      <input type="checkbox" name="ticket_category" <%= ticketCategory ? 'checked' : '' %>> Ticket auto-category (one call per incoming email)
+    </label>
+    <label style="font-size:14px;">Monthly budget $
+      <input class="input" type="number" name="monthly_budget_usd" min="0" step="5" value="<%= monthlyBudget || '' %>" style="width:110px;margin-left:6px;">
+    </label>
+    <button class="btn btn-primary" type="submit">Save</button>
+  </form>
+</div>
+
+<div class="card" style="margin-bottom:18px;">
+  <h2 style="margin:0 0 2px;font-size:16px;">What runs on its own</h2>
+  <p class="muted" style="font-size:12px;margin:0 0 12px;">Scheduled jobs can spend without anyone pressing anything. This is the list people forget exists.</p>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>Job</th><th>When</th><th>Does it spend?</th></tr></thead>
+    <tbody>
+      <% (schedules||[]).forEach(function(s){ %>
+        <tr><td><%= s.what %></td><td class="muted"><%= s.when %></td><td class="muted"><%= s.spends %></td></tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+
+<% if ((biggest||[]).length) { %>
+<div class="card">
+  <h2 style="margin:0 0 2px;font-size:16px;">Dearest single calls</h2>
+  <p class="muted" style="font-size:12px;margin:0 0 12px;">One document, one question. A big number here usually means something enormous was sent up that did not need to be.</p>
+  <div class="table-wrap"><table class="table">
+    <thead><tr><th>When</th><th>Feature</th><th>Model</th><th style="text-align:right;">In</th><th style="text-align:right;">Out</th><th style="text-align:right;">Cost</th></tr></thead>
+    <tbody>
+      <% biggest.forEach(function(c){ %>
+        <tr>
+          <td class="muted"><%= new Date(c.created_at).toLocaleString('en-GB') %></td>
+          <td><%= LABEL[c.feature] || c.feature %></td>
+          <td class="muted" style="font-size:12px;"><%= c.model %></td>
+          <td style="text-align:right;"><%= num(c.input_tokens + c.cache_read_tokens + c.cache_create_tokens) %></td>
+          <td style="text-align:right;"><%= num(c.output_tokens) %></td>
+          <td style="text-align:right;font-weight:700;"><%= usd(c.cost_usd) %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+</div>
+<% } %>
+
+<%- include('../partials/footer') %>
