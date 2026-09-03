@@ -130,7 +130,7 @@
     </div>
   </div>
   <button class="btn" type="submit">Search</button>
-  <% if (status||search||source||paid||dd||(period&&period.from)) { %><a class="btn" href="/invoices">Clear all</a><% } %>
+  <% if (status||search||source||paid||dd||gc||qb||emailed||recurring||(period&&period.from)) { %><a class="btn" href="/invoices?clear=1" title="Filters stay set until you clear them">Clear all</a><% } %>
 </form>
 <script>
   (function(){
@@ -207,7 +207,7 @@
         box.style.background = bad ? 'var(--tint-warn)' : 'var(--tint-ok)';
         box.innerHTML = '✓ Batch finished — <strong>' + s.ok + ' of ' + s.total + '</strong> completed'
           + (bad ? '. <span style="color:var(--warn-deep);">' + bad + ' issue(s): ' + s.errs.slice(0,5).join('; ') + '</span>' : '.')
-          + ' <a href="/invoices" style="margin-left:6px;">Refresh list</a>';
+          + ' <a href="/invoices' + location.search + '" style="margin-left:6px;">Refresh list</a>';
       }
     }
     function poll(){

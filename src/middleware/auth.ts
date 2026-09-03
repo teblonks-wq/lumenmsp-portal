@@ -103,5 +103,8 @@ declare module 'express-session' {
     // account instead of "no account found" - and nobody who did not is affected.
     signupMode?: boolean;
     signupCompany?: string;
+    // The invoice list's filter, as a query string. A filter stays set until it is
+    // explicitly cleared - see the sticky-filter block in routes/invoices.ts.
+    invoiceFilter?: string;
   }
 }

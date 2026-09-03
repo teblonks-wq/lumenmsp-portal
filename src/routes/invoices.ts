@@ -143,8 +143,52 @@ router.post('/invoices/health/verify-qb', async (req: Request, res: Response) =>
   }
 });
 
+// ── Sticky filters ──────────────────────────────────────────────────────────────
+// Terry, 3 Sep 2026: a filter should stay set until you CLEAR it. It used to survive a
+// refresh (it lives in the URL) but was lost by anything that redirected back to a bare
+// /invoices - finishing a batch, rendering PDFs, or just clicking Invoices in the nav -
+// so actioning one invoice meant re-picking the same five dropdowns.
+//
+// Remembered in the session, and the URL is always rewritten to carry it, so the view
+// stays shareable and the back button still behaves. Arriving with ANY filter in the URL
+// replaces what is remembered; ?clear=1 forgets it. That is why "Clear all" points at
+// ?clear=1 and not at a bare /invoices - a bare /invoices now means "put my filter back".
+const FILTER_KEYS = ['status', 'search', 'source', 'paid', 'dd', 'gc', 'qb', 'emailed', 'recurring', 'period', 'from', 'to'] as const;
+
 router.get('/invoices', requireAuth, async (req: Request, res: Response) => {
   const user = req.session.user!;
+
+  if (String(req.query.clear || '') === '1') {
+    delete req.session.invoiceFilter;
+    res.redirect('/invoices');
+    return;
+  }
+  // PRESENT, not merely non-empty. The filter form submits every key on every search, so
+  // clearing the last dropdown by hand arrives as status=&search=&paid=… — an explicit
+  // "show me everything". Restoring the old filter there would make the dropdowns
+  // impossible to clear. Only a request carrying NO filter key at all — a redirect, or the
+  // sidebar link — means "put my filter back".
+  const explicit = FILTER_KEYS.some((k) => Object.prototype.hasOwnProperty.call(req.query, k));
+  const asked = new URLSearchParams();
+  for (const k of FILTER_KEYS) {
+    const v = String((req.query as any)[k] ?? '').trim();
+    if (v) asked.set(k, v);
+  }
+  if (explicit) {
+    // Empty means empty: an explicit clear-by-dropdown forgets the saved filter too.
+    if (Array.from(asked.keys()).length) req.session.invoiceFilter = asked.toString();
+    else delete req.session.invoiceFilter;
+  } else if (req.session.invoiceFilter) {
+    // Nothing asked for and a filter is remembered: put it back. Any message the redirect
+    // was carrying rides along, or completing a batch would silently lose its own result.
+    const back = new URLSearchParams(req.session.invoiceFilter);
+    for (const k of ['msg', 'err']) {
+      const v = String((req.query as any)[k] ?? '').trim();
+      if (v) back.set(k, v);
+    }
+    res.redirect('/invoices?' + back.toString());
+    return;
+  }
   const status = ((req.query.status as string) || '').trim();
   const search = ((req.query.search as string) || '').trim();
   const source = ((req.query.source as string) || '').trim(); // '' | portal | legacy
