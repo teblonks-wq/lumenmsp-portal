@@ -36,8 +36,8 @@
     <button class="btn" type="submit">Ask QuickBooks what it actually has</button>
   </form>
   <form method="post" action="/invoices/health/fix-balances" style="margin:0;"
-        onsubmit="return confirm('Set the balance to the invoice total on every issued, unpaid invoice that currently shows nothing owed?\n\nPaid, void and part-paid invoices are not touched.');">
-    <button class="btn btn-primary" type="submit">Set the missing balances</button>
+        onsubmit="return confirm('Two repairs:\n\n1. Set the balance to the invoice total on every issued, unpaid invoice showing nothing owed. Paid, void and part-paid invoices are not touched.\n\n2. Stamp an issue date on any issued invoice that has none, taken from the date it was created. An invoice with no issue date has no tax point, so it belongs to no VAT quarter.');">
+    <button class="btn btn-primary" type="submit">Set the missing balances and dates</button>
   </form>
 </div>
 

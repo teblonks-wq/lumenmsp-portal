@@ -206,12 +206,60 @@
 <div class="card" style="padding:0;">
   <div class="card-header" style="padding:20px 24px 0;"><h2>Line items</h2></div>
   <div class="table-wrap">
+<% var _unlocked = invoice.unlocked_until && new Date(invoice.unlocked_until) > new Date();
+   var _locked = !_unlocked && ((invoice.status && invoice.status !== 'draft') || invoice.emailed_at || invoice.quickbooks_invoice_id); %>
+<% if (_unlocked) { %>
+  <div class="alert alert-success" style="max-width:100%;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+    <span><strong>Unlocked for editing</strong> until <%= new Date(invoice.unlocked_until).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) %><% if (invoice.unlock_reason) { %> &mdash; <%= invoice.unlock_reason %><% } %>. It re-locks itself.</span>
+    <span style="display:flex;gap:8px;">
+      <a class="btn" href="/invoices/<%= invoice.id %>/edit">Edit it</a>
+      <form method="post" action="/invoices/<%= invoice.id %>/relock" style="margin:0;"><button class="btn" type="submit">Lock again now</button></form>
+    </span>
+  </div>
+<% } else if (_locked) { %>
+  <details class="card" style="margin-bottom:14px;">
+    <summary style="cursor:pointer;font-weight:600;font-size:14px;">🔒 This invoice is locked &mdash; unlock it to edit</summary>
+    <p class="muted" style="font-size:12px;margin:8px 0 10px;">
+      It is locked because the customer and QuickBooks already hold it, so it must not be silently rewritten.
+      Unlocking suspends that for <strong>30 minutes</strong>, on this invoice only. Your name and your reason are recorded against it, and it re-locks itself.
+    </p>
+    <form method="post" action="/invoices/<%= invoice.id %>/unlock" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <input class="input" name="reason" placeholder="Why does it need changing?" required style="min-width:280px;font-size:13px;">
+      <input class="input" name="passphrase" type="password" placeholder="Unlock passphrase" required autocomplete="off" style="max-width:190px;font-size:13px;">
+      <button class="btn" type="submit">Unlock for 30 minutes</button>
+    </form>
+  </details>
+<% } %>
+<% if (qbLines && (qbLines.blocked||[]).length) { %>
+  <div class="alert alert-error" style="max-width:100%;">
+    <strong>This invoice cannot go to QuickBooks yet.</strong>
+    <%= qbLines.blocked.length %> line<%= qbLines.blocked.length===1?'':'s' %> ha<%= qbLines.blocked.length===1?'s':'ve' %> no QuickBooks item:
+    <strong><%= qbLines.blocked.join(', ') %></strong>.
+    Map the catalogue product under <a class="row-link" href="/settings/qb-items">Settings &rarr; QuickBooks</a>,
+    or set a <strong>fallback default item</strong> there so an unmapped line never stops a whole invoice again.
+  </div>
+<% } %>
     <table class="table">
-      <thead><tr><th>Description</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit</th><th style="text-align:right;">VAT %</th><th style="text-align:right;">Line total</th></tr></thead>
+      <thead><tr><th>Description</th><th>Source / category</th><th>QuickBooks</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Unit</th><th style="text-align:right;">VAT %</th><th style="text-align:right;">Line total</th></tr></thead>
       <tbody>
         <% if (items.length===0) { %><tr><td colspan="5"><div class="empty-state">No line items.</div></td></tr><% } %>
         <% items.forEach(function(it){ %>
-          <tr><td><%= it.description %></td><td style="text-align:right;"><%= Number(it.quantity) %></td><td style="text-align:right;"><%= money(it.unit_price) %></td><td style="text-align:right;"><%= Number(it.tax_rate) %></td><td style="text-align:right;"><%= money(it.line_total) %></td></tr>
+          <% var _m = ((qbLines && qbLines.lines) || []).filter(function(l){ return l.description === it.description; })[0]; %>
+          <tr>
+            <td><%= it.description %></td>
+            <td style="font-size:12px;color:var(--muted);">
+              <%= it.source || 'manual' %><% if (it.invoice_category) { %> &middot; <%= it.invoice_category %><% } %>
+            </td>
+            <td style="font-size:12px;<%= (_m && !_m.ok) ? 'color:var(--bad-fg,#a12626);font-weight:600;' : 'color:var(--muted);' %>">
+              <% if (!_m) { %>&mdash;
+              <% } else if (_m.ok) { %>✓ <%= _m.via %>
+              <% } else { %>⚠ <%= _m.via %><% } %>
+            </td>
+            <td style="text-align:right;"><%= Number(it.quantity) %></td>
+            <td style="text-align:right;"><%= money(it.unit_price) %></td>
+            <td style="text-align:right;"><%= Number(it.tax_rate) %></td>
+            <td style="text-align:right;"><%= money(it.line_total) %></td>
+          </tr>
         <% }); %>
       </tbody>
       <tfoot>

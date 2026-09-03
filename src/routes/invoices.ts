@@ -1,13 +1,14 @@
 import { Router, Request, Response } from 'express';
 import { requireAuth, requireFinance } from '../middleware/auth';
 import { pool } from '../db/pool';
+import bcrypt from 'bcryptjs';
 import { getComms } from './comms';
 import { logActivity } from '../lib/activity';
 import { notify } from '../lib/notifications';
 import { renderInvoicePdf, loadInvoiceForRender, renderInvoiceHtml } from '../lib/invoice-pdf';
 import { htmlToPdf } from '../lib/pdf';
 import { emailInvoiceAction, pushInvoiceToQBAction, submitInvoiceToGCAction, remindInvoiceAction, remindCustomersAction } from './integrations';
-import { backfillInvoiceBalances, balanceContradictions, invoicesNotInQb, verifyAgainstQuickBooks } from '../lib/invoice-balance';
+import { backfillInvoiceBalances, backfillIssueDates, balanceContradictions, invoicesNotInQb, verifyAgainstQuickBooks, qbLinePreview } from '../lib/invoice-balance';
 import { sendMail } from '../lib/mailer';
 import { invoiceEmailHtml } from '../lib/emails';
 import { invoiceViewUrl } from '../lib/invoice-link';
@@ -15,7 +16,7 @@ import { QuickBooks } from '../lib/quickbooks';
 import { generateFromTemplate, refreshGiacomLines, refreshCallCharges, regenerateInvoice, nextInvoiceNumber, recomputeInvoiceTotals } from '../lib/recurring-billing';
 import { syncItCloudInvoice, resyncItCloudLine, promoteItCloudToTemplate } from '../lib/it-cloud-sync';
 import { resolvePeriod, PERIOD_OPTIONS } from '../lib/date-periods';
-import { getSetting } from '../lib/settings';
+import { getSetting, setSetting } from '../lib/settings';
 import { config } from '../config';
 import { aiAskText, aiAskCached, cacheNote } from '../lib/ai-compose';
 import { GoCardless } from '../lib/gocardless';
@@ -119,12 +120,16 @@ router.get('/invoices/health', async (req: Request, res: Response) => {
 // information, because there was none there.
 router.post('/invoices/health/fix-balances', async (req: Request, res: Response) => {
   const r = await backfillInvoiceBalances();
+  // An issued invoice with no issue date has no tax point, so it belongs to no VAT quarter
+  // and sorts nowhere. Stamped from created_at — the moment it came into existence.
+  const dated = await backfillIssueDates();
   await logActivity(req.session.user!.id, 'updated', 'invoices', 0,
-    `Invoices: set the balance on ${r.fixed} unpaid invoice(s) that were showing nothing owed`);
+    `Invoices: set the balance on ${r.fixed} invoice(s) and the issue date on ${dated}`);
+  const bits: string[] = [];
+  if (r.fixed) bits.push(`Set the balance on ${r.fixed} invoice(s) — £${r.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} that was showing as nothing owed.`);
+  if (dated) bits.push(`Stamped an issue date on ${dated} invoice(s) that had none, taken from the date each was created.`);
   res.redirect('/invoices/health?msg=' + encodeURIComponent(
-    r.fixed
-      ? `Set the balance on ${r.fixed} invoice(s) — £${r.value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} that was showing as nothing owed.`
-      : 'Nothing to fix — every unpaid invoice already shows what is owed.'));
+    bits.length ? bits.join(' ') : 'Nothing to fix — every unpaid invoice shows what is owed and every issued invoice has a date.'));
 });
 
 // Ask QuickBooks what it actually holds, rather than trusting our own column.
@@ -516,7 +521,11 @@ router.get('/invoices/:id', requireAuth, async (req: Request, res: Response) => 
       "SELECT id, amount, reason, source_invoice_id, quickbooks_credit_id, created_at FROM customer_credits WHERE customer_id=$1 AND status='open' ORDER BY created_at", [inv.customer_id]
     )).rows;
   }
-  res.render('invoices/detail', { user, invoice: inv, items: items.rows, openCredits,
+  // What each line will post under in QuickBooks — worked out without sending anything, so a
+  // line that cannot be mapped is visible BEFORE the push refuses the whole invoice.
+  let qbLines: any = { lines: [], blocked: [] };
+  try { qbLines = await qbLinePreview(inv.id); } catch { /* the preview must never break the page */ }
+  res.render('invoices/detail', { user, invoice: inv, items: items.rows, openCredits, qbLines,
     notice: req.query.msg || null, error: req.query.err || null, comms, commsTo, commsContacts,
     back: safeBack(req.query.back, '') || null, events: await getDocEvents('invoice', inv.id) });
 });
@@ -610,14 +619,91 @@ router.post('/invoices/:id/apply-credit', requireAuth, async (req: Request, res:
 // customer and QuickBooks already hold, so its lines/header must NOT be silently rewritten — that's
 // what wiped IC-0123's one-off + part-month lines. Drafts (bill-run review stage) stay editable.
 function invoiceLocked(inv: any): boolean {
+  if (!inv) return false;
+  // A deliberate unlock beats the lock, but only while it lasts. Thirty minutes is enough to
+  // fix a line and long enough to forget about — so it expires on its own rather than relying
+  // on anyone remembering to close it.
+  if (inv.unlocked_until && new Date(inv.unlocked_until).getTime() > Date.now()) return false;
   // Locked once it's no longer a draft, OR has been emailed to the customer, OR submitted to
   // QuickBooks — any of those means it's a real document we must not silently rewrite.
-  return !!inv && (
+  return (
     (!!inv.status && inv.status !== 'draft') ||
     !!inv.emailed_at ||
     !!inv.quickbooks_invoice_id
   );
 }
+
+// ── Unlocking an issued invoice ─────────────────────────────────────────────────
+// Terry, 2026-09-03: "we need to be able to unlock invoices."
+//
+// The lock exists for a good reason — the customer and QuickBooks already hold the document —
+// so this does not remove it. It suspends it, for THIRTY MINUTES, for ONE invoice, behind a
+// passphrase, with the reason and the person recorded on the row. It expires by itself.
+//
+// The passphrase is stored as a bcrypt hash in settings ('invoices' / 'unlock_hash'), never in
+// this file and never in the repository. Set it with /invoices/unlock-passphrase.
+const UNLOCK_MINUTES = 30;
+
+async function unlockHash(): Promise<string> {
+  return (await getSetting('invoices', 'unlock_hash')) || '';
+}
+
+router.post('/invoices/:id/unlock', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const pass = String((req.body || {}).passphrase || '');
+  const reason = String((req.body || {}).reason || '').trim();
+  const hash = await unlockHash();
+  if (!hash) {
+    res.redirect('/invoices/' + id + '?err=' + encodeURIComponent('No unlock passphrase has been set yet. An administrator can set one under Settings.'));
+    return;
+  }
+  if (!reason) {
+    res.redirect('/invoices/' + id + '?err=' + encodeURIComponent('Say why this invoice is being unlocked — it is recorded against it.'));
+    return;
+  }
+  let ok = false;
+  try { ok = await bcrypt.compare(pass, hash); } catch { ok = false; }
+  if (!ok) {
+    // A wrong passphrase on a finance document is worth recording, not just refusing.
+    await logActivity(req.session.user!.id, 'updated', 'invoices', id, `Invoices: FAILED unlock attempt on invoice #${id}`);
+    res.redirect('/invoices/' + id + '?err=' + encodeURIComponent('That passphrase is not right.'));
+    return;
+  }
+  await pool.query(
+    `UPDATE invoices SET unlocked_by=$2, unlocked_at=NOW(),
+            unlocked_until = NOW() + ($3 || ' minutes')::interval, unlock_reason=$4
+      WHERE id=$1`,
+    [id, req.session.user!.id, String(UNLOCK_MINUTES), reason.slice(0, 300)]
+  ).catch(() => {});
+  await logActivity(req.session.user!.id, 'updated', 'invoices', id,
+    `Invoices: unlocked invoice #${id} for ${UNLOCK_MINUTES} minutes — ${reason}`);
+  res.redirect('/invoices/' + id + '/edit?msg=' + encodeURIComponent(
+    `Unlocked for ${UNLOCK_MINUTES} minutes. The reason and your name are recorded on the invoice, and it re-locks itself.`));
+});
+
+// Re-lock immediately, rather than waiting the thirty minutes out.
+router.post('/invoices/:id/relock', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  await pool.query('UPDATE invoices SET unlocked_until=NULL WHERE id=$1', [id]).catch(() => {});
+  await logActivity(req.session.user!.id, 'updated', 'invoices', id, `Invoices: re-locked invoice #${id}`);
+  res.redirect('/invoices/' + id + '?msg=' + encodeURIComponent('Locked again.'));
+});
+
+// Set or change the passphrase. Stored hashed; the value itself is never written anywhere.
+router.post('/invoices/unlock-passphrase', requireAuth, async (req: Request, res: Response) => {
+  const b: any = req.body || {};
+  const next = String(b.new_passphrase || '');
+  if (next.length < 6) { res.redirect('/invoices/health?err=' + encodeURIComponent('Use at least 6 characters.')); return; }
+  const current = await unlockHash();
+  if (current) {
+    let ok = false;
+    try { ok = await bcrypt.compare(String(b.current_passphrase || ''), current); } catch { ok = false; }
+    if (!ok) { res.redirect('/invoices/health?err=' + encodeURIComponent('The current passphrase is not right.')); return; }
+  }
+  await setSetting('invoices', 'unlock_hash', await bcrypt.hash(next, 10));
+  await logActivity(req.session.user!.id, 'updated', 'invoices', 0, 'Invoices: the unlock passphrase was changed');
+  res.redirect('/invoices/health?msg=' + encodeURIComponent('Unlock passphrase set.'));
+});
 const LOCK_MSG = 'This invoice has been issued and is locked from editing. To change it, void it and re-issue, or raise a credit note.';
 
 router.get('/invoices/:id/edit', requireAuth, async (req: Request, res: Response) => {
@@ -639,7 +725,7 @@ router.post('/invoices/:id', requireAuth, async (req: Request, res: Response, ne
   // Non-numeric segment (e.g. /invoices/batch-complete) belongs to another route — fall through.
   if (Number.isNaN(id)) { next(); return; }
   // Issued / emailed / QB-submitted invoices are locked — never silently rewrite a real invoice.
-  const lk = await pool.query('SELECT status, emailed_at, quickbooks_invoice_id, invoice_scheme FROM invoices WHERE id=$1 AND deleted_at IS NULL', [id]);
+  const lk = await pool.query('SELECT status, emailed_at, quickbooks_invoice_id, invoice_scheme, unlocked_until FROM invoices WHERE id=$1 AND deleted_at IS NULL', [id]);
   if (lk.rows.length && invoiceLocked(lk.rows[0])) { res.redirect('/invoices/' + id + '?err=' + encodeURIComponent(LOCK_MSG)); return; }
   const user = req.session.user!;
   const b = req.body;

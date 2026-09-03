@@ -1794,6 +1794,15 @@ model Invoice {
   // connected, or the customer having no QuickBooks record, both looked like success from
   // every screen. The outcome now lives ON THE INVOICE, so the invoice can say what happened
   // to it and why.
+  // ── A deliberate, temporary unlock ─────────────────────────────────────────────
+  // An issued invoice is locked because the customer and QuickBooks already hold it. But a
+  // locked invoice with an unmappable line is a dead end, so there has to be a way through —
+  // one that is deliberate, time-limited and leaves a trace, rather than a lock that gets
+  // quietly weakened for everyone.
+  unlockedBy          Int?      @map("unlocked_by")
+  unlockedAt          DateTime? @map("unlocked_at")
+  unlockedUntil       DateTime? @map("unlocked_until")
+  unlockReason        String?   @map("unlock_reason")
   qbPushState         String?   @map("qb_push_state")   // pushed | amended | skipped | failed
   qbPushError         String?   @map("qb_push_error")   // the reason, in the words a person needs
   qbPushAt            DateTime? @map("qb_push_at")
