@@ -1242,6 +1242,17 @@ model BankTransaction {
   matchReason    String?   @map("match_reason")
   matchedAt      DateTime? @map("matched_at")
   qbPurchaseId   String?   @map("qb_purchase_id")  // set when pushed to QuickBooks
+  // ── Justification ──────────────────────────────────────────────────────────────
+  // Terry, 2026-09-03: "even if it is not purchasing we need to provide invoice or
+  // justification." So a payment is never simply exempted from having paperwork. It is
+  // complete when it has an ATTACHMENT or a JUSTIFICATION — a written reason, on the record,
+  // attributable to a person, that goes with the entry to QuickBooks and stands in front of
+  // the accountant in place of a document. "No invoice expected" was a silent hole; this is
+  // the answer to the same question.
+  justification       String?   @map("justification")
+  justificationSource String?   @map("justification_source")  // supplier (standing reason) | manual (this payment)
+  justifiedBy         Int?      @map("justified_by")
+  justifiedAt         DateTime? @map("justified_at")
   notes          String?
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
@@ -2217,8 +2228,10 @@ model Supplier {
   buys                  String?                          // hardware | licence | connectivity | rent | fuel | subsistence | professional | other (comma list)
   // invoiceExpected REPLACES the ignore list. 'never' must always carry a reason and a date
   // to look at it again, so nothing is ever permanently exempt by accident.
+  // 'never' does NOT mean "stop asking" — it means no invoice exists, so the standing
+  // justification below is what goes on the record in its place, stamped onto every payment.
   invoiceExpected       String    @default("always") @map("invoice_expected")   // always | sometimes | never
-  invoiceExpectedReason String?   @map("invoice_expected_reason")
+  invoiceExpectedReason String?   @map("invoice_expected_reason")   // the standing justification
   invoiceReviewOn       DateTime? @map("invoice_review_on")
   invoiceSource         String?   @map("invoice_source")     // email | portal | download | none
   credentialId          Int?      @map("credential_id")      // vault entry used to fetch portal-only invoices

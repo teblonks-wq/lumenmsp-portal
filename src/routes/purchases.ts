@@ -681,6 +681,58 @@ router.post('/purchases/anomalies/refresh', async (req: Request, res: Response) 
   }
 });
 
+// "We never get an invoice from this one" — in one click, from the finding itself.
+// This is the replacement for the old pattern-based ignore list, and the difference that
+// matters is the REASON: it is required, it is stored on the supplier, and it comes with a
+// date to look at it again. Aventis sat on the old list as "financing" with nothing to say
+// otherwise, and that supplier is our landlord.
+router.post('/purchases/anomalies/:id/no-invoice-expected', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const reason = String((req.body || {}).reason || '').trim();
+  if (!id) { res.redirect('/purchases?err=' + encodeURIComponent('Nothing selected.')); return; }
+  if (!reason) {
+    res.redirect('/purchases?err=' + encodeURIComponent('Say why no invoice is expected — it is stored on the supplier and reviewed later, which is the whole point of it.'));
+    return;
+  }
+  const a = (await pool.query('SELECT * FROM purchase_anomalies WHERE id=$1', [id])).rows[0];
+  if (!a) { res.redirect('/purchases?err=' + encodeURIComponent('That finding has gone.')); return; }
+
+  // The payee, from the ledger rather than from the wording of a title.
+  let payee = '';
+  if (a.txn_id) {
+    const t = (await pool.query('SELECT counterparty FROM bank_transactions WHERE id=$1', [a.txn_id])).rows[0];
+    payee = String(t?.counterparty || '').trim();
+  }
+  if (!payee) payee = String(a.supplier_key || '').trim();
+  if (!payee) { res.redirect('/purchases?err=' + encodeURIComponent('Could not work out which payee that finding is about.')); return; }
+
+  const supplierId = await ensureSupplier(payee);
+  await addAlias(supplierId, 'bank_narrative', payee, {
+    match: 'contains', source: 'human', userId: req.session.user!.id,
+    reason: 'Set from the worklist when marking that no invoice is expected',
+  });
+  await pool.query(
+    `UPDATE suppliers SET invoice_expected='never', invoice_expected_reason=$1,
+            invoice_review_on = NOW() + INTERVAL '12 months', is_purchase_supplier=true, updated_at=NOW()
+      WHERE id=$2`, [reason, supplierId]
+  ).catch(() => {});
+
+  // Everything open about this payee goes at once — one decision, not one per payment.
+  const cleared = await pool.query(
+    `UPDATE purchase_anomalies SET status='resolved'
+      WHERE status='open' AND kind IN ('payment_no_invoice','payments_no_invoice','small_spend_no_invoice')
+        AND (id = $1 OR lower(COALESCE(supplier_key,'')) = lower($2)
+             OR txn_id IN (SELECT id FROM bank_transactions WHERE lower(COALESCE(counterparty,'')) = lower($3)))`,
+    [id, a.supplier_key || '', payee]
+  ).catch(() => ({ rowCount: 0 }));
+
+  await logActivity(req.session.user!.id, 'updated', 'invoices', 0,
+    `Purchases: no invoice expected from ${payee} — ${reason}`);
+  try { await refreshAnomalies(); } catch (e) { console.error('[purchases] re-sweep failed:', (e as Error).message); }
+  res.redirect('/purchases?msg=' + encodeURIComponent(
+    `${payee} now expects no invoice — "${reason}". ${cleared.rowCount || 1} finding(s) cleared, and it will come back for review in 12 months.`));
+});
+
 router.post('/purchases/anomalies/:id/dismiss', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   if (id) {

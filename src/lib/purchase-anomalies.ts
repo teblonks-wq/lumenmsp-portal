@@ -5,6 +5,8 @@ import { graphConfigured, graphSendMail } from './graph';
 import { classifyNoInvoice, classifyNoInvoiceLive, normaliseCounterparty, aliasTokensFor } from './purchase-match';
 import { getInvoiceMailbox } from './purchase-inbox';
 import { activeRules, suppressedBy } from './purchase-rules';
+import { isInternalSender } from './purchase-dupes';
+import { resolveSupplier } from './supplier-master';
 
 // ── The Purchase Agent's anomaly list ────────────────────────────────────────────
 // A worklist, not a log. Every finding is one row keyed by what it IS, so a condition
@@ -259,6 +261,14 @@ async function backlog(): Promise<Backlog> {
   for (const t of rawTxns) {
     if (coveredIds.has(t.id)) continue;   // already explained by findPaymentCoversSeveral
     if (await classifyNoInvoiceLive((t.counterparty || '') + ' ' + (t.description || ''))) continue;
+    // The supplier master is now the authority on whether paperwork is even expected.
+    // invoice_expected='never' always carries a reason, which is what the old pattern-based
+    // ignore list could not do — and is why the landlord could sit on it as "financing".
+    const sup = await resolveSupplier({ counterparty: t.counterparty, description: t.description });
+    if (sup) {
+      const row = (await pool.query('SELECT invoice_expected FROM suppliers WHERE id=$1', [sup.supplierId]).catch(() => ({ rows: [] as any[] }))).rows[0];
+      if (row && row.invoice_expected === 'never') continue;
+    }
     txns.push(t);
   }
 
@@ -352,16 +362,48 @@ function paymentFindings(b: Backlog): Finding[] {
 }
 
 // Invoices we hold that nothing has paid, grouped the same way.
+// Who an invoice is FROM, never who forwarded it. A forwarded invoice carries Terry's name
+// in from_name, and keying on that produced "Terry O'Kelly — 13 invoices totalling
+// £23,324.47", which is not a supplier and not a finding — it is the identification failing.
+// Same guard as supplierKey() in purchase-dupes: the invoice's own words first, an EXTERNAL
+// sender second, the filename last.
+function docSupplier(d: any): { key: string; label: string; identified: boolean } {
+  if (d.ai_supplier && String(d.ai_supplier).trim()) {
+    const l = String(d.ai_supplier).trim();
+    return { key: normaliseCounterparty(l) || l.toLowerCase(), label: l, identified: true };
+  }
+  if (!isInternalSender(d.from_email)) {
+    const l = String(d.from_name || d.from_email || '').trim();
+    if (l) return { key: normaliseCounterparty(l) || l.toLowerCase(), label: l, identified: true };
+  }
+  return { key: '__unidentified', label: 'Supplier not identified', identified: false };
+}
+
 function invoiceFindings(b: Backlog): Finding[] {
   const bySupplier = new Map<string, any[]>();
+  const labels = new Map<string, string>();
   for (const d of b.docs) {
-    const k = normaliseCounterparty(String(d.ai_supplier || d.from_name || d.from_email || d.file_name)) || 'unknown';
-    (bySupplier.get(k) || bySupplier.set(k, []).get(k)!).push(d);
+    const s = docSupplier(d);
+    labels.set(s.key, s.label);
+    (bySupplier.get(s.key) || bySupplier.set(s.key, []).get(s.key)!).push(d);
   }
   const out: Finding[] = [];
   for (const [key, list] of bySupplier) {
     const total = list.reduce((n, d) => n + Math.abs(Number(d.parsed_amount) || 0), 0);
-    const label = list[0].ai_supplier || list[0].from_name || key;
+    const label = labels.get(key) || key;
+    // Invoices whose supplier we cannot name are ONE finding about identification, not a
+    // pile of findings about payment. Naming the supplier is the fix, and it is a different
+    // job from chasing a payment.
+    if (key === '__unidentified') {
+      out.push({
+        key: 'unidentified_invoices', kind: 'supplier_unknown', severity: 'medium',
+        title: `${list.length} invoices totalling ${money(total)} we cannot attribute to a supplier`,
+        detail: `These arrived forwarded, so the sender is one of us rather than the supplier, and nothing on the face of them has been read as a supplier name yet. `
+          + `They are not unpaid — we simply do not know whose they are. Reading them, or adding the sender as an alias on the Suppliers screen, resolves the whole group.`,
+        amount: total, documentId: list[0].id,
+      });
+      continue;
+    }
     if (list.length >= GROUP_FROM) {
       out.push({
         key: 'unpaid_grp:' + key, kind: 'unpaid_invoices', severity: 'high',
@@ -487,7 +529,7 @@ async function findVatMismatches(): Promise<Finding[]> {
 // Kinds this function is authoritative for. An open row of one of these kinds that is NOT
 // re-raised has stopped being true, so it resolves. 'ai_concern' is raised by the matcher
 // as it reads, so it is NOT in this list and is never auto-resolved from here.
-const OWNED_KINDS = ['already_paid', 'covers_several', 'invoice_not_received', 'not_a_purchase', 'possible_duplicate', 'needs_match', 'unpaid_invoice', 'unpaid_invoices', 'payment_no_invoice', 'payments_no_invoice', 'small_spend_no_invoice', 'price_jump', 'missing_bill', 'new_supplier', 'vat_mismatch'];
+const OWNED_KINDS = ['already_paid', 'covers_several', 'invoice_not_received', 'not_a_purchase', 'possible_duplicate', 'needs_match', 'supplier_unknown', 'unpaid_invoice', 'unpaid_invoices', 'payment_no_invoice', 'payments_no_invoice', 'small_spend_no_invoice', 'price_jump', 'missing_bill', 'new_supplier', 'vat_mismatch'];
 
 export async function refreshAnomalies(): Promise<{ raised: number; resolved: number; open: number; suppressed: number }> {
   const all: Finding[] = [];
@@ -537,6 +579,22 @@ export async function refreshAnomalies(): Promise<{ raised: number; resolved: nu
       WHERE status='open' AND kind = ANY($1) AND NOT (dedupe_key = ANY($2))`,
     [OWNED_KINDS, keys.length ? keys : ['']]
   ).catch(() => ({ rowCount: 0 }));
+
+  // A concern is frozen text written while the agent was trying to match a document. Once
+  // that document is attached, archived, or turns out not to be a purchase invoice at all,
+  // the concern has been answered by events — and 233 of 400 open findings were exactly
+  // this, never clearing because nothing owned them.
+  await pool.query(
+    `UPDATE purchase_anomalies SET status='resolved'
+      WHERE status='open' AND kind='ai_concern' AND document_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM purchase_documents d
+           WHERE d.id = purchase_anomalies.document_id
+             AND (d.status = 'attached' OR d.archived_at IS NOT NULL
+                  OR COALESCE(d.doc_type,'invoice') IN ('statement','sales_invoice','not_a_purchase'))
+        )
+        AND NOT EXISTS (SELECT 1 FROM purchase_anomaly_notes n WHERE n.anomaly_id = purchase_anomalies.id)`
+  ).catch(() => {});
 
   // Any finding pointing at a document that no longer exists is debris — including
   // 'ai_concern', which nothing else ever clears.

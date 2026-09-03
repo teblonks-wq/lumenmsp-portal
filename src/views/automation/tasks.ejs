@@ -73,7 +73,8 @@ function taskTable(rows, showProgress) { %>
     <tbody>
       <% legacy.forEach(function(c){ %>
         <tr>
-          <td><a class="row-link" href="/assets/<%= c.device_id %>"><%= c.hostname || ('#' + c.device_id) %></a></td>
+          <td><% if (c.asset_id) { %><a class="row-link" href="/assets/<%= c.asset_id %>?back=<%= encodeURIComponent('/automation/scheduled-tasks') %>"><%= c.hostname || ('#' + c.device_id) %></a>
+              <% } else { %><%= c.hostname || ('#' + c.device_id) %><% } %></td>
           <td class="muted"><%= c.customer_name || '—' %></td>
           <td><%= c.kind === 'power.shutdown' ? 'Shut down' : c.kind === 'power.restart' ? 'Restart' : cap(c.kind) %></td>
           <td style="white-space:nowrap;"><%= when(c.run_after) %></td>

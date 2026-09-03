@@ -78,7 +78,11 @@
   <tbody>
     <% devices.forEach(function(d){ %>
       <tr>
-        <td><% if (d.device_id) { %><a class="row-link" href="/assets/<%= d.device_id %>"><%= d.hostname || ('#' + d.device_id) %></a><% } else { %><span class="muted">gone</span><% } %></td>
+        <%# asset_id, never device_id: /assets/:id is a customer_assets id and the two
+            numbering schemes are unrelated. A machine with no asset row is named, not linked. %>
+        <td><% if (d.asset_id) { %><a class="row-link" href="/assets/<%= d.asset_id %>?back=<%= encodeURIComponent('/automation/scheduled-tasks/' + task.id) %>"><%= d.hostname || ('#' + d.device_id) %></a>
+            <% } else if (d.hostname) { %><%= d.hostname %>
+            <% } else { %><span class="muted">gone</span><% } %></td>
         <td class="muted"><%= d.customer_name || '—' %></td>
         <td>
           <span class="badge <%= dbadge(d.status) %>"><%= cap(d.status) %></span>

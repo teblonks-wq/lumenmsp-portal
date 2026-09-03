@@ -38,6 +38,7 @@
   function amt(v){ if (v==null) return ''; var n=Math.abs(Number(v)||0); return '£'+n.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   var KIND = { already_paid:'Already paid', invoice_not_received:'Invoice missing', not_a_purchase:'Not ours', possible_duplicate:'Duplicate?',
                needs_match:'One click', unpaid_invoice:'Not paid', unpaid_invoices:'Not paid',
+               supplier_unknown:'Who is this?',
                payment_no_invoice:'No invoice', payments_no_invoice:'No invoices', small_spend_no_invoice:'Small spend',
                covers_several:'One payment, several bills',
                price_jump:'Price up', missing_bill:'Bill missing', new_supplier:'New supplier',
@@ -96,6 +97,13 @@
             <% } %>
             <button class="btn" type="button" style="font-size:11px;padding:2px 8px;" onclick="anToggle(<%= a.id %>)" title="Tell it what you know. It will consider what you say and, if it is a standing instruction, offer to remember it.">💬 Reply<% var th=(notes||{})[a.id]||[]; if (th.length) { %> (<%= th.length %>)<% } %></button>
             <form method="post" action="/purchases/anomalies/<%= a.id %>/dismiss" style="margin:0;"><button class="btn" type="submit" style="font-size:11px;padding:2px 8px;" title="Stop showing me this. A REPLY is usually better — it keeps the reason, so the same thing does not come back next month.">Dismiss</button></form>
+            <% if (a.kind === 'payments_no_invoice' || a.kind === 'payment_no_invoice') { %>
+              <form method="post" action="/purchases/anomalies/<%= a.id %>/no-invoice-expected" style="margin:0;display:flex;gap:4px;align-items:center;"
+                    onsubmit="var r=this.reason.value.trim(); if(!r){ alert('Say why — the reason is stored on the supplier and comes back for review in 12 months. That is the bit the old ignore list could not do.'); return false; } return confirm('No invoice will be expected from this payee from now on.\n\nReason: '+r+'\n\nEvery open finding about them clears, and it returns for review in 12 months.');">
+                <input class="input" name="reason" placeholder="why no invoice? e.g. drawings, wages, no invoice issued" style="font-size:11px;padding:2px 8px;min-width:250px;">
+                <button class="btn" type="submit" style="font-size:11px;padding:2px 8px;" title="Records this on the supplier with your reason and a review date, and clears every open finding about them at once.">🚫 No invoice expected</button>
+              </form>
+            <% } %>
           </div>
 
           <% if (a.document_id) { %><div id="an-pk-<%= a.document_id %>" style="display:none;margin-top:8px;"></div><% } %>

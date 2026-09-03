@@ -1,5 +1,16 @@
 <%- include('partials/header', { title: name, user }) %>
 <%
+// The registry's InstallDate is YYYYMMDD when it is there at all. Not every installer
+// writes one; a blank is Windows' silence, not a gap in our collection.
+function instDate(v) {
+  var s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  var m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m) s = m[1] + '-' + m[2] + '-' + m[3];
+  var d = new Date(s);
+  if (isNaN(d.getTime())) return s;
+  return d.toLocaleDateString('en-GB', { timeZone: 'Europe/London', day: '2-digit', month: 'short', year: 'numeric' });
+}
 function ago(s) {
   if (s == null) return 'never';
   var m = Math.round(Number(s) / 60);
@@ -95,11 +106,11 @@ function ago(s) {
       <thead>
         <tr>
           <th class="tick"><input type="checkbox" id="swTickAll" onclick="swAll(this.checked)" title="Select every machine that is behind"></th>
-          <th>Machine</th><th>Customer</th><th>Installed</th><th>Update</th><th>Via</th><th>Last seen</th>
+          <th>Machine</th><th>Customer</th><th>Version</th><th>Installed</th><th>Update</th><th>Via</th><th>Last seen</th>
         </tr>
       </thead>
       <tbody>
-        <% if (!installs.length) { %><tr><td colspan="7"><div class="empty-state">Not installed anywhere.</div></td></tr><% } %>
+        <% if (!installs.length) { %><tr><td colspan="8"><div class="empty-state">Not installed anywhere.</div></td></tr><% } %>
         <% installs.forEach(function (i) { %>
           <tr>
             <td class="tick">
@@ -113,6 +124,10 @@ function ago(s) {
             </td>
             <td class="muted"><% if (i.customer_id) { %><a class="row-link" href="/customers/<%= i.customer_id %>"><%= i.customer_name %></a><% } else { %>—<% } %></td>
             <td class="muted" style="font-size:12px;"><%= i.version || '—' %></td>
+            <td class="muted" style="font-size:12px;white-space:nowrap;">
+              <% var _id = instDate(i.install_date); %>
+              <% if (_id) { %><%= _id %><% } else { %><span title="Windows did not record an install date for this application">&mdash;</span><% } %>
+            </td>
             <td>
               <% if (i.available_version) { %>
                 <span style="font-size:12px;"><%= i.current_version || i.version || '?' %> → <strong><%= i.available_version %></strong></span>

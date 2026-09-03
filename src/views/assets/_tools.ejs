@@ -836,6 +836,19 @@
     var softwareBusy = document.getElementById('softwareBusy');
     var softAge = document.getElementById('softAge');
 
+    // The registry writes InstallDate as YYYYMMDD, but not every installer writes one at
+    // all - MSI usually does, a plain EXE often does not. A blank is Windows' silence, not
+    // ours, and the column says so rather than implying we lost it.
+    function instDate(v){
+      var s = String(v == null ? '' : v).trim();
+      if (!s) return '';
+      var m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+      if (m) s = m[1] + '-' + m[2] + '-' + m[3];
+      var d = new Date(s);
+      if (isNaN(d.getTime())) return s;   // show whatever the installer actually wrote
+      return d.toLocaleDateString('en-GB', { timeZone:'Europe/London', day:'2-digit', month:'short', year:'numeric' });
+    }
+
     function ageWords(secs){
       if (secs == null) return 'never collected';
       var m = Math.round(secs/60);
@@ -861,6 +874,11 @@
             : (q ? 'Nothing matches that search.' : 'No inventory stored yet — use "Refresh from device" once it is online.');
           renderTable(softwareResult, j.rows, [
             { k:'name', t:'Name' }, { k:'version', t:'Version' }, { k:'publisher', t:'Publisher' },
+            { k:'install_date', t:'Installed', render: function(r){
+                var d = instDate(r.install_date);
+                return d ? esc(d)
+                  : '<span class="muted" title="Windows did not record an install date for this application">&mdash;</span>';
+              } },
             { k:'size_mb', t:'Size (MB)' }
           ], null, function(x){
             var out = '';

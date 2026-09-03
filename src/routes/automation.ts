@@ -61,11 +61,16 @@ router.get('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req:
     // are not automation tasks and cannot be edited here.
     pool.query(
       `SELECT ac.id, ac.kind, ac.run_after, ac.requested_at, ad.hostname, ad.id AS device_id,
-              c.name AS customer_name, u.display_name AS requested_by_name
+              c.name AS customer_name, u.display_name AS requested_by_name, ast.id AS asset_id
          FROM agent_commands ac
          LEFT JOIN agent_devices ad ON ad.id = ac.device_id
          LEFT JOIN customers c ON c.id = ad.customer_id
          LEFT JOIN users u ON u.id = ac.requested_by
+         LEFT JOIN LATERAL (
+           SELECT ca.id FROM customer_assets ca
+            WHERE ca.agent_device_id = ac.device_id AND ca.merged_into_id IS NULL AND ca.archived_at IS NULL
+            ORDER BY ca.id LIMIT 1
+         ) ast ON true
         WHERE ac.kind LIKE 'power.%' AND ac.status='queued' AND ac.run_after IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM automation_task_devices d WHERE d.command_id = ac.id)
         ORDER BY ac.run_after LIMIT 100`),
@@ -223,12 +228,17 @@ router.get('/automation/scheduled-tasks/:id(\\d+)', requireAuth, requireAdmin, a
 
   const devices = (await pool.query(
     `SELECT d.id, d.device_id, d.status, d.error, d.finished_at, d.command_id,
-            ad.hostname, c.name AS customer_name,
+            ad.hostname, c.name AS customer_name, ast.id AS asset_id,
             ac.exit_code, ac.status AS command_status, right(COALESCE(ac.output,''), 600) AS output_tail
        FROM automation_task_devices d
        LEFT JOIN agent_devices ad ON ad.id = d.device_id
        LEFT JOIN customers c ON c.id = ad.customer_id
        LEFT JOIN agent_commands ac ON ac.id = d.command_id
+       LEFT JOIN LATERAL (
+         SELECT ca.id FROM customer_assets ca
+          WHERE ca.agent_device_id = d.device_id AND ca.merged_into_id IS NULL AND ca.archived_at IS NULL
+          ORDER BY ca.id LIMIT 1
+       ) ast ON true
       WHERE d.task_id=$1 ORDER BY c.name NULLS LAST, ad.hostname`, [id])).rows;
 
   const siblings = task.series_id

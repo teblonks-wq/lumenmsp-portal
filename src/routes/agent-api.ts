@@ -1105,6 +1105,29 @@ router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request
               + ' Output redacted.', id]).catch(() => {});
         });
     }
+    // Anything that changes what is installed makes the cached inventory a lie until the
+    // next daily collection. That gap is not cosmetic: an Adobe Reader deployed across a
+    // customer installed correctly and still read as missing on every machine, which is
+    // indistinguishable from a failed deploy. Re-collect straight away, and only on
+    // success - a failed install changed nothing worth re-reading.
+    const CHANGES_INVENTORY = [
+      'software.install', 'software.uninstall',
+      'choco.install', 'choco.uninstall', 'choco.upgrade',
+      'winget.install', 'winget.uninstall', 'winget.upgrade',
+    ];
+    if (exitCode === 0 && CHANGES_INVENTORY.includes(r.rows[0].kind)) {
+      // Guarded so a bulk deploy of twelve packages to one machine queues ONE re-scan
+      // rather than twelve. Fire-and-forget: the agent is waiting on this response and
+      // has done its part correctly, so a housekeeping failure must never reach it.
+      pool.query(
+        `INSERT INTO agent_commands (device_id, kind, payload, status)
+         SELECT $1, 'inventory.software', '{}'::jsonb, 'queued'
+          WHERE NOT EXISTS (SELECT 1 FROM agent_commands
+                             WHERE device_id=$1 AND kind='inventory.software'
+                               AND status IN ('queued','running'))`, [d.id])
+        .then((q) => { if (q.rowCount) wakeAgent(d.id); })
+        .catch((err: any) => console.error('[software] inventory re-scan not queued:', err.message));
+    }
     if (r.rows[0].kind === 'gpo.inventory') {
       ingestGpoInventory(id).catch((err: any) => console.error('[gpo] ingest failed:', err.message));
     }

@@ -192,6 +192,16 @@ function supplierTokens(doc: any): string[] {
 
 export interface AutoMatchResult { matched: number; considered: number; byClaude: number; suggested: number; aiRead: number }
 
+
+// One line a person can triage without opening anything: what was noticed, on whose invoice.
+// The Portal speaks as the Portal — "Ask Portal", never "Claude" — everywhere a user reads it.
+function concernTitle(concern: string, d: any): string {
+  const who = String(d.ai_supplier || d.from_name || d.file_name || 'an invoice').trim();
+  const first = String(concern || '').split(/(?<=[.!?])\s/)[0].trim().replace(/\s+/g, ' ');
+  const short = first.length > 120 ? first.slice(0, 117).trimEnd() + '…' : first;
+  return short ? `${who}: ${short}` : `The Portal noticed something on ${who}`;
+}
+
 export async function autoMatchInvoices(opts?: { useAi?: boolean }): Promise<AutoMatchResult> {
   // Claude costs money per call, so it is opt-outable and only ever reached below, after
   // the free rules have had their go.
@@ -309,7 +319,10 @@ export async function autoMatchInvoices(opts?: { useAi?: boolean }): Promise<Aut
         `INSERT INTO purchase_anomalies (dedupe_key, kind, severity, title, detail, amount, document_id, supplier_key, status, first_seen_at, last_seen_at)
          VALUES ($1,'ai_concern','medium',$2,$3,$4,$5,$6,'open',NOW(),NOW())
          ON CONFLICT (dedupe_key) DO UPDATE SET detail=EXCLUDED.detail, last_seen_at=NOW()`,
-        ['ai_concern:' + d.id, 'Claude flagged something on ' + (d.file_name || 'an invoice'), verdict.concern,
+        // The concern itself is the headline. "Claude flagged something on X.pdf" told a
+        // reader nothing and made 233 identical-looking rows — they had to open every one to
+        // find out whether it mattered. Terry: "I dont want to have to check every line."
+        ['ai_concern:' + d.id, concernTitle(verdict.concern, d), verdict.concern,
          d.parsed_amount != null ? Number(d.parsed_amount) : null, d.id, supplierKey(d) || null]
       ).catch(() => {});
     }
