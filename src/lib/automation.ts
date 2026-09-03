@@ -24,7 +24,7 @@ import { getScript } from './scripts';
 // ── Actions ─────────────────────────────────────────────────────────────────────
 
 export type ActionKey = 'power.restart' | 'power.shutdown' | 'wu.off' | 'wu.on' | 'script.run'
-  | 'software.install' | 'software.upgrade' | 'software.uninstall';
+  | 'shell.run' | 'software.install' | 'software.upgrade' | 'software.uninstall';
 
 export interface ActionDef {
   key: ActionKey;
@@ -34,7 +34,7 @@ export interface ActionDef {
   /** The agent command kind this becomes. */
   kind: string;
   /** Extra thing the form must collect: a script, or a package. */
-  needs: 'none' | 'script' | 'package' | 'software';
+  needs: 'none' | 'script' | 'package' | 'software' | 'command';
   /** True if a signed-in user could lose work. Drives the warning on the form. */
   disruptive: boolean;
 }
@@ -50,6 +50,8 @@ export const ACTIONS: ActionDef[] = [
     consequence: 'Windows Update is set back to its normal automatic state and the policy key is removed.' },
   { key: 'script.run', label: 'Run a script', kind: 'shell.powershell', needs: 'script', disruptive: false,
     consequence: 'The script runs on each machine. What it does is whatever the script does - read its review first.' },
+  { key: 'shell.run', label: 'Run a PowerShell command', kind: 'shell.powershell', needs: 'command', disruptive: false,
+    consequence: 'The command runs as SYSTEM on every machine selected. There is no preview and no undo - a command that is wrong is wrong everywhere at once.' },
   { key: 'software.install', label: 'Deploy software', kind: 'software.install', needs: 'software', disruptive: false,
     consequence: 'The software is installed silently on each machine, from the catalogue entry you pick. A machine that already has it is left alone.' },
   { key: 'software.upgrade', label: 'Update software', kind: 'winget.upgrade', needs: 'software', disruptive: false,
@@ -153,6 +155,8 @@ export interface TaskInput {
   packageId?: number | null;
   /** software_catalogue.id — what "Deploy / Update / Remove software" acts on. */
   catalogueId?: number | null;
+  /** Free-text PowerShell, for the shell.run action only. */
+  command?: string | null;
   delaySeconds?: number | null;
 }
 
@@ -238,6 +242,17 @@ export async function createTask(inp: TaskInput, userId: number | null, userName
     }
     kind = s.fileType === 'bat' || s.fileType === 'cmd' ? 'shell.cmd' : 'shell.powershell';
     payload = { script: s.body, run_as: s.runAs === 'current_user' ? 'user' : 'system', script_id: s.id, script_name: s.name };
+  } else if (def.needs === 'command') {
+    // The one action that takes free text. Deliberate: the single-machine terminal has
+    // always allowed exactly this, and refusing it across a selection would only push people
+    // to run the same command machine by machine, unlogged and unreported. It is admin-only,
+    // it is confirmed with the machine count in front of the person, and it lands in the
+    // same per-machine report as everything else — which is more accountability than the
+    // terminal gives, not less.
+    const cmd = String(inp.command || '').trim();
+    if (!cmd) return { ok: false, error: 'Type the command first.' };
+    if (cmd.length > 8000) return { ok: false, error: `That command is ${cmd.length} characters and the agent accepts 8,000.` };
+    payload = { script: cmd, run_as: 'system' };
   } else if (def.needs === 'software') {
     // The catalogue decides BOTH what is deployable and how it installs — a WinGet id, a
     // Chocolatey id, or one of our own MSIs — so the action's nominal `kind` is replaced by

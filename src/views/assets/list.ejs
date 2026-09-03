@@ -111,8 +111,14 @@ function tileHref(over){
       <option value="0" <%= filters.agent==='0'?'selected':'' %>>Without agent</option>
     </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Devices with no assigned person and no known signed-in user"><input class="js-autofilter" type="checkbox" name="nouser" value="1" <%= filters.nouser?'checked':'' %>> No known user</label>
-    <label style="display:flex;align-items:center;gap:6px;font-size:13px;" title="Anything Atera types as a server"><input class="js-autofilter" type="checkbox" name="servers" value="1" <%= filters.servers?'checked':'' %>> Servers only</label>
+    <% /* "Servers only" lived here as well as on the tile and in the type dropdown — three
+          controls for one idea. The tile keeps it, because the tile also carries the count.
+          `servers=1` still works as a URL, so the tile and any bookmark are unaffected. */ %>
     <noscript><button class="btn" type="submit">Filter</button></noscript>
+    <span class="muted" style="font-size:12.5px;font-weight:600;white-space:nowrap;" id="in-view-count"
+          title="How many devices the filters above are letting through">
+      <%= rows.length %> in view
+    </span>
     <% if (_anyFilter) { %><a class="btn" href="/assets">Clear</a><% } %>
     <%
        var flt = (typeof f !== 'undefined' && f) ? f : {};
@@ -240,7 +246,10 @@ function tileHref(over){
         var picked = rows().filter(function (c) { return c.checked; });
         if (!bar || !lbl) return;
         bar.style.display = picked.length ? 'flex' : 'none';
-        lbl.textContent = picked.length + (picked.length === 1 ? ' device selected' : ' devices selected');
+        // "8 selected" on its own invites acting on eight when you meant the hundred and
+        // forty-two the filter is showing. Say both.
+        var total = parseInt(bar.getAttribute('data-total') || '0', 10) || rows().length;
+        lbl.textContent = picked.length + ' of ' + total + ' selected';
         if (all) {
           all.checked = picked.length > 0 && picked.length === rows().length;
           all.indeterminate = picked.length > 0 && picked.length < rows().length;
@@ -550,6 +559,61 @@ function tileHref(over){
     });
   });
 })();
+</script>
+
+<style>
+  .bulk-bar { position:sticky; bottom:0; z-index:30; display:none; gap:10px; align-items:center; flex-wrap:wrap;
+    margin:14px 0 0; padding:12px 16px; border:1px solid var(--line-strong); border-radius:12px;
+    background:var(--card,#fff); box-shadow:0 -6px 20px rgba(0,0,0,.10); }
+  .bulk-bar .sep { width:1px; align-self:stretch; background:var(--line); margin:0 4px; }
+  .bulk-bar select, .bulk-bar input[type=text] { font:inherit; font-size:12.5px; padding:5px 8px;
+    border:1px solid var(--line-strong); border-radius:7px; background:var(--card,#fff); color:var(--ink); }
+</style>
+
+<form method="post" id="bulk-form" action="/assets/automate" class="bulk-bar"
+      data-total="<%= rows.length %>">
+  <input type="hidden" name="back" value="/assets">
+  <strong id="sel-count" style="font-size:13px;white-space:nowrap;"></strong>
+
+  <%# Everything that acts ON the machines hands over to Automation, which owns conditions,
+      scheduling and per-machine reporting. Nothing is dispatched from this screen. %>
+  <button class="btn btn-primary" type="submit" name="action" value="software.install"
+          title="Pick the software on the next screen, then choose when it runs">Deploy software</button>
+  <button class="btn" type="submit" name="action" value="script.run"
+          title="Run one of the scripts from the library on every machine selected">Run a script</button>
+  <button class="btn" type="submit" name="action" value="shell.run"
+          title="Type a PowerShell command and run it as SYSTEM on every machine selected">Run PowerShell</button>
+
+  <span class="sep"></span>
+
+  <select name="tagId" title="Add the selected devices to this group">
+    <option value="">Add to a group…</option>
+    <% (typeof allTags !== 'undefined' ? allTags : []).forEach(function(t){ %>
+      <option value="<%= t.id %>"><%= t.name %></option>
+    <% }); %>
+  </select>
+  <input type="text" name="newTag" placeholder="or name a new one" maxlength="80" style="width:150px;">
+  <button class="btn" type="submit" formaction="/assets/tags/add">Add</button>
+  <button class="btn" type="submit" formaction="/assets/tags/remove" title="Remove the selected devices from the group chosen on the left">Remove</button>
+
+  <button class="btn" type="button" id="sel-clear" style="margin-left:auto;">Clear selection</button>
+</form>
+
+<script>
+  // The bulk bar is a real form, so the machines it acts on are the ticks - no hidden
+  // state, and a stale selection cannot survive a filter change.
+  (function () {
+    var clear = document.getElementById('sel-clear');
+    if (!clear) return;
+    clear.addEventListener('click', function () {
+      document.querySelectorAll('.sel-row').forEach(function (c) { c.checked = false; });
+      var all = document.getElementById('sel-all');
+      if (all) { all.checked = false; all.indeterminate = false; }
+      document.dispatchEvent(new Event('change', { bubbles: true }));
+      var bar = document.getElementById('bulk-form');
+      if (bar) bar.style.display = 'none';
+    });
+  })();
 </script>
 
 <%- include('../partials/footer') %>

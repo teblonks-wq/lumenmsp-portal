@@ -637,6 +637,44 @@ function selectedIds(body: any): number[] {
   return Array.from(new Set(arr.map((x: any) => parseInt(String(x), 10)).filter((n: number) => n > 0)));
 }
 
+// ── Selection → Automation ──────────────────────────────────────────────────────
+// The list is where you FIND machines; Automation is where you act on them. Rather than
+// grow a second scheduler here, the selection is handed over: assets resolve to agent
+// devices and the task form opens with them already picked. One engine keeps owning
+// conditions, recurrence and per-machine reporting, whichever screen the machines came from.
+//
+// An asset with no agent is dropped rather than carried through as a machine that will
+// never act. It is COUNTED and named on the far side, because silently acting on eleven of
+// the twelve you ticked is how you end up believing something reached a machine it never did.
+router.post('/assets/automate', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const back = String(req.body?.back || '/assets');
+  const action = String(req.body?.action || '').trim();
+  const ids = ([] as any[]).concat(req.body?.ids || [])
+    .map((v) => parseInt(String(v), 10)).filter((n) => Number.isInteger(n) && n > 0).slice(0, 500);
+  if (!ids.length) { res.redirect(back + (back.includes('?') ? '&' : '?') + 'err=' + encodeURIComponent('Tick some machines first.')); return; }
+
+  const rows = (await pool.query(
+    `SELECT a.id, a.hostname, a.agent_device_id, ad.revoked
+       FROM customer_assets a
+       LEFT JOIN agent_devices ad ON ad.id = a.agent_device_id
+      WHERE a.id = ANY($1::int[]) AND a.merged_into_id IS NULL AND a.archived_at IS NULL`, [ids])).rows;
+  const usable = rows.filter((r: any) => r.agent_device_id && !r.revoked);
+  const dropped = rows.filter((r: any) => !r.agent_device_id || r.revoked);
+
+  if (!usable.length) {
+    res.redirect(back + (back.includes('?') ? '&' : '?') + 'err=' + encodeURIComponent(
+      'None of those machines can be reached: the LumenMSP Agent is what carries out the work, and none of them are running it.'));
+    return;
+  }
+  const params = new URLSearchParams({ devices: usable.map((r: any) => r.agent_device_id).join(',') });
+  if (action) params.set('action', action);
+  if (dropped.length) {
+    const names = dropped.map((r: any) => r.hostname || ('#' + r.id)).slice(0, 6).join(', ');
+    params.set('msg', `${dropped.length} of the ${rows.length} machines you picked ${dropped.length === 1 ? 'is' : 'are'} not running the LumenMSP Agent and ${dropped.length === 1 ? 'has' : 'have'} been left out: ${names}${dropped.length > 6 ? ', and others' : ''}.`);
+  }
+  res.redirect('/automation/scheduled-tasks/new?' + params.toString());
+});
+
 router.post('/assets/tags/add', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const back = safeBack(req.body.back, '/assets');
   const ids = selectedIds(req.body);

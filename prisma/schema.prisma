@@ -1242,17 +1242,13 @@ model BankTransaction {
   matchReason    String?   @map("match_reason")
   matchedAt      DateTime? @map("matched_at")
   qbPurchaseId   String?   @map("qb_purchase_id")  // set when pushed to QuickBooks
-  // ── Justification ──────────────────────────────────────────────────────────────
+  // ── Evidence ───────────────────────────────────────────────────────────────────
   // Terry, 2026-09-03: "even if it is not purchasing we need to provide invoice or
-  // justification." So a payment is never simply exempted from having paperwork. It is
-  // complete when it has an ATTACHMENT or a JUSTIFICATION — a written reason, on the record,
-  // attributable to a person, that goes with the entry to QuickBooks and stands in front of
-  // the accountant in place of a document. "No invoice expected" was a silent hole; this is
-  // the answer to the same question.
-  justification       String?   @map("justification")
-  justificationSource String?   @map("justification_source")  // supplier (standing reason) | manual (this payment)
-  justifiedBy         Int?      @map("justified_by")
-  justifiedAt         DateTime? @map("justified_at")
+  // justification." Every payment out of this business is evidenced by a DOCUMENT or by a
+  // JUSTIFICATION. There is no third state in which money simply left and nobody has to
+  // account for it, and there is no setting that makes the question go away — "no invoice
+  // expected" was a silent hole, and this is what fills it.
+  justificationId Int? @map("justification_id")
   notes          String?
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
@@ -2272,6 +2268,46 @@ model Supplier {
 //
 // (kind, value) is UNIQUE — one alias can only ever point at one supplier, so a match is
 // never ambiguous. Claude may PROPOSE an alias; a human confirming it makes it permanent.
+// ── Justification ───────────────────────────────────────────────────────────────
+// What stands on the record in place of a document, when no document exists or the document
+// is gone. It is not a note and not an exemption: it has an author, a date, a KIND that
+// drives how the money is treated for tax, and it travels to QuickBooks so the accountant
+// reads it where they work.
+//
+// Two ways one comes to exist:
+//   • standing — the supplier record carries the reason (drawings, wages, a DD that issues
+//     no invoice) and it is STAMPED onto each payment as its own row, so every payment
+//     carries its own evidence with a pointer back to the standing reason. One decision,
+//     but a per-payment record.
+//   • manual — someone justified this particular payment.
+//
+// Superseded rather than edited, so the history of what was claimed, and when, survives.
+model PurchaseJustification {
+  id            Int      @id @default(autoincrement())
+  transactionId Int?     @map("transaction_id")
+  supplierId    Int?     @map("supplier_id")     // set when it came from a standing reason
+  // The kind is the control. Drawings are not a business expense at all; wages belong to
+  // payroll; a lost receipt is a real deductible expense with a reason attached. Treating
+  // them as one undifferentiated "no invoice" is what loses money at year end.
+  kind          String                            // drawings | wages | no_invoice_issued | receipt_lost | statutory | finance | transfer | personal | other
+  reason        String                            // in plain words, for a human to read
+  source        String   @default("manual")       // manual | supplier
+  amount        Decimal? @db.Decimal(12, 2)
+  // Pushed to QuickBooks as the memo on the entry, so it is visible to whoever is doing the
+  // books rather than only inside the Portal.
+  pushedToQbAt  DateTime? @map("pushed_to_qb_at")
+  supersededBy  Int?      @map("superseded_by")
+  revokedAt     DateTime? @map("revoked_at")
+  revokedReason String?   @map("revoked_reason")
+  createdBy     Int?      @map("created_by")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([transactionId])
+  @@index([supplierId])
+  @@index([kind])
+  @@map("purchase_justifications")
+}
+
 model SupplierAlias {
   id          Int       @id @default(autoincrement())
   supplierId  Int       @map("supplier_id")

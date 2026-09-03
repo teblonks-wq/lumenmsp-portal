@@ -28,6 +28,7 @@
 </div>
 
 <% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+<% if (typeof notice !== 'undefined' && notice) { %><div class="alert" style="margin-bottom:12px;background:var(--tint-warn,#fffbeb);border:1px solid var(--warn-line,#fde68a);color:var(--warn-deep,#92400e);"><%= notice %></div><% } %>
 
 <form method="post" action="/automation/scheduled-tasks" id="ntForm">
 <input type="hidden" name="device_ids" id="ntDeviceIds">
@@ -44,7 +45,8 @@
 
     <label for="ntAction">Action</label>
     <select id="ntAction" name="action">
-      <% actions.forEach(function(a){ %><option value="<%= a.key %>" data-needs="<%= a.needs %>" data-consequence="<%= a.consequence %>"><%= a.label %></option><% }); %>
+      <% var _seedAction = (typeof seedAction !== 'undefined' ? seedAction : ''); %>
+      <% actions.forEach(function(a){ %><option value="<%= a.key %>" data-needs="<%= a.needs %>" data-consequence="<%= a.consequence %>" <%= _seedAction === a.key ? 'selected' : '' %>><%= a.label %></option><% }); %>
     </select>
     <div class="nt-consequence" id="ntConsequence"></div>
 
@@ -82,6 +84,14 @@
       </select>
       <p class="nt-help">Only what is in the <a class="row-link" href="/automation/catalogue">software catalogue</a> can be sent to a fleet — a typo in a package id, typed once, lands on every machine you picked. Bitdefender and MeshCentral are deliberately not here: they have their own installers that carry the company, policy and certificate, and a generic push produces an endpoint nobody manages.</p>
       <p class="nt-help" id="ntSoftwareMsiNote" style="display:none;">This one is one of our own uploaded MSIs. It can be installed, but not updated or removed this way — an MSI uninstall needs the product code from each machine.</p>
+    </div>
+
+    <div id="ntCommandWrap" class="hide">
+      <label for="ntCommand">PowerShell</label>
+      <textarea id="ntCommand" name="command" rows="6" spellcheck="false"
+        style="width:100%;font:inherit;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;padding:8px 9px;border:1px solid var(--line-strong);border-radius:7px;background:var(--card,#fff);color:var(--ink);box-sizing:border-box;"
+        placeholder="Get-Service -Name Spooler | Select-Object Status, StartType"></textarea>
+      <p class="nt-help">Runs as SYSTEM on every machine selected. Whatever it returns comes back as the outcome. There is no preview and no undo.</p>
     </div>
 
     <div id="ntDelayWrap" class="hide">
@@ -172,7 +182,12 @@
 
 <script>
 (function(){
+  // Machines chosen on /assets arrive already picked. They are seeded into the same
+  // `picked` map the list writes to, so they survive searching and filtering here exactly
+  // as if they had been ticked on this screen.
+  var SEED = <%- JSON.stringify((typeof seedDevices !== 'undefined' ? seedDevices : []).map(function(d){ return { id: d.id, hostname: d.hostname }; })) %>;
   var picked = Object.create(null);   // id -> hostname, kept across searches
+  SEED.forEach(function(d){ picked[d.id] = d.hostname || String(d.id); });
   var devices = [];
 
   var action = document.getElementById('ntAction');
@@ -188,6 +203,7 @@
     show(document.getElementById('ntScriptWrap'), needs === 'script');
     show(document.getElementById('ntPackageWrap'), needs === 'package');
     show(document.getElementById('ntSoftwareWrap'), needs === 'software');
+    show(document.getElementById('ntCommandWrap'), needs === 'command');
     show(document.getElementById('ntDelayWrap'), action.value.indexOf('power.') === 0);
   }
   function syncCondition(){

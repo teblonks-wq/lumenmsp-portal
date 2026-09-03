@@ -96,12 +96,28 @@ router.get('/automation/scheduled-tasks/new', requireAuth, requireAdmin, async (
         WHERE c.deleted_at IS NULL GROUP BY c.id, c.name HAVING COUNT(ad.id) > 0 ORDER BY c.name`),
     listCatalogue(),
   ]);
+  // Arriving from a selection on /assets: the machines and the action come in on the URL,
+  // so picking twelve machines there does not mean finding them again here. Ids are agent
+  // device ids, already resolved and filtered by the sender - anything unknown is simply
+  // not preselected rather than silently widening the task.
+  const seedIds = String(req.query.devices || '').split(',')
+    .map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0).slice(0, 500);
+  const seedDevices = seedIds.length
+    ? (await pool.query(
+      `SELECT ad.id, ad.hostname, c.name AS customer_name
+         FROM agent_devices ad LEFT JOIN customers c ON c.id = ad.customer_id
+        WHERE ad.id = ANY($1::int[]) AND ad.revoked IS NOT TRUE
+        ORDER BY c.name NULLS LAST, ad.hostname`, [seedIds])).rows
+    : [];
+  const seedAction = ACTIONS.some((a) => a.key === String(req.query.action || '')) ? String(req.query.action) : '';
+
   res.render('automation/task-new', {
     user: req.session.user!,
     actions: ACTIONS, conditions: CONDITIONS, recurrences: RECURRENCES,
     scripts: scripts.filter((s) => s.osType === 'windows'),
     packages: packages.rows, customers: customers.rows, catalogue,
-    notice: null, error: req.query.err || null,
+    seedDevices, seedAction,
+    notice: req.query.msg || null, error: req.query.err || null,
   });
 });
 
@@ -145,6 +161,7 @@ router.post('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req
     scriptId: parseInt(String(b.script_id || ''), 10) || null,
     packageId: parseInt(String(b.package_id || ''), 10) || null,
     catalogueId: parseInt(String(b.catalogue_id || ''), 10) || null,
+    command: String(b.command || '') || null,
     delaySeconds: b.delay_seconds != null ? parseInt(String(b.delay_seconds), 10) : null,
   }, req.session.user!.id, req.session.user!.displayName);
 
