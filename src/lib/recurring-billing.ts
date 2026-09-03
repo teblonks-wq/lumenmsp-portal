@@ -237,7 +237,7 @@ async function autoGc(inv: any): Promise<boolean> {
   const gc = await GoCardless.load();
   if (!gc.isConfigured()) return false;
   const gcId = await gc.createPayment(inv.gocardless_mandate_id, Math.round(Number(inv.total) * 100), 'Invoice ' + inv.invoice_number, chargeDateFor(inv.due_date));
-  await pool.query(`UPDATE invoices SET gocardless_payment_id=$1, payment_status='pending' WHERE id=$2`, [gcId, inv.id]);
+  await pool.query(`UPDATE invoices SET gocardless_payment_id=$1, gocardless_submitted_at=NOW(), payment_status='pending' WHERE id=$2`, [gcId, inv.id]);
   return true;
 }
 
@@ -416,7 +416,7 @@ export async function finaliseCommsBillRun(period: string, userId: number | null
           const pence = Math.round((Number(inv.total) || 0) * 100);
           if (pence > 0) {
             const gcId = await gc.createPayment(inv.gocardless_mandate_id, pence, 'Invoice ' + inv.invoice_number, chargeDateFor(inv.due_date));
-            await pool.query("UPDATE invoices SET gocardless_payment_id=$1, payment_status='pending' WHERE id=$2", [gcId, inv.id]);
+            await pool.query("UPDATE invoices SET gocardless_payment_id=$1, gocardless_submitted_at=NOW(), payment_status='pending' WHERE id=$2", [gcId, inv.id]);
             collected++;
           }
         } else if (isEmailAddr(to)) {

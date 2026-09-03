@@ -920,7 +920,7 @@ export async function completeInvoice(id: number, userId: number): Promise<strin
       else if (inv.gocardless_payment_id && inv.payment_status !== 'failed') { results.push('already submitted for payment'); }
       else {
         const gcId = await gc.createPayment(inv.gocardless_mandate_id, pence, 'Invoice ' + inv.invoice_number, chargeDateFor(inv.due_date));
-        await pool.query(`UPDATE invoices SET gocardless_payment_id=$1, payment_status='pending' WHERE id=$2`, [gcId, id]);
+        await pool.query(`UPDATE invoices SET gocardless_payment_id=$1, gocardless_submitted_at=NOW(), payment_status='pending' WHERE id=$2`, [gcId, id]);
         results.push('submitted for payment');
       }
     } else if (isEmailAddr(to)) {
@@ -1026,8 +1026,186 @@ export async function submitInvoiceToGCAction(id: number): Promise<string> {
   if (pence <= 0) return 'zero total - skipped';
   if (inv.gocardless_payment_id && inv.payment_status !== 'failed') return 'already submitted';
   const gcId = await gc.createPayment(inv.gocardless_mandate_id, pence, 'Invoice ' + inv.invoice_number, chargeDateFor(inv.due_date));
-  await pool.query(`UPDATE invoices SET gocardless_payment_id=$1, payment_status='pending' WHERE id=$2`, [gcId, id]);
+  await pool.query(`UPDATE invoices SET gocardless_payment_id=$1, gocardless_submitted_at=NOW(), payment_status='pending' WHERE id=$2`, [gcId, id]);
   return 'submitted for payment';
+}
+
+// ── Payment reminders ───────────────────────────────────────────────────────────
+// One email per CUSTOMER, never per invoice. Terry, 3 Sep 2026: selecting four invoices
+// for the same client must produce ONE email that talks about all four. Four separate
+// chasers for the same debt, arriving together, reads as a system with nobody in charge
+// of it — and it invites the reply "which one do you actually want paying?".
+//
+// Three things are deliberately not chased, and every one is REPORTED rather than quietly
+// dropped. "12/12 done" hiding four skips is how you come to believe you chased someone
+// you never chased:
+//   • already paid  — nothing is owed.
+//   • Direct Debit  — collection is scheduled. That customer is not late and has done
+//                     nothing wrong; chasing them is a way to lose a good payer. When a
+//                     collection has actually failed, chase it deliberately.
+//   • not yet due   — a reminder that tells somebody they are late when they are not
+//                     costs more goodwill than the chase could ever be worth.
+//
+// Attachments are capped: past REMINDER_ATTACH_LIMIT invoices the email still lists every
+// one of them but attaches none, because a twenty-megabyte reminder is one that bounces.
+const REMINDER_ATTACH_LIMIT = 6;
+
+/**
+ * Who the money conversation goes to: the designated billing contact, else the primary
+ * contact, else the company's own address.
+ *
+ * Deliberately wider than billingEmail(), which only ever looks at billing_contact_id and
+ * returns nothing otherwise — so every customer without one set was being skipped by the
+ * bulk actions with "no billing email", even when a perfectly good primary contact existed.
+ */
+async function billingRecipient(inv: any): Promise<{ to: string; name: string }> {
+  if (inv.billing_contact_id) {
+    const bc = await pool.query('SELECT email, full_name FROM customer_contacts WHERE id=$1', [inv.billing_contact_id]);
+    if (isEmailAddr(bc.rows[0]?.email)) return { to: bc.rows[0].email, name: bc.rows[0].full_name || '' };
+  }
+  if (inv.cust_id) {
+    const pc = await pool.query(
+      `SELECT email, full_name FROM customer_contacts
+        WHERE customer_id=$1 AND email IS NOT NULL AND email <> ''
+        ORDER BY is_primary DESC, id LIMIT 1`, [inv.cust_id]);
+    if (isEmailAddr(pc.rows[0]?.email)) return { to: pc.rows[0].email, name: pc.rows[0].full_name || '' };
+  }
+  if (isEmailAddr(inv.email)) return { to: inv.email, name: inv.name || '' };
+  return { to: '', name: '' };
+}
+
+export interface ReminderOutcome {
+  /** Invoices actually covered by a reminder. */
+  ok: number;
+  /** Emails sent — fewer than `ok` whenever a customer had more than one invoice. */
+  emails: number;
+  skipped: string[];
+  failed: string[];
+}
+
+const remEsc = (s: any) => String(s ?? '').replace(/[&<>"]/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as Record<string, string>)[c] || c);
+const remMoney = (n: any) => '£' + (Number(n) || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const remDate = (d: any) => (d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+
+/**
+ * Chase a set of invoices. Groups by customer and sends one email each.
+ * Used by the bulk action AND by the single-invoice button — same rules either way, so a
+ * reminder sent from an invoice page can never behave differently from one sent from the list.
+ */
+export async function remindCustomersAction(ids: number[], userId: number): Promise<ReminderOutcome> {
+  const out: ReminderOutcome = { ok: 0, emails: 0, skipped: [], failed: [] };
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const groups = new Map<number, any[]>();
+
+  for (const id of Array.from(new Set(ids))) {
+    const inv = await loadInvForAction(id);
+    if (!inv) { out.skipped.push('#' + id + ': not found'); continue; }
+    const label = inv.invoice_number || ('#' + id);
+    if (inv.payment_status === 'paid') { out.skipped.push(label + ': already paid'); continue; }
+    if (!inv.cust_id) { out.skipped.push(label + ': no customer on the invoice'); continue; }
+    if (inv.gocardless_mandate_id) { out.skipped.push(label + ': on Direct Debit — collection is scheduled'); continue; }
+    const due = inv.due_date ? new Date(inv.due_date) : null;
+    if (!due || isNaN(due.getTime())) { out.skipped.push(label + ': no due date, so it cannot be overdue'); continue; }
+    if (due >= today) { out.skipped.push(label + ': not due until ' + remDate(due)); continue; }
+    if (!groups.has(inv.cust_id)) groups.set(inv.cust_id, []);
+    groups.get(inv.cust_id)!.push(inv);
+  }
+
+  for (const invs of Array.from(groups.values())) {
+    // Oldest first: the email should read as a history, and the line the customer sees
+    // first should be the one outstanding longest.
+    invs.sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)));
+    const first = invs[0];
+    const many = invs.length > 1;
+    const label = (i: any) => i.invoice_number || ('#' + i.id);
+
+    try {
+      const { to, name } = await billingRecipient(first);
+      if (!isEmailAddr(to)) {
+        invs.forEach((i) => out.skipped.push(label(i) + ': no billing or contact email for ' + (first.name || 'that customer')));
+        continue;
+      }
+
+      const rows: string[] = [];
+      let total = 0;
+      for (const i of invs) {
+        const amount = Number(i.balance ?? i.total) || 0;
+        total += amount;
+        let link = '';
+        try { link = (await invoiceViewUrl(i.id)) || ''; } catch { /* the row still stands without a link */ }
+        const num = remEsc(label(i));
+        rows.push(
+          '<tr>'
+          + `<td style="padding:6px 14px 6px 0;">${link ? `<a href="${remEsc(link)}">${num}</a>` : num}</td>`
+          + `<td style="padding:6px 14px 6px 0;color:#6b7280;">${remDate(i.issue_date)}</td>`
+          + `<td style="padding:6px 14px 6px 0;color:#6b7280;">${remDate(i.due_date)}</td>`
+          + `<td style="padding:6px 0;text-align:right;font-weight:600;">${remMoney(amount)}</td>`
+          + '</tr>');
+      }
+
+      const attachments: any[] = [];
+      if (invs.length <= REMINDER_ATTACH_LIMIT) {
+        for (const i of invs) {
+          try {
+            const pdf = await renderInvoicePdf(i.id);
+            if (pdf && pdf.length > 1000) {
+              attachments.push({ filename: label(i) + '.pdf', contentType: 'application/pdf', base64: pdf.toString('base64') });
+            }
+          } catch { /* a missing PDF must not stop the chase — the table still says what is owed */ }
+        }
+      }
+
+      const html = `<p>Hi ${remEsc(name || first.name || 'there')},</p>`
+        + `<p>Our records show ${many ? `<strong>${invs.length} invoices</strong> that are` : 'the following invoice as'} past due. `
+        + 'Could you let us know when we can expect payment?</p>'
+        + '<table style="border-collapse:collapse;font-size:14px;margin:14px 0;">'
+        + '<thead><tr>'
+        + '<th style="text-align:left;padding:0 14px 6px 0;border-bottom:1px solid #e5e7eb;">Invoice</th>'
+        + '<th style="text-align:left;padding:0 14px 6px 0;border-bottom:1px solid #e5e7eb;">Issued</th>'
+        + '<th style="text-align:left;padding:0 14px 6px 0;border-bottom:1px solid #e5e7eb;">Due</th>'
+        + '<th style="text-align:right;padding:0 0 6px;border-bottom:1px solid #e5e7eb;">Amount</th>'
+        + '</tr></thead><tbody>' + rows.join('')
+        + (many
+          ? '<tr><td colspan="3" style="padding:10px 14px 0 0;border-top:1px solid #e5e7eb;font-weight:700;">Total outstanding</td>'
+            + `<td style="padding:10px 0 0;border-top:1px solid #e5e7eb;text-align:right;font-weight:700;">${remMoney(total)}</td></tr>`
+          : '')
+        + '</tbody></table>'
+        + (attachments.length
+          ? `<p>${attachments.length === 1 ? 'A copy is attached.' : 'Copies of all ' + attachments.length + ' are attached.'}</p>`
+          : '<p>You can open any of them using the links above.</p>')
+        + '<p>If payment is already on its way, thank you — please ignore this message. If any of '
+        + 'these are in query, reply to this email and we will look into it.</p>';
+
+      await sendMail({
+        to,
+        subject: many ? `Payment reminder — ${invs.length} outstanding invoices` : 'Payment reminder — invoice ' + label(first),
+        html,
+        signatureName: 'Accounts Department',
+        attachments: attachments.length ? attachments : undefined,
+      });
+
+      // Logged against EVERY invoice in the group, so each invoice's own history shows it
+      // was chased — and names the others that shared the email, or the history would imply
+      // a chaser that was never sent on its own.
+      const others = invs.map((i) => label(i)).join(', ');
+      for (const i of invs) {
+        await pool.query(
+          `INSERT INTO communications (entity_type, entity_id, direction, from_name, from_email, to_email, subject, body, sent_by_user_id)
+           VALUES ('invoice',$1,'outbound',$2,$3,$4,$5,$6,$7)`,
+          [i.id, config.FROM_NAME, config.FROM_EMAIL, to,
+            many ? `Payment reminder (${invs.length} invoices)` : 'Payment reminder ' + label(i),
+            many ? `Reminder sent to ${to} covering ${others}.` : `Reminder sent to ${to}.`, userId]);
+      }
+      out.ok += invs.length;
+      out.emails += 1;
+    } catch (e: any) {
+      const m = e?.message || 'send failed';
+      invs.forEach((i) => out.failed.push(label(i) + ': ' + m));
+      console.error('[reminder] customer group failed:', m);
+    }
+  }
+  return out;
 }
 
 export async function remindInvoiceAction(id: number, userId: number): Promise<string> {
@@ -1250,7 +1428,7 @@ router.post('/invoices/:id/submit-for-payment', requireAuth, async (req: Request
   try {
     const pence = Math.round(Number(inv.total) * 100);
     const gcId = await gc.createPayment(inv.gocardless_mandate_id, pence, 'Invoice ' + inv.invoice_number, chargeDateFor(inv.due_date));
-    await pool.query(`UPDATE invoices SET gocardless_payment_id=$1, payment_status='pending' WHERE id=$2`, [gcId, id]);
+    await pool.query(`UPDATE invoices SET gocardless_payment_id=$1, gocardless_submitted_at=NOW(), payment_status='pending' WHERE id=$2`, [gcId, id]);
     res.redirect('/invoices/' + id + '?msg=' + encodeURIComponent('Payment submitted to GoCardless'));
   } catch (e: any) { res.redirect('/invoices/' + id + '?err=' + encodeURIComponent(e.message)); }
 });

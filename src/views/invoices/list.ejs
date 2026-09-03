@@ -7,6 +7,21 @@
      if (bal > 0 && bal < tot) return { label:'Part-paid', cls:'badge-primary' };
      var overdue = i.due_date && new Date(i.due_date) < new Date(new Date().toDateString());
      return overdue ? { label:'Overdue', cls:'badge-failed' } : { label:'Unpaid', cls:'badge-primary' };
+   }
+   // Sync-column tooltips. A grey icon has to say what has NOT happened — the titles used
+   // to read "Emailed to customer" and "In QuickBooks" whether the icon was lit or not, so
+   // hovering an unsent invoice told you it had been sent.
+   function syncWhen(ts){
+     if (!ts) return '';
+     return new Date(ts).toLocaleString('en-GB', { timeZone:'Europe/London',
+       day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+   }
+   function syncTip(on, onText, offText, ts, extra){
+     if (!on) return offText;
+     var w = syncWhen(ts);
+     // No date for something that plainly happened means the date was never recorded —
+     // usually a row that predates the column. Say that, rather than borrowing another date.
+     return onText + ' · ' + (w || 'date not recorded') + (extra || '');
    } %>
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
@@ -265,9 +280,17 @@
             <td class="money"><% if (Number(i.balance) > 0) { %><span style="color:var(--warn-fg);"><%= money(i.balance) %></span><% } else if (i.payment_status==='paid') { %><span class="muted">—</span><% } else { %><span class="muted"><%= money(i.total) %></span><% } %></td>
             <td class="muted"><%= i.issue_date ? new Date(i.issue_date).toLocaleDateString('en-GB') : '—' %></td>
             <td style="text-align:center;white-space:nowrap;">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.emailed ? 'var(--blue)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title>Emailed to customer</title><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.gocardless_payment_id ? 'var(--ok-fg)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= i.gocardless_payment_id ? 'Submitted for payment (GoCardless)' : 'Not submitted for payment' %></title><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.quickbooks_invoice_id ? 'var(--warn-fg)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= i.payment_synced_at ? 'In QuickBooks · payment synced ' + new Date(i.payment_synced_at).toLocaleString('en-GB') : 'In QuickBooks' %></title><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+              <%
+                 // The invoice's own send date, falling back to the newest outbound message.
+                 // A later message than the send is a resend, a reminder or a chase, and it
+                 // is worth saying so rather than showing one date and hiding the other.
+                 var _emAt = i.emailed_at || i.last_emailed;
+                 var _emExtra = (i.emailed_at && i.last_emailed && new Date(i.last_emailed) > new Date(i.emailed_at))
+                   ? ' · last message ' + syncWhen(i.last_emailed) : '';
+              %>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.emailed ? 'var(--blue)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= syncTip(i.emailed, 'Emailed to customer', 'Not emailed to the customer', _emAt, _emExtra) %></title><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 5L2 7"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.gocardless_payment_id ? 'var(--ok-fg)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= syncTip(!!i.gocardless_payment_id, 'Submitted for payment (GoCardless)', 'Not submitted for payment', i.gocardless_submitted_at) %></title><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="<%= i.quickbooks_invoice_id ? 'var(--warn-fg)' : off %>" stroke-width="2" style="vertical-align:middle;margin:0 2px;"><title><%= syncTip(!!i.quickbooks_invoice_id, 'Sent to QuickBooks', 'Not in QuickBooks', i.qb_push_at, i.payment_synced_at ? ' · payment state last read ' + syncWhen(i.payment_synced_at) : '') %></title><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
             </td>
           </tr>
         <% }); %>

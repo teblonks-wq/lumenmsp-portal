@@ -1751,6 +1751,10 @@ model Invoice {
   quoteId             Int?      @map("quote_id")
   quickbooksInvoiceId String?   @map("quickbooks_invoice_id")
   gocardlessPaymentId String?   @map("gocardless_payment_id")
+  // Set alongside gocardlessPaymentId wherever a payment is submitted. Rows that predate
+  // this column stay NULL and the tooltip says the date was not recorded, rather than
+  // borrowing another date and quietly implying it means something it does not.
+  gocardlessSubmittedAt DateTime? @map("gocardless_submitted_at")
   gocardlessPayoutRef String?   @map("gocardless_payout_ref")  // bank-statement ref of the GC payout that included this payment
   gocardlessPaidOutAt DateTime? @db.Date @map("gocardless_paid_out_at") // payout arrival date
   paymentStatus       String    @default("unpaid") @map("payment_status") // unpaid | pending | paid | failed

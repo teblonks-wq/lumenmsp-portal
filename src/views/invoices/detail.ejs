@@ -28,6 +28,14 @@
     <a class="btn" href="/invoices/<%= invoice.id %>/pdf" target="_blank">Preview PDF</a>
     <button class="btn" type="button" onclick="finOpen()" style="color:var(--accent-deep);border-color:var(--accent-line);" title="Finance Agent — ask anything about this invoice; it checks the LIVE GoCardless payment, credits, the customer's other invoices and the email thread">&pound; Finance Agent</button>
     <form method="post" action="/invoices/<%= invoice.id %>/resend-finance" onsubmit="return confirm('Email this invoice (PDF attached) to the finance contact?');" style="margin:0;"><button class="btn" type="submit">✉ Email to finance</button></form>
+    <%# Only offered when there is something to chase. A Send reminder button on a settled
+        invoice is an invitation to email a customer who has already paid. %>
+    <% if (String(invoice.payment_status || 'unpaid') !== 'paid') { %>
+    <form method="post" action="/invoices/<%= invoice.id %>/remind" style="margin:0;"
+          onsubmit="return confirm('Send a payment reminder for this invoice to the billing contact?\n\nIt is only sent if the invoice is actually past due, is not paid, and the customer is not on Direct Debit — you will be told if it is not sent, and why.');">
+      <button class="btn" type="submit" title="Chases the billing contact. Skipped, with a reason, if it is not overdue or the customer pays by Direct Debit.">&#9200; Send reminder</button>
+    </form>
+    <% } %>
     <form method="post" action="/invoices/<%= invoice.id %>/complete" onsubmit="return confirm('Complete this invoice — email the finance contact, push to QuickBooks and submit for Direct Debit?');" style="margin:0;"><button class="btn btn-primary" type="submit">Complete</button></form>
     <% if (!invoice.recurring_parent_id) { %><button class="btn" type="button" onclick="invModal('recurring')">♻ <%= invoice.is_recurring ? 'Recurring' : 'Make recurring' %></button><% } %>
     <button class="btn" type="button" onclick="invModal('credit')">Log overpayment</button>

@@ -143,7 +143,7 @@ export async function linkGcPaymentsToInvoices(): Promise<{ customers: number; l
       const pick = candidates[0];
       used.add(String(pick.id));
       await pool.query(
-        `UPDATE invoices SET gocardless_payment_id=$2, payment_status='pending' WHERE id=$1`,
+        `UPDATE invoices SET gocardless_payment_id=$2, gocardless_submitted_at=NOW(), payment_status='pending' WHERE id=$1`,
         [inv.id, pick.id]);
       out.linked++;
       console.log(`[gocardless-sync] linked ${inv.invoice_number} → ${pick.id} (${pick.status}, £${(pence / 100).toFixed(2)}, ${pick.charge_date})`);

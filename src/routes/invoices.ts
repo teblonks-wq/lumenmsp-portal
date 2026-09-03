@@ -6,7 +6,7 @@ import { logActivity } from '../lib/activity';
 import { notify } from '../lib/notifications';
 import { renderInvoicePdf, loadInvoiceForRender, renderInvoiceHtml } from '../lib/invoice-pdf';
 import { htmlToPdf } from '../lib/pdf';
-import { emailInvoiceAction, pushInvoiceToQBAction, submitInvoiceToGCAction, remindInvoiceAction } from './integrations';
+import { emailInvoiceAction, pushInvoiceToQBAction, submitInvoiceToGCAction, remindInvoiceAction, remindCustomersAction } from './integrations';
 import { backfillInvoiceBalances, balanceContradictions, invoicesNotInQb, verifyAgainstQuickBooks } from '../lib/invoice-balance';
 import { sendMail } from '../lib/mailer';
 import { invoiceEmailHtml } from '../lib/emails';
@@ -252,12 +252,14 @@ router.get('/invoices', requireAuth, async (req: Request, res: Response) => {
     `SELECT i.id, i.invoice_number, i.title, i.total, i.balance, i.status, i.payment_status,
             i.issue_date, i.due_date, i.payment_synced_at, i.is_recurring,
             i.quickbooks_invoice_id, i.gocardless_payment_id,
+            i.emailed_at, i.qb_push_at, i.gocardless_submitted_at, em.last_emailed,
             (i.quickbooks_invoice_id IS NOT NULL AND i.created_by IS NULL) AS is_legacy,
             c.name AS customer_name, c.id AS customer_id, c.gocardless_mandate_id,
             (em.entity_id IS NOT NULL) AS emailed${matchSelect}
      FROM invoices i
      LEFT JOIN customers c ON c.id = i.customer_id
-     LEFT JOIN (SELECT entity_id FROM communications WHERE entity_type='invoice' AND direction='outbound' GROUP BY entity_id) em ON em.entity_id = i.id
+     LEFT JOIN (SELECT entity_id, MAX(created_at) AS last_emailed FROM communications
+                  WHERE entity_type='invoice' AND direction='outbound' GROUP BY entity_id) em ON em.entity_id = i.id
      WHERE ${where.join(' AND ')} ORDER BY i.issue_date DESC NULLS LAST, i.id DESC`, params
   );
   const stat = await pool.query(`SELECT status, COUNT(*)::int n FROM invoices WHERE deleted_at IS NULL GROUP BY status`);
@@ -424,6 +426,21 @@ router.post('/invoices/bulk', requireAuth, async (req: Request, res: Response) =
     await logActivity(uid, 'deleted', 'invoices', id, 'Deleted invoice #' + id + ' (bulk)');
     return 'deleted';
   };
+  // Reminders are grouped by CUSTOMER and so cannot go through the per-invoice loop below:
+  // four invoices for one client must arrive as ONE email, not four. It reports invoices
+  // covered AND emails sent, because those are different numbers and both matter.
+  if (action === 'reminder') {
+    const r = await remindCustomersAction(ids, uid);
+    const parts: string[] = [r.ok
+      ? `Reminders: ${r.emails} email${r.emails === 1 ? '' : 's'} covering ${r.ok} of ${ids.length} invoice${ids.length === 1 ? '' : 's'}`
+      : `Reminders: none sent, of ${ids.length} selected`];
+    if (r.skipped.length) parts.push(`${r.skipped.length} skipped — ${r.skipped.slice(0, 12).join('; ')}${r.skipped.length > 12 ? ' …' : ''}`);
+    if (r.failed.length) parts.push(`${r.failed.length} failed — ${r.failed.slice(0, 12).join('; ')}${r.failed.length > 12 ? ' …' : ''}`);
+    const bad = r.skipped.length > 0 || r.failed.length > 0;
+    res.redirect(withParam(backTo, (bad ? 'err' : 'msg') + '=' + encodeURIComponent(parts.join(' · '))));
+    return;
+  }
+
   const run = action === 'email' ? (id: number) => emailInvoiceAction(id, uid)
     : action === 'qb' ? (id: number) => pushInvoiceToQBAction(id)
     : action === 'gc' ? (id: number) => submitInvoiceToGCAction(id)
@@ -694,6 +711,21 @@ router.get('/invoices/:id/pdf', requireAuth, async (req: Request, res: Response)
     res.setHeader('Content-Disposition', (req.query.dl ? 'attachment' : 'inline') + `; filename="${numRow.rows[0].invoice_number}.pdf"`);
     res.send(pdf);
   } catch (e) { console.error('Invoice PDF error:', e); res.status(500).render('error', { message: 'PDF generation failed (Chromium missing?).' }); }
+});
+
+// ── Chase ONE invoice from its own page ─────────────────────────────────────────
+// Goes through the same grouped path as the bulk action, so the rules cannot drift apart:
+// a paid, not-yet-due or Direct Debit invoice is refused here for the same reason and in
+// the same words as it would be from the list.
+router.post('/invoices/:id/remind', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const r = await remindCustomersAction([id], req.session.user!.id);
+  if (r.ok) {
+    res.redirect('/invoices/' + id + '?msg=' + encodeURIComponent('Payment reminder sent.'));
+    return;
+  }
+  const why = r.failed[0] || r.skipped[0] || 'nothing to chase';
+  res.redirect('/invoices/' + id + '?err=' + encodeURIComponent('No reminder sent — ' + why.replace(/^[^:]*:\s*/, '')));
 });
 
 // ── Resend the invoice (with PDF attached) to the finance / billing contact ──────
