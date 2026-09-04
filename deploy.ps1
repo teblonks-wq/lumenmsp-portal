@@ -131,7 +131,11 @@ Write-Host ("Snapshot saved: {0}" -f $snapName) -ForegroundColor DarkGray
 ssh @sshOpts $server "sudo bash -c 'ls -1t /var/backups/predeploy/*.dump 2>/dev/null | tail -n +21 | xargs -r rm -f'"
 # ------------------------------------------------------------------------------
 
-ssh @sshOpts $server "mkdir -p $remotePath && tar --warning=no-unknown-keyword -xzf /tmp/portal-deploy.tar.gz -C $remotePath && rm -f /tmp/portal-deploy.tar.gz && cd $remotePath && npm install --omit=dev --silent && npx prisma generate && npx prisma db push --accept-data-loss && pm2 restart $appName 2>/dev/null || pm2 start dist/index.js --name $appName && pm2 save"
+# --no-audit --no-fund (added 2026-09-04): the audit POST to registry.npmjs.org is the ONLY network
+# call in a no-op install, and when that endpoint is slow or returns 400 (it did, twice, today) the
+# deploy sits silently for 5+ minutes after "Snapshot saved". We deploy a lockfile we already built
+# and tested locally; auditing it again on the server buys nothing.
+ssh @sshOpts $server "mkdir -p $remotePath && tar --warning=no-unknown-keyword -xzf /tmp/portal-deploy.tar.gz -C $remotePath && rm -f /tmp/portal-deploy.tar.gz && cd $remotePath && npm install --omit=dev --silent --no-audit --no-fund && npx prisma generate && npx prisma db push --accept-data-loss && pm2 restart $appName 2>/dev/null || pm2 start dist/index.js --name $appName && pm2 save"
 
 # Step 5: Clean up
 Remove-Item $staging -Recurse -Force
