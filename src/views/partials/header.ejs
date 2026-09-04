@@ -351,6 +351,7 @@
     </button>
     <span id="notifLatest" class="muted notif-latest"></span>
     <a href="/notifications" class="row-link" style="font-size:12px;">View all</a>
+    <a href="#" id="notifClearAll" class="row-link" style="font-size:12px;margin-left:8px;" title="Take everything off the list. Nothing is deleted — the full panel still has it.">Clear all</a>
     <div id="notifDropdown" class="notif-dropdown"></div>
   </div>
   <div class="topbar-right">
@@ -420,6 +421,16 @@
       cnt=document.getElementById('notifCount'), latest=document.getElementById('notifLatest');
   if(!bell) return;
   function esc(s){return (s||'').replace(/[&<>"]/g,function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];});}
+  var clearAll = document.getElementById('notifClearAll');
+  if (clearAll) clearAll.addEventListener('click', function(e){
+    e.preventDefault();
+    // No confirm: clearing is not destructive — cleared_at is a timestamp and /notifications
+    // still shows everything. A dialog for a reversible action just trains people past it.
+    fetch('/notifications/clear-all', { method: 'POST' })
+      .then(function(){ load(); if (dd) dd.style.display = 'none'; })
+      .catch(function(){});
+  });
+
   function load(){
     fetch('/notifications.json').then(function(r){return r.json();}).then(function(d){
       var items=d.items||[];

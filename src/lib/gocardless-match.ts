@@ -305,8 +305,10 @@ export async function linkGcCustomer(gcCustomerId: string, portalCustomerId: num
 
 // Auto-link every confident row, and refresh the cached mandate of everyone already linked so a
 // re-signed customer starts collecting again on its own.
-export async function applyMatches(state: MatchState): Promise<{ linked: number; refreshed: number }> {
+export async function applyMatches(state: MatchState): Promise<{ linked: number; refreshed: number; linkedNames: string[] }> {
   let linked = 0, refreshed = 0;
+  // Named, not just counted — "1 new mandate" tells you nothing you can act on.
+  const linkedNames: string[] = [];
   for (const r of state.rows) {
     if (r.linked) {
       const c = r.linked;
@@ -323,6 +325,7 @@ export async function applyMatches(state: MatchState): Promise<{ linked: number;
       await linkGcCustomer(r.gcId, r.match.id, r.mandateId);
       r.linked = r.match; r.match.gocardless_customer_id = r.gcId; r.match.gocardless_mandate_id = r.mandateId;
       r.match = null; r.tier = null; r.confident = false;
+      if (r.linked && (r.linked as any).name) linkedNames.push(String((r.linked as any).name));
       linked++;
     }
   }
@@ -331,5 +334,5 @@ export async function applyMatches(state: MatchState): Promise<{ linked: number;
     state.stats.suggested = state.rows.filter((x) => !x.linked && x.match).length;
     state.stats.unmatched = state.rows.filter((x) => !x.linked && !x.match).length;
   }
-  return { linked, refreshed };
+  return { linked, refreshed, linkedNames };
 }

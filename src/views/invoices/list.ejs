@@ -27,6 +27,7 @@
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div><h1>Invoices</h1><p class="muted"><%= invoices.length %> shown<% if (period && period.from) { %> · <%= period.label %><% } %></p></div>
   <button class="btn" type="button" onclick="finOpen()" style="color:var(--accent-deep);border-color:var(--accent-line);" title="Finance Agent — customer-wide money questions: every invoice, every GoCardless collection, credits, reconciliation pre-computed">&pound; Finance Agent</button>
+  <a class="btn" href="/invoices/health" title="Invoice health — what QuickBooks actually holds, missing balances and issue dates, and the repairs">&#10010; Health</a>
   <a class="btn btn-primary" href="/invoices/new">+ New invoice</a>
 </div>
 
@@ -56,7 +57,7 @@
   <a class="tile acc-bad" href="<%= qs({paid:'unpaid'}) %>" title="Unpaid and past the due date, in the rows shown">
     <div class="n <%= _overdue ? 'bad' : '' %>"><%= _overdue %><% if (_overdueVal) { %> <small><%= money(_overdueVal) %></small><% } %></div><div class="l">overdue</div><div class="h">show unpaid</div></a>
   <a class="tile acc-plain<%= status==='draft' ? ' on' : '' %>" href="<%= qs({status: status==='draft' ? '' : 'draft'}) %>">
-    <div class="n"><%= statusCounts.draft||0 %></div><div class="l">draft</div><div class="h"><%= status==='draft' ? 'filtering — click to clear' : 'click to filter' %></div></a>
+    <div class="n"><%= statusCounts.draft||0 %></div><div class="l">raised</div><div class="h"><%= status==='draft' ? 'filtering — click to clear' : 'click to filter' %></div></a>
   <a class="tile<%= status==='issued' ? ' on' : '' %>" href="<%= qs({status: status==='issued' ? '' : 'issued'}) %>">
     <div class="n info"><%= statusCounts.issued||0 %></div><div class="l">issued</div><div class="h"><%= status==='issued' ? 'filtering — click to clear' : 'click to filter' %></div></a>
   <a class="tile<%= status==='paid' ? ' on' : '' %>" href="<%= qs({status: status==='paid' ? '' : 'paid'}) %>">
@@ -66,8 +67,9 @@
 <!-- Status tabs -->
 <div class="tabs" style="margin-bottom:14px;">
   <a class="tab-btn <%= status==='' ? 'active' : '' %>" href="<%= qs({status:''}) %>">All</a>
+  <% var _slabel = { draft: 'Raised', issued: 'Issued', paid: 'Paid', void: 'Void' }; %>
   <% ['draft','issued','paid','void'].forEach(function(s){ %>
-    <a class="tab-btn <%= status===s ? 'active' : '' %>" href="<%= qs({status:s}) %>"><%= s.charAt(0).toUpperCase()+s.slice(1) %> <span class="muted">(<%= statusCounts[s]||0 %>)</span></a>
+    <a class="tab-btn <%= status===s ? 'active' : '' %>" href="<%= qs({status:s}) %>"><%= _slabel[s] %> <span class="muted">(<%= statusCounts[s]||0 %>)</span></a>
   <% }); %>
 </div>
 

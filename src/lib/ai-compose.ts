@@ -495,6 +495,16 @@ export function stripTrailingJson(text: string): string {
   return t;
 }
 
+// Send the system prompt as a cache_control block on EVERY path, not just the corpus one.
+// Nothing changes when the prompt is under the model's minimum (Anthropic simply does not
+// cache it - see cacheMinimumTokens) and there is no charge for asking; but the prompts that
+// do clear the line (JUDGE_SYSTEM, the IT-report writer) get read at 0.1x on repeat calls,
+// and any prompt that grows past the line later is cached without anyone touching this.
+// Added 2026-09-04 after Anthropic's "cache hit rate is low" billing email.
+function cachedSystem(system: string): any {
+  return [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
+}
+
 async function callClaude(key: string, model: string, system: string, userText: string, maxTokens: number, images?: StudioImage[]): Promise<string> {
   const content: any = (images && images.length)
     ? [
@@ -517,7 +527,7 @@ async function callClaude(key: string, model: string, system: string, userText: 
         model,
         max_tokens: maxTokens,
         temperature: 0.3,
-        system,
+        system: cachedSystem(system),
         messages: [{ role: 'user', content }],
       }),
     });
@@ -595,7 +605,7 @@ export async function aiAskDoc(system: string, question: string, file: AiDocFile
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
         model, max_tokens: maxTokens, temperature: 0,
-        system,
+        system: cachedSystem(system),
         messages: [{ role: 'user', content: [block, { type: 'text', text: question }] }],
       }),
     });

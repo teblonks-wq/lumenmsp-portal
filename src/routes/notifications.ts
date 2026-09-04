@@ -31,6 +31,15 @@ router.post('/notifications/:id/snooze', requireAuth, async (req: Request, res: 
   res.json({ ok: true });
 });
 
+// Clear the lot. Distinct from read-all: reading marks them seen, clearing takes them off
+// the list. Cleared is a timestamp, not a delete, so the full panel can still show them.
+router.post('/notifications/clear-all', requireAuth, async (req: Request, res: Response) => {
+  const r = await pool.query(
+    'UPDATE notifications SET cleared_at=NOW(), read_at=COALESCE(read_at, NOW()) WHERE user_id=$1 AND cleared_at IS NULL',
+    [req.session.user!.id]);
+  res.json({ ok: true, cleared: r.rowCount || 0 });
+});
+
 router.post('/notifications/read-all', requireAuth, async (req: Request, res: Response) => {
   await pool.query('UPDATE notifications SET read_at=NOW() WHERE user_id=$1 AND read_at IS NULL', [req.session.user!.id]);
   res.json({ ok: true });

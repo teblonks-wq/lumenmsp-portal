@@ -111,6 +111,7 @@ router.get('/invoices/health', async (req: Request, res: Response) => {
   ).catch(() => ({ rows: [{ n: 0, v: 0 }] }))).rows[0];
   res.render('invoices/health', {
     user: req.session.user!, rows, owed, notInQb, qbGap,
+    unlockSet: !!(await unlockHash()),
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });

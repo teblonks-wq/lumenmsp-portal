@@ -641,6 +641,15 @@ export async function reconcile(): Promise<ReconcileResult> {
       });
       if (becameProtected) {
         toastEndpointSecurity({ hostname: r.hostname, customerId: r.customer_id, customerName: r.customer_name, confirmed: true });
+        // The toast is only seen by whoever happens to be looking. A machine becoming
+        // protected is worth finding later too, so it also lands in notifications. Hung off
+        // the SAME becameProtected guard as the toast, so it cannot re-fire each sweep.
+        import('./notifications')
+          .then(({ notifyStaff }) => notifyStaff(`Bitdefender deployed — ${r.hostname}`, {
+            type: 'info', link: '/security',
+            body: `${r.hostname}${r.customer_name ? ' at ' + r.customer_name : ''} is now protected — confirmed by both GravityZone and the agent.`,
+          }))
+          .catch((e: any) => console.error('[notify] gz protected:', e.message));
       }
       out.protectedCount++;
       continue;

@@ -10,7 +10,8 @@
     <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="<%= _back || '/invoices' %>">← <%= _back ? (_back.indexOf('/customers/') === 0 ? 'Back to customer' : 'Back') : 'Invoices' %></a></p>
     <p class="doc-kicker">Invoice<% if (invoice.is_recurring) { %> · recurring template<% } %></p>
     <h1><%= invoice.invoice_number %>
-      <span class="badge <%= sbadge(invoice.status) %>"><%= String(invoice.status||'').charAt(0).toUpperCase()+String(invoice.status||'').slice(1) %></span>
+      <% var _sl = { draft: 'Raised', issued: 'Issued', paid: 'Paid', void: 'Void' }[String(invoice.status||'')] || (String(invoice.status||'').charAt(0).toUpperCase()+String(invoice.status||'').slice(1)); %>
+      <span class="badge <%= sbadge(invoice.status) %>"><%= _sl %></span>
       <% if (invoice.status !== 'void' && invoice.payment_status) { %><span class="badge <%= pbadge(invoice.payment_status) %>"><%= invoice.payment_status === 'paid' ? 'Paid' : (Number(invoice.balance||0) > 0 && Number(invoice.balance) < Number(invoice.total||0) ? 'Part-paid' : 'Unpaid') %></span><% } %>
     </h1>
     <p class="doc-sub">

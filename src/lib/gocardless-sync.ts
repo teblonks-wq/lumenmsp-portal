@@ -18,10 +18,20 @@ export async function syncGoCardlessMandates(): Promise<{ total: number; linked:
   try { state = await buildMatchState(gc); }
   catch (e) { console.error('[gocardless-sync] fetch failed:', (e as Error).message); return { total: 0, linked: 0, unmatched: 0, refreshed: 0 }; }
 
-  const { linked, refreshed } = await applyMatches(state);
+  const { linked, refreshed, linkedNames } = await applyMatches(state);
   const unmatched = state.rows.filter((r) => !r.linked && r.mandateId).length;
   if (linked || refreshed) {
     console.log(`[gocardless-sync] linked ${linked} new mandate(s), refreshed ${refreshed}; ${unmatched} active mandate(s) still unmatched`);
+  }
+  // Terry, 3 Sep 2026: a customer signing up to Direct Debit should reach the team, not just
+  // the log. Named, because "1 new mandate" is not something anyone can act on. This runs
+  // hourly, so it only fires on the run that actually linked one.
+  if (linked && linkedNames.length) {
+    const { notifyStaff } = await import('./notifications');
+    await notifyStaff(
+      linked === 1 ? `Direct Debit set up — ${linkedNames[0]}` : `${linked} new Direct Debit mandates`,
+      { type: 'info', link: '/settings/gocardless',
+        body: linkedNames.slice(0, 8).join(', ') + (linkedNames.length > 8 ? ` and ${linkedNames.length - 8} more` : '') + ' — now collecting by Direct Debit.' });
   }
   for (const w of state.warnings) console.warn('[gocardless-sync]', w);
   return { total: state.rows.length, linked, unmatched, refreshed };

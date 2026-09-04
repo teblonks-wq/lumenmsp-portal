@@ -18,6 +18,20 @@ export async function notify(
   } catch (e) { console.error('[notify] failed:', (e as Error).message); }
 }
 
+// Estate events every member of staff should see, IN-APP ONLY.
+//
+// Deliberately not alertGroup(): that also fires Teams, and a Teams message for every
+// machine that enrols would make the channel unreadable within a day of an onboarding.
+// These are "worth knowing when you next look", not "interrupt me".
+export async function notifyStaff(title: string, opts: { body?: string; link?: string; type?: string } = {}): Promise<void> {
+  try {
+    const staff = await pool.query(
+      'SELECT id FROM users WHERE is_active=true AND customer_id IS NULL AND hidden_from_lookups=false'
+    );
+    await Promise.allSettled(staff.rows.map((s: any) => notify(s.id, title, opts)));
+  } catch (e) { console.error('[notifyStaff] failed:', (e as Error).message); }
+}
+
 // Alerts every member of a group (support | sales), in-app + Teams.
 // `link` is relative (e.g. /quotes/5).
 export async function alertGroup(group: 'support' | 'sales', title: string, body: string, link: string): Promise<void> {

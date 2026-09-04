@@ -531,6 +531,18 @@ router.post('/agent/api/enroll', async (req: Request, res: Response) => {
     }
     await logActivity(null, existing ? 'agent_reenrolled' : 'agent_enrolled', 'agent_devices', deviceId, `${hostname} enrolled for ${cust.rows[0].name}`);
 
+    // A machine joining the estate goes to the team. Only a genuinely NEW one — a
+    // re-enrolment is the same machine coming back and is not news. In-app only: a
+    // 38-machine onboarding must not become 38 Teams messages.
+    if (!existing) {
+      import('../lib/notifications')
+        .then(({ notifyStaff }) => notifyStaff(`New machine — ${hostname}`, {
+          type: 'info', link: '/assets',
+          body: `${hostname} has enrolled for ${cust.rows[0].name}.`,
+        }))
+        .catch((e: any) => console.error('[notify] enrol:', e.message));
+    }
+
     // Remote access rides along with enrollment — a device that arrives without
     // MeshCentral is a device somebody has to remember to visit later, and nobody does.
     // Dynamic import on purpose: mesh.ts imports AGENT_PKG_DIR and wakeAgent from here,

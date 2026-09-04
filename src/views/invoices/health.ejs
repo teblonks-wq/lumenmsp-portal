@@ -104,4 +104,32 @@
   <% } %>
 </div>
 
+<%# ── The unlock passphrase ──────────────────────────────────────────────────────
+    The route has always existed; nothing ever posted to it, so there was no way to set
+    one and the unlock box on an invoice refused every time. autocomplete is off and the
+    boxes are new-password, or Chrome offers a saved login into a shared passphrase. %>
+<div class="card" style="margin-top:18px;">
+  <h2 style="font-size:15px;margin:0 0 4px;">Invoice unlock passphrase</h2>
+  <p class="muted" style="font-size:12.5px;margin:0 0 12px;max-width:70ch;">
+    An issued invoice is locked because the customer and QuickBooks already hold it. This passphrase
+    suspends that lock for 30 minutes, on one invoice, and the unlock is recorded against it.
+    <% if (typeof unlockSet !== 'undefined' && unlockSet) { %>
+      <strong>One is set.</strong> Enter the current one to change it.
+    <% } else { %>
+      <strong>None is set yet — the unlock button on an invoice will refuse until you set one.</strong>
+    <% } %>
+  </p>
+  <form method="post" action="/invoices/unlock-passphrase" autocomplete="off"
+        style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+    <% if (typeof unlockSet !== 'undefined' && unlockSet) { %>
+      <input class="input" type="password" name="current_passphrase" placeholder="Current passphrase" required
+             autocomplete="new-password" data-lpignore="true" data-1p-ignore style="max-width:200px;font-size:13px;">
+    <% } %>
+    <input class="input" type="password" name="new_passphrase" placeholder="New passphrase" required minlength="6"
+           autocomplete="new-password" data-lpignore="true" data-1p-ignore style="max-width:200px;font-size:13px;">
+    <button class="btn btn-primary" type="submit"><%= (typeof unlockSet !== 'undefined' && unlockSet) ? 'Change it' : 'Set it' %></button>
+    <span class="muted" style="font-size:11.5px;">At least 6 characters. Stored hashed &mdash; it is never written to the code or the repo.</span>
+  </form>
+</div>
+
 <%- include('../partials/footer') %>

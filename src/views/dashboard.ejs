@@ -93,7 +93,7 @@
   <div class="card acc-invoices" style="position:relative;">
     <div class="card-header"><h2>Invoices</h2><% if (canFin) { %><a class="btn btn-primary" href="/invoices/new">+ New</a><% } %></div>
     <div class="stat-grid" style="<%= canFin ? '' : 'filter:blur(6px);pointer-events:none;user-select:none;' %>">
-      <div class="stat-cell"><div class="n"><%= canFin ? (i.draft||0) : '—' %></div><div class="l">Draft</div></div>
+      <div class="stat-cell"><div class="n"><%= canFin ? (i.draft||0) : '—' %></div><div class="l">Raised</div></div>
       <div class="stat-cell"><div class="n blue"><%= canFin ? (i.issued||0) : '—' %></div><div class="l">Issued</div></div>
       <div class="stat-cell"><div class="n green"><%= canFin ? (i.paid||0) : '—' %></div><div class="l">Paid</div></div>
       <div class="stat-cell"><div class="n"><%= canFin ? (i.void||0) : '—' %></div><div class="l">Void</div></div>
