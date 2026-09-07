@@ -5,8 +5,9 @@ import { logActivity } from '../lib/activity';
 import { listScripts } from '../lib/scripts';
 import {
   KINDS, HEAL_TYPES, listWatchdogs, getWatchdog, createWatchdog, updateWatchdog, setEnabled, deleteWatchdog,
-  checkNow, healNow, watchdogDetail, WatchdogInput,
+  checkNow, healNow, watchdogDetail, WatchdogInput, filterWords, normaliseFilter,
 } from '../lib/watchdogs';
+import { lookupServices, servicesOnMachines, inventoryStats } from '../lib/services-inventory';
 
 // ── Watchdogs — under Automation ────────────────────────────────────────────────
 // The board lists every watchdog with what it is finding right now; a watchdog's own page
@@ -42,12 +43,33 @@ async function formLocals(req: Request, existing: any | null) {
     ? (await pool.query(
       `SELECT ad.id, ad.hostname FROM watchdog_targets t JOIN agent_devices ad ON ad.id=t.device_id WHERE t.watchdog_id=$1 ORDER BY ad.hostname`, [existing.id])).rows
     : [];
+  const [tags, types, inventory] = await Promise.all([
+    pool.query(`SELECT t.id, t.name, COUNT(m.asset_id)::int AS n FROM asset_tags t LEFT JOIN asset_tag_members m ON m.tag_id = t.id GROUP BY t.id, t.name ORDER BY t.name`).catch(() => ({ rows: [] as any[] })),
+    pool.query(`SELECT device_type AS t, COUNT(*)::int AS n FROM agent_devices WHERE revoked IS NOT TRUE AND device_type IS NOT NULL GROUP BY 1 ORDER BY 2 DESC`).catch(() => ({ rows: [] as any[] })),
+    inventoryStats().catch(() => ({ machines: 0, services: 0, newest: null })),
+  ]);
   return {
     user: req.session.user!, kinds: KINDS, healTypes: HEAL_TYPES,
     scripts: scripts.filter((s) => s.osType === 'windows'), customers: customers.rows,
+    tags: tags.rows, deviceTypes: types.rows, inventory,
     existing, seedDevices, notice: req.query.msg || null, error: req.query.err || null,
   };
 }
+
+/** Service lookup across the estate (or chosen machines / one customer): names, display names, machine counts. */
+router.get('/automation/watchdogs/services.json', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const deviceIds = String(req.query.device_ids || '').split(',').map((s) => parseInt(s, 10)).filter((n) => n > 0);
+  const rows = await lookupServices({ q: String(req.query.q || '').trim(), deviceIds, customerId: parseInt(String(req.query.customer || ''), 10) || null, limit: 40 });
+  res.json({ ok: true, services: rows, inventory: await inventoryStats() });
+});
+
+/** Which of the chosen machines actually have each named service — shown before the watchdog is saved. */
+router.get('/automation/watchdogs/check-services.json', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const deviceIds = String(req.query.device_ids || '').split(',').map((s) => parseInt(s, 10)).filter((n) => n > 0);
+  const names = String(req.query.names || '').split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean).slice(0, 20);
+  const known = (await pool.query(`SELECT DISTINCT device_id FROM device_services WHERE device_id = ANY($1::int[])`, [deviceIds])).rows.map((r) => Number(r.device_id));
+  res.json({ ok: true, inventoried: known, coverage: await servicesOnMachines(known, names) });
+});
 
 router.get('/automation/watchdogs/new', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   res.render('automation/watchdog-new', await formLocals(req, null));
@@ -85,8 +107,17 @@ router.get('/automation/watchdogs/:id(\\d+)', requireAuth, requireAdmin, async (
     const s = (await pool.query('SELECT name FROM scripts WHERE id=$1', [h.scriptId])).rows[0];
     if (s) scriptNames.set(Number(h.scriptId), s.name);
   }
+  let scopeWords: string | null = null;
+  if (w.scope === 'filter') {
+    const f = normaliseFilter(w.params?.filter);
+    const [cn, tn] = await Promise.all([
+      f?.customerIds?.length ? pool.query('SELECT id, name FROM customers WHERE id = ANY($1::int[])', [f.customerIds]) : Promise.resolve({ rows: [] as any[] }),
+      f?.tagIds?.length ? pool.query('SELECT id, name FROM asset_tags WHERE id = ANY($1::int[])', [f.tagIds]) : Promise.resolve({ rows: [] as any[] }),
+    ]);
+    scopeWords = filterWords(f, { customers: new Map(cn.rows.map((r: any) => [Number(r.id), String(r.name)])), tags: new Map(tn.rows.map((r: any) => [Number(r.id), String(r.name)])) });
+  }
   res.render('automation/watchdog', {
-    user: req.session.user!, w, states: detail?.states || [], events: detail?.events || [], kinds: KINDS, healTypes: HEAL_TYPES,
+    user: req.session.user!, w, states: detail?.states || [], events: detail?.events || [], kinds: KINDS, healTypes: HEAL_TYPES, scopeWords,
     customerName: customer?.name || null, scriptNames: Object.fromEntries(scriptNames),
     notice: req.query.msg || null, error: req.query.err || null,
   });

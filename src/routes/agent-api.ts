@@ -5,6 +5,8 @@ import path from 'path';
 import multer from 'multer';
 import { pool } from '../db/pool';
 import { looksLikeBitlockerScan, ingestBitlockerScan } from '../lib/bitlocker';
+import { looksLikeBatteryProbe, ingestBatteryProbe, maybeQueueBatteryProbe } from '../lib/battery';
+import { looksLikeServicesProbe, ingestServicesProbe, maybeQueueServicesProbe } from '../lib/services-inventory';
 import { getSetting, setSetting } from '../lib/settings';
 import { logActivity } from '../lib/activity';
 import { vaultConfigured, encryptSecret, decryptSecret } from '../lib/vault';
@@ -651,6 +653,11 @@ router.post('/agent/api/heartbeat', requireDevice, async (req: Request, res: Res
       const { maybeQueueBitlockerScan } = await import('../lib/bitlocker');
       await maybeQueueBitlockerScan(d.id);
     } catch { /* never let this break a heartbeat */ }
+    // Battery health, same shape: laptops only, once a day, a reading that says how the
+    // pack is wearing. lib/battery.ts decides "due"; this is two reads in the common case.
+    try { await maybeQueueBatteryProbe(d.id, d.device_type); } catch { /* never let this break a heartbeat */ }
+    // Service inventory, same shape again: every machine, once a day, what Get-Service would say.
+    try { await maybeQueueServicesProbe(d.id); } catch { /* never let this break a heartbeat */ }
 
     res.json({ ok: true, public_ip: clientIp(req), config: await deviceConfig(d.customer_id, d.update_ring ?? 2) });
   } catch (e: any) {
@@ -1082,7 +1089,11 @@ router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request
     const r = await pool.query(
       `UPDATE agent_commands SET status=$1, exit_code=$2, output=$3, finished_at=NOW(),
               payload = CASE WHEN payload::text LIKE '%Get-BitLockerVolume%'
-                             THEN '{"bitlocker_scan":true}'::jsonb ELSE NULL END
+                             THEN '{"bitlocker_scan":true}'::jsonb
+                             WHEN payload::text LIKE '%lumen_battery%'
+                             THEN '{"battery_probe":true}'::jsonb
+                             WHEN payload::text LIKE '%lumen_services%'
+                             THEN '{"services_probe":true}'::jsonb ELSE NULL END
         WHERE id=$4 AND device_id=$5 RETURNING kind`,
       [exitCode === 0 ? 'done' : 'failed', exitCode, output, id, d.id]);
     if (!r.rows.length) { res.status(404).json({ ok: false, error: 'unknown command' }); return; }
@@ -1100,6 +1111,25 @@ router.post('/agent/api/commands/:id/result', requireDevice, async (req: Request
     // The output is REPLACED with a summary the moment it is ingested: recovery keys
     // must not sit in agent_commands.output in the clear, where the console history
     // would happily show them to anyone who can read a command log.
+    // A battery probe is identified the same way — by its own marker in the output.
+    if (r.rows[0].kind === 'shell.powershell' && looksLikeBatteryProbe(output)) {
+      ingestBatteryProbe(d.id, output)
+        .then(async (summary) => { await pool.query('UPDATE agent_commands SET output=$1 WHERE id=$2', [summary, id]); })
+        .catch(async (err: any) => {
+          console.error('[battery] ingest failed:', err.message);
+          await pool.query('UPDATE agent_commands SET output=$1 WHERE id=$2',
+            [('Battery probe could not be stored: ' + String(err.message || 'unknown error')).slice(0, 300), id]).catch(() => {});
+        });
+    }
+    if (r.rows[0].kind === 'shell.powershell' && looksLikeServicesProbe(output)) {
+      ingestServicesProbe(d.id, output)
+        .then(async (summary) => { await pool.query('UPDATE agent_commands SET output=$1 WHERE id=$2', [summary, id]); })
+        .catch(async (err: any) => {
+          console.error('[services] ingest failed:', err.message);
+          await pool.query('UPDATE agent_commands SET output=$1 WHERE id=$2',
+            [('Service inventory could not be stored: ' + String(err.message || 'unknown error')).slice(0, 300), id]).catch(() => {});
+        });
+    }
     if (r.rows[0].kind === 'shell.powershell' && looksLikeBitlockerScan(output)) {
       ingestBitlockerScan(d.id, output)
         .then(async (kept) => {

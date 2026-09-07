@@ -123,11 +123,19 @@ export function normalise(inp: WatchdogInput): { ok: true; value: WatchdogInput 
     if (!(d >= 1 && d <= 365)) return { ok: false, error: 'How many days without a restart? 1 to 365.' };
     p.days = d;
   }
-  const scope = ['devices', 'customer', 'estate'].includes(String(inp.scope)) ? String(inp.scope) : 'devices';
+  const scope = ['devices', 'customer', 'estate', 'filter'].includes(String(inp.scope)) ? String(inp.scope) : 'devices';
   const deviceIds = Array.from(new Set((inp.deviceIds || []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0)));
   const customerId = Number(inp.customerId) > 0 ? Number(inp.customerId) : null;
   if (scope === 'devices' && !deviceIds.length) return { ok: false, error: 'Pick at least one machine, or watch a whole customer or the estate.' };
   if (scope === 'customer' && !customerId) return { ok: false, error: 'Pick the customer.' };
+  // A FILTER scope (Terry, 7 Sep: "this needs to filter — folders/tags, advanced filters") is kept
+  // as the filter itself, in params, and evaluated at every sweep — so a machine tagged tomorrow
+  // is watched tomorrow, and one that loses the tag drops out. Nothing is expanded at save time.
+  if (scope === 'filter') {
+    const f = normaliseFilter(src.filter || (inp as any).filter);
+    if (!f) return { ok: false, error: 'Set at least one filter — a customer, a tag, a type, an OS or a name — or choose another scope.' };
+    p.filter = f;
+  }
 
   // Heal actions. Kept to what the sweep knows how to do; anything else is dropped rather than
   // stored as a promise nobody will keep.
@@ -226,14 +234,66 @@ async function event(watchdogId: number, deviceId: number | null, kind: string, 
     [watchdogId, deviceId, kind, detail.slice(0, 2000), commandId]).catch(() => {});
 }
 
+export interface TargetFilter { customerIds?: number[]; tagIds?: number[]; types?: string[]; osLike?: string; hostLike?: string; onlineOnly?: boolean }
+
+/** The picker's filter, cleaned: ids as ints, words trimmed, empty = null. */
+export function normaliseFilter(src: any): TargetFilter | null {
+  if (!src || typeof src !== 'object') return null;
+  const ids = (v: any) => Array.from(new Set((Array.isArray(v) ? v : String(v || '').split(',')).map((x: any) => Number(x)).filter((n: number) => Number.isInteger(n) && n > 0)));
+  const f: TargetFilter = {};
+  const c = ids(src.customerIds ?? src.customerId); if (c.length) f.customerIds = c;
+  const t = ids(src.tagIds ?? src.tagId); if (t.length) f.tagIds = t;
+  const types = (Array.isArray(src.types) ? src.types : String(src.types || src.type || '').split(',')).map((x: any) => String(x).trim().toLowerCase()).filter(Boolean).slice(0, 10);
+  if (types.length) f.types = Array.from(new Set(types));
+  const os = String(src.osLike || src.os || '').trim().slice(0, 60); if (os) f.osLike = os;
+  const host = String(src.hostLike || src.q || src.host || '').trim().slice(0, 60); if (host) f.hostLike = host;
+  if (src.onlineOnly === true || String(src.onlineOnly) === '1') f.onlineOnly = true;
+  return Object.keys(f).length ? f : null;
+}
+
+/** SQL for a filter over agent_devices `ad` (customers joined as `c`). Params are appended to `params`. */
+export function filterSql(f: TargetFilter, params: any[]): string {
+  const w: string[] = [];
+  if (f.customerIds?.length) { params.push(f.customerIds); w.push(`ad.customer_id = ANY($${params.length}::int[])`); }
+  if (f.tagIds?.length) {
+    // Tags live on customer_assets; an agent device is tagged through the asset that points at it.
+    params.push(f.tagIds);
+    w.push(`ad.id IN (SELECT ca.agent_device_id FROM customer_assets ca JOIN asset_tag_members m ON m.asset_id = ca.id WHERE m.tag_id = ANY($${params.length}::int[]) AND ca.agent_device_id IS NOT NULL)`);
+  }
+  if (f.types?.length) {
+    // "server" matches "Server", "Windows Server" and the like — the type strings differ by source.
+    const ors = f.types.map((t) => { params.push('%' + t + '%'); return `ad.device_type ILIKE $${params.length}`; });
+    w.push('(' + ors.join(' OR ') + ')');
+  }
+  if (f.osLike) { params.push('%' + f.osLike + '%'); w.push(`(ad.os ILIKE $${params.length} OR ad.os_version ILIKE $${params.length})`); }
+  if (f.hostLike) { params.push('%' + f.hostLike + '%'); w.push(`(ad.hostname ILIKE $${params.length} OR ad.logged_in_user ILIKE $${params.length} OR c.name ILIKE $${params.length})`); }
+  if (f.onlineOnly) w.push(`ad.last_seen_at > NOW() - INTERVAL '10 minutes'`);
+  return w.length ? ' AND ' + w.join(' AND ') : '';
+}
+
+/** Words for the scope on the board and the watchdog page. */
+export function filterWords(f: TargetFilter | null | undefined, names?: { customers?: Map<number, string>; tags?: Map<number, string> }): string {
+  if (!f) return 'Machines matching a filter';
+  const bits: string[] = [];
+  if (f.customerIds?.length) bits.push(f.customerIds.map((id) => names?.customers?.get(id) || `customer #${id}`).join(', '));
+  if (f.tagIds?.length) bits.push('tagged ' + f.tagIds.map((id) => names?.tags?.get(id) || `#${id}`).join(', '));
+  if (f.types?.length) bits.push(f.types.join('/') + 's');
+  if (f.osLike) bits.push('OS like "' + f.osLike + '"');
+  if (f.hostLike) bits.push('name like "' + f.hostLike + '"');
+  if (f.onlineOnly) bits.push('online now');
+  return 'Every machine ' + bits.join(', ') + ' (follows changes)';
+}
+
 // ── Targets ─────────────────────────────────────────────────────────────────────
 
 interface Dev { id: number; hostname: string; customerId: number | null; customerName: string | null; lastSeenSecs: number | null; diskInfo: any; lastBootAt: Date | null; os: string | null }
 
 async function targetsOf(w: WatchdogRow): Promise<Dev[]> {
-  const where = w.scope === 'estate' ? '' : w.scope === 'customer' ? 'AND ad.customer_id = $1'
-    : 'AND ad.id IN (SELECT device_id FROM watchdog_targets WHERE watchdog_id = $1)';
-  const params = w.scope === 'estate' ? [] : [w.scope === 'customer' ? w.customerId : w.id];
+  const params: any[] = [];
+  let where = '';
+  if (w.scope === 'customer') { params.push(w.customerId); where = 'AND ad.customer_id = $1'; }
+  else if (w.scope === 'devices') { params.push(w.id); where = 'AND ad.id IN (SELECT device_id FROM watchdog_targets WHERE watchdog_id = $1)'; }
+  else if (w.scope === 'filter') { const f = normaliseFilter(w.params?.filter); if (!f) return []; where = filterSql(f, params); }
   const r = await pool.query(
     `SELECT ad.id, ad.hostname, ad.customer_id, c.name AS customer_name, ad.disk_info, ad.last_boot_at, ad.os,
             EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at)) AS seen_secs

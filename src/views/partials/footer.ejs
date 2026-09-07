@@ -98,6 +98,7 @@
 </script>
 
 <% if (typeof user !== 'undefined' && user) { %>
+  <% if (typeof lumenOn !== 'undefined' && lumenOn) { %><%- include('lumen-launcher') %><% } %>
   <!-- WhatsApp softphone (staff): rings here when a customer calls the WhatsApp number -->
   <script src="/static/js/call-widget.js?v=<%= typeof assetV !== 'undefined' ? assetV : '0' %>" defer></script>
   <!-- Lumen Chat: the AGENT end of the website chat bot — staff answer web chats from here -->

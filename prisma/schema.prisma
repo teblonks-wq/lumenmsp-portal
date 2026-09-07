@@ -572,6 +572,44 @@ model AgentDevice {
 // Because it is stored, it is the most sensitive row in the Portal: recovery_key_encrypted
 // is an AES-256-GCM blob from lib/vault, decrypted only behind requireVaultAccess, and
 // every reveal is written to the activity log.
+// One row per battery probe (daily, laptops only — lib/battery.ts). Append-only: the slope
+// is the point. `present=false` is a real reading too — a laptop whose battery has been
+// pulled, or a desktop that said it was a laptop.
+// Windows services per machine (lib/services-inventory.ts). Refreshed once a day per agent by a
+// marked shell.powershell probe; a machine's rows are REPLACED on each report. Behind the Watchdog
+// form's service lookup ("this needs to be a lookup across all services from all computers").
+model DeviceService {
+  id          Int       @id @default(autoincrement())
+  deviceId    Int       @map("device_id")            // -> agent_devices.id
+  name        String                                  // short name, what Get-Service is given
+  displayName String?   @map("display_name")
+  status      String?                                 // running | stopped | …
+  startType   String?   @map("start_type")            // auto | manual | disabled
+  collectedAt DateTime  @default(now()) @map("collected_at") @db.Timestamptz(6)
+
+  @@unique([deviceId, name])
+  @@index([name])
+  @@map("device_services")
+}
+
+model DeviceBatteryReading {
+  id          Int       @id @default(autoincrement())
+  deviceId    Int       @map("device_id")            // -> agent_devices.id
+  collectedAt DateTime  @default(now()) @map("collected_at") @db.Timestamptz(6)
+  present     Boolean   @default(true)
+  batteries   Int       @default(1)
+  designMwh   BigInt?   @map("design_mwh")
+  fullMwh     BigInt?   @map("full_mwh")
+  healthPct   Decimal?  @map("health_pct") @db.Decimal(5, 1)  // full ÷ design, capped at 100
+  cycleCount  Int?      @map("cycle_count")
+  chargePct   Int?      @map("charge_pct")
+  status      String?                                   // charging | on mains | on battery
+  name        String?
+
+  @@index([deviceId, collectedAt])
+  @@map("device_battery_readings")
+}
+
 model AssetBitlockerKey {
   id                   Int       @id @default(autoincrement())
   deviceId             Int       @map("device_id")           // -> agent_devices.id (the thing that reports)

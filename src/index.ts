@@ -45,6 +45,7 @@ import licenceRoutes from './routes/licences';
 import ateraRoutes from './routes/atera';
 import ateraAttachmentRoutes from './routes/atera-attachments';
 import watchdogRoutes from './routes/watchdog';
+import lumenRoutes, { lumenBetaIds, lumenUrl } from './routes/lumen';
 import assetRoutes from './routes/assets';
 import webhookRoutes from './routes/webhooks';
 import insightsRoutes from './routes/insights';
@@ -155,7 +156,8 @@ app.use(helmet({
       baseUri: ["'self'"],
       formAction: ["'self'"],
       // 'self' so the Portal can frame its own same-origin pages (the Insights embed in Tools).
-      frameSrc: ["'self'"],
+      // + the Lumen assistant (separate app, framed in the right-hand drawer — routes/lumen.ts).
+      frameSrc: ["'self'", 'https://lumen.lumenmsp.co.uk'],
       // 'self' (not 'none') so the Portal can frame its own pages (the Insights embed); still blocks
       // external sites from clickjacking the Portal.
       frameAncestors: ["'self'"],
@@ -170,7 +172,8 @@ app.set('trust proxy', 1);
 // receipt camera) and no-store on dynamic responses (login/app pages shouldn't be cached).
 app.use((req, res, next) => {
   // microphone=(self): required for the WhatsApp softphone's getUserMedia(audio). camera=(self) for the /m receipt camera.
-  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(self), payment=(), camera=(self)');
+  // microphone also delegated to the Lumen drawer (lumen.lumenmsp.co.uk) for dictation in the panel.
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(self "https://lumen.lumenmsp.co.uk"), payment=(), camera=(self)');
   if (!req.path.startsWith('/static')) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Pragma', 'no-cache');
@@ -336,6 +339,7 @@ app.use(async (req, res, next) => {
   if (req.session.user) {
     try { res.locals.canFinance = await hasFinanceAccess(req.session.user); } catch { /* noop */ }
     try { res.locals.canVault = await hasVaultAccess(req.session.user); } catch { /* noop */ }
+    try { res.locals.lumenOn = await lumenOnFor(req.session.user.id); } catch { res.locals.lumenOn = false; }
     try {
       // Badge only brand-new leads that haven't been actioned yet. Open = being worked,
       // proposed = answered/awaiting the customer, won/lost = closed — none need a nudge.
@@ -358,6 +362,13 @@ app.use(async (req, res, next) => {
   }
   next();
 });
+
+// Lumen beta gate, read once a minute: only listed staff see the blue button (routes/lumen.ts).
+let lumenGate: { ids: Set<number>; url: string; at: number } | null = null;
+async function lumenOnFor(userId: number): Promise<boolean> {
+  if (!lumenGate || Date.now() - lumenGate.at > 60_000) lumenGate = { ids: await lumenBetaIds(), url: await lumenUrl(), at: Date.now() };
+  return lumenGate.ids.has(userId);
+}
 
 // ── Portal theme (V4 visual refresh, 2026-07-29) ──────────────────────────────
 // Per-user colour theme: aurora (default) | carbon | solstice. Cached in the session
@@ -430,6 +441,7 @@ app.use('/', credentialRoutes);
 app.use('/', licenceRoutes);      // per-customer software licences (key is vault-encrypted)
 app.use('/', ateraRoutes);
 app.use('/', watchdogRoutes);     // Watchdogs — standing checks with self-heal, under Automation
+app.use('/', lumenRoutes);        // Lumen launcher: hand-off token + beta list (the assistant itself is a separate app)
 app.use('/', ateraAttachmentRoutes); // Atera ticket attachments → Portal (token + CORS to app.atera.com)
 app.use('/', assetRoutes);
 app.use('/', agentToolsRoutes);  // remote tools on the asset page (admin-only)
@@ -558,6 +570,14 @@ server.listen(config.PORT, () => {
       .then((m) => m.pruneBitlockerCommands())
       .then((n) => { if (n) console.log('[bitlocker] pruned %d old scan command(s)', n); })
       .catch((e: any) => console.error('[bitlocker] prune failed:', e.message));
+    import('./lib/battery')
+      .then((m) => m.pruneBatteryCommands())
+      .then((n) => { if (n) console.log('[battery] pruned %d old probe command(s)', n); })
+      .catch((e: any) => console.error('[battery] prune failed:', e.message));
+    import('./lib/services-inventory')
+      .then((m) => m.pruneServicesCommands())
+      .then((n) => { if (n) console.log('[services] pruned %d old probe command(s)', n); })
+      .catch((e: any) => console.error('[services] prune failed:', e.message));
   }, 24 * 60 * 60 * 1000);
   startScanPoller();       // on-demand Bitdefender scans: pending -> running -> finished
   startSecurityReconcile(); // Bitdefender deployments: move queued -> installed -> protected, and

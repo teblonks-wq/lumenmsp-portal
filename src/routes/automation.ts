@@ -1,3 +1,4 @@
+import { normaliseFilter, filterSql } from '../lib/watchdogs';
 import { Router, Request, Response } from 'express';
 import { requireAuth, requireAdmin } from '../middleware/auth';
 import { pool } from '../db/pool';
@@ -123,22 +124,21 @@ router.get('/automation/scheduled-tasks/new', requireAuth, requireAdmin, async (
 
 /** The machine picker. Searches hostname, customer and the signed-in user. */
 router.get('/automation/devices.json', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const q = String(req.query.q || '').trim();
-  const customerId = parseInt(String(req.query.customer || ''), 10) || 0;
+  // Filters (7 Sep 2026: "folders/tags, advanced filters"): customer, tag, type, OS, words, online —
+  // the same TargetFilter a watchdog can keep as its scope, so what the picker shows is exactly
+  // what a filter-scoped watchdog would watch.
+  const f = normaliseFilter({ customerIds: req.query.customer, tagIds: req.query.tag, types: req.query.type, osLike: req.query.os, hostLike: req.query.q, onlineOnly: req.query.online });
   const params: any[] = [];
-  const where: string[] = ['ad.revoked IS NOT TRUE', 'ad.hostname IS NOT NULL'];
-  if (customerId) { params.push(customerId); where.push('ad.customer_id = $' + params.length); }
-  if (q) {
-    params.push('%' + q + '%');
-    where.push(`(ad.hostname ILIKE $${params.length} OR c.name ILIKE $${params.length} OR ad.logged_in_user ILIKE $${params.length})`);
-  }
+  const where = ['ad.revoked IS NOT TRUE', 'ad.hostname IS NOT NULL'];
+  const extra = f ? filterSql(f, params) : '';
   const { rows } = await pool.query(
     `SELECT ad.id, ad.hostname, ad.device_type, ad.os, ad.logged_in_user, c.name AS customer_name,
-            (EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at)) < 180) AS online
+            (EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at)) < 180) AS online,
+            (SELECT STRING_AGG(t.name, ', ' ORDER BY t.name) FROM customer_assets ca JOIN asset_tag_members m ON m.asset_id = ca.id JOIN asset_tags t ON t.id = m.tag_id WHERE ca.agent_device_id = ad.id) AS tags
        FROM agent_devices ad LEFT JOIN customers c ON c.id = ad.customer_id
-      WHERE ${where.join(' AND ')}
+      WHERE ${where.join(' AND ')}${extra}
       ORDER BY c.name NULLS LAST, ad.hostname LIMIT 400`, params);
-  res.json({ ok: true, devices: rows });
+  res.json({ ok: true, devices: rows, filter: f });
 });
 
 router.post('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req: Request, res: Response) => {

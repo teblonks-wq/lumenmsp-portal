@@ -20,6 +20,7 @@ import { vaultConfigured } from '../lib/vault';
 import { startScan, scansFor, scanInFlight, type ScanType } from '../lib/gravityzone-scan';
 import { requireVaultAccess, hasVaultAccess } from '../middleware/auth';
 import { refreshAsset as refreshWarranty, warrantyView, providerLabelFor, sweep as warrantySweep } from '../lib/warranty';
+import { batteryForDevice, queueBatteryProbe } from '../lib/battery';
 import { askDevice, saveFinding, listFindings, deleteFinding } from '../lib/device-ask';
 
 const router = Router();
@@ -479,6 +480,23 @@ router.post('/assets/:id/friendly-name', requireAuth, async (req: Request, res: 
 // The lock is the whole design. A person who has read the contract knows more than Dell's
 // database does about a second-hand machine or a third-party support deal, and a nightly
 // job quietly reverting them would make this feature worse than not having it.
+
+// Battery: ask the machine now rather than waiting for the daily read. Queues the same probe
+// the heartbeat would; the reading lands when the agent answers (seconds if it is on).
+router.post('/assets/:id/battery/refresh', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const back = safeBack(req.body.back, `/assets/${id}`);
+  const a = (await pool.query('SELECT id, customer_id, hostname, serial_number, agent_device_id FROM customer_assets WHERE id=$1', [id])).rows[0];
+  const dev = a ? (await pool.query(
+    `SELECT id FROM agent_devices WHERE revoked=false AND customer_id=$1
+        AND (id=$4 OR ($4::int IS NULL AND (($2::text IS NOT NULL AND serial_number=$2) OR ($3::text IS NOT NULL AND LOWER(hostname)=LOWER($3)))))
+      ORDER BY last_seen_at DESC NULLS LAST LIMIT 1`, [a.customer_id, a.serial_number || null, a.hostname || null, a.agent_device_id || null])).rows[0] : null;
+  if (!dev) { res.redirect(back + '?err=' + encodeURIComponent('No LumenMSP Agent on this device, so nothing can read the battery.') + '#hardware'); return; }
+  const cmdId = await queueBatteryProbe(dev.id, req.session.user!.id);
+  wakeAgent(dev.id);
+  await logActivity(req.session.user!.id, 'asset_battery_check', 'customer_assets', id, `Battery read queued (command #${cmdId})`);
+  res.redirect(back + '?msg=' + encodeURIComponent('Asked the machine for its battery figures — refresh in a few seconds.') + '#hardware');
+});
 
 router.post('/assets/:id/warranty/refresh', requireAuth, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
@@ -1054,8 +1072,11 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     } catch { /* table appears with the next prisma db push */ }
   }
 
+  let battery: any = null;
+  if (agentInfo) { try { battery = await batteryForDevice(agentInfo.id); } catch { /* table appears with the next prisma db push */ } }
+
   res.render('assets/detail', {
-    user: req.session.user!, asset: row, agentInfo, gpo, security, patches, patchMeta, agentScripts,
+    user: req.session.user!, asset: row, agentInfo, gpo, security, patches, patchMeta, agentScripts, battery,
     bitlocker, blState, canVaultKeys: await hasVaultAccess(req.session.user!), bdScans,
     bd, bdGate, bdLog, bdLogError, requiredExclusions: REQUIRED_EXCLUSIONS,
     trackCommandId: parseInt(String(req.query.cmd || ''), 10) || null,

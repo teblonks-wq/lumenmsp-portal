@@ -1,0 +1,24 @@
+<%- include('partials/header', { title: 'Lumen — beta', user }) %>
+
+<div class="page-header">
+  <h1>Lumen</h1>
+  <p class="muted" style="margin:4px 0 0;font-size:13px;">The Portal's assistant runs as its own app at the address below. Only the staff user ids listed here see the blue button — everyone else sees nothing while it is being built.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+
+<form method="post" action="/lumen/admin" style="max-width:560px;">
+  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+  <div class="form-group" style="margin-bottom:14px;">
+    <label>Beta users (staff user ids, comma-separated)</label>
+    <input class="input" name="beta_user_ids" value="<%= ids %>" placeholder="e.g. 1" style="width:100%;">
+    <div class="muted" style="font-size:12px;margin-top:4px;">Your own id is <%= user.id %>. Ids are on <a class="row-link" href="/admin/users">Admin → Staff users</a>.</div>
+  </div>
+  <div class="form-group" style="margin-bottom:14px;">
+    <label>Lumen address</label>
+    <input class="input" name="url" value="<%= url %>" style="width:100%;">
+  </div>
+  <button class="btn btn-primary" type="submit">Save</button>
+</form>
+
+<%- include('partials/footer') %>

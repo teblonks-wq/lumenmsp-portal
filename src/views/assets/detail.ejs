@@ -542,6 +542,49 @@ function _ago(d) {
         <div class="dev-field-row"><div class="k">Serial number</div><div class="v"><%= fmt(asset.serial_number) %></div></div>
         <div class="dev-field-row"><div class="k">Processor</div><div class="v"><%= fmt(asset.cpu) %></div></div>
         <div class="dev-field-row"><div class="k">RAM</div><div class="v"><%= asset.ram_gb ? asset.ram_gb + ' GB' : '—' %></div></div>
+        <%# Battery — laptops only. Health is full-charge ÷ design capacity; a slope over
+            ~30 days is shown when there are enough readings to say one. Read daily by the
+            agent (lib/battery.ts); "Read now" asks straight away. %>
+        <% var _isLaptop = /laptop|notebook|tablet|portable/i.test(String((agentInfo && agentInfo.device_type) || asset.device_type || ''));
+           var _bat = (typeof battery !== 'undefined' && battery && battery.latest) ? battery.latest : null;
+           if (_isLaptop || _bat) { %>
+        <div class="dev-field-row"><div class="k">Battery</div><div class="v">
+          <% if (!_bat) { %>
+            <span class="muted">Not read yet<%= agentInfo ? ' — checked daily' : '' %>.</span>
+          <% } else if (!_bat.present) { %>
+            <span class="muted">No battery reported</span> <span class="muted" style="font-size:11px;">(<%= new Date(_bat.collected_at).toLocaleDateString('en-GB', { timeZone: 'Europe/London', day:'numeric', month:'short' }) %>)</span>
+          <% } else {
+               var h = _bat.health_pct == null ? null : Number(_bat.health_pct);
+               var col = h == null ? 'var(--muted)' : h >= 80 ? 'var(--ok-fg,#15803d)' : h >= 60 ? 'var(--warn-deep,#b45309)' : 'var(--bad-fg,#b91c1c)';
+               var word = h == null ? 'health unknown' : h >= 80 ? 'healthy' : h >= 60 ? 'tired' : 'due for replacement';
+               var earlier = battery.earlier && battery.earlier.health_pct != null ? Number(battery.earlier.health_pct) : null;
+               var slope = (h != null && earlier != null) ? Math.round((h - earlier) * 10) / 10 : null;
+          %>
+            <div style="max-width:340px;">
+              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+                <span style="font-weight:600;color:<%= col %>;"><%= h == null ? '—' : h + '%' %> <span style="font-weight:400;"><%= word %></span></span>
+                <span class="muted"><%= _bat.charge_pct != null ? _bat.charge_pct + '% charged' : '' %><%= _bat.status ? ' · ' + _bat.status : '' %></span>
+              </div>
+              <% if (h != null) { %>
+              <div style="height:8px;border-radius:4px;background:var(--surface-3);overflow:hidden;">
+                <div style="width:<%= Math.max(2, Math.min(100, h)) %>%;height:100%;background:<%= col %>;"></div>
+              </div>
+              <% } %>
+              <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:3px;" class="muted">
+                <span><%= _bat.full_mwh && _bat.design_mwh ? (Math.round(Number(_bat.full_mwh)/100)/10) + ' of ' + (Math.round(Number(_bat.design_mwh)/100)/10) + ' Wh' : '' %><%= _bat.cycle_count ? ' · ' + _bat.cycle_count + ' cycles' : '' %><%= _bat.batteries > 1 ? ' · ' + _bat.batteries + ' packs' : '' %></span>
+                <span><%= slope == null ? '' : (slope < 0 ? slope + ' pts in ~30 days' : slope > 0 ? '+' + slope + ' pts in ~30 days' : 'steady over ~30 days') %></span>
+              </div>
+              <div class="muted" style="font-size:11px;margin-top:2px;">read <%= new Date(_bat.collected_at).toLocaleString('en-GB', { timeZone: 'Europe/London', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) %></div>
+            </div>
+          <% } %>
+          <% if (agentInfo && user.role === 'admin') { %>
+            <form method="post" action="/assets/<%= asset.id %>/battery/refresh" style="margin-top:6px;">
+              <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+              <button class="btn" type="submit" style="font-size:11.5px;padding:2px 8px;">Read now</button>
+            </form>
+          <% } %>
+        </div></div>
+        <% } %>
         <div class="dev-field-row"><div class="k">Disk</div><div class="v">
           <% var _dl = diskList(agentInfo && agentInfo.disk_info); %>
           <% if (!_dl.length) { %><%= fmt(asset.disk_info) %><% } else { %>

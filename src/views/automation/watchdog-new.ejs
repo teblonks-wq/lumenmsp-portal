@@ -51,9 +51,14 @@
     <p class="nt-help" id="wdKindHelp"></p>
 
     <div id="pService">
-      <label for="wdServices">Services (short names, one per line or comma-separated)</label>
+      <label for="wdSvcFind">Find a service</label>
+      <input id="wdSvcFind" type="search" placeholder="type part of a name — spooler, sql, sage…" autocomplete="off">
+      <div class="nt-list hide" id="wdSvcHits" style="max-height:220px;"></div>
+      <p class="nt-help" id="wdSvcInv"><% if (inventory && inventory.machines) { %>Known from <%= inventory.machines %> machines, <%= inventory.services %> distinct services<% if (inventory.newest) { %>, newest <%= new Date(inventory.newest).toLocaleString('en-GB', { timeZone: 'Europe/London', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) %><% } %>. The list narrows to the chosen machines once you pick them.<% } else { %>No service inventory yet — every machine reports its services within a day of this going live; until then, type the name.<% } %></p>
+      <label for="wdServices">Watching (short names, one per line or comma-separated)</label>
       <textarea id="wdServices" rows="3" placeholder="Spooler&#10;MSSQLSERVER&#10;LanmanServer"></textarea>
       <p class="nt-help">The service name, not the display name — what <code>Get-Service</code> is given. A service that is not installed on a machine counts as failing there.</p>
+      <div class="nt-help" id="wdSvcCover"></div>
     </div>
     <div id="pProcess" class="hide">
       <div class="nt-two">
@@ -118,10 +123,11 @@
     <label for="wdScope">Scope</label>
     <select id="wdScope">
       <option value="devices">Chosen machines</option>
+      <option value="filter">Every machine matching the filter below (follows changes)</option>
       <option value="customer">Every machine at one customer</option>
       <option value="estate">Every machine we manage</option>
     </select>
-    <p class="nt-help">A customer or estate scope follows machines as they are enrolled — nothing to update when a new server appears.</p>
+    <p class="nt-help">A filter, customer or estate scope follows machines as they are enrolled, tagged or re-typed — nothing to update when a new server appears. "Chosen machines" is the list you tick, and only that list.</p>
     <div id="scopeCustomer" class="hide">
       <label for="wdCustomer">Customer</label>
       <select id="wdCustomer">
@@ -130,20 +136,36 @@
       </select>
     </div>
     <div id="scopeDevices">
-      <div class="nt-two">
+      <div class="nt-three">
         <div>
-          <label for="ntCustomer">Filter by customer</label>
+          <label for="ntCustomer">Customer</label>
           <select id="ntCustomer">
             <option value="">All customers</option>
             <% customers.forEach(function(c){ %><option value="<%= c.id %>"><%= c.name %> (<%= c.devices %>)</option><% }); %>
           </select>
         </div>
         <div>
-          <label for="ntSearch">Search</label>
-          <input id="ntSearch" type="search" placeholder="hostname, user…">
+          <label for="ntTag">Tag / folder</label>
+          <select id="ntTag">
+            <option value="">Any tag</option>
+            <% (tags || []).forEach(function(t){ %><option value="<%= t.id %>"><%= t.name %> (<%= t.n %>)</option><% }); %>
+          </select>
+        </div>
+        <div>
+          <label for="ntType">Type</label>
+          <select id="ntType">
+            <option value="">Any type</option>
+            <% (deviceTypes || []).forEach(function(t){ %><option value="<%= t.t %>"><%= t.t %> (<%= t.n %>)</option><% }); %>
+          </select>
         </div>
       </div>
-      <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
+      <div class="nt-three" style="margin-top:6px;">
+        <div><label for="ntOs">OS contains</label><input id="ntOs" type="search" placeholder="Server 2019, Windows 11…"></div>
+        <div><label for="ntSearch">Name / user / company</label><input id="ntSearch" type="search" placeholder="hostname, user…"></div>
+        <div><label for="ntOnline">Online</label><select id="ntOnline"><option value="">Any</option><option value="1">Checking in now</option></select></div>
+      </div>
+      <p class="nt-help" id="ntFilterHelp"></p>
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center;" id="ntPickBar">
         <button type="button" class="btn" id="ntAll" style="font-size:12px;">Select all shown</button>
         <button type="button" class="btn" id="ntNone" style="font-size:12px;">Clear</button>
         <span class="nt-picked" id="ntPicked">0 selected</span>
@@ -189,8 +211,24 @@
 
   // ── scope ──
   var scope = $('wdScope');
-  function syncScope(){ show($('scopeCustomer'), scope.value === 'customer'); show($('scopeDevices'), scope.value === 'devices'); }
+  function syncScope(){
+    var filt = scope.value === 'filter';
+    show($('scopeCustomer'), scope.value === 'customer'); show($('scopeDevices'), scope.value === 'devices' || filt);
+    show($('ntPickBar'), !filt);
+    $('ntFilterHelp').textContent = filt ? 'These filters ARE the scope. The list below is what matches right now; the watchdog re-evaluates it on every sweep.' : 'Narrow the list, then tick the machines to watch.';
+    render();
+  }
   scope.addEventListener('change', syncScope);
+  function readFilter(){
+    var f = {};
+    if ($('ntCustomer').value) f.customerIds = [Number($('ntCustomer').value)];
+    if ($('ntTag').value) f.tagIds = [Number($('ntTag').value)];
+    if ($('ntType').value) f.types = [$('ntType').value];
+    if ($('ntOs').value.trim()) f.osLike = $('ntOs').value.trim();
+    if ($('ntSearch').value.trim()) f.hostLike = $('ntSearch').value.trim();
+    if ($('ntOnline').value) f.onlineOnly = true;
+    return Object.keys(f).length ? f : null;
+  }
 
   // ── heal rows ──
   function healRow(h){
@@ -224,14 +262,16 @@
 
   // ── machine picker (same shape as Scheduled tasks) ──
   function render(){
-    var list = $('ntList');
+    var list = $('ntList'); if (!list) return;
+    var filt = scope.value === 'filter';
     if (!devices.length) { list.innerHTML = '<div class="nt-row muted">No machines match.</div>'; return; }
-    list.innerHTML = devices.map(function(d){
+    list.innerHTML = (filt ? '<div class="nt-row" style="background:var(--chip-bg,#eef2f7);font-weight:600;">' + devices.length + ' machine' + (devices.length === 1 ? '' : 's') + ' match right now</div>' : '') + devices.map(function(d){
       var on = picked[d.id] ? ' checked' : '';
-      return '<label class="nt-row"><input type="checkbox" data-id="' + d.id + '"' + on + '>' +
+      return '<label class="nt-row">' + (filt ? '' : '<input type="checkbox" data-id="' + d.id + '"' + on + '>') +
              '<span class="nt-dot' + (d.online ? ' on' : '') + '"></span>' +
              '<span class="h">' + esc(d.hostname || ('#' + d.id)) + '</span>' +
-             '<span class="c">' + esc(d.customer_name || '') + '</span></label>';
+             (d.tags ? '<span class="muted" style="font-size:11px;">' + esc(d.tags) + '</span>' : '') +
+             '<span class="c">' + esc([d.customer_name, d.device_type].filter(Boolean).join(' · ')) + '</span></label>';
     }).join('');
     list.querySelectorAll('input[type=checkbox]').forEach(function(cb){
       cb.addEventListener('change', function(){
@@ -245,12 +285,62 @@
   function syncPicked(){ var ids = Object.keys(picked); $('ntPicked').textContent = ids.length + ' selected'; $('ntDeviceIds').value = ids.join(','); }
   var t = null;
   function load(){
-    fetch('/automation/devices.json?q=' + encodeURIComponent($('ntSearch').value.trim()) + '&customer=' + encodeURIComponent($('ntCustomer').value))
-      .then(function(r){ return r.json(); }).then(function(j){ devices = (j && j.devices) || []; render(); })
+    var qs = 'q=' + encodeURIComponent($('ntSearch').value.trim()) + '&customer=' + encodeURIComponent($('ntCustomer').value) +
+             '&tag=' + encodeURIComponent($('ntTag').value) + '&type=' + encodeURIComponent($('ntType').value) +
+             '&os=' + encodeURIComponent($('ntOs').value.trim()) + '&online=' + encodeURIComponent($('ntOnline').value);
+    fetch('/automation/devices.json?' + qs)
+      .then(function(r){ return r.json(); }).then(function(j){ devices = (j && j.devices) || []; render(); coverage(); })
       .catch(function(){ $('ntList').innerHTML = '<div class="nt-row muted">Could not load machines.</div>'; });
   }
-  $('ntSearch').addEventListener('input', function(){ clearTimeout(t); t = setTimeout(load, 200); });
-  $('ntCustomer').addEventListener('change', load);
+  ['ntSearch', 'ntOs'].forEach(function(id){ $(id).addEventListener('input', function(){ clearTimeout(t); t = setTimeout(load, 200); }); });
+  ['ntCustomer', 'ntTag', 'ntType', 'ntOnline'].forEach(function(id){ $(id).addEventListener('change', load); });
+
+  // ── service lookup across the estate (narrowed to the chosen / matching machines) ──
+  function scopedIds(){ return scope.value === 'filter' ? devices.map(function(d){ return d.id; }) : Object.keys(picked).map(Number); }
+  var st = null;
+  function findServices(){
+    var q = $('wdSvcFind').value.trim(); var hits = $('wdSvcHits');
+    if (q.length < 2) { hits.classList.add('hide'); return; }
+    var ids = scopedIds().slice(0, 400);
+    fetch('/automation/watchdogs/services.json?q=' + encodeURIComponent(q) + (ids.length ? '&device_ids=' + ids.join(',') : '') + (scope.value === 'customer' && $('wdCustomer').value ? '&customer=' + $('wdCustomer').value : ''))
+      .then(function(r){ return r.json(); }).then(function(j){
+        var list = (j && j.services) || [];
+        hits.classList.remove('hide');
+        if (!list.length) { hits.innerHTML = '<div class="nt-row muted">Nothing called that on ' + (ids.length ? 'the chosen machines' : 'any inventoried machine') + '. You can still type the name.</div>'; return; }
+        hits.innerHTML = list.map(function(x){
+          return '<div class="nt-row" style="cursor:pointer;" data-svc="' + esc(x.name) + '"><span class="h">' + esc(x.name) + '</span><span class="muted" style="font-size:11.5px;">' + esc(x.displayName || '') + '</span><span class="c">' + x.machines + ' machine' + (x.machines === 1 ? '' : 's') + ', ' + x.running + ' running</span></div>';
+        }).join('');
+        hits.querySelectorAll('[data-svc]').forEach(function(row){ row.addEventListener('click', function(){ addService(row.getAttribute('data-svc')); }); });
+      }).catch(function(){ hits.classList.add('hide'); });
+  }
+  function addService(name){
+    var cur = $('wdServices').value.split(/[\n,;]+/).map(function(x){ return x.trim(); }).filter(Boolean);
+    if (cur.map(function(x){ return x.toLowerCase(); }).indexOf(name.toLowerCase()) < 0) cur.push(name);
+    $('wdServices').value = cur.join('\n'); $('wdSvcFind').value = ''; $('wdSvcHits').classList.add('hide'); coverage();
+  }
+  $('wdSvcFind').addEventListener('input', function(){ clearTimeout(st); st = setTimeout(findServices, 220); });
+  $('wdSvcFind').addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); var first = $('wdSvcHits').querySelector('[data-svc]'); if (first) addService(first.getAttribute('data-svc')); else if (this.value.trim()) addService(this.value.trim()); } });
+  document.addEventListener('click', function(e){ if (!$('wdSvcHits').contains(e.target) && e.target !== $('wdSvcFind')) $('wdSvcHits').classList.add('hide'); });
+  // Coverage: of the machines this watchdog will watch, which actually have each service — before it is saved and fails on day one.
+  var ct = null;
+  function coverage(){
+    var out = $('wdSvcCover'); if (kind.value !== 'service') { out.textContent = ''; return; }
+    var names = $('wdServices').value.split(/[\n,;]+/).map(function(x){ return x.trim(); }).filter(Boolean);
+    var ids = scopedIds();
+    if (!names.length || !ids.length || scope.value === 'estate' || scope.value === 'customer') { out.textContent = ''; return; }
+    fetch('/automation/watchdogs/check-services.json?names=' + encodeURIComponent(names.join(',')) + '&device_ids=' + ids.slice(0, 400).join(','))
+      .then(function(r){ return r.json(); }).then(function(j){
+        if (!j.ok) return;
+        var known = (j.inventoried || []).length;
+        out.innerHTML = names.map(function(n){
+          var have = (j.coverage && j.coverage[n]) ? j.coverage[n].length : 0;
+          var colour = have === known ? 'var(--ok-fg,#15803d)' : have ? 'var(--warn-deep,#b45309)' : 'var(--bad-fg,#b91c1c)';
+          return '<span style="color:' + colour + ';font-weight:600;">' + esc(n) + '</span>: on ' + have + ' of ' + known + ' inventoried' + (ids.length > known ? ' (' + (ids.length - known) + ' not inventoried yet)' : '');
+        }).join(' · ');
+      }).catch(function(){});
+  }
+  $('wdServices').addEventListener('input', function(){ clearTimeout(ct); ct = setTimeout(coverage, 300); });
+  var _syncPicked = syncPicked; syncPicked = function(){ _syncPicked(); coverage(); };
   $('ntAll').addEventListener('click', function(){ devices.forEach(function(d){ picked[d.id] = d.hostname || String(d.id); }); render(); syncPicked(); });
   $('ntNone').addEventListener('click', function(){ picked = Object.create(null); render(); syncPicked(); });
 
@@ -266,12 +356,15 @@
       name: $('wdName').value, kind: k, params: params, scope: scope.value,
       customerId: scope.value === 'customer' ? $('wdCustomer').value : null,
       deviceIds: scope.value === 'devices' ? Object.keys(picked).map(Number) : [],
+      filter: scope.value === 'filter' ? readFilter() : null,
       severity: $('wdSeverity').value, intervalMinutes: $('wdInterval').value,
       heal: readHeal(), healMaxPerDay: $('wdMax').value, healCooldownMinutes: $('wdCool').value,
       escalateCase: $('wdEsc').value === '1', notes: $('wdNotes').value
     };
     if (!spec.name.trim()) { e.preventDefault(); alert('Give the watchdog a name.'); return; }
     if (spec.scope === 'devices' && !spec.deviceIds.length) { e.preventDefault(); alert('Pick at least one machine, or change the scope.'); return; }
+    if (spec.scope === 'filter' && !spec.filter) { e.preventDefault(); alert('Set at least one filter — a customer, a tag, a type, an OS or a name — or change the scope.'); return; }
+    if (spec.scope === 'filter') spec.params.filter = spec.filter;
     $('wdSpec').value = JSON.stringify(spec);
   });
 
@@ -285,6 +378,15 @@
     if (EXISTING.kind === 'offline') $('wdMinutes').value = p.minutes || 30;
     if (EXISTING.kind === 'uptime') $('wdDays').value = p.days || 30;
     scope.value = EXISTING.scope; $('wdSeverity').value = EXISTING.severity; $('wdInterval').value = EXISTING.intervalMinutes;
+    if (EXISTING.scope === 'filter' && p.filter) {
+      var f = p.filter;
+      if (f.customerIds && f.customerIds.length) $('ntCustomer').value = String(f.customerIds[0]);
+      if (f.tagIds && f.tagIds.length) $('ntTag').value = String(f.tagIds[0]);
+      if (f.types && f.types.length) { var to = Array.prototype.filter.call($('ntType').options, function(o){ return o.value.toLowerCase() === String(f.types[0]).toLowerCase(); })[0]; if (to) $('ntType').value = to.value; }
+      if (f.osLike) $('ntOs').value = f.osLike;
+      if (f.hostLike) $('ntSearch').value = f.hostLike;
+      if (f.onlineOnly) $('ntOnline').value = '1';
+    }
     $('wdMax').value = EXISTING.healMaxPerDay; $('wdCool').value = EXISTING.healCooldownMinutes; $('wdEsc').value = EXISTING.escalateCase ? '1' : '0';
     (EXISTING.heal || []).forEach(healRow);
   } else {

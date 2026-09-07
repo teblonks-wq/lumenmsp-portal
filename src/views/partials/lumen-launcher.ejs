@@ -1,0 +1,94 @@
+<%
+// Lumen launcher — the blue button and the right-hand slide-out (Terry, 7 Sep 2026).
+// The panel itself is the separate Lumen app, framed from lumenUrl; the Portal only mints the
+// hand-off token (/lumen/token) and moves the page when Lumen says navigate. Rendered only for
+// users on the Lumen beta list (res.locals.lumenOn), so nobody else sees a thing.
+%>
+<style>
+  #lumenBtn { position:fixed; right:22px; bottom:22px; width:54px; height:54px; border-radius:50%; border:0; cursor:pointer; z-index:900;
+    background:#2563eb url(/static/lumen-crest.png) center/34px 34px no-repeat; box-shadow:0 10px 26px rgba(37,99,235,.38); transition:transform .15s ease, box-shadow .15s ease; }
+  #lumenBtn:hover { transform:translateY(-2px); box-shadow:0 14px 30px rgba(37,99,235,.45); }
+  #lumenBtn.open { display:none; }
+  #lumenDrawer { position:fixed; top:0; right:0; height:100vh; width:440px; max-width:100vw; z-index:950; background:#f6f8fb; box-shadow:-16px 0 40px rgba(2,6,23,.22);
+    transform:translateX(105%); transition:transform .22s ease-out; display:flex; flex-direction:column; }
+  #lumenDrawer.open { transform:none; }
+  #lumenDrawer iframe { flex:1; border:0; width:100%; height:100%; background:#f6f8fb; }
+  #lumenDown { padding:24px 22px; font-size:13.5px; color:#334155; }
+  #lumenDown p { margin:0 0 10px; }
+  #lumenDown[hidden] { display:none; }
+  #lumenDrawer .lumen-grip { position:absolute; left:0; top:0; width:6px; height:100%; cursor:ew-resize; }
+  @media (max-width:640px) { #lumenDrawer { width:100vw; } }
+</style>
+<button id="lumenBtn" type="button" title="Lumen" aria-label="Open Lumen"></button>
+<div id="lumenDrawer" aria-label="Lumen"><div class="lumen-grip"></div>
+  <div id="lumenDown" hidden><p><strong>Lumen isn't answering.</strong></p><p>It is almost certainly being updated — it deploys separately from the Portal, so nothing here is affected.</p><button type="button" class="btn" id="lumenRetry">Try again</button></div>
+  <iframe id="lumenFrame" title="Lumen" allow="microphone; clipboard-write"></iframe></div>
+<script>
+(function () {
+  var btn = document.getElementById('lumenBtn'), drawer = document.getElementById('lumenDrawer'), frame = document.getElementById('lumenFrame');
+  var origin = null, loaded = false, ready = false, waitTimer = null;
+  var down = document.getElementById('lumenDown');
+  function screen() { return location.pathname + location.search + location.hash; }
+  function showDown(on) { down.hidden = !on; frame.style.display = on ? 'none' : ''; }
+  function load(force) {
+    if (loaded && !force) return Promise.resolve();
+    ready = false; showDown(false);
+    return fetch('/lumen/token', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j.ok) throw new Error('no token');
+      origin = j.url;
+      frame.src = j.url + '/panel?t=' + encodeURIComponent(j.token) + '&screen=' + encodeURIComponent(screen());
+      loaded = true;
+      // Lumen restarts on its own deploy, which takes a second or two. If the panel has not
+      // said hello by now it is down or being updated — say so plainly instead of showing the
+      // browser's error page inside the drawer.
+      clearTimeout(waitTimer);
+      waitTimer = setTimeout(function () { if (!ready) showDown(true); }, 12000);
+    });
+  }
+  function open() {
+    load().then(function () {
+      drawer.classList.add('open'); btn.classList.add('open');
+      try { sessionStorage.setItem('lumen.open', '1'); } catch (e) {}
+    }).catch(function () { btn.title = 'Lumen is not available right now'; });
+  }
+  document.getElementById('lumenRetry').addEventListener('click', function () { load(true); });
+  function close() {
+    drawer.classList.remove('open'); btn.classList.remove('open');
+    try { sessionStorage.setItem('lumen.open', '0'); } catch (e) {}
+  }
+  btn.addEventListener('click', open);
+  window.addEventListener('message', function (e) {
+    if (!origin || e.origin !== origin) return;
+    var m = e.data || {};
+    if (m.type === 'lumen:close') close();
+    else if (m.type === 'lumen:navigate' && typeof m.path === 'string' && /^\/(?!\/)/.test(m.path)) {
+      // Portal paths only. A hash-only change on the same page must not reload.
+      var target = m.path;
+      if (target.split('#')[0] === location.pathname + location.search) { location.hash = target.split('#')[1] || ''; window.dispatchEvent(new HashChangeEvent('hashchange')); }
+      else location.href = target;
+    }
+    else if (m.type === 'lumen:reload') {
+      // A change Lumen made lands on the page behind it; without this the screen still shows
+      // the old number and the person believes nothing happened.
+      location.reload();
+    }
+    else if (m.type === 'lumen:open' && typeof m.url === 'string' && /^https:\/\//.test(m.url)) window.open(m.url, '_blank', 'noopener');
+    else if (m.type === 'lumen:ready') {
+      ready = true; clearTimeout(waitTimer); showDown(false);
+      try { frame.contentWindow.postMessage({ type: 'lumen:screen', path: screen() }, origin); } catch (err) {}
+    }
+  });
+  window.addEventListener('hashchange', function () { if (origin && loaded) { try { frame.contentWindow.postMessage({ type: 'lumen:screen', path: screen() }, origin); } catch (e) {} } });
+  // Resize by dragging the left edge; remembered per browser.
+  (function () {
+    var grip = drawer.querySelector('.lumen-grip'), dragging = false;
+    try { var w = parseInt(localStorage.getItem('lumen.width') || '', 10); if (w >= 340 && w <= 900) drawer.style.width = w + 'px'; } catch (e) {}
+    grip.addEventListener('mousedown', function (e) { dragging = true; e.preventDefault(); frame.style.pointerEvents = 'none'; });
+    window.addEventListener('mousemove', function (e) { if (!dragging) return; var w = Math.max(340, Math.min(900, window.innerWidth - e.clientX)); drawer.style.width = w + 'px'; });
+    window.addEventListener('mouseup', function () { if (!dragging) return; dragging = false; frame.style.pointerEvents = ''; try { localStorage.setItem('lumen.width', parseInt(drawer.style.width, 10)); } catch (e) {} });
+  })();
+  // Keyboard: Ctrl+. toggles.
+  document.addEventListener('keydown', function (e) { if ((e.ctrlKey || e.metaKey) && e.key === '.') { e.preventDefault(); drawer.classList.contains('open') ? close() : open(); } });
+  try { if (sessionStorage.getItem('lumen.open') === '1') open(); } catch (e) {}
+})();
+</script>

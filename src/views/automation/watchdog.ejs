@@ -110,7 +110,7 @@
     <div class="wd-card wd-kv">
       <h2>The check</h2>
       <b>Watching</b><%= what %>
-      <b>Scope</b><%= w.scope === 'estate' ? 'Every machine we manage' : w.scope === 'customer' ? ('Every machine at ' + (customerName || 'that customer')) : ('Chosen machines (' + states.length + ')') %>
+      <b>Scope</b><%= w.scope === 'estate' ? 'Every machine we manage' : w.scope === 'customer' ? ('Every machine at ' + (customerName || 'that customer')) : w.scope === 'filter' ? ((typeof scopeWords !== 'undefined' && scopeWords) || 'Machines matching a filter') + ' — ' + states.length + ' now' : ('Chosen machines (' + states.length + ')') %>
       <% if (kinds.filter(function(k){ return k.key === w.kind; })[0].probe) { %><b>Cadence</b>Every <%= w.intervalMinutes %> minutes, on machines that are checking in<% } else { %><b>Cadence</b>Every minute, from what the agent already reports<% } %>
       <b>Severity</b><%= w.severity %>
       <% if (w.notes) { %><b>Notes</b><%= w.notes %><% } %>
