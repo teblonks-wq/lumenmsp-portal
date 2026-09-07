@@ -53,8 +53,30 @@
   <p class="muted" style="margin-top:0;">Standard emails the portal sends. The signature above is appended to each.</p>
 
   <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden;">
-    <div style="background:var(--surface-2);padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);">Welcome email <span class="muted" style="font-weight:400;">— sent to new staff on import / resend</span></div>
+    <div style="background:var(--surface-2);padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);">Staff welcome email <span class="muted" style="font-weight:400;">— sent to new staff on import / resend</span></div>
     <div style="padding:16px;background:var(--surface);"><%- welcomePreview %></div>
+  </div>
+
+  <div id="contact-methods" style="border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:14px;">
+    <div style="background:var(--surface-2);padding:8px 14px;font-weight:600;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;">
+      <span>Customer welcome email <span class="muted" style="font-weight:400;">— their portal login + how to reach us; sent per contact (contact card → Portal) or company-wide (customer → Contacts)</span></span>
+      <% if (methodsCustom) { %><span class="badge badge-primary">custom list</span><% } else { %><span class="badge badge-inactive">default list</span><% } %>
+    </div>
+    <div style="padding:12px 14px;">
+      <div class="muted" style="font-size:12px;margin-bottom:6px;">Subject: <%= customerWelcomeSubject %></div>
+      <form method="post" action="/admin/branding/contact-methods">
+        <label style="font-weight:600;font-size:13px;">How to reach us <span class="muted" style="font-weight:400;">— one per line: <code>Label | Value | Note</code>. Phone numbers, emails and web addresses become links automatically. Empty = defaults.</span></label>
+        <textarea class="input" name="contact_methods" rows="6" style="width:100%;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;margin-top:6px;" spellcheck="false" placeholder="<%= methodsDefault.split('\n')[0] %>"><%= methodsText %></textarea>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+          <button class="btn btn-primary" type="submit">Save contact methods</button>
+          <% if (methodsCustom) { %><button class="btn" type="submit" onclick="this.form.contact_methods.value='';">Reset to defaults</button><% } %>
+        </div>
+      </form>
+      <details style="margin-top:10px;" open>
+        <summary class="muted" style="cursor:pointer;font-size:13px;">Preview</summary>
+        <div style="border:1px solid var(--line);border-radius:8px;padding:14px;margin-top:8px;background:var(--surface);"><%- customerWelcomePreview %></div>
+      </details>
+    </div>
   </div>
 
   <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:14px;">

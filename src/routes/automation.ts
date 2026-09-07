@@ -162,12 +162,41 @@ router.post('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req
     packageId: parseInt(String(b.package_id || ''), 10) || null,
     catalogueId: parseInt(String(b.catalogue_id || ''), 10) || null,
     command: String(b.command || '') || null,
+    accountName: String(b.account_name || '') || null,
     delaySeconds: b.delay_seconds != null ? parseInt(String(b.delay_seconds), 10) : null,
   }, req.session.user!.id, req.session.user!.displayName);
 
   if (!r.ok) { res.redirect('/automation/scheduled-tasks/new?err=' + encodeURIComponent(r.error || 'Could not schedule that.')); return; }
   const extra = (r.occurrences || 1) > 1 ? ` — ${r.occurrences} occurrences scheduled.` : '';
   res.redirect(`/automation/scheduled-tasks/${r.taskId}?msg=` + encodeURIComponent('Scheduled.' + extra));
+});
+
+/**
+ * The same create, answered as JSON. For the places a task is scheduled from INSIDE another
+ * screen — today the device's User Management panel ("Disable at…") — where a redirect to
+ * the task page would throw away the panel the person was working in. Same validation,
+ * same table, same sweep; the task page link comes back for the panel to show.
+ */
+router.post('/automation/scheduled-tasks.json', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const ids = Array.isArray(b.device_ids) ? b.device_ids.map((n: any) => parseInt(String(n), 10)).filter(Boolean)
+    : String(b.device_ids || '').split(',').map((s: string) => parseInt(s.trim(), 10)).filter(Boolean);
+  const r = await createTask({
+    name: String(b.name || ''),
+    action: String(b.action || ''),
+    condition: String(b.condition || 'datetime'),
+    runAtEpoch: parseInt(String(b.run_at_epoch || ''), 10) || null,
+    runUntilEpoch: parseInt(String(b.run_until_epoch || ''), 10) || null,
+    recurrence: 'none',
+    deviceIds: ids,
+    scriptId: parseInt(String(b.script_id || ''), 10) || null,
+    catalogueId: parseInt(String(b.catalogue_id || ''), 10) || null,
+    command: String(b.command || '') || null,
+    accountName: String(b.account_name || '') || null,
+    delaySeconds: b.delay_seconds != null ? parseInt(String(b.delay_seconds), 10) : null,
+  }, req.session.user!.id, req.session.user!.displayName);
+  if (!r.ok) { res.status(400).json({ ok: false, error: r.error || 'Could not schedule that.' }); return; }
+  res.json({ ok: true, taskId: r.taskId, url: `/automation/scheduled-tasks/${r.taskId}` });
 });
 
 // ── Software catalogue ──────────────────────────────────────────────────────────

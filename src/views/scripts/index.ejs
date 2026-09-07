@@ -68,6 +68,7 @@
   <p style="margin:0 0 8px;font-size:12px;color:var(--muted);">
     Expects <code>{"source":"atera","scripts":[{"sourceRef":"…","name":"…","body":"…"}]}</code>.
     Keyed on <code>sourceRef</code>, so running it twice updates rather than duplicates.
+    A row may carry <code>bodyUrl</code> instead of <code>body</code> for Atera's shared library — the server fetches it.
   </p>
   <button class="btn" type="button" id="scClip">Import from clipboard</button>
   <label for="scJson">…or paste the JSON here</label>
@@ -119,7 +120,7 @@
       <td><span class="pill plain"><%= s.fileType %></span></td>
       <td style="font-size:12px;color:var(--muted);"><%= String(s.runAs).replace('_',' ') %></td>
       <td style="font-size:12px;color:var(--muted);"><%= s.lines %> lines · <%= kb(s.bytes) %></td>
-      <td><% if (s.source === 'atera') { %><span class="pill info">Atera</span><% } else { %><span class="pill plain">Lumen</span><% } %></td>
+      <td><% if (s.source === 'atera') { %><span class="pill info">Atera</span><% } else if (s.source === 'atera-shared') { %><span class="pill plain" title="Atera's shared (community) library">Atera library</span><% } else { %><span class="pill plain">Lumen</span><% } %></td>
       <td style="font-size:12px;color:var(--muted);"><%= new Date(s.updatedAt).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}) %></td>
     </tr>
   <% }) %>
@@ -141,19 +142,27 @@ function scPanel(id){ var p = document.getElementById(id); if (p) p.classList.to
     if (!payload || !Array.isArray(payload.scripts) || !payload.scripts.length) {
       say('No "scripts" array in that payload.', true); return;
     }
-    say('Importing ' + payload.scripts.length + ' script(s)…');
+    // Big payloads (the 1,111-script shared library) go up in batches, so a body the
+    // server has to fetch cannot time the whole request out, and progress is visible.
+    var all = payload.scripts, BATCH = 60, created = 0, updated = 0, failed = [];
+    say('Importing ' + all.length + ' script(s)…');
     try {
-      var r = await fetch('/scripts/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-csrf-token': '<%= csrfToken %>' },
-        body: JSON.stringify(payload),
-      });
-      var j = await r.json();
-      if (!j.ok) { say(j.error || 'Import failed.', true); return; }
-      var msg = j.created + ' added, ' + j.updated + ' updated, ' + j.failed.length + ' failed (of ' + j.total + ').';
-      if (j.failed.length) msg += '\n' + j.failed.map(function(f){ return '• ' + f.name + ' — ' + f.error; }).join('\n');
-      say(msg, j.failed.length > 0);
-      if (j.created || j.updated) setTimeout(function(){ location.reload(); }, 1800);
+      for (var at = 0; at < all.length; at += BATCH) {
+        var slice = all.slice(at, at + BATCH);
+        if (all.length > BATCH) say('Importing ' + (at + 1) + '–' + Math.min(at + BATCH, all.length) + ' of ' + all.length + '… (' + created + ' added, ' + updated + ' updated, ' + failed.length + ' failed so far)');
+        var r = await fetch('/scripts/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': '<%= csrfToken %>' },
+          body: JSON.stringify({ source: payload.source, scripts: slice }),
+        });
+        var j = await r.json();
+        if (!j.ok) { say(j.error || 'Import failed.', true); return; }
+        created += j.created; updated += j.updated; failed = failed.concat(j.failed || []);
+      }
+      var msg = created + ' added, ' + updated + ' updated, ' + failed.length + ' failed (of ' + all.length + ').';
+      if (failed.length) msg += '\n' + failed.map(function(f){ return '• ' + f.name + ' — ' + f.error; }).join('\n');
+      say(msg, failed.length > 0);
+      if (created || updated) setTimeout(function(){ location.reload(); }, 1800);
     } catch (e) { say('Import failed: ' + e.message, true); }
   }
 

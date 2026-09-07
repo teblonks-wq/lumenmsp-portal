@@ -3,20 +3,26 @@
 // ONE block, included by BOTH the composer form and the Properties panel, because the
 // status can be set from either and a case parked with nobody attached is precisely the
 // hole this closes. Shown by _third-party-js.ejs whenever its own form's status select
-// reads awaiting_3rd_party. Locals: ticket, thirdParties (optional — empty renders the
-// "add one first" line rather than an empty picker that looks broken).
+// reads awaiting_3rd_party. Locals: ticket, thirdParties (optional).
+//
+// "+ New" adds a third party WITHOUT leaving the case: the supplier you are waiting on is
+// usually one you have never chased before, and "go to the board, add it, come back" is
+// how the case got parked with nobody named. The new party lands in the suppliers list
+// exactly as the board would add it (same dedupe), and is selected here in the same go.
 var _tps = (typeof thirdParties !== 'undefined' && thirdParties) ? thirdParties : [];
+var _cats = (typeof thirdPartyCategories !== 'undefined' && thirdPartyCategories) ? thirdPartyCategories
+  : ['Connectivity / Openreach','Telecoms carrier','Hardware vendor','Software vendor','Cloud / licensing','Landlord / facilities',"Customer's own supplier",'Other'];
 %>
 <div class="tp-block" style="display:none;margin-top:10px;border:1px solid var(--warn-line,#fde68a);background:var(--tint-yellow,#fffbeb);border-radius:10px;padding:10px 12px;">
-  <div style="font-size:12.5px;font-weight:700;color:var(--warn-deep,#92400e);margin-bottom:8px;">Waiting on whom?</div>
-  <% if (!_tps.length) { %>
-    <p style="font-size:12px;margin:0;">There are no third parties on the list yet — <a href="/third-parties" target="_blank">add the ones you chase ↗</a>. The case will still park, but nothing will chase it.</p>
-  <% } else { %>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+    <div style="font-size:12.5px;font-weight:700;color:var(--warn-deep,#92400e);">Waiting on whom?</div>
+    <button type="button" class="tp-new-toggle" style="background:none;border:0;padding:0;font-size:12px;font-weight:700;color:var(--accent,#2563eb);cursor:pointer;">+ New third party</button>
+  </div>
   <div style="display:grid;grid-template-columns:1.3fr 1fr 0.95fr;gap:10px;">
     <div>
       <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">Third party</label>
       <select class="input tp-id" name="tp_id" style="width:100%;padding:5px 8px;font-size:12.5px;">
-        <option value="">— pick one —</option>
+        <option value=""><%= _tps.length ? '— pick one —' : '— none on the list yet: add one with + New —' %></option>
         <% _tps.forEach(function(tp){ %>
           <option value="<%= tp.id %>" data-chase="<%= tp.chaseBy %>" <%= String(ticket.third_party_id||'')===String(tp.id)?'selected':'' %>><%= tp.name %></option>
         <% }); %>
@@ -31,6 +37,41 @@ var _tps = (typeof thirdParties !== 'undefined' && thirdParties) ? thirdParties 
       <input class="input tp-chase" type="date" name="tp_chase" value="<%= ticket.chase_by || '' %>" style="width:100%;padding:5px 8px;font-size:12.5px;">
     </div>
   </div>
+
+  <%# Inline "new third party" — hidden until + New. No name attributes on purpose: these
+      inputs sit INSIDE the case form and must never post with it. %>
+  <div class="tp-new" style="display:none;margin-top:10px;padding:10px 12px;border:1px dashed var(--warn-line,#fde68a);border-radius:8px;background:rgba(255,255,255,.6);">
+    <div style="font-size:12px;font-weight:700;margin-bottom:6px;">New third party</div>
+    <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:8px;">
+      <div>
+        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">Name *</label>
+        <input class="input tp-new-name" placeholder="e.g. Openreach, Sage, Gamma" style="width:100%;padding:5px 8px;font-size:12.5px;" maxlength="120">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">What kind</label>
+        <select class="input tp-new-cat" style="width:100%;padding:5px 8px;font-size:12.5px;">
+          <% _cats.forEach(function(c){ %><option value="<%= c %>"><%= c %></option><% }); %>
+        </select>
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">Support phone</label>
+        <input class="input tp-new-phone" placeholder="optional" style="width:100%;padding:5px 8px;font-size:12.5px;" maxlength="40">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">Support email</label>
+        <input class="input tp-new-email" type="email" placeholder="optional" style="width:100%;padding:5px 8px;font-size:12.5px;" maxlength="190">
+      </div>
+      <div>
+        <label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px;">Usual turnaround (working days)</label>
+        <input class="input tp-new-days" type="number" min="1" max="60" value="3" style="width:100%;padding:5px 8px;font-size:12.5px;">
+      </div>
+      <div style="display:flex;align-items:flex-end;gap:6px;">
+        <button type="button" class="btn btn-primary tp-new-save" style="padding:5px 12px;font-size:12.5px;">Add &amp; select</button>
+        <button type="button" class="btn tp-new-cancel" style="padding:5px 10px;font-size:12.5px;">Cancel</button>
+      </div>
+    </div>
+    <p class="tp-new-msg muted" style="font-size:11.5px;margin:6px 0 0;min-height:14px;"></p>
+  </div>
+
   <p class="muted" style="font-size:11px;margin:7px 0 0;">On the chase date the case returns to Awaiting engineer by itself, and it stays on the <a href="/third-parties" target="_blank">Third parties board ↗</a> until it does.</p>
-  <% } %>
 </div>

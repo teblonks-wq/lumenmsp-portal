@@ -155,8 +155,8 @@ export interface ScriptStats {
 export async function scriptStats(): Promise<ScriptStats> {
   const r = (await pool.query(
     `SELECT COUNT(*)::int total,
-            COUNT(*) FILTER (WHERE source = 'atera')::int "fromAtera",
-            COUNT(*) FILTER (WHERE source <> 'atera')::int "ownWork",
+            COUNT(*) FILTER (WHERE source LIKE 'atera%')::int "fromAtera",
+            COUNT(*) FILTER (WHERE source NOT LIKE 'atera%')::int "ownWork",
             COALESCE(SUM(octet_length(body)), 0)::int bytes,
             COUNT(*) FILTER (WHERE review_verdict = 'broken')::int broken,
             COUNT(*) FILTER (WHERE review_verdict = 'warn')::int warn,

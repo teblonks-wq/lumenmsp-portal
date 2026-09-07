@@ -4,6 +4,8 @@
 // copy and neither reaches into the other. Include ONCE per page.
 function tpWire(){
   document.querySelectorAll('.tp-block').forEach(function(block){
+    if (block.dataset.tpWired) return;
+    block.dataset.tpWired = '1';
     var form = block.closest('form');
     if (!form) return;
     var sel = form.querySelector('select[name="status"], select[name="set_status"]');
@@ -27,6 +29,57 @@ function tpWire(){
       if (o && o.getAttribute('data-chase') && chase) chase.value = o.getAttribute('data-chase');
     });
     sync();
+
+    // ── + New third party, without leaving the case ─────────────────────────────
+    var panel = block.querySelector('.tp-new');
+    var toggle = block.querySelector('.tp-new-toggle');
+    if (!panel || !toggle) return;
+    var nameIn = panel.querySelector('.tp-new-name');
+    var msg = panel.querySelector('.tp-new-msg');
+    function show(on){
+      panel.style.display = on ? 'block' : 'none';
+      msg.textContent = '';
+      if (on) { nameIn.value = ''; nameIn.focus(); }
+    }
+    toggle.addEventListener('click', function(){ show(panel.style.display === 'none'); });
+    panel.querySelector('.tp-new-cancel').addEventListener('click', function(){ show(false); });
+    // Enter in the name box adds the party — it must NOT submit the surrounding case form.
+    nameIn.addEventListener('keydown', function(e){ if (e.key === 'Enter') { e.preventDefault(); save(); } });
+    panel.querySelector('.tp-new-save').addEventListener('click', save);
+
+    function save(){
+      var name = nameIn.value.trim();
+      if (!name) { msg.textContent = 'A third party needs a name.'; nameIn.focus(); return; }
+      var btn = panel.querySelector('.tp-new-save');
+      btn.disabled = true; msg.textContent = 'Adding…';
+      fetch('/third-parties/quick.json', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name,
+          category: panel.querySelector('.tp-new-cat').value,
+          support_phone: panel.querySelector('.tp-new-phone').value.trim(),
+          support_email: panel.querySelector('.tp-new-email').value.trim(),
+          typical_days: panel.querySelector('.tp-new-days').value
+        })
+      }).then(function(r){ return r.json(); }).then(function(j){
+        btn.disabled = false;
+        if (!j || !j.ok) { msg.textContent = (j && j.error) || 'Could not add that.'; return; }
+        // The party is now real: put it in EVERY picker on the page (composer AND the
+        // Properties panel share the list), and select it in the one that asked.
+        document.querySelectorAll('.tp-id').forEach(function(s){
+          var exists = Array.prototype.some.call(s.options, function(o){ return o.value === String(j.id); });
+          if (!exists) {
+            var o = document.createElement('option');
+            o.value = String(j.id); o.textContent = j.name; o.setAttribute('data-chase', j.chaseBy || '');
+            s.appendChild(o);
+          }
+        });
+        if (id) { id.value = String(j.id); if (chase && j.chaseBy) chase.value = j.chaseBy; }
+        msg.textContent = j.existing ? (j.name + ' was already a supplier — marked as a third party and selected.') : (j.name + ' added and selected.');
+        setTimeout(function(){ show(false); }, 900);
+      }).catch(function(){ btn.disabled = false; msg.textContent = 'Could not add that — check the connection and try again.'; });
+    }
   });
 }
 // The composer and the Properties panel are rendered in either order, so wire up once

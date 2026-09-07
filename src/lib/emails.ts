@@ -22,6 +22,116 @@ export async function sendWelcomeEmail(toEmail: string, toName: string, fromName
   await sendMail({ to: toEmail, subject: 'Welcome to the Lumen MSP Portal', html: welcomeEmailHtml(toName), signatureName: fromName });
 }
 
+// ── Customer welcome email ──────────────────────────────────────────────────────
+// Sent to a customer's people when they are given the portal: their login email, how to
+// sign in, and every way they can reach us. Sent per contact (contact card → Portal) or
+// company-wide (customer → Contacts → Send welcome email). The "how to reach us" list is
+// edited under Admin → Branding (settings 'branding'/'contact_methods'), one method per
+// line as  Label | Value | Note  — no deploy needed to change a number or add WhatsApp.
+
+export interface ContactMethod { label: string; value: string; href: string | null; note: string }
+
+export const DEFAULT_CONTACT_METHODS_TEXT = [
+  'Phone | 0333 3350170 | Fastest for anything urgent — you\'ll speak to an engineer, not a queue',
+  'Email | sp@lumenmsp.co.uk | Opens a case automatically and you\'ll get a reference straight back',
+  'Portal | ' + ((config.APP_URL || 'https://portal.lumenmsp.co.uk').replace(/^https?:\/\//, '').replace(/\/$/, '')) + '/my | Raise a case, see progress, and look back at anything we\'ve done for you',
+  'Website chat | www.lumenmsp.co.uk | Live chat with the team during office hours',
+].join('\n');
+
+/** Work out the link for a method from its value: email → mailto, mostly-digits → tel (or wa.me when the label says WhatsApp), web → http(s). */
+function methodHref(label: string, value: string): string | null {
+  const v = (value || '').trim();
+  if (!v) return null;
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return 'mailto:' + v;
+  if (/^\+?[0-9 ()-]{7,}$/.test(v)) {
+    const digits = v.replace(/[^+0-9]/g, '');
+    if (/whatsapp/i.test(label)) return 'https://wa.me/' + (digits.startsWith('+') ? digits.slice(1) : digits.replace(/^0/, '44'));
+    return 'tel:' + digits;
+  }
+  if (/^https?:\/\//i.test(v)) return v;
+  if (/^(www\.)?[a-z0-9-]+(\.[a-z0-9-]+)+(\/\S*)?$/i.test(v)) return 'https://' + v;
+  return null;
+}
+
+/** Parse the Branding text (Label | Value | Note per line) into methods. Blank/comment lines skipped. */
+export function parseContactMethods(text: string): ContactMethod[] {
+  const out: ContactMethod[] = [];
+  for (const raw of (text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const parts = line.split('|').map((x) => x.trim());
+    const label = parts[0] || '';
+    const value = parts[1] || '';
+    if (!label || !value) continue;
+    out.push({ label, value, href: methodHref(label, value), note: parts.slice(2).join(' | ') });
+  }
+  return out;
+}
+
+/** The current "how to reach us" list — Branding override if saved, otherwise the defaults. */
+export async function getContactMethods(): Promise<ContactMethod[]> {
+  const saved = await getSetting('branding', 'contact_methods').catch(() => null);
+  const list = parseContactMethods(saved && saved.trim() ? saved : DEFAULT_CONTACT_METHODS_TEXT);
+  return list.length ? list : parseContactMethods(DEFAULT_CONTACT_METHODS_TEXT);
+}
+
+export const CUSTOMER_WELCOME_SUBJECT = 'Welcome to your Lumen IT support portal';
+
+export function customerWelcomeEmailHtml(opts: {
+  contactName?: string | null; customerName?: string | null; loginEmail: string;
+  methods: ContactMethod[]; note?: string | null;
+}): string {
+  const esc = (s: string) => (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as Record<string, string>)[c]);
+  const first = (opts.contactName || '').trim().split(/\s+/)[0] || 'there';
+  const url = (config.APP_URL || 'https://portal.lumenmsp.co.uk').replace(/\/$/, '');
+  const shown = url.replace(/^https?:\/\//, '');
+  const company = (opts.customerName || '').trim();
+  const note = (opts.note || '').trim()
+    ? `<p style="margin:0 0 16px;padding:12px 14px;background:#f0fdfa;border-left:3px solid #0ea5b7;border-radius:0 6px 6px 0;">${esc(opts.note!.trim()).replace(/\n/g, '<br>')}</p>` : '';
+  const rows = opts.methods.map((m) => {
+    const val = m.href ? `<a href="${esc(m.href)}" style="color:#0e7490;text-decoration:none;font-weight:600;">${esc(m.value)}</a>` : `<strong>${esc(m.value)}</strong>`;
+    const sub = m.note ? `<div style="color:#6b7280;font-size:13px;margin-top:1px;">${esc(m.note)}</div>` : '';
+    return `<tr>
+      <td style="padding:8px 16px 8px 0;color:#6b7280;font-size:14px;vertical-align:top;white-space:nowrap;">${esc(m.label)}</td>
+      <td style="padding:8px 0;font-size:15px;vertical-align:top;">${val}${sub}</td></tr>`;
+  }).join('');
+  return `
+  <div style="font-family:'Segoe UI',Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.6;">
+    <p style="margin:0 0 14px;">Hi ${esc(first)},</p>
+    ${note}
+    <p style="margin:0 0 16px;">Welcome to the <strong>Lumen IT support portal</strong>${company ? ` for ${esc(company)}` : ''}. It's the one place to raise a support case, see what we're working on for you right now, and look back over anything we've done — no more wondering whether an email got through.</p>
+
+    <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 18px;width:100%;max-width:520px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;">
+      <tr><td style="padding:14px 18px;">
+        <div style="color:#6b7280;font-size:13px;text-transform:uppercase;letter-spacing:.4px;">Your login</div>
+        <div style="font-size:17px;font-weight:600;margin:2px 0 8px;">${esc(opts.loginEmail)}</div>
+        <div style="font-size:14px;">Choose <strong>Sign in with Microsoft</strong> and use this address — it's the same login as your email, so there's no separate password to remember.</div>
+      </td></tr>
+    </table>
+
+    <p style="margin:0 0 8px;">
+      <a href="${url}" style="display:inline-block;background:#0ea5b7;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 28px;border-radius:6px;font-size:15px;">Open the portal</a>
+    </p>
+    <p style="margin:0 0 22px;font-size:13px;color:#6b7280;">Or go to <a href="${url}" style="color:#0e7490;">${esc(shown)}</a> — worth saving as a bookmark. Not on Microsoft 365? Just reply to this email and we'll set you up with a password instead.</p>
+
+    <h3 style="margin:0 0 4px;font-size:16px;color:#111827;">How to reach us</h3>
+    <p style="margin:0 0 6px;color:#6b7280;font-size:14px;">Whichever way you get in touch, it lands with the same team and you can follow it in the portal.</p>
+    <table cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 22px;">${rows}</table>
+
+    <p style="margin:0;">Any trouble getting in, reply to this email and a real person will pick it up.</p>`;
+}
+
+export async function sendCustomerWelcomeEmail(opts: {
+  toEmail: string; contactName?: string | null; customerName?: string | null; note?: string | null; fromName?: string;
+  methods?: ContactMethod[];
+}): Promise<void> {
+  const methods = opts.methods || (await getContactMethods());
+  await sendMail({
+    to: opts.toEmail, subject: CUSTOMER_WELCOME_SUBJECT, signatureName: opts.fromName,
+    html: customerWelcomeEmailHtml({ contactName: opts.contactName, customerName: opts.customerName, loginEmail: opts.toEmail, methods, note: opts.note }),
+  });
+}
+
 // Branded quotation email — greeting, optional personal note, a tidy summary
 // table and a clear call-to-action button. Renders cleanly even with images off.
 export function quoteEmailHtml(opts: {

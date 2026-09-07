@@ -94,6 +94,12 @@
       <p class="nt-help">Runs as SYSTEM on every machine selected. Whatever it returns comes back as the outcome. There is no preview and no undo.</p>
     </div>
 
+    <div id="ntAccountWrap" class="hide">
+      <label for="ntAccount">Local account name</label>
+      <input type="text" id="ntAccount" name="account_name" maxlength="104" placeholder="e.g. jsmith" style="max-width:320px;">
+      <p class="nt-help">The user name exactly as the machine's User Management panel lists it (Get-LocalUser). Local accounts only — a domain or Microsoft 365 leaver is done through <a class="row-link" href="/leavers">Leavers</a>. Built-in accounts are refused.</p>
+    </div>
+
     <div id="ntDelayWrap" class="hide">
       <label for="ntDelay">Warning to the person at the machine</label>
       <select id="ntDelay" name="delay_seconds">
@@ -204,6 +210,7 @@
     show(document.getElementById('ntPackageWrap'), needs === 'package');
     show(document.getElementById('ntSoftwareWrap'), needs === 'software');
     show(document.getElementById('ntCommandWrap'), needs === 'command');
+    show(document.getElementById('ntAccountWrap'), needs === 'account');
     show(document.getElementById('ntDelayWrap'), action.value.indexOf('power.') === 0);
   }
   function syncCondition(){

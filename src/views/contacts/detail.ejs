@@ -106,9 +106,12 @@
         </div>
         <button class="btn btn-primary" type="submit">Save access</button>
       </form>
-      <form method="post" action="/contacts/<%= contact.id %>/portal-invite" style="margin-top:10px;padding-top:12px;border-top:1px solid var(--line);" onsubmit="return confirm('Email a portal invite to <%= contact.email || '' %>?');">
-        <button class="btn" type="submit" <%= (on && contact.email) ? '' : 'disabled' %>>✉ Send invite</button>
-        <p class="muted" style="font-size:12px;margin:6px 0 0;"><% if (!contact.email) { %>Add an email address to invite this contact.<% } else { %>Emails <strong><%= contact.email %></strong> the portal link + Microsoft sign-in steps.<% } %></p>
+      <form method="post" action="/contacts/<%= contact.id %>/portal-invite" style="margin-top:10px;padding-top:12px;border-top:1px solid var(--line);" onsubmit="return confirm('Email the portal welcome to <%= contact.email || '' %>?');">
+        <div style="display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;">
+          <button class="btn" type="submit" <%= (on && contact.email) ? '' : 'disabled' %>>✉ Send welcome email</button>
+          <input class="input" name="note" maxlength="2000" placeholder="Optional note shown at the top of the email" style="flex:1;min-width:200px;" <%= (on && contact.email) ? '' : 'disabled' %>>
+        </div>
+        <p class="muted" style="font-size:12px;margin:6px 0 0;"><% if (!contact.email) { %>Add an email address to invite this contact.<% } else { %>Emails <strong><%= contact.email %></strong> their login, the Microsoft sign-in steps and how to reach us. Whole company at once: <a class="row-link" href="/customers/<%= contact.customer_id %>#contacts">customer → Contacts</a>. Edit the reach-us list under <a class="row-link" href="/admin/branding#contact-methods">Admin → Branding</a>.<% } %></p>
       </form>
     </div>
 

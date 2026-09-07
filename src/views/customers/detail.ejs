@@ -242,7 +242,11 @@
 <!-- ═══ Contacts ═══ -->
 <section class="tab-panel" data-key="contacts" id="contacts">
   <div class="card" style="padding:0;">
-    <div style="padding:14px 24px 4px;"><input class="input card-filter" placeholder="Search contacts…" style="max-width:280px;"></div>
+    <div style="padding:14px 24px 4px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <input class="input card-filter" placeholder="Search contacts…" style="max-width:280px;">
+      <% var welcomeable = contacts.filter(function(c){ return !c.archived && c.email; }); %>
+      <button type="button" class="btn" style="margin-left:auto;" onclick="document.getElementById('welcome-modal').style.display='block';" <%= welcomeable.length ? '' : 'disabled' %> title="Email their portal login and how to reach us">✉ Send welcome email</button>
+    </div>
     <div class="table-wrap">
       <table class="table">
         <thead><tr><th>Name</th><th>Job title</th><th>Email</th><th>Phone</th><th>Mobile</th><th style="text-align:right;">Actions</th></tr></thead>
@@ -275,6 +279,48 @@
       <div class="form-group"><label>Mobile</label><input class="input" name="mobile_phone"></div>
       <button class="btn btn-primary" type="submit">Add</button>
     </form>
+  </div>
+
+  <!-- Portal welcome picker: everyone live with an email is pre-ticked; 3rd parties are listed but unticked. -->
+  <div id="welcome-modal" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:1000;" onclick="if(event.target===this)this.style.display='none';">
+    <div style="position:absolute;top:0;right:0;bottom:0;width:min(520px,94vw);background:var(--surface);box-shadow:-8px 0 24px rgba(0,0,0,.18);overflow:auto;padding:24px 28px;">
+      <h2 style="margin:0 0 4px;">Send portal welcome email</h2>
+      <p class="muted" style="margin:0 0 14px;font-size:13px;">Each person gets their own email: their login address, how to sign in with Microsoft, and every way to reach us. Edit the "how to reach us" list under <a class="row-link" href="/admin/branding#contact-methods" target="_blank">Admin → Branding</a>.</p>
+      <% if (!customer.portal_enabled) { %>
+        <div class="alert alert-error" style="font-size:13px;margin-bottom:12px;">⚠ The customer-portal switch is <strong>off</strong> for <%= customer.name %> — they'll get the email but won't be able to sign in until it's turned on under <a class="row-link" href="#overview" onclick="document.getElementById('welcome-modal').style.display='none';">Access</a>.</div>
+      <% } %>
+      <form method="post" action="/customers/<%= customer.id %>/portal-welcome" onsubmit="var n=this.querySelectorAll('input[name=contact_ids]:checked').length; if(!n){alert('Tick at least one contact.');return false;} return confirm('Send the welcome email to '+n+' contact'+(n===1?'':'s')+'?');">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <label style="font-weight:600;font-size:13px;">Who gets it</label>
+          <span class="muted" style="font-size:12px;">
+            <a class="row-link" href="#" onclick="document.querySelectorAll('#welcome-modal input[name=contact_ids]:not(:disabled)').forEach(function(c){c.checked=true;});return false;">all</a> ·
+            <a class="row-link" href="#" onclick="document.querySelectorAll('#welcome-modal input[name=contact_ids]').forEach(function(c){c.checked=false;});return false;">none</a>
+          </span>
+        </div>
+        <div style="border:1px solid var(--line);border-radius:8px;max-height:46vh;overflow:auto;">
+          <% contacts.filter(function(c){ return !c.archived; }).forEach(function (ct) { var lvl = String(ct.portal_access_level || 'none'); %>
+            <label style="display:flex;gap:10px;align-items:flex-start;padding:8px 12px;border-bottom:1px solid var(--line);cursor:<%= ct.email ? 'pointer' : 'default' %>;opacity:<%= ct.email ? 1 : .55 %>;">
+              <input type="checkbox" name="contact_ids" value="<%= ct.id %>" style="margin-top:4px;" <%= ct.email ? (ct.is_third_party ? '' : 'checked') : 'disabled' %>>
+              <span style="flex:1;min-width:0;">
+                <span style="font-weight:600;"><%= ct.full_name %></span>
+                <% if (ct.is_primary) { %><span class="badge badge-primary">Primary</span><% } %>
+                <% if (ct.is_third_party) { %><span class="badge badge-inactive">3rd party</span><% } %>
+                <% if (lvl !== 'none') { %><span class="badge badge-inactive" title="Portal access level">portal: <%= lvl %></span><% } %>
+                <br><span class="muted" style="font-size:12px;"><%= ct.email || 'No email address — add one on their contact card' %><% if (ct.job_title) { %> · <%= ct.job_title %><% } %></span>
+              </span>
+            </label>
+          <% }); %>
+        </div>
+        <div class="form-group" style="margin-top:12px;">
+          <label>Add a note <span class="muted" style="font-weight:400;">(optional — shown at the top, e.g. "We'll be at your office Tuesday to get everyone set up")</span></label>
+          <textarea class="input" name="note" rows="3" maxlength="2000" style="width:100%;"></textarea>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px;">
+          <button type="button" class="btn" onclick="document.getElementById('welcome-modal').style.display='none';">Cancel</button>
+          <button type="submit" class="btn btn-primary">✉ Send welcome emails</button>
+        </div>
+      </form>
+    </div>
   </div>
 </section>
 

@@ -4,7 +4,7 @@ import { pool } from '../db/pool';
 import bcrypt from 'bcryptjs';
 import { graphConfigured, graphListLicensedUsers } from '../lib/graph';
 import { syncInternalUsers } from '../lib/dirsync';
-import { sendWelcomeEmail, welcomeEmailHtml, STATUS_EMAILS, defaultStatusEmail, renderTemplate, quoteEmailHtml, invoiceEmailHtml, onboardingEmailHtml } from '../lib/emails';
+import { sendWelcomeEmail, welcomeEmailHtml, STATUS_EMAILS, defaultStatusEmail, renderTemplate, quoteEmailHtml, invoiceEmailHtml, onboardingEmailHtml, customerWelcomeEmailHtml, getContactMethods, parseContactMethods, DEFAULT_CONTACT_METHODS_TEXT, CUSTOMER_WELCOME_SUBJECT } from '../lib/emails';
 import { sendMail } from '../lib/mailer';
 import { getSetting, setSetting } from '../lib/settings';
 import { runBackup, listBackups, backupStatus, backupRunning } from '../lib/backup';
@@ -208,6 +208,15 @@ router.get('/admin/branding', async (req: Request, res: Response) => {
   const sigPreview = await getSignatureHtml(req.session.user!.displayName);
   const welcomePreview = welcomeEmailHtml('Sample User') + sigPreview;
 
+  // Customer welcome: the "how to reach us" list is editable text (Label | Value | Note per line).
+  const savedMethods = await getSetting('branding', 'contact_methods');
+  const methodsText = savedMethods && savedMethods.trim() ? savedMethods : DEFAULT_CONTACT_METHODS_TEXT;
+  const methodsCustom = !!(savedMethods && savedMethods.trim());
+  const customerWelcomePreview = customerWelcomeEmailHtml({
+    contactName: 'Sample Customer', customerName: 'Sample Customer Ltd', loginEmail: 'sample@customer.co.uk',
+    methods: parseContactMethods(methodsText),
+  }) + sigPreview;
+
   const statusEmails = [];
   for (const s of STATUS_EMAILS) {
     const saved = await getSetting('email_templates', s.status);
@@ -224,6 +233,7 @@ router.get('/admin/branding', async (req: Request, res: Response) => {
 
   res.render('admin/branding', {
     user: req.session.user!, sigTemplate, bannerUrl, sigPreview, welcomePreview, isCustom, statusEmails,
+    methodsText, methodsCustom, methodsDefault: DEFAULT_CONTACT_METHODS_TEXT, customerWelcomePreview, customerWelcomeSubject: CUSTOMER_WELCOME_SUBJECT,
     saved: req.query.saved === '1',
   });
 });
@@ -235,6 +245,13 @@ router.post('/admin/branding/banner', bannerUpload.single('banner'), async (req:
     await setSetting('branding', 'email_banner_url', base + '/static/branding/' + f.filename);
   }
   res.redirect('/admin/branding?saved=1');
+});
+
+// "How to reach us" list used by the customer welcome email. Blank = back to the defaults.
+router.post('/admin/branding/contact-methods', async (req: Request, res: Response) => {
+  const v = String((req.body as any).contact_methods || '').trim();
+  await setSetting('branding', 'contact_methods', v && parseContactMethods(v).length ? v : null);
+  res.redirect('/admin/branding?saved=1#contact-methods');
 });
 
 router.post('/admin/branding/status-emails', async (req: Request, res: Response) => {
@@ -628,6 +645,7 @@ async function buildTestTemplates(): Promise<{ key: string; label: string; subje
   const out: { key: string; label: string; subject: string; html: string }[] = [
     { key: 'blank', label: 'Blank — write your own', subject: '', html: '' },
     { key: 'welcome', label: 'Welcome', subject: 'Welcome to the Lumen MSP Portal', html: welcomeEmailHtml('Test User') },
+    { key: 'customer_welcome', label: 'Customer welcome', subject: CUSTOMER_WELCOME_SUBJECT, html: customerWelcomeEmailHtml({ contactName: 'Test User', customerName: 'Sample Customer Ltd', loginEmail: 'test.user@example.co.uk', methods: await getContactMethods() }) },
   ];
   for (const s of STATUS_EMAILS) out.push({ key: 'ticket_' + s.status, label: 'Ticket — ' + s.label, subject: sub(s.subject), html: await statusTpl(s.status) });
   out.push({ key: 'quote', label: 'Quote', subject: 'Your quotation Q-0000', html: quoteEmailHtml({ contactName: 'Test User', quoteNumber: 'Q-0000', title: 'Sample quotation', total: '£1,200.00', validUntil: '30 days', link: config.APP_URL || 'https://portal.lumenmsp.co.uk' }) });

@@ -105,18 +105,56 @@ router.post('/scripts/:id(\\d+)/delete', requireAuth, requireAdmin, async (req: 
  * duplicating. Every row is reported individually; one bad script must not silently
  * take the other 47 with it.
  */
+/**
+ * Where a script body may be FETCHED from when the payload carries `bodyUrl` instead of
+ * `body`. Atera's shared library (1,111 scripts) lists its metadata in the browser but keeps
+ * every body on public Azure blob storage that the browser cannot read cross-origin — the
+ * server can. Allow-listed to that one container so "import" can never be turned into
+ * "make the Portal fetch an arbitrary URL"; anything else is refused per row.
+ */
+const BODY_URL_OK = /^https:\/\/agentreportingstore\.blob\.core\.windows\.net\/sharedscripts\/[0-9a-f-]{36}$/i;
+async function fetchBody(url: string): Promise<string> {
+  if (!BODY_URL_OK.test(url)) throw new Error('bodyUrl is not on the allowed list.');
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 20000);
+  try {
+    const r = await fetch(url, { signal: ctl.signal });
+    if (!r.ok) throw new Error(`fetch ${r.status}`);
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.length > 2 * 1024 * 1024) throw new Error('body over 2 MB');
+    // Scripts arrive as UTF-8, some with a BOM, a few as UTF-16 from a Windows editor.
+    if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) return buf.subarray(2).toString('utf16le');
+    if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return buf.subarray(3).toString('utf8');
+    return buf.toString('utf8');
+  } finally { clearTimeout(t); }
+}
+
 router.post('/scripts/import', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const source = String(req.body?.source || 'atera').trim().slice(0, 40) || 'atera';
   const items: any[] = Array.isArray(req.body?.scripts) ? req.body.scripts : [];
   if (!items.length) { res.status(400).json({ ok: false, error: 'No scripts in that payload.' }); return; }
   if (items.length > 2000) { res.status(400).json({ ok: false, error: 'Too many scripts in one go.' }); return; }
 
+  // Bodies that have to be fetched are fetched FIRST, a few at a time, so one slow blob does
+  // not serialise the whole batch and one bad one fails only its own row.
+  const bodies = new Map<number, string | Error>();
+  const need = items.map((it, i) => ({ i, url: String(it?.bodyUrl || '') })).filter(x => x.url && !String(items[x.i]?.body || '').trim());
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(6, need.length) }, async () => {
+    while (cursor < need.length) {
+      const x = need[cursor++];
+      try { bodies.set(x.i, await fetchBody(x.url)); } catch (e: any) { bodies.set(x.i, e instanceof Error ? e : new Error(String(e))); }
+    }
+  }));
+
   let created = 0, updated = 0;
   const failed: Array<{ name: string; error: string }> = [];
-  for (const it of items) {
+  for (const [i, it] of items.entries()) {
     try {
+      const fetched = bodies.get(i);
+      if (fetched instanceof Error) throw new Error(`could not fetch the body — ${fetched.message}`);
       const r = await upsertScript({
-        name: it?.name, description: it?.description, body: it?.body,
+        name: it?.name, description: it?.description, body: fetched ?? it?.body,
         fileType: it?.fileType, osType: it?.osType, runAs: it?.runAs,
         arguments: it?.arguments, maxRuntimeMinutes: it?.maxRuntimeMinutes,
         category: it?.category, source, sourceRef: it?.sourceRef,
@@ -154,7 +192,11 @@ router.post('/scripts/:id(\\d+)/review', requireAuth, requireAdmin, async (req: 
 /** The queue the Review button works through: never reviewed, or edited since. */
 router.get('/scripts/review-queue', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const all = String(req.query.all || '') === '1';
-  const scripts = await listScripts();
+  // The shared library (1,100+ community scripts) is NOT reviewed by default — that is a
+  // four-figure Claude bill for scripts nobody has asked to run. Review those one at a
+  // time from the script's own page, or pass ?library=1 to queue them all deliberately.
+  const includeLibrary = String(req.query.library || '') === '1';
+  const scripts = (await listScripts()).filter(s => includeLibrary || s.source !== 'atera-shared');
   const due = all ? scripts : scripts.filter(s => !s.reviewedAt || reviewIsStale(s));
   res.json({ ok: true, ids: due.map(s => ({ id: s.id, name: s.name })) });
 });

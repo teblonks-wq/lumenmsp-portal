@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { pool, insightsPool } from '../db/pool';
 import { logActivity } from '../lib/activity';
-import { sendWelcomeEmail } from '../lib/emails';
+import { sendCustomerWelcomeEmail } from '../lib/emails';
 
 const router = Router();
 
@@ -157,20 +157,24 @@ router.post('/contacts/:id/portal-access', requireAuth, async (req: Request, res
   res.redirect('/contacts/' + id + '?msg=' + encodeURIComponent('Portal access updated.') + '#portal');
 });
 
-// Send the portal welcome / invite email (Microsoft sign-in instructions) to this contact.
+// Send the customer welcome email (their login, Microsoft sign-in steps, how to reach us) to this
+// contact. Company-wide version: customer → Contacts → Send welcome email.
 router.post('/contacts/:id/portal-invite', requireAuth, async (req: Request, res: Response) => {
   const user = req.session.user!;
   const id = parseInt(String(req.params.id), 10);
   if (!Number.isInteger(id)) { res.redirect('/contacts'); return; }
-  const ct = (await pool.query('SELECT full_name, email, portal_access_level FROM customer_contacts WHERE id = $1 LIMIT 1', [id])).rows[0];
+  const ct = (await pool.query(
+    `SELECT cc.full_name, cc.email, cc.portal_access_level, c.name AS customer_name
+       FROM customer_contacts cc JOIN customers c ON c.id = cc.customer_id WHERE cc.id = $1 LIMIT 1`, [id])).rows[0];
   if (!ct || !ct.email) { res.redirect('/contacts/' + id + '?err=' + encodeURIComponent('This contact has no email address to invite.') + '#portal'); return; }
   if (!ct.portal_access_level || ct.portal_access_level === 'none') {
     res.redirect('/contacts/' + id + '?err=' + encodeURIComponent('Give this contact an access level before sending an invite.') + '#portal'); return;
   }
   try {
-    await sendWelcomeEmail(ct.email, ct.full_name, user.displayName);
-    await logActivity(user.id, 'updated', 'customer_contacts', id, `Portal invite sent to ${ct.email}`).catch(() => {});
-    res.redirect('/contacts/' + id + '?msg=' + encodeURIComponent('Invite sent to ' + ct.email) + '#portal');
+    const note = String(req.body.note || '').trim().slice(0, 2000) || null;
+    await sendCustomerWelcomeEmail({ toEmail: ct.email, contactName: ct.full_name, customerName: ct.customer_name, note, fromName: user.displayName });
+    await logActivity(user.id, 'updated', 'customer_contacts', id, `Portal welcome email sent to ${ct.email}`).catch(() => {});
+    res.redirect('/contacts/' + id + '?msg=' + encodeURIComponent('Welcome email sent to ' + ct.email) + '#portal');
   } catch (e: any) {
     res.redirect('/contacts/' + id + '?err=' + encodeURIComponent('Could not send invite: ' + (e.message || 'unknown error')) + '#portal');
   }

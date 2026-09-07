@@ -24,7 +24,8 @@ import { getScript } from './scripts';
 // ── Actions ─────────────────────────────────────────────────────────────────────
 
 export type ActionKey = 'power.restart' | 'power.shutdown' | 'wu.off' | 'wu.on' | 'script.run'
-  | 'shell.run' | 'software.install' | 'software.upgrade' | 'software.uninstall';
+  | 'shell.run' | 'software.install' | 'software.upgrade' | 'software.uninstall'
+  | 'user.disable' | 'user.enable';
 
 export interface ActionDef {
   key: ActionKey;
@@ -33,8 +34,8 @@ export interface ActionDef {
   consequence: string;
   /** The agent command kind this becomes. */
   kind: string;
-  /** Extra thing the form must collect: a script, or a package. */
-  needs: 'none' | 'script' | 'package' | 'software' | 'command';
+  /** Extra thing the form must collect: a script, a package, a command, or a local account name. */
+  needs: 'none' | 'script' | 'package' | 'software' | 'command' | 'account';
   /** True if a signed-in user could lose work. Drives the warning on the form. */
   disruptive: boolean;
 }
@@ -58,6 +59,14 @@ export const ACTIONS: ActionDef[] = [
     consequence: 'Each machine updates that software to the latest version. A machine that does not have it installed is unaffected.' },
   { key: 'software.uninstall', label: 'Remove software', kind: 'winget.uninstall', needs: 'software', disruptive: true,
     consequence: 'The software is REMOVED from each machine, silently and without asking the person using it. Anything it was mid-way through is lost.' },
+  // Local (non-domain) accounts. Terry's ask (2026-09-07): a leaver's LOCAL account on a
+  // workgroup machine has no directory to disable it from, so the moment access ends is a
+  // Disable-LocalUser the agent runs at the time set — scheduled from the device's User
+  // Management panel, and living here so it can be seen and cancelled like any other task.
+  { key: 'user.disable', label: 'Disable a local user account', kind: 'users.disable', needs: 'account', disruptive: true,
+    consequence: 'Disable-LocalUser runs on each machine at that moment. The account can no longer sign in; a session already open is NOT signed out. Its files and profile are untouched.' },
+  { key: 'user.enable', label: 'Enable a local user account', kind: 'users.enable', needs: 'account', disruptive: false,
+    consequence: 'Enable-LocalUser runs on each machine at that moment and the account can sign in again.' },
 ];
 
 export function actionDef(key: string): ActionDef | null {
@@ -157,6 +166,8 @@ export interface TaskInput {
   catalogueId?: number | null;
   /** Free-text PowerShell, for the shell.run action only. */
   command?: string | null;
+  /** Local account name (as `Get-LocalUser` knows it), for the user.* actions only. */
+  accountName?: string | null;
   delaySeconds?: number | null;
 }
 
@@ -253,6 +264,17 @@ export async function createTask(inp: TaskInput, userId: number | null, userName
     if (!cmd) return { ok: false, error: 'Type the command first.' };
     if (cmd.length > 8000) return { ok: false, error: `That command is ${cmd.length} characters and the agent accepts 8,000.` };
     payload = { script: cmd, run_as: 'system' };
+  } else if (def.needs === 'account') {
+    // The agent quotes the name itself; here it only has to be a plausible account name.
+    // Built-ins are refused — disabling Administrator on a schedule is a lock-out, not a
+    // leaver, and the person asking for it should have to do it by hand with eyes open.
+    const acct = String(inp.accountName || '').trim();
+    if (!acct) return { ok: false, error: 'Which local account? Give its user name.' };
+    if (acct.length > 104 || /[\x00-\x1f"\/\\\[\]:;|=,+*?<>]/.test(acct)) return { ok: false, error: 'That is not a valid local account name.' };
+    if (/^(administrator|guest|defaultaccount|wdagutilityaccount|system)$/i.test(acct)) {
+      return { ok: false, error: `${acct} is a built-in Windows account — it is not disabled on a schedule from here.` };
+    }
+    payload = { name: acct };
   } else if (def.needs === 'software') {
     // The catalogue decides BOTH what is deployable and how it installs — a WinGet id, a
     // Chocolatey id, or one of our own MSIs — so the action's nominal `kind` is replaced by

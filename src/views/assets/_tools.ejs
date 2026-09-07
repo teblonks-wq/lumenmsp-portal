@@ -546,6 +546,7 @@
   (function(){
     var ASSET = <%= asset.id %>;
     var BASE = '/assets/' + ASSET + '/tools';
+    var AGENT_DEVICE = <%= (typeof agentInfo !== 'undefined' && agentInfo && agentInfo.id) ? agentInfo.id : 'null' %>;
     var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); };
 
     // ── tool sub-tabs ──────────────────────────────────────────────────────────
@@ -1202,6 +1203,7 @@
         ], null, function(x){
           return '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-user="' + esc(x.name) + '" data-act="' + (x.enabled?'disable':'enable') + '">' +
                  (x.enabled?'Disable':'Enable') + '</button> ' +
+                 (x.enabled ? '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-user="' + esc(x.name) + '" data-act="schedule" title="Disable this account at a set time">Disable at…</button> ' : '') +
                  '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-user="' + esc(x.name) + '" data-act="resetpw">Reset password</button>';
         });
       }).catch(function(e){ fail(usersResult, e.message); });
@@ -1224,7 +1226,9 @@
                  (x.enabled?'Disable':'Enable') + '</button> ' +
                  '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-ad="' + esc(x.sam) + '" data-act="resetpw">Reset password</button> ' +
                  '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-ad="' + esc(x.sam) + '" data-act="setinfo"' +
-                 ' data-name="' + esc(x.name || x.sam) + '" data-desc="' + esc(x.description || '') + '">Job details</button>';
+                 ' data-name="' + esc(x.name || x.sam) + '" data-desc="' + esc(x.description || '') + '">Details</button> ' +
+                 '<button class="btn" style="padding:2px 8px;font-size:11.5px;" data-ad="' + esc(x.sam) + '" data-act="rename"' +
+                 ' data-name="' + esc(x.name || x.sam) + '" title="Rename the account everywhere: names, username, sign-in, email; old address kept as an alias">Change name</button>';
         });
         if (r.routedTo) {
           var n = document.createElement('p');
@@ -1242,47 +1246,130 @@
     // Changing somebody's job details is a small FORM, not three prompts in a row. It writes
     // to Active Directory, which for a hybrid customer is the master — the change syncs up to
     // Microsoft 365 on its own. A box left blank means "leave that field alone".
+    // ── "Disable at…" — a leaver whose account is LOCAL to this machine ──────────
+    // No directory to disable it from, so the cut is a Disable-LocalUser the agent runs at
+    // the moment chosen. It becomes an Automation scheduled task (one machine, this
+    // account), which is where it can be seen, cancelled or re-timed before it fires.
+    function openScheduleDisable(btn){
+      var who = btn.getAttribute('data-user');
+      var old = document.getElementById('luSchedForm');
+      if (old) old.remove();
+      if (!AGENT_DEVICE) { alert('This device has no LumenMSP Agent record, so nothing can run the command at the time set.'); return; }
+      var box = document.createElement('div');
+      box.id = 'luSchedForm';
+      box.style.cssText = 'margin:10px 0;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--chip-bg,#eef2f7);';
+      // Default to 17:30 tomorrow — the usual "their last day ends" moment; change it freely.
+      var d = new Date(); d.setDate(d.getDate() + 1); d.setHours(17, 30, 0, 0);
+      var pad = function(n){ return (n < 10 ? '0' : '') + n; };
+      var dflt = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+      box.innerHTML =
+        '<div style="font-weight:700;font-size:13px;margin-bottom:2px;">Disable ' + esc(who) + ' at a set time</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-bottom:8px;">Runs <code>Disable-LocalUser</code> on <%= asset.hostname %> at that moment (the machine must be on and checking in). Anyone already signed in as ' + esc(who) + ' is not signed out. Files and profile are untouched.</div>' +
+        '<div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">' +
+          '<div><label class="muted" style="font-size:11px;display:block;">Date and time</label>' +
+            '<input class="input" id="luWhen" type="datetime-local" value="' + dflt + '" style="font-size:12.5px;"></div>' +
+          '<button class="btn btn-primary" type="button" id="luGo" style="font-size:12.5px;">Schedule</button>' +
+          '<button class="btn" type="button" id="luCancel" style="font-size:12.5px;">Cancel</button>' +
+        '</div>' +
+        '<p class="muted" id="luMsg" style="font-size:11.5px;margin:8px 0 0;min-height:14px;"></p>';
+      usersResult.insertBefore(box, usersResult.firstChild);
+      document.getElementById('luCancel').addEventListener('click', function(){ box.remove(); });
+      document.getElementById('luGo').addEventListener('click', function(){
+        var w = document.getElementById('luWhen').value;
+        var msg = document.getElementById('luMsg');
+        if (!w) { msg.textContent = 'Pick the date and time.'; return; }
+        // datetime-local is read in the browser's own zone (Europe/London for us); the
+        // server only ever sees the epoch, so nothing re-parses the text.
+        var epoch = Math.floor(new Date(w).getTime() / 1000);
+        if (!(epoch > Math.floor(Date.now()/1000))) { msg.textContent = 'That time has already passed.'; return; }
+        var go = document.getElementById('luGo'); go.disabled = true; msg.textContent = 'Scheduling…';
+        jsonFetch('/automation/scheduled-tasks.json', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Disable local user ' + who + ' on <%= asset.hostname %>',
+            action: 'user.disable', condition: 'datetime', run_at_epoch: epoch,
+            device_ids: [AGENT_DEVICE], account_name: who
+          })
+        }).then(function(j){
+          if (!j.ok) { go.disabled = false; msg.textContent = j.error || 'Could not schedule that.'; return; }
+          var when = new Date(epoch * 1000).toLocaleString('en-GB', { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+          msg.innerHTML = '<span style="color:var(--ok);font-weight:600;">Scheduled.</span> ' + esc(who) + ' will be disabled ' + esc(when) + ' — ' +
+            '<a class="row-link" href="' + esc(j.url) + '" target="_blank">see or cancel it on Automation ↗</a>';
+          go.remove(); document.getElementById('luCancel').textContent = 'Close';
+        }).catch(function(err){ go.disabled = false; msg.textContent = err.message; });
+      });
+    }
+
+    // ── Read one AD user (everything both forms show). Cached per open, not per page. ──
+    function readAdUser(sam){
+      return run('ad.user.getinfo', { sam: sam }, usersBusy).then(function(r){
+        if (r.status !== 'done') throw new Error(r.output || 'Could not read that account.');
+        var rows = parseRows(r.output);
+        if (!rows || !rows.length) throw new Error(r.output || 'The AD agent returned nothing for that account.');
+        return rows[0];
+      });
+    }
+    function fld(id, label, placeholder, span){
+      return '<div' + (span ? ' style="grid-column:span ' + span + ';"' : '') + '><label class="muted" style="font-size:11px;display:block;">' + label + '</label>' +
+             '<input class="input" id="' + id + '" style="width:100%;font-size:12.5px;" placeholder="' + esc(placeholder || '') + '"></div>';
+    }
+    function val(id){ return (document.getElementById(id).value || '').trim(); }
+
+    // Changing somebody's details is a small FORM, not a row of prompts. It writes to Active
+    // Directory, which for a hybrid customer is the master — the change syncs up to
+    // Microsoft 365 on its own. The form opens FILLED with what AD holds now, and only the
+    // boxes you actually change are written; a box emptied out is left alone, never blanked.
     function openJobDetails(btn){
       var sam = btn.getAttribute('data-ad');
       var who = btn.getAttribute('data-name') || sam;
-      var desc = btn.getAttribute('data-desc') || '';
-      var old = document.getElementById('adInfoForm');
-      if (old) old.remove();
+      var old = document.getElementById('adInfoForm'); if (old) old.remove();
+      var old2 = document.getElementById('adRenameForm'); if (old2) old2.remove();
       var box = document.createElement('div');
       box.id = 'adInfoForm';
       box.style.cssText = 'margin:10px 0;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--chip-bg,#eef2f7);';
       box.innerHTML =
-        '<div style="font-weight:700;font-size:13px;margin-bottom:2px;">Job details — ' + esc(who) + '</div>' +
-        '<div class="muted" style="font-size:11.5px;margin-bottom:8px;">Writes to Active Directory. Anything left blank is left exactly as it is.</div>' +
-        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">' +
-          '<div><label class="muted" style="font-size:11px;display:block;">Job title</label>' +
-            '<input class="input" id="adiTitle" style="width:100%;font-size:12.5px;" placeholder="e.g. Operations Manager"></div>' +
-          '<div><label class="muted" style="font-size:11px;display:block;">Department</label>' +
-            '<input class="input" id="adiDept" style="width:100%;font-size:12.5px;" placeholder="e.g. Finance"></div>' +
-          '<div><label class="muted" style="font-size:11px;display:block;">Description</label>' +
-            '<input class="input" id="adiDesc" style="width:100%;font-size:12.5px;"></div>' +
+        '<div style="font-weight:700;font-size:13px;margin-bottom:2px;">Job &amp; contact details — ' + esc(who) + '</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-bottom:8px;">Writes to Active Directory. Only what you change is written; a box left as it is, or emptied, is left alone. <span id="adiState">Reading the account…</span></div>' +
+        '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">' +
+          fld('adiTitle', 'Job title', 'e.g. Operations Manager') +
+          fld('adiDept', 'Department', 'e.g. Finance') +
+          fld('adiCompany', 'Company', '') +
+          fld('adiManager', 'Manager (AD username)', 'e.g. jsmith') +
+          fld('adiPhone', 'Office phone', '') +
+          fld('adiMobile', 'Mobile', '') +
+          fld('adiOffice', 'Office / location', 'e.g. Swindon') +
+          fld('adiDesc', 'Description', '') +
         '</div>' +
         '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;">' +
-          '<button class="btn btn-primary" id="adiSave" style="font-size:12px;padding:4px 12px;">Save to AD</button>' +
+          '<button class="btn btn-primary" id="adiSave" style="font-size:12px;padding:4px 12px;" disabled>Save to AD</button>' +
           '<button class="btn" id="adiCancel" style="font-size:12px;padding:4px 12px;">Cancel</button>' +
           '<span class="muted" id="adiMsg" style="font-size:11.5px;"></span>' +
         '</div>';
       usersResult.insertBefore(box, usersResult.firstChild);
-      document.getElementById('adiDesc').value = desc;
-      document.getElementById('adiTitle').focus();
       document.getElementById('adiCancel').addEventListener('click', function(){ box.remove(); });
+
+      var map = { adiTitle:'title', adiDept:'department', adiCompany:'company', adiManager:'manager',
+                  adiPhone:'phone', adiMobile:'mobile', adiOffice:'office', adiDesc:'description' };
+      var current = {};
+      readAdUser(sam).then(function(u){
+        current = u;
+        Object.keys(map).forEach(function(id){ document.getElementById(id).value = u[map[id]] || ''; });
+        document.getElementById('adiState').textContent = 'Showing what AD holds now.';
+        document.getElementById('adiSave').disabled = false;
+        document.getElementById('adiTitle').focus();
+      }).catch(function(err){
+        // Reading failed (no AD agent answering, say): the form still works blind, as before.
+        document.getElementById('adiState').textContent = 'Could not read the current values (' + err.message + ') — fill in only what you want changed.';
+        document.getElementById('adiSave').disabled = false;
+      });
+
       document.getElementById('adiSave').addEventListener('click', function(){
-        var t = document.getElementById('adiTitle').value.trim();
-        var d = document.getElementById('adiDept').value.trim();
-        var c = document.getElementById('adiDesc').value.trim();
-        // Only send what changed. Sending the description back unchanged would still write it.
-        var body = { sam: sam };
-        if (t) body.title = t;
-        if (d) body.department = d;
-        if (c && c !== desc) body.description = c;
-        if (!body.title && !body.department && !body.description) {
-          document.getElementById('adiMsg').textContent = 'Nothing to change.'; return;
-        }
+        var body = { sam: sam }, n = 0;
+        Object.keys(map).forEach(function(id){
+          var v = val(id), k = map[id];
+          if (v && v !== String(current[k] || '')) { body[k] = v; n++; }
+        });
+        if (!n) { document.getElementById('adiMsg').textContent = 'Nothing to change.'; return; }
         var sv = document.getElementById('adiSave');
         sv.disabled = true; sv.textContent = 'Saving…';
         run('ad.user.setinfo', body, usersBusy).then(function(r){
@@ -1296,9 +1383,135 @@
       });
     }
 
+    // ── Change name: the account follows the person (marriage, mostly) ────────────
+    // First/last/display name, the object's own name, the username, the sign-in name,
+    // the email address and every proxy address move together, in one script on the DC.
+    // The OLD email address is kept as an alias so mail to it still arrives. The proposed
+    // username / sign-in / email are worked out from how the CURRENT ones were formed
+    // (jsmith → jjones, john.smith → john.jones) and every one of them can be overtyped.
+    function deriveLocal(oldLocal, oldGiven, oldSurname, newGiven, newSurname){
+      var o = String(oldLocal || '').toLowerCase();
+      var g = String(oldGiven || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      var s2 = String(oldSurname || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      var ng = String(newGiven || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      var ns = String(newSurname || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!o || !g || !s2 || !ng || !ns) return oldLocal;
+      var pats = [
+        [g.charAt(0) + s2, ng.charAt(0) + ns],
+        [g + '.' + s2,     ng + '.' + ns],
+        [g + s2,           ng + ns],
+        [g + '_' + s2,     ng + '_' + ns],
+        [g + '-' + s2,     ng + '-' + ns],
+        [s2 + g.charAt(0), ns + ng.charAt(0)],
+        [g.charAt(0) + '.' + s2, ng.charAt(0) + '.' + ns],
+        [g,                ng],
+        [s2,               ns]
+      ];
+      for (var i = 0; i < pats.length; i++) if (o === pats[i][0]) return pats[i][1];
+      return oldLocal;   // pattern not recognised — keep it, the person can overtype
+    }
+
+    function openRename(btn){
+      var sam = btn.getAttribute('data-ad');
+      var who = btn.getAttribute('data-name') || sam;
+      var old = document.getElementById('adRenameForm'); if (old) old.remove();
+      var old2 = document.getElementById('adInfoForm'); if (old2) old2.remove();
+      var box = document.createElement('div');
+      box.id = 'adRenameForm';
+      box.style.cssText = 'margin:10px 0;padding:12px 14px;border:1px solid var(--warn-line,#fde68a);border-radius:10px;background:var(--tint-yellow,#fffbeb);';
+      box.innerHTML =
+        '<div style="font-weight:700;font-size:13px;margin-bottom:2px;">Change name — ' + esc(who) + '</div>' +
+        '<div class="muted" style="font-size:11.5px;margin-bottom:8px;">Renames the account everywhere in Active Directory: names, the object itself, username, sign-in name, email and all proxy addresses. The old email address is kept as an alias. Microsoft 365 follows on the next sync. <span id="adrState">Reading the account…</span></div>' +
+        '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">' +
+          fld('adrGiven', 'First name', '') +
+          fld('adrSurname', 'Last name', '') +
+          fld('adrDisplay', 'Display name', 'First Last') +
+          fld('adrSam', 'Username (sAMAccountName)', '') +
+          fld('adrUpn', 'Sign-in name (UPN)', 'name@domain') +
+          fld('adrMail', 'Email address (new primary)', 'name@domain') +
+        '</div>' +
+        '<div id="adrAliases" class="muted" style="font-size:11.5px;margin-top:8px;"></div>' +
+        '<label style="display:flex;gap:6px;align-items:center;font-size:12px;margin-top:8px;"><input type="checkbox" id="adrKeep" checked> Keep the old email address as an alias (mail sent to it still arrives)</label>' +
+        '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;">' +
+          '<button class="btn btn-primary" id="adrSave" style="font-size:12px;padding:4px 12px;" disabled>Rename in AD</button>' +
+          '<button class="btn" id="adrCancel" style="font-size:12px;padding:4px 12px;">Cancel</button>' +
+          '<span class="muted" id="adrMsg" style="font-size:11.5px;"></span>' +
+        '</div>';
+      usersResult.insertBefore(box, usersResult.firstChild);
+      document.getElementById('adrCancel').addEventListener('click', function(){ box.remove(); });
+
+      var cur = null, touched = {};
+      ['adrDisplay','adrSam','adrUpn','adrMail'].forEach(function(id){
+        document.getElementById(id).addEventListener('input', function(){ touched[id] = true; });
+      });
+      // As the names are typed, the derived boxes follow — until the person overtypes one,
+      // after which that box is theirs and stops following.
+      function propose(){
+        if (!cur) return;
+        var g = val('adrGiven'), sn = val('adrSurname');
+        if (!touched.adrDisplay) document.getElementById('adrDisplay').value = (g + ' ' + sn).trim();
+        if (!touched.adrSam) document.getElementById('adrSam').value = deriveLocal(cur.sam, cur.given, cur.surname, g, sn);
+        var upn = String(cur.upn || ''), mail = String(cur.mail || '');
+        if (!touched.adrUpn && upn.indexOf('@') > 0) document.getElementById('adrUpn').value = deriveLocal(upn.split('@')[0], cur.given, cur.surname, g, sn) + '@' + upn.split('@')[1];
+        if (!touched.adrMail && mail.indexOf('@') > 0) document.getElementById('adrMail').value = deriveLocal(mail.split('@')[0], cur.given, cur.surname, g, sn) + '@' + mail.split('@')[1];
+      }
+      document.getElementById('adrGiven').addEventListener('input', propose);
+      document.getElementById('adrSurname').addEventListener('input', propose);
+
+      readAdUser(sam).then(function(u){
+        cur = u;
+        document.getElementById('adrGiven').value = u.given || '';
+        document.getElementById('adrSurname').value = u.surname || '';
+        document.getElementById('adrDisplay').value = u.display || u.name || '';
+        document.getElementById('adrSam').value = u.sam || sam;
+        document.getElementById('adrUpn').value = u.upn || '';
+        document.getElementById('adrMail').value = u.mail || '';
+        var px = (u.proxies || []).filter(function(p){ return /^smtp:/i.test(p); });
+        document.getElementById('adrAliases').innerHTML = 'Now: <strong>' + esc(u.display || u.name || '') + '</strong> · ' + esc(u.sam) + ' · ' + esc(u.upn || '') +
+          (px.length ? ' · addresses: ' + px.map(function(p){ return (p.indexOf('SMTP:') === 0 ? '<strong>' + esc(p.slice(5)) + '</strong>' : esc(p.slice(5))); }).join(', ') : (u.mail ? ' · ' + esc(u.mail) : ''));
+        document.getElementById('adrState').textContent = 'Type the new name — the rest is proposed from how the current username and addresses were formed.';
+        document.getElementById('adrSave').disabled = false;
+        document.getElementById('adrSurname').focus(); document.getElementById('adrSurname').select();
+      }).catch(function(err){
+        document.getElementById('adrState').textContent = 'Could not read the account (' + err.message + '). The rename needs the current values — try again when the AD agent is answering.';
+      });
+
+      document.getElementById('adrSave').addEventListener('click', function(){
+        var body = { sam: sam, given: val('adrGiven'), surname: val('adrSurname'), display: val('adrDisplay'),
+                     new_sam: val('adrSam'), new_upn: val('adrUpn'), new_mail: val('adrMail'),
+                     keep_old_alias: document.getElementById('adrKeep').checked ? '1' : '0' };
+        var msg = document.getElementById('adrMsg');
+        if (!body.given || !body.surname) { msg.textContent = 'First name and last name are both needed.'; return; }
+        if (!/^[A-Za-z0-9._-]{1,20}$/.test(body.new_sam)) { msg.textContent = 'The username can only have letters, digits, dots, dashes and underscores (20 max).'; return; }
+        if (body.new_upn.indexOf('@') < 1 || body.new_mail.indexOf('@') < 1) { msg.textContent = 'Sign-in name and email both need to look like name@domain.'; return; }
+        var lines = [
+          'Rename "' + (cur && (cur.display || cur.name) || sam) + '" in Active Directory?', '',
+          'Display name:  ' + body.display,
+          'Username:      ' + (cur ? cur.sam : sam) + '  →  ' + body.new_sam,
+          'Sign-in name:  ' + (cur && cur.upn || '') + '  →  ' + body.new_upn,
+          'Email:         ' + (cur && cur.mail || '') + '  →  ' + body.new_mail + (body.keep_old_alias === '1' ? '  (old address kept as an alias)' : '  (old address REMOVED)'),
+          '',
+          'They will need to sign in with the new name from now on. Anything that refers to the old username by hand (scripts, mapped drives, a profile folder name) is not touched.'
+        ];
+        if (!confirm(lines.join('\n'))) return;
+        var sv = document.getElementById('adrSave');
+        sv.disabled = true; sv.textContent = 'Renaming…';
+        run('ad.user.rename', body, usersBusy).then(function(r){
+          if (r.status !== 'done') { msg.textContent = r.output || 'That did not complete.'; sv.disabled = false; sv.textContent = 'Rename in AD'; return; }
+          box.remove();
+          document.getElementById('adQuery').value = body.new_sam;
+          loadAdUsers();
+          var n = document.createElement('p'); n.style.cssText = 'font-size:12px;color:var(--ok);font-weight:600;'; n.textContent = r.output || 'Renamed.';
+          usersResult.insertBefore(n, usersResult.firstChild);
+        }).catch(function(err){ msg.textContent = err.message; sv.disabled = false; sv.textContent = 'Rename in AD'; });
+      });
+    }
+
     usersResult.addEventListener('click', function(e){
       var b = e.target.closest('[data-user],[data-ad]'); if (!b) return;
       if (b.getAttribute('data-act') === 'setinfo') { openJobDetails(b); return; }
+      if (b.getAttribute('data-act') === 'rename') { openRename(b); return; }
+      if (b.getAttribute('data-act') === 'schedule') { openScheduleDisable(b); return; }
       var isAd = b.hasAttribute('data-ad');
       var who = isAd ? b.getAttribute('data-ad') : b.getAttribute('data-user');
       var act = b.getAttribute('data-act');

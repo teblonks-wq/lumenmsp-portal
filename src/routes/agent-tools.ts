@@ -76,7 +76,17 @@ const KINDS: Record<string, { label: string; ad?: boolean; destructive?: boolean
   'ad.user.enable': { label: 'Enabled an AD account', ad: true, destructive: true },
   'ad.user.resetpw': { label: 'Reset an AD password', ad: true, destructive: true },
   'ad.user.setinfo': { label: "Changed an AD user's job details", ad: true, destructive: true },
+  'ad.user.getinfo': { label: "Read an AD user's details", ad: true },
+  'ad.user.rename': { label: 'Renamed an AD user', ad: true, destructive: true },
 };
+
+/** Something that can be an AD attribute value: no control characters, bounded. */
+function adText(v: any, max = 200): string {
+  return String(v ?? '').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, max);
+}
+/** sAMAccountName-shaped: the characters AD accepts, within its 20-character limit. */
+const SAM_OK = /^[A-Za-z0-9._-]{1,20}$/;
+const UPN_OK = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 
 /** A PowerShell single-quoted literal. Doubling the quote is the ONLY escape inside '...',
  *  and nothing else is interpreted there — no expansion, no backtick escapes. Values reach
@@ -176,33 +186,119 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
       payload.expand = b.expand === '1' || b.expand === true ? '1' : '0';
     }
     if (kind === 'ad.user.setinfo') {
-      const sam = String(b.sam || '').trim();
+      const sam = adText(b.sam);
       if (!sam) { res.status(400).json({ ok: false, error: 'No account name given.' }); return; }
       // Only the fields actually typed are touched. A blank box means "leave it alone",
       // never "blank it out" — quietly clearing somebody's department because a box was
       // empty is exactly the kind of damage a bulk tool should not be able to do.
       const sets: string[] = [];
       const changed: string[] = [];
+      const pre: string[] = [];
       const fields: Array<[string, string, string]> = [
-        ['title', 'Title', String(b.title || '').trim()],
-        ['department', 'Department', String(b.department || '').trim()],
-        ['description', 'Description', String(b.description || '').trim()],
+        ['title', 'Title', adText(b.title)],
+        ['department', 'Department', adText(b.department)],
+        ['description', 'Description', adText(b.description, 1024)],
+        ['phone', 'OfficePhone', adText(b.phone, 64)],
+        ['mobile', 'MobilePhone', adText(b.mobile, 64)],
+        ['office', 'Office', adText(b.office)],
+        ['company', 'Company', adText(b.company)],
       ];
       for (const [key, adName, val] of fields) {
         if (!val) continue;
-        sets.push(`-${adName} ${psq(val.slice(0, 200))}`);
+        sets.push(`-${adName} ${psq(val)}`);
         changed.push(`${key} to "${val.slice(0, 60)}"`);
+      }
+      // The manager is looked up FIRST, by username, and the whole save is refused if it is
+      // not a real account — Set-ADUser would otherwise fail half-way with the title already
+      // written, and a wrong manager is a wrong approver on everything downstream.
+      const manager = adText(b.manager, 120);
+      if (manager) {
+        if (!SAM_OK.test(manager)) { res.status(400).json({ ok: false, error: 'The manager must be given as their AD username.' }); return; }
+        pre.push(`$mgrSam = ${psq(manager)}; $mgr = Get-ADUser -Filter { SamAccountName -eq $mgrSam } -ErrorAction Stop`);
+        pre.push(`if (-not $mgr) { throw "No AD account called '$mgrSam' - the manager was not set and nothing else was changed." }`);
+        sets.push('-Manager $mgr');
+        changed.push(`manager to ${manager}`);
       }
       if (!sets.length) { res.status(400).json({ ok: false, error: 'Nothing to change — fill in at least one field.' }); return; }
       payload.script = [
         'Import-Module ActiveDirectory -ErrorAction Stop',
+        ...pre,
         `Set-ADUser -Identity ${psq(sam)} ${sets.join(' ')} -ErrorAction Stop`,
-        `$u = Get-ADUser -Identity ${psq(sam)} -Properties Title,Department,Description`,
-        '"$($u.SamAccountName) updated. Title: $($u.Title); Department: $($u.Department); Description: $($u.Description)"',
+        `$u = Get-ADUser -Identity ${psq(sam)} -Properties Title,Department,Description,OfficePhone,MobilePhone,Office,Company,Manager`,
+        `$m = if ($u.Manager) { (Get-ADUser -Identity $u.Manager).SamAccountName } else { '' }`,
+        '"$($u.SamAccountName) updated. Title: $($u.Title); Department: $($u.Department); Office: $($u.Office); Phone: $($u.OfficePhone); Mobile: $($u.MobilePhone); Company: $($u.Company); Manager: $m"',
       ].join('\r\n');
       payload.run_as = 'system';
       payload.setinfo_for = sam;
       payload.setinfo_changed = changed.join(', ');
+      wireKind = 'shell.powershell';
+    }
+    if (kind === 'ad.user.getinfo') {
+      // One read, everything the two forms show, as JSON. The manager comes back as a
+      // username rather than a DN because a username is what the form takes in.
+      const sam = adText(b.sam);
+      if (!sam) { res.status(400).json({ ok: false, error: 'No account name given.' }); return; }
+      payload.script = [
+        'Import-Module ActiveDirectory -ErrorAction Stop',
+        `$u = Get-ADUser -Identity ${psq(sam)} -Properties GivenName,Surname,DisplayName,UserPrincipalName,EmailAddress,mailNickname,proxyAddresses,Title,Department,Description,OfficePhone,MobilePhone,Office,Company,Manager,DistinguishedName -ErrorAction Stop`,
+        `$m = if ($u.Manager) { try { (Get-ADUser -Identity $u.Manager).SamAccountName } catch { '' } } else { '' }`,
+        `[pscustomobject]@{ sam=$u.SamAccountName; given=$u.GivenName; surname=$u.Surname; display=$u.DisplayName; name=$u.Name; upn=$u.UserPrincipalName; mail=$u.EmailAddress; nick=$u.mailNickname; proxies=@($u.proxyAddresses | ForEach-Object { [string]$_ }); title=$u.Title; department=$u.Department; description=$u.Description; phone=$u.OfficePhone; mobile=$u.MobilePhone; office=$u.Office; company=$u.Company; manager=$m; dn=$u.DistinguishedName } | ConvertTo-Json -Depth 3 -Compress`,
+      ].join('\r\n');
+      payload.run_as = 'system';
+      wireKind = 'shell.powershell';
+    }
+    if (kind === 'ad.user.rename') {
+      // A person's name changed (marriage, mostly). Everything that carries the old name
+      // moves in ONE script on the DC, in an order that cannot leave the account half-done:
+      // every clash is checked before the first write, the attributes are written, then the
+      // object itself is renamed last (its DN changes, so nothing may refer to it after).
+      // The old primary SMTP is KEPT as a secondary alias so mail to the old address still
+      // arrives; nothing is ever removed from proxyAddresses. Hybrid: Entra Connect carries
+      // all of it up on the next sync, so Microsoft 365 follows on its own.
+      const sam = adText(b.sam);
+      const given = adText(b.given, 64);
+      const surname = adText(b.surname, 64);
+      const display = adText(b.display, 256) || `${given} ${surname}`.trim();
+      const newSam = adText(b.new_sam, 20) || sam;
+      const newUpn = adText(b.new_upn, 256).toLowerCase();
+      const newMail = adText(b.new_mail, 256).toLowerCase();
+      const keepOld = b.keep_old_alias === false || b.keep_old_alias === '0' ? false : true;
+      if (!sam) { res.status(400).json({ ok: false, error: 'No account name given.' }); return; }
+      if (!given || !surname) { res.status(400).json({ ok: false, error: 'First name and last name are both needed.' }); return; }
+      if (!SAM_OK.test(newSam)) { res.status(400).json({ ok: false, error: 'The username can only contain letters, digits, dots, dashes and underscores, up to 20 characters.' }); return; }
+      if (!UPN_OK.test(newUpn)) { res.status(400).json({ ok: false, error: 'The sign-in name must look like name@domain.' }); return; }
+      if (!UPN_OK.test(newMail)) { res.status(400).json({ ok: false, error: 'The email address must look like name@domain.' }); return; }
+      if (/[\\/\[\]:;|=,+*?<>"]/.test(display) || display.length > 64) { res.status(400).json({ ok: false, error: 'That display name has characters AD will not take in a name.' }); return; }
+      const nick = newMail.split('@')[0];
+      payload.script = [
+        'Import-Module ActiveDirectory -ErrorAction Stop',
+        `$u = Get-ADUser -Identity ${psq(sam)} -Properties proxyAddresses,EmailAddress,mailNickname,UserPrincipalName,DisplayName,GivenName,Surname -ErrorAction Stop`,
+        `$newSam = ${psq(newSam)}; $newUpn = ${psq(newUpn)}; $newMail = ${psq(newMail)}; $display = ${psq(display)}`,
+        // ── every clash first, so a refusal changes nothing ──
+        // Script-block filters with variables: the AD provider binds the values itself, so a
+        // name like O'Brien or one with a $ in it can neither break the filter nor expand.
+        `if ($newSam -ne $u.SamAccountName) { $c = Get-ADUser -Filter { SamAccountName -eq $newSam }; if ($c) { throw "The username $newSam is already taken by $($c.Name). Nothing was changed." } }`,
+        `$c = Get-ADUser -Filter { UserPrincipalName -eq $newUpn } | Where-Object { $_.DistinguishedName -ne $u.DistinguishedName }; if ($c) { throw "The sign-in name $newUpn already belongs to $($c.Name). Nothing was changed." }`,
+        `$px = 'smtp:' + $newMail; $c = Get-ADObject -Filter { proxyAddresses -eq $px -or mail -eq $newMail } | Where-Object { $_.DistinguishedName -ne $u.DistinguishedName }; if ($c) { throw "The address $newMail is already on $($c.Name). Nothing was changed." }`,
+        `$parent = ($u.DistinguishedName -replace '^CN=(?:\\\\,|[^,])+,', ''); $c = Get-ADObject -Filter { Name -eq $display } -SearchBase $parent -SearchScope OneLevel | Where-Object { $_.DistinguishedName -ne $u.DistinguishedName }; if ($c) { throw "There is already an object called '$display' in that OU. Nothing was changed." }`,
+        // ── proxyAddresses: new primary in front, old primary demoted to an alias, nothing dropped ──
+        `$old = @($u.proxyAddresses | ForEach-Object { [string]$_ })`,
+        `$oldPrimary = ($old | Where-Object { $_ -clike 'SMTP:*' } | Select-Object -First 1); if (-not $oldPrimary -and $u.EmailAddress) { $oldPrimary = 'SMTP:' + $u.EmailAddress }`,
+        `$new = @('SMTP:' + $newMail)`,
+        `foreach ($p in $old) { if ($p -ieq ('smtp:' + $newMail)) { continue }; if ($p -clike 'SMTP:*') { $new += 'smtp:' + $p.Substring(5) } else { $new += $p } }`,
+        keepOld
+          ? `if ($oldPrimary -and ($oldPrimary.Substring(5) -ine $newMail) -and -not ($new -contains ('smtp:' + $oldPrimary.Substring(5)))) { $new += 'smtp:' + $oldPrimary.Substring(5) }`
+          : `$new = @($new | Where-Object { -not ($oldPrimary -and $_ -ieq ('smtp:' + $oldPrimary.Substring(5))) })`,
+        // ── the writes, object rename last ──
+        `Set-ADUser -Identity $u -GivenName ${psq(given)} -Surname ${psq(surname)} -DisplayName $display -SamAccountName $newSam -UserPrincipalName $newUpn -EmailAddress $newMail -ErrorAction Stop`,
+        `Set-ADUser -Identity $u -Replace @{ proxyAddresses = [string[]]$new; mailNickname = ${psq(nick)} } -ErrorAction Stop`,
+        `if ($u.Name -cne $display) { Rename-ADObject -Identity $u.DistinguishedName -NewName $display -ErrorAction Stop }`,
+        `$v = Get-ADUser -Identity $newSam -Properties proxyAddresses,EmailAddress,DisplayName`,
+        `"Renamed. Now $($v.DisplayName) - signs in as $($v.UserPrincipalName), username $($v.SamAccountName), email $($v.EmailAddress). Addresses: $(($v.proxyAddresses | Where-Object { $_ -like 'smtp:*' }) -join ', ')"`,
+      ].join('\r\n');
+      payload.run_as = 'system';
+      payload.rename_from = sam;
+      payload.rename_summary = `${sam} -> ${newSam}; ${display}; sign-in ${newUpn}; mail ${newMail}${keepOld ? ' (old address kept as alias)' : ''}`;
       wireKind = 'shell.powershell';
     }
     if (kind === 'winget.search' || kind === 'choco.search') payload.q = String(b.q || '').slice(0, 120);
@@ -293,10 +389,11 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
     const commandId = ins.rows[0].id;
 
     // Audit BEFORE the result comes back, and never record the generated password.
-    const target = payload.name || payload.sam || payload.setinfo_for || payload.path || '';
+    const target = payload.name || payload.sam || payload.setinfo_for || payload.rename_from || payload.path || '';
     await logActivity(req.session.user!.id, 'agent_tool', 'customer_assets', assetId,
       `${spec.label} on ${device.hostname || 'device'}${target ? ' (' + target + ')' : ''}` +
       (kind === 'ad.user.setinfo' ? ' — set ' + payload.setinfo_changed : '') +
+      (kind === 'ad.user.rename' ? ' — ' + payload.rename_summary : '') +
       (kind.startsWith('shell.') ? ` [as ${payload.run_as}]: ` + String(payload.script).slice(0, 200) : ''));
 
     wakeAgent(device.id);   // long-poll returns immediately instead of waiting out its timer

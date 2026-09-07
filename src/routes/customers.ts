@@ -6,7 +6,7 @@ import { getComms } from './comms';
 import { logActivity } from '../lib/activity';
 import { syncCustomerDirectory } from '../lib/dirsync';
 import { sendMail } from '../lib/mailer';
-import { onboardingEmailHtml } from '../lib/emails';
+import { onboardingEmailHtml, sendCustomerWelcomeEmail, getContactMethods } from '../lib/emails';
 import { alertGroup } from '../lib/notifications';
 import { getSetting, setSetting } from '../lib/settings';
 import { accountTotals, cliList, commsAccount, HANDSET_RE, CALL_TYPES, classifyCall, getCallMarkups, allocateNumberRange, commsCallCharge } from '../lib/comms-billing';
@@ -1140,6 +1140,46 @@ router.post('/customers/:id/contacts', requireAuth, async (req: Request, res: Re
     );
   }
   res.redirect('/customers/' + id + '#contacts');
+});
+
+// Company-wide portal welcome: email the ticked contacts their login + how to reach us.
+// The picker on the Contacts tab pre-ticks everyone live with an email; this trusts only
+// ids that belong to THIS customer and have an address. One failure does not stop the rest.
+router.post('/customers/:id/portal-welcome', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const user = req.session.user!;
+  const raw = req.body.contact_ids;
+  const ids = (Array.isArray(raw) ? raw : raw ? [raw] : [])
+    .map((x: any) => parseInt(String(x), 10)).filter(Number.isInteger).slice(0, 200);
+  const note = String(req.body.note || '').trim().slice(0, 2000) || null;
+  if (!Number.isInteger(id) || !ids.length) { res.redirect('/customers/' + id + '?err=' + encodeURIComponent('Tick at least one contact to send the welcome email to.') + '#contacts'); return; }
+
+  const cust = (await pool.query('SELECT id, name FROM customers WHERE id = $1 AND deleted_at IS NULL', [id])).rows[0];
+  if (!cust) { res.redirect('/customers'); return; }
+  const { rows: contacts } = await pool.query(
+    `SELECT id, full_name, email FROM customer_contacts
+      WHERE customer_id = $1 AND id = ANY($2::int[]) AND archived = false AND email IS NOT NULL AND email <> ''
+      ORDER BY is_primary DESC, full_name ASC`, [id, ids]);
+  if (!contacts.length) { res.redirect('/customers/' + id + '?err=' + encodeURIComponent('None of the ticked contacts has an email address.') + '#contacts'); return; }
+
+  const methods = await getContactMethods();
+  const sent: string[] = []; const failed: string[] = [];
+  for (const ct of contacts) {
+    try {
+      await sendCustomerWelcomeEmail({ toEmail: ct.email, contactName: ct.full_name, customerName: cust.name, note, fromName: user.displayName, methods });
+      sent.push(ct.full_name);
+      await logActivity(user.id, 'updated', 'customer_contacts', ct.id, `Portal welcome email sent to ${ct.email}`).catch(() => {});
+    } catch (e: any) {
+      failed.push(`${ct.full_name} (${e?.message || 'send failed'})`);
+      console.error('[portal-welcome]', ct.email, e);
+    }
+  }
+  await logActivity(user.id, 'updated', 'customers', id, `Portal welcome email sent to ${sent.length} contact${sent.length === 1 ? '' : 's'}${failed.length ? `, ${failed.length} failed` : ''}`).catch(() => {});
+  const summary = sent.length ? `Welcome email sent to ${sent.length === 1 ? sent[0] : sent.length + ' contacts'}.` : '';
+  if (failed.length) {
+    res.redirect('/customers/' + id + '?' + (summary ? 'msg=' + encodeURIComponent(summary) + '&' : '') + 'err=' + encodeURIComponent('Could not send to ' + failed.join(', ')) + '#contacts'); return;
+  }
+  res.redirect('/customers/' + id + '?msg=' + encodeURIComponent(summary) + '#contacts');
 });
 
 // Quick-add a contact from just an email (used by the composer "Add" button on the

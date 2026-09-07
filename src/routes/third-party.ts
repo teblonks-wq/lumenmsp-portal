@@ -53,6 +53,47 @@ function fields(b: any): any[] {
   ];
 }
 
+/**
+ * Quick add from a case. The engineer parking a case on "someone we have never chased
+ * before" must not have to leave the case to name them — that round trip is how cases got
+ * parked on nobody. Same dedupe as the board: an existing supplier of that name is flagged
+ * as a third party, never duplicated. Any signed-in engineer may add one (the board's full
+ * editor stays admin-only); the record carries who added it in the activity log.
+ * Returns { ok, id, name, chaseBy, existing } so the picker can select it straight away.
+ */
+router.post('/third-parties/quick.json', requireAuth, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const name = nz(b.name)?.slice(0, 120) || null;
+  if (!name) { res.status(400).json({ ok: false, error: 'A third party needs a name.' }); return; }
+  const category = THIRD_PARTY_CATEGORIES.includes(String(b.category || '')) ? String(b.category) : 'Other';
+  const supportPhone = nz(b.support_phone)?.slice(0, 40) || null;
+  const supportEmail = nz(b.support_email)?.slice(0, 190) || null;
+  const days = numOrNull(b.typical_days);
+  const typicalDays = days == null ? 3 : Math.min(days, 60);
+  try {
+    const existing = (await pool.query('SELECT id, name, is_third_party FROM suppliers WHERE lower(name)=lower($1) LIMIT 1', [name])).rows[0];
+    let id: number;
+    if (existing) {
+      id = Number(existing.id);
+      await pool.query(`UPDATE suppliers SET is_third_party=true, is_active=true, category=COALESCE(category, $2),
+                               support_phone=COALESCE(support_phone, $3), support_email=COALESCE(support_email, $4),
+                               typical_days=COALESCE(typical_days, $5), updated_at=NOW()
+                         WHERE id=$1`, [id, category, supportPhone, supportEmail, typicalDays]);
+      await logActivity(req.session.user!.id, 'third_party_flag', 'suppliers', id, `${existing.name} marked as a third party (from a case)`);
+    } else {
+      const ins = await pool.query(
+        `INSERT INTO suppliers (name, category, support_phone, support_email, typical_days, is_third_party)
+         VALUES ($1,$2,$3,$4,$5,true) RETURNING id`, [name, category, supportPhone, supportEmail, typicalDays]);
+      id = Number(ins.rows[0].id);
+      await logActivity(req.session.user!.id, 'third_party_create', 'suppliers', id, `Third party added from a case: ${name}`);
+    }
+    const tp = await getThirdParty(id);
+    res.json({ ok: true, id, name: tp?.name || name, chaseBy: chaseByDefault(tp?.typicalDays ?? typicalDays), existing: !!existing });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || 'Could not add that third party.' });
+  }
+});
+
 router.post('/third-parties', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const f = fields(req.body);
   if (!f[0]) { res.redirect(BACK + '?err=' + encodeURIComponent('A third party needs a name.')); return; }
