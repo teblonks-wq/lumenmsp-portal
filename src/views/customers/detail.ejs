@@ -940,10 +940,11 @@
                 // made; the last signed-in user is greyed because it is only whoever
                 // happened to log on. They are not the same claim and must not look alike.
               %>
-              <td class="muted" style="font-size:12px;" title="<%= a.assigned_name ? (a.assigned_name + ' (assigned)') : (a.last_login_user ? (a.last_login_user + ' (last signed in)') : 'Nobody assigned and nobody has signed in') %>">
-                <% if (a.assigned_name) { %><span style="font-weight:600;color:var(--ink);"><%= a.assigned_name %></span>
+              <td class="muted js-assign-cell" style="font-size:12px;white-space:nowrap;" data-asset="<%= a.id %>" data-cust="<%= customer.id %>" data-assigned="<%= a.assigned_contact_id || '' %>" data-last="<%= a.last_login_user || '' %>" title="<%= a.assigned_name ? (a.assigned_name + ' (assigned)') : (a.last_login_user ? (a.last_login_user + ' (last signed in)') : 'Nobody assigned and nobody has signed in') %>">
+                <span class="js-assign-val"><% if (a.assigned_name) { %><span style="font-weight:600;color:var(--ink);"><%= a.assigned_name %></span>
                 <% } else if (a.last_login_user) { %><%= String(a.last_login_user).split('\\').pop() %>
-                <% } else { %><span class="muted" style="opacity:.55;">unallocated</span><% } %>
+                <% } else { %><span class="muted" style="opacity:.55;">unallocated</span><% } %></span>
+                <button type="button" class="assign-edit" title="Change assigned user" aria-label="Change assigned user">&#9998;</button>
               </td>
               <td>
                 <% if (a.agent_installed) { %>
@@ -1832,4 +1833,5 @@
   })();
 </script>
 
+<%- include('../assets/_assign') %>
 <%- include('../partials/footer') %>

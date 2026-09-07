@@ -306,21 +306,34 @@ router.post('/assets/remote-settings', requireAuth, requireAdmin, async (req: Re
 // ── Assign a device to a customer contact (Portal-side allocation) ──────────────
 // This is OUR column (customer_assets.assigned_contact_id), not Atera data — staying editable
 // while the Atera-synced fields are locked is deliberate, and the sync never touches it.
+// Answers JSON when asked for it (Accept: application/json) so the inline editor on the
+// /assets list and the customer Assets tab (views/assets/_assign.ejs) can save in place;
+// the device page's plain form still gets its redirect.
 router.post('/assets/:id/assign', requireAuth, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
+  const wantsJson = /application\/json/.test(String(req.get('accept') || ''));
   const asset = (await pool.query('SELECT id, customer_id, hostname FROM customer_assets WHERE id=$1', [id])).rows[0];
-  if (!asset) { res.status(404).render('error', { message: 'Device not found.' }); return; }
+  if (!asset) {
+    if (wantsJson) { res.status(404).json({ ok: false, error: 'Device not found.' }); return; }
+    res.status(404).render('error', { message: 'Device not found.' }); return;
+  }
   const contactId = parseInt(String(req.body.contact_id || ''), 10) || null;
   if (contactId) {
     const ok = (await pool.query('SELECT id, full_name FROM customer_contacts WHERE id=$1 AND customer_id=$2', [contactId, asset.customer_id])).rows[0];
-    if (!ok) { res.redirect(`/assets/${id}?err=` + encodeURIComponent('That contact does not belong to this device\'s customer.')); return; }
+    if (!ok) {
+      const err = 'That contact does not belong to this device\'s customer.';
+      if (wantsJson) { res.status(400).json({ ok: false, error: err }); return; }
+      res.redirect(`/assets/${id}?err=` + encodeURIComponent(err)); return;
+    }
     await pool.query('UPDATE customer_assets SET assigned_contact_id=$1, updated_at=NOW() WHERE id=$2', [contactId, id]);
     await logActivity(req.session.user!.id, 'updated', 'customers', asset.customer_id, `Device ${asset.hostname || id} assigned to ${ok.full_name}`);
+    if (wantsJson) { res.json({ ok: true, contact_id: ok.id, name: ok.full_name }); return; }
     res.redirect(`/assets/${id}?msg=` + encodeURIComponent(`Assigned to ${ok.full_name}`));
     return;
   }
   await pool.query('UPDATE customer_assets SET assigned_contact_id=NULL, updated_at=NOW() WHERE id=$1', [id]);
   await logActivity(req.session.user!.id, 'updated', 'customers', asset.customer_id, `Device ${asset.hostname || id} set to unallocated`);
+  if (wantsJson) { res.json({ ok: true, contact_id: null, name: '' }); return; }
   res.redirect(`/assets/${id}?msg=` + encodeURIComponent('Set to unallocated'));
 });
 

@@ -420,7 +420,7 @@ function tileHref(over){
             </td>
             <td class="muted"><%= a.os || '—' %><% if (a.os_version) { %> <span style="font-size:11px;">(<%= a.os_version %>)</span><% } %></td>
             <td class="muted"><%= [a.manufacturer, a.model].filter(Boolean).join(' ') || '—' %></td>
-            <td class="muted" style="font-size:12px;" title="<%= a.assigned_name ? (a.assigned_name + ' (assigned)') : (a.last_login_user || '') %>"><% if (a.assigned_name) { %><span style="font-weight:600;color:var(--ink);"><%= a.assigned_name %></span><% } else if (a.last_login_user) { %><%= String(a.last_login_user).split('\\').pop() %><% } else { %><span class="muted" style="opacity:.55;">unallocated</span><% } %></td>
+            <td class="muted js-assign-cell" style="font-size:12px;white-space:nowrap;" data-asset="<%= a.id %>" data-cust="<%= a.customer_id || '' %>" data-assigned="<%= a.assigned_contact_id || '' %>" data-last="<%= a.last_login_user || '' %>" title="<%= a.assigned_name ? (a.assigned_name + ' (assigned)') : (a.last_login_user || '') %>"><span class="js-assign-val"><% if (a.assigned_name) { %><span style="font-weight:600;color:var(--ink);"><%= a.assigned_name %></span><% } else if (a.last_login_user) { %><%= String(a.last_login_user).split('\\').pop() %><% } else { %><span class="muted" style="opacity:.55;">unallocated</span><% } %></span><% if (a.customer_id) { %> <button type="button" class="assign-edit" title="Change assigned user" aria-label="Change assigned user">&#9998;</button><% } %></td>
             <td class="muted seen-live" data-asset="<%= a.id %>" style="font-size:12px;"><%= a.agent_device_id && a.agent_seen_secs != null ? secsAgo(a.agent_seen_secs) : timeAgo(a.last_seen_at) %></td>
             <td style="text-align:right;white-space:nowrap;">
               <% if (a.agent_device_id && a.agent_mesh_node_id) { %>
@@ -616,4 +616,5 @@ function tileHref(over){
   })();
 </script>
 
+<%- include('_assign') %>
 <%- include('../partials/footer') %>

@@ -1,0 +1,104 @@
+<%
+  // Inline "assigned user" editor for asset tables (estate /assets list + the customer
+  // Assets tab). Include ONCE per page, after the table. Each editable cell is:
+  //   <td class="js-assign-cell" data-asset=ID data-cust=CUSTOMER_ID data-assigned=CONTACT_ID>
+  //     <span class="js-assign-val">...current display...</span>
+  //     <button type="button" class="assign-edit">...</button>
+  //   </td>
+  // Click the pencil -> the customer's contacts load from /customers/:id/contacts.json into a
+  // <select>; choosing one POSTs /assets/:id/assign (the same route the device page uses,
+  // so the audit trail and the "contact must belong to this customer" check are identical).
+  // Esc or clicking away cancels. The cell then re-renders with the same bold-assigned /
+  // grey-last-signed-in / "unallocated" rule the table already follows.
+%>
+<style>
+  .assign-edit { background:none; border:none; color:var(--muted); cursor:pointer; padding:0 4px; font-size:12px; line-height:1; opacity:0; vertical-align:middle; border-radius:4px; }
+  .assign-edit:hover { color:var(--accent); background:var(--surface-2, rgba(0,0,0,.05)); }
+  tr:hover .assign-edit, .assign-edit:focus { opacity:1; }
+  .assign-select { font:inherit; font-size:12px; padding:3px 6px; border:1px solid var(--accent); border-radius:6px; background:var(--card, #fff); color:var(--ink); max-width:220px; }
+  .js-assign-cell.saving { opacity:.55; pointer-events:none; }
+  .js-assign-cell .assign-err { display:block; color:var(--bad-fg); font-size:11px; margin-top:2px; }
+  @media (hover:none) { .assign-edit { opacity:1; } }
+</style>
+<script>
+(function () {
+  var meta = document.querySelector('meta[name="csrf-token"]');
+  var CSRF = meta ? meta.getAttribute('content') : '';
+  var cache = {}; // customerId -> contacts[]
+  function contactsFor(cid) {
+    if (cache[cid]) return Promise.resolve(cache[cid]);
+    return fetch('/customers/' + cid + '/contacts.json', { credentials: 'same-origin' })
+      .then(function (r) { if (!r.ok) throw new Error('contacts ' + r.status); return r.json(); })
+      .then(function (rows) { cache[cid] = rows; return rows; });
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function render(cell, name) {
+    // Same three-state rule as the server-rendered cell. The last signed-in user is kept on
+    // the cell (data-last) so clearing an assignment falls back to it, not to blank.
+    var last = cell.getAttribute('data-last') || '';
+    var val = cell.querySelector('.js-assign-val');
+    if (name) { val.innerHTML = '<span style="font-weight:600;color:var(--ink);">' + esc(name) + '</span>'; cell.title = name + ' (assigned)'; }
+    else if (last) { val.textContent = last.split('\\').pop(); cell.title = last + ' (last signed in)'; }
+    else { val.innerHTML = '<span class="muted" style="opacity:.55;">unallocated</span>'; cell.title = 'Nobody assigned and nobody has signed in'; }
+  }
+  function save(cell, contactId, name) {
+    var id = cell.getAttribute('data-asset');
+    cell.classList.add('saving');
+    var body = new URLSearchParams(); body.set('contact_id', contactId || ''); body.set('_csrf', CSRF);
+    return fetch('/assets/' + id + '/assign', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'x-csrf-token': CSRF, 'Accept': 'application/json' },
+      body: body.toString()
+    }).then(function (r) {
+      var ct = r.headers.get('content-type') || '';
+      if (ct.indexOf('application/json') >= 0) return r.json().then(function (j) { if (!r.ok || j.ok === false) throw new Error(j.error || ('save ' + r.status)); return j; });
+      // Older server build: the route answers with a redirect to the device page. A
+      // redirect carrying ?msg= is the success path, ?err= is the refusal.
+      if (r.redirected && /[?&]err=/.test(r.url)) throw new Error(decodeURIComponent((r.url.split('err=')[1] || 'refused').split('&')[0]).replace(/\+/g, ' '));
+      if (!r.ok) throw new Error('save ' + r.status);
+      return { ok: true };
+    }).then(function () {
+      cell.setAttribute('data-assigned', contactId || '');
+      render(cell, name);
+    });
+  }
+  function open(cell) {
+    var cid = cell.getAttribute('data-cust');
+    if (!cid || cell.querySelector('select')) return;
+    var val = cell.querySelector('.js-assign-val'), btn = cell.querySelector('.assign-edit');
+    var err = cell.querySelector('.assign-err'); if (err) err.remove();
+    var was = val.innerHTML;
+    val.innerHTML = '<span class="muted" style="font-size:11px;">loading&hellip;</span>';
+    contactsFor(cid).then(function (rows) {
+      var cur = cell.getAttribute('data-assigned') || '';
+      var sel = document.createElement('select'); sel.className = 'assign-select';
+      var o0 = document.createElement('option'); o0.value = ''; o0.textContent = '— unallocated —'; sel.appendChild(o0);
+      rows.forEach(function (c) { var o = document.createElement('option'); o.value = c.id; o.textContent = c.full_name + (c.is_primary ? ' (primary)' : ''); if (String(c.id) === cur) o.selected = true; sel.appendChild(o); });
+      val.innerHTML = ''; val.appendChild(sel); if (btn) btn.style.display = 'none';
+      var done = false;
+      function close(restore) { if (done) return; done = true; if (restore) val.innerHTML = was; if (btn) btn.style.display = ''; }
+      sel.addEventListener('change', function () {
+        var opt = sel.options[sel.selectedIndex];
+        var name = sel.value ? opt.textContent.replace(/ \(primary\)$/, '') : '';
+        done = true; if (btn) btn.style.display = '';
+        save(cell, sel.value, name).catch(function (e) {
+          render(cell, (rows.filter(function (c) { return String(c.id) === cur; })[0] || {}).full_name || '');
+          var s = document.createElement('span'); s.className = 'assign-err'; s.textContent = 'Not saved: ' + e.message; cell.appendChild(s);
+        }).then(function () { cell.classList.remove('saving'); });
+      });
+      sel.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(true); });
+      sel.addEventListener('blur', function () { setTimeout(function () { close(true); }, 150); });
+      sel.focus();
+    }).catch(function (e) {
+      val.innerHTML = was;
+      var s = document.createElement('span'); s.className = 'assign-err'; s.textContent = 'Could not load contacts: ' + e.message; cell.appendChild(s);
+    });
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('.assign-edit');
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    open(b.closest('.js-assign-cell'));
+  });
+})();
+</script>
