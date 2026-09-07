@@ -1,0 +1,297 @@
+<%- include('../partials/header', { title: existing ? 'Edit watchdog' : 'New watchdog', user }) %>
+<style>
+  .nt-wrap { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:20px; align-items:start; }
+  @media (max-width:900px){ .nt-wrap { grid-template-columns:1fr; } }
+  .nt-card { padding:16px; border:1px solid var(--line); border-radius:14px; background:var(--card,#fff); }
+  .nt-card h2 { font-size:13.5px; margin:0 0 10px; }
+  .nt-card label { font-size:11.5px; font-weight:700; color:var(--muted); display:block; margin:12px 0 3px; }
+  .nt-card input, .nt-card select, .nt-card textarea { width:100%; font:inherit; font-size:13px; padding:7px 9px;
+    border:1px solid var(--line-strong); border-radius:7px; background:var(--card,#fff); color:var(--ink); box-sizing:border-box; }
+  .nt-help { font-size:11.5px; color:var(--muted); margin:4px 0 0; line-height:1.45; }
+  .nt-two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .nt-three { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  .nt-list { max-height:380px; overflow:auto; border:1px solid var(--line); border-radius:10px; margin-top:8px; }
+  .nt-row { display:flex; align-items:center; gap:9px; padding:6px 10px; border-bottom:1px solid var(--line); font-size:12.5px; }
+  .nt-row:last-child { border-bottom:0; }
+  .nt-row .h { font-weight:600; }
+  .nt-row .c { color:var(--muted); margin-left:auto; font-size:11.5px; }
+  .nt-dot { width:7px; height:7px; border-radius:50%; background:var(--muted); flex:0 0 auto; }
+  .nt-dot.on { background:var(--ok-fg,#15803d); }
+  .nt-picked { font-size:12px; font-weight:700; margin-top:8px; }
+  .heal-row { display:grid; grid-template-columns:1.1fr 1.6fr auto; gap:8px; align-items:start; padding:8px 0; border-bottom:1px solid var(--line); }
+  .heal-row:last-child { border-bottom:0; }
+  .heal-row .btn { margin-top:0; }
+  .nt-consequence { margin-top:12px; padding:10px 12px; border-radius:9px; font-size:12.5px; line-height:1.5;
+    background:var(--tint-warn,#fffbeb); color:var(--warn-deep,#92400e); border:1px solid var(--warn-line,#fde68a); }
+  .hide { display:none !important; }
+</style>
+
+<div class="page-header" style="margin-bottom:14px;">
+  <h1 style="margin:0;"><%= existing ? 'Edit watchdog' : 'New watchdog' %></h1>
+  <p class="muted" style="margin:4px 0 0;font-size:13px;"><a class="row-link" href="/automation/watchdogs">Watchdogs</a></p>
+</div>
+
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<form method="post" action="<%= existing ? '/automation/watchdogs/' + existing.id : '/automation/watchdogs' %>" id="wdForm">
+<input type="hidden" name="_csrf" value="<%= csrfToken %>">
+<input type="hidden" name="spec" id="wdSpec">
+<input type="hidden" name="device_ids" id="ntDeviceIds">
+<div class="nt-wrap">
+  <div class="nt-card">
+    <h2>What to watch</h2>
+    <label for="wdName">Name</label>
+    <input id="wdName" placeholder="e.g. Print Spooler on the Larkmead servers" maxlength="120" value="<%= existing ? existing.name : '' %>">
+    <p class="nt-help">This is what the alert will be called, so say what it protects rather than what it checks.</p>
+
+    <label for="wdKind">Check</label>
+    <select id="wdKind">
+      <% kinds.forEach(function(k){ %><option value="<%= k.key %>" data-probe="<%= k.probe ? 1 : 0 %>" data-help="<%= k.help %>" <%= existing && existing.kind === k.key ? 'selected' : '' %>><%= k.label %></option><% }); %>
+    </select>
+    <p class="nt-help" id="wdKindHelp"></p>
+
+    <div id="pService">
+      <label for="wdServices">Services (short names, one per line or comma-separated)</label>
+      <textarea id="wdServices" rows="3" placeholder="Spooler&#10;MSSQLSERVER&#10;LanmanServer"></textarea>
+      <p class="nt-help">The service name, not the display name — what <code>Get-Service</code> is given. A service that is not installed on a machine counts as failing there.</p>
+    </div>
+    <div id="pProcess" class="hide">
+      <div class="nt-two">
+        <div><label for="wdProcess">Process name</label><input id="wdProcess" placeholder="e.g. Sage.SBD.Services"></div>
+        <div><label for="wdExpect">It should be</label>
+          <select id="wdExpect"><option value="running">Running</option><option value="absent">Not running</option></select></div>
+      </div>
+    </div>
+    <div id="pDisk" class="hide">
+      <div class="nt-three">
+        <div><label for="wdDrive">Drive</label><input id="wdDrive" value="C:" placeholder="C: or any"></div>
+        <div><label for="wdPct">Under % free</label><input id="wdPct" type="number" min="1" max="99" placeholder="10"></div>
+        <div><label for="wdGb">Under GB free</label><input id="wdGb" type="number" min="1" step="0.5" placeholder="20"></div>
+      </div>
+      <p class="nt-help">Either line, or both — it fails when a drive is under any of them. Clears at 5 points / 2 GB back above, so it does not flap.</p>
+    </div>
+    <div id="pOffline" class="hide">
+      <label for="wdMinutes">Quiet for longer than (minutes)</label>
+      <input id="wdMinutes" type="number" min="5" value="30">
+      <p class="nt-help">Machines check in every few minutes when they are on. 30 minutes catches a server that has gone; use hours for laptops that come and go.</p>
+    </div>
+    <div id="pUptime" class="hide">
+      <label for="wdDays">No restart for longer than (days)</label>
+      <input id="wdDays" type="number" min="1" value="30">
+    </div>
+
+    <div class="nt-two">
+      <div>
+        <label for="wdSeverity">Severity</label>
+        <select id="wdSeverity"><option value="warning">Warning — on the board, in the feed</option><option value="critical">Critical — also pushes to phones</option></select>
+      </div>
+      <div id="wdIntervalWrap">
+        <label for="wdInterval">Check every (minutes)</label>
+        <input id="wdInterval" type="number" min="5" max="1440" value="15">
+      </div>
+    </div>
+    <p class="nt-help" id="wdIntervalHelp">Each check is a small read on the machine. Fifteen minutes is right for most things; five for something that must not be down long.</p>
+
+    <h2 style="margin-top:18px;">Self-heal — when it fails, do this</h2>
+    <div id="healRows"></div>
+    <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+      <select id="healAdd" style="max-width:280px;">
+        <option value="">+ Add an action…</option>
+        <% healTypes.forEach(function(h){ %><option value="<%= h.key %>" data-help="<%= h.help %>"><%= h.label %></option><% }); %>
+      </select>
+    </div>
+    <p class="nt-help">Actions run in this order on the first failure, then again after the cool-down while it keeps failing, up to the daily cap. No actions = alert only.</p>
+    <div class="nt-three">
+      <div><label for="wdMax">Cap per day</label><input id="wdMax" type="number" min="0" max="24" value="3"></div>
+      <div><label for="wdCool">Cool-down (minutes)</label><input id="wdCool" type="number" min="5" max="1440" value="30"></div>
+      <div><label for="wdEsc">When the cap is hit</label>
+        <select id="wdEsc"><option value="1">Raise a case, tell the team</option><option value="0">Just tell the team</option></select></div>
+    </div>
+    <div class="nt-consequence" id="wdConsequence">A watchdog that heals can restart services and machines without anyone watching. The cap and cool-down are the brakes; the story of every action is kept on the watchdog's page.</div>
+
+    <label for="wdNotes">Notes</label>
+    <textarea id="wdNotes" rows="2" placeholder="Why this exists, who asked, what it protects"><%= existing && existing.notes ? existing.notes : '' %></textarea>
+  </div>
+
+  <div class="nt-card">
+    <h2>Which machines</h2>
+    <label for="wdScope">Scope</label>
+    <select id="wdScope">
+      <option value="devices">Chosen machines</option>
+      <option value="customer">Every machine at one customer</option>
+      <option value="estate">Every machine we manage</option>
+    </select>
+    <p class="nt-help">A customer or estate scope follows machines as they are enrolled — nothing to update when a new server appears.</p>
+    <div id="scopeCustomer" class="hide">
+      <label for="wdCustomer">Customer</label>
+      <select id="wdCustomer">
+        <option value="">— pick —</option>
+        <% customers.forEach(function(c){ %><option value="<%= c.id %>" <%= existing && String(existing.customerId) === String(c.id) ? 'selected' : '' %>><%= c.name %> (<%= c.devices %>)</option><% }); %>
+      </select>
+    </div>
+    <div id="scopeDevices">
+      <div class="nt-two">
+        <div>
+          <label for="ntCustomer">Filter by customer</label>
+          <select id="ntCustomer">
+            <option value="">All customers</option>
+            <% customers.forEach(function(c){ %><option value="<%= c.id %>"><%= c.name %> (<%= c.devices %>)</option><% }); %>
+          </select>
+        </div>
+        <div>
+          <label for="ntSearch">Search</label>
+          <input id="ntSearch" type="search" placeholder="hostname, user…">
+        </div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
+        <button type="button" class="btn" id="ntAll" style="font-size:12px;">Select all shown</button>
+        <button type="button" class="btn" id="ntNone" style="font-size:12px;">Clear</button>
+        <span class="nt-picked" id="ntPicked">0 selected</span>
+      </div>
+      <div class="nt-list" id="ntList"><div class="nt-row muted">Loading machines…</div></div>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:16px;display:flex;gap:10px;align-items:center;">
+  <button class="btn btn-primary" type="submit"><%= existing ? 'Save changes' : 'Start watching' %></button>
+  <a class="btn" href="<%= existing ? '/automation/watchdogs/' + existing.id : '/automation/watchdogs' %>">Cancel</a>
+</div>
+</form>
+
+<script>
+(function(){
+  var EXISTING = <%- JSON.stringify(existing ? { kind: existing.kind, params: existing.params || {}, scope: existing.scope, severity: existing.severity, intervalMinutes: existing.intervalMinutes, heal: existing.heal || [], healMaxPerDay: existing.healMaxPerDay, healCooldownMinutes: existing.healCooldownMinutes, escalateCase: existing.escalateCase } : null) %>;
+  var SCRIPTS = <%- JSON.stringify(scripts.map(function(s){ return { id: s.id, name: s.name }; })) %>;
+  var HEAL = <%- JSON.stringify(healTypes) %>;
+  var SEED = <%- JSON.stringify((seedDevices || []).map(function(d){ return { id: d.id, hostname: d.hostname }; })) %>;
+  var picked = Object.create(null);
+  SEED.forEach(function(d){ picked[d.id] = d.hostname || String(d.id); });
+  var devices = [];
+  var $ = function(id){ return document.getElementById(id); };
+  function show(el, on){ if (el) el.classList.toggle('hide', !on); }
+
+  // ── kind ──
+  var kind = $('wdKind');
+  function syncKind(){
+    var o = kind.options[kind.selectedIndex];
+    $('wdKindHelp').textContent = o.getAttribute('data-help') || '';
+    var k = kind.value;
+    show($('pService'), k === 'service'); show($('pProcess'), k === 'process'); show($('pDisk'), k === 'disk');
+    show($('pOffline'), k === 'offline'); show($('pUptime'), k === 'uptime');
+    var probe = o.getAttribute('data-probe') === '1';
+    show($('wdIntervalWrap'), probe); show($('wdIntervalHelp'), probe);
+    // service_start only makes sense on a service watchdog; drop it elsewhere.
+    document.querySelectorAll('.heal-row').forEach(function(r){ if (r.getAttribute('data-type') === 'service_start' && k !== 'service') r.remove(); });
+    var addOpt = $('healAdd').querySelector('option[value="service_start"]'); if (addOpt) addOpt.disabled = (k !== 'service');
+  }
+  kind.addEventListener('change', syncKind);
+
+  // ── scope ──
+  var scope = $('wdScope');
+  function syncScope(){ show($('scopeCustomer'), scope.value === 'customer'); show($('scopeDevices'), scope.value === 'devices'); }
+  scope.addEventListener('change', syncScope);
+
+  // ── heal rows ──
+  function healRow(h){
+    var row = document.createElement('div'); row.className = 'heal-row'; row.setAttribute('data-type', h.type);
+    var def = HEAL.filter(function(x){ return x.key === h.type; })[0] || { label: h.type, help: '' };
+    var mid = '';
+    if (h.type === 'script') mid = '<select class="heal-script">' + SCRIPTS.map(function(s){ return '<option value="' + s.id + '"' + (String(s.id) === String(h.scriptId) ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('') + '</select>';
+    else if (h.type === 'command') mid = '<input class="heal-cmd" placeholder="Restart-Service Spooler" value="' + esc(h.script || '') + '">';
+    else if (h.type === 'restart') mid = '<select class="heal-delay"><option value="60"' + (String(h.delaySeconds) === '60' ? ' selected' : '') + '>60-second warning</option><option value="300"' + (String(h.delaySeconds) === '300' ? ' selected' : '') + '>5-minute warning</option><option value="0"' + (String(h.delaySeconds) === '0' ? ' selected' : '') + '>Immediately</option></select>';
+    else mid = '<span class="nt-help" style="margin:0;">' + esc(def.help) + '</span>';
+    row.innerHTML = '<div style="font-size:12.5px;font-weight:600;padding-top:7px;">' + esc(def.label) + '</div><div>' + mid + '</div>' +
+      '<button type="button" class="btn heal-del" style="font-size:12px;">Remove</button>';
+    row.querySelector('.heal-del').addEventListener('click', function(){ row.remove(); });
+    $('healRows').appendChild(row);
+  }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+  $('healAdd').addEventListener('change', function(){
+    if (!this.value) return;
+    healRow({ type: this.value, delaySeconds: 60 });
+    this.value = '';
+  });
+  function readHeal(){
+    return Array.prototype.map.call(document.querySelectorAll('.heal-row'), function(r){
+      var t = r.getAttribute('data-type'); var h = { type: t };
+      if (t === 'script') h.scriptId = Number(r.querySelector('.heal-script').value);
+      if (t === 'command') h.script = r.querySelector('.heal-cmd').value.trim();
+      if (t === 'restart') h.delaySeconds = Number(r.querySelector('.heal-delay').value);
+      return h;
+    });
+  }
+
+  // ── machine picker (same shape as Scheduled tasks) ──
+  function render(){
+    var list = $('ntList');
+    if (!devices.length) { list.innerHTML = '<div class="nt-row muted">No machines match.</div>'; return; }
+    list.innerHTML = devices.map(function(d){
+      var on = picked[d.id] ? ' checked' : '';
+      return '<label class="nt-row"><input type="checkbox" data-id="' + d.id + '"' + on + '>' +
+             '<span class="nt-dot' + (d.online ? ' on' : '') + '"></span>' +
+             '<span class="h">' + esc(d.hostname || ('#' + d.id)) + '</span>' +
+             '<span class="c">' + esc(d.customer_name || '') + '</span></label>';
+    }).join('');
+    list.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+      cb.addEventListener('change', function(){
+        var id = cb.getAttribute('data-id');
+        var d = devices.filter(function(x){ return String(x.id) === String(id); })[0];
+        if (cb.checked) picked[id] = (d && d.hostname) || id; else delete picked[id];
+        syncPicked();
+      });
+    });
+  }
+  function syncPicked(){ var ids = Object.keys(picked); $('ntPicked').textContent = ids.length + ' selected'; $('ntDeviceIds').value = ids.join(','); }
+  var t = null;
+  function load(){
+    fetch('/automation/devices.json?q=' + encodeURIComponent($('ntSearch').value.trim()) + '&customer=' + encodeURIComponent($('ntCustomer').value))
+      .then(function(r){ return r.json(); }).then(function(j){ devices = (j && j.devices) || []; render(); })
+      .catch(function(){ $('ntList').innerHTML = '<div class="nt-row muted">Could not load machines.</div>'; });
+  }
+  $('ntSearch').addEventListener('input', function(){ clearTimeout(t); t = setTimeout(load, 200); });
+  $('ntCustomer').addEventListener('change', load);
+  $('ntAll').addEventListener('click', function(){ devices.forEach(function(d){ picked[d.id] = d.hostname || String(d.id); }); render(); syncPicked(); });
+  $('ntNone').addEventListener('click', function(){ picked = Object.create(null); render(); syncPicked(); });
+
+  // ── submit: everything into one JSON field ──
+  $('wdForm').addEventListener('submit', function(e){
+    var k = kind.value; var params = {};
+    if (k === 'service') params.services = $('wdServices').value;
+    if (k === 'process') { params.process = $('wdProcess').value; params.expect = $('wdExpect').value; }
+    if (k === 'disk') { params.drive = $('wdDrive').value; params.minFreePct = $('wdPct').value; params.minFreeGb = $('wdGb').value; }
+    if (k === 'offline') params.minutes = $('wdMinutes').value;
+    if (k === 'uptime') params.days = $('wdDays').value;
+    var spec = {
+      name: $('wdName').value, kind: k, params: params, scope: scope.value,
+      customerId: scope.value === 'customer' ? $('wdCustomer').value : null,
+      deviceIds: scope.value === 'devices' ? Object.keys(picked).map(Number) : [],
+      severity: $('wdSeverity').value, intervalMinutes: $('wdInterval').value,
+      heal: readHeal(), healMaxPerDay: $('wdMax').value, healCooldownMinutes: $('wdCool').value,
+      escalateCase: $('wdEsc').value === '1', notes: $('wdNotes').value
+    };
+    if (!spec.name.trim()) { e.preventDefault(); alert('Give the watchdog a name.'); return; }
+    if (spec.scope === 'devices' && !spec.deviceIds.length) { e.preventDefault(); alert('Pick at least one machine, or change the scope.'); return; }
+    $('wdSpec').value = JSON.stringify(spec);
+  });
+
+  // ── prefill when editing ──
+  if (EXISTING) {
+    kind.value = EXISTING.kind;
+    var p = EXISTING.params || {};
+    if (EXISTING.kind === 'service') $('wdServices').value = (p.services || []).join('\n');
+    if (EXISTING.kind === 'process') { $('wdProcess').value = p.process || ''; $('wdExpect').value = p.expect || 'running'; }
+    if (EXISTING.kind === 'disk') { $('wdDrive').value = p.drive || 'C:'; $('wdPct').value = p.minFreePct || ''; $('wdGb').value = p.minFreeGb || ''; }
+    if (EXISTING.kind === 'offline') $('wdMinutes').value = p.minutes || 30;
+    if (EXISTING.kind === 'uptime') $('wdDays').value = p.days || 30;
+    scope.value = EXISTING.scope; $('wdSeverity').value = EXISTING.severity; $('wdInterval').value = EXISTING.intervalMinutes;
+    $('wdMax').value = EXISTING.healMaxPerDay; $('wdCool').value = EXISTING.healCooldownMinutes; $('wdEsc').value = EXISTING.escalateCase ? '1' : '0';
+    (EXISTING.heal || []).forEach(healRow);
+  } else {
+    healRow({ type: 'service_start' });
+  }
+  syncKind(); syncScope(); syncPicked(); load();
+})();
+</script>
+
+<%- include('../partials/footer') %>

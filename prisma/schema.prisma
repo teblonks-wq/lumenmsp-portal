@@ -3981,6 +3981,95 @@ model Script {
 // (series_id = the id of the first). Expanding at read time was rejected there for a
 // good reason and the same one applies here: you cannot cancel, re-time or report on an
 // occurrence that does not exist as a row.
+// ── Watchdog: standing checks with self-heal ────────────────────────────────────
+// A watchdog is a QUESTION asked of a set of machines on a cadence — "is the Spooler
+// running", "is C: above 10% free", "has this machine been heard from in the last 30
+// minutes" — with an ANSWER already decided for the day it fails: restart the service, run
+// a script, reboot, raise a case, tell somebody. The signal comes from what the agent
+// already reports (heartbeat: last_seen, disks, last boot) or from a small probe the
+// watchdog queues itself (services, processes) — no new agent capability.
+//
+// State is kept per (watchdog, machine) so a failure is raised ONCE, healed with a cap and a
+// cool-down, escalated when the cap is hit, and closed the moment the check passes again.
+// The estate `alerts` table is the board it shows on; watchdog_states is the memory behind it.
+// Timestamps here are timestamptz on purpose — see [[pg-utc-timestamps]].
+model Watchdog {
+  id                  Int       @id @default(autoincrement())
+  name                String
+  // service | process | disk | offline | uptime
+  kind                String
+  // service: { services: string[] } · process: { process: string, expect: 'running'|'absent' }
+  // disk: { drive: 'C:'|'any', minFreePct?: number, minFreeGb?: number }
+  // offline: { minutes: number } · uptime: { days: number }
+  params              Json?
+  // devices (watchdog_targets) | customer (customer_id) | estate
+  scope               String    @default("devices")
+  customerId          Int?      @map("customer_id")
+  severity            String    @default("warning")   // warning | critical
+  intervalMinutes     Int       @default(15) @map("interval_minutes")   // probe kinds only
+  enabled             Boolean   @default(true)
+  // [{ type: 'service_start' | 'script' | 'command' | 'restart' | 'case' | 'notify', scriptId?, script?, delaySeconds? }]
+  heal                Json?
+  healMaxPerDay       Int       @default(3) @map("heal_max_per_day")
+  healCooldownMinutes Int       @default(30) @map("heal_cooldown_minutes")
+  escalateCase        Boolean   @default(true) @map("escalate_case")     // raise a case when the cap is hit
+  notes               String?
+  createdBy           Int?      @map("created_by")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt           DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  @@index([enabled, kind])
+  @@map("watchdogs")
+}
+
+model WatchdogTarget {
+  id         Int @id @default(autoincrement())
+  watchdogId Int @map("watchdog_id")
+  deviceId   Int @map("device_id")   // agent_devices.id
+
+  @@unique([watchdogId, deviceId])
+  @@map("watchdog_targets")
+}
+
+// One row per (watchdog, machine): what it last found, since when, and what it has done about it.
+model WatchdogState {
+  id                 Int       @id @default(autoincrement())
+  watchdogId         Int       @map("watchdog_id")
+  deviceId           Int       @map("device_id")
+  status             String    @default("unknown")   // ok | failing | unknown
+  detail             String?                         // plain words: "Spooler stopped; Print Spooler stopped"
+  failingSince       DateTime? @map("failing_since") @db.Timestamptz(6)
+  lastCheckedAt      DateTime? @map("last_checked_at") @db.Timestamptz(6)
+  probeCommandId     Int?      @map("probe_command_id")   // outstanding probe, if any
+  probeQueuedAt      DateTime? @map("probe_queued_at") @db.Timestamptz(6)
+  healCount          Int       @default(0) @map("heal_count")       // today's heals
+  healDay            String?   @map("heal_day")                     // 'YYYY-MM-DD' the count belongs to
+  lastHealAt         DateTime? @map("last_heal_at") @db.Timestamptz(6)
+  escalatedAt        DateTime? @map("escalated_at") @db.Timestamptz(6)
+  alertId            BigInt?   @map("alert_id")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([watchdogId, deviceId])
+  @@index([status])
+  @@map("watchdog_states")
+}
+
+// The story, per machine: failed / healed / heal result / recovered / escalated / probe problems.
+model WatchdogEvent {
+  id         Int      @id @default(autoincrement())
+  watchdogId Int      @map("watchdog_id")
+  deviceId   Int?     @map("device_id")
+  kind       String   // failed | recovered | heal | heal_result | escalated | probe_error | note
+  detail     String?
+  commandId  Int?     @map("command_id")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([watchdogId, createdAt])
+  @@index([deviceId, createdAt])
+  @@map("watchdog_events")
+}
+
 model AutomationTask {
   id            Int       @id @default(autoincrement())
   name          String

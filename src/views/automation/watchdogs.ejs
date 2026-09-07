@@ -1,0 +1,94 @@
+<%- include('../partials/header', { title: 'Watchdogs', user }) %>
+<%
+  var KLABEL = {}; kinds.forEach(function(k){ KLABEL[k.key] = k.label; });
+  function ago(d){ if (!d) return ''; var m = Math.round((Date.now() - new Date(d).getTime())/60000); if (m < 1) return 'just now'; if (m < 60) return m + ' min'; if (m < 2880) return Math.round(m/60) + ' h'; return Math.round(m/1440) + ' days'; }
+%>
+<style>
+  .wd-sec { margin-bottom:26px; }
+  .wd-sec h2 { font-size:14px; margin:0 0 8px; }
+  .wd-sec .muted-sub { font-size:12px; color:var(--muted); margin:0 0 10px; }
+  .wd-empty { padding:16px; border:1px dashed var(--line); border-radius:12px; color:var(--muted); font-size:12.5px; }
+  .wd-fail { border-left:4px solid var(--bad-fg,#b91c1c); }
+  .wd-fail.warn { border-left-color:var(--warn-deep,#b45309); }
+  .wd-pill { display:inline-block; font-size:11px; font-weight:700; padding:2px 7px; border-radius:999px; }
+  .wd-pill.ok { background:var(--tint-ok,#ecfdf5); color:var(--ok-fg,#15803d); }
+  .wd-pill.bad { background:var(--tint-bad,#fef2f2); color:var(--bad-fg,#b91c1c); }
+  .wd-pill.unk { background:var(--chip-bg,#eef2f7); color:var(--muted); }
+  .wd-pill.off { background:var(--chip-bg,#eef2f7); color:var(--muted); text-decoration:line-through; }
+</style>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
+  <div>
+    <h1 style="margin:0;">Watchdogs</h1>
+    <p class="muted" style="margin:4px 0 0;font-size:13px;">Standing checks on customer machines — services, processes, disk space, silence, uptime — each with what to do the day it fails.</p>
+  </div>
+  <a class="btn btn-primary" href="/automation/watchdogs/new">New watchdog</a>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div class="wd-sec">
+  <h2>Failing now</h2>
+  <p class="muted-sub">Every machine that is currently failing a check. Alerts for these are on the <a class="row-link" href="/n3twrx">alert board</a> too.</p>
+  <% if (!failing.length) { %>
+    <div class="wd-empty">Nothing is failing. <%= dogs.length ? 'Every watched machine is answering the way it should.' : 'No watchdogs yet — add one to start.' %></div>
+  <% } else { %>
+  <table class="table">
+    <thead><tr><th>Watchdog</th><th>Machine</th><th>What it found</th><th>Since</th><th>Self-heal</th></tr></thead>
+    <tbody>
+      <% failing.forEach(function(f){ %>
+        <tr class="wd-fail <%= f.severity === 'critical' ? '' : 'warn' %>">
+          <td><a class="row-link" href="/automation/watchdogs/<%= f.watchdog_id %>"><strong><%= f.name %></strong></a><br><span class="muted" style="font-size:11px;"><%= f.severity %></span></td>
+          <td><%= f.hostname %><% if (f.customer_name) { %><br><span class="muted" style="font-size:11px;"><%= f.customer_name %></span><% } %></td>
+          <td style="font-size:12.5px;"><%= f.detail %></td>
+          <td style="white-space:nowrap;"><%= ago(f.failing_since) %></td>
+          <td style="font-size:12px;">
+            <% if (f.escalated_at) { %><span class="wd-pill bad">Needs a person</span>
+            <% } else if (f.heal_count > 0) { %>tried <%= f.heal_count %>×<% } else { %><span class="muted">—</span><% } %>
+          </td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+  <% } %>
+</div>
+
+<div class="wd-sec">
+  <h2>All watchdogs</h2>
+  <% if (!dogs.length) { %>
+    <div class="wd-empty">None yet. The first ones worth having: the services your customers' line-of-business apps depend on, C: drive free space across the estate, and "gone quiet" on every server.</div>
+  <% } else { %>
+  <table class="table">
+    <thead><tr><th>Name</th><th>Watching</th><th>Scope</th><th>Machines</th><th>State</th><th>Self-heal</th></tr></thead>
+    <tbody>
+      <% dogs.forEach(function(w){
+           var p = w.params || {};
+           var what = w.kind === 'service' ? (p.services || []).join(', ')
+                    : w.kind === 'process' ? (p.process + (p.expect === 'absent' ? ' must NOT run' : ' must run'))
+                    : w.kind === 'disk' ? ((p.drive === 'any' ? 'any drive' : p.drive) + ' under ' + [p.minFreePct ? p.minFreePct + '%' : null, p.minFreeGb ? p.minFreeGb + ' GB' : null].filter(Boolean).join(' / '))
+                    : w.kind === 'offline' ? ('quiet > ' + p.minutes + ' min')
+                    : w.kind === 'uptime' ? ('no restart > ' + p.days + ' days') : '';
+      %>
+        <tr>
+          <td><a class="row-link" href="/automation/watchdogs/<%= w.id %>"><strong><%= w.name %></strong></a>
+            <% if (!w.enabled) { %> <span class="wd-pill off">off</span><% } %>
+            <% if (w.severity === 'critical') { %> <span class="wd-pill bad">critical</span><% } %></td>
+          <td style="font-size:12.5px;"><%= KLABEL[w.kind] || w.kind %><br><span class="muted" style="font-size:11.5px;"><%= what %></span></td>
+          <td style="font-size:12.5px;"><%= w.scope === 'estate' ? 'Whole estate' : w.scope === 'customer' ? 'One customer' : 'Chosen machines' %></td>
+          <td><%= w.targets %></td>
+          <td style="font-size:12px;">
+            <% if (w.failing) { %><span class="wd-pill bad"><%= w.failing %> failing</span> <% } %>
+            <% if (w.ok) { %><span class="wd-pill ok"><%= w.ok %> ok</span> <% } %>
+            <% if (w.unknown) { %><span class="wd-pill unk"><%= w.unknown %> unknown</span><% } %>
+            <% if (!w.targets) { %><span class="muted">not checked yet</span><% } %>
+          </td>
+          <td style="font-size:12px;"><% if ((w.heal || []).length) { %><%= w.heal.map(function(h){ return h.type.replace('_',' '); }).join(', ') %> · max <%= w.healMaxPerDay %>/day<% } else { %><span class="muted">none — alert only</span><% } %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table>
+  <% } %>
+</div>
+
+<%- include('../partials/footer') %>

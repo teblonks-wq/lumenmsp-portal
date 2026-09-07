@@ -43,6 +43,8 @@ import { ensureSignupColumns } from './lib/self-signup';
 import credentialRoutes from './routes/credentials';
 import licenceRoutes from './routes/licences';
 import ateraRoutes from './routes/atera';
+import ateraAttachmentRoutes from './routes/atera-attachments';
+import watchdogRoutes from './routes/watchdog';
 import assetRoutes from './routes/assets';
 import webhookRoutes from './routes/webhooks';
 import insightsRoutes from './routes/insights';
@@ -104,6 +106,7 @@ import { startInvoiceInbox } from './lib/purchase-inbox';
 import { startPurchaseAnomalies } from './lib/purchase-anomalies';
 import { startPostponeSweep } from './lib/postpone-sweep';
 import { startAutomationSweep } from './lib/automation';
+import { startWatchdogSweep } from './lib/watchdogs';
 import { startLeaverSweep } from './lib/leaver';
 import { startBackupCron } from './lib/backup';
 import { startTeamsGraphCron } from './lib/teamsgraph';
@@ -426,6 +429,8 @@ app.use('/', myRoutes);           // customer portal (/my) — requireCustomer-g
 app.use('/', credentialRoutes);
 app.use('/', licenceRoutes);      // per-customer software licences (key is vault-encrypted)
 app.use('/', ateraRoutes);
+app.use('/', watchdogRoutes);     // Watchdogs — standing checks with self-heal, under Automation
+app.use('/', ateraAttachmentRoutes); // Atera ticket attachments → Portal (token + CORS to app.atera.com)
 app.use('/', assetRoutes);
 app.use('/', agentToolsRoutes);  // remote tools on the asset page (admin-only)
 app.use('/', customerToolsRoutes); // customer → Tools ▾ (User Management on the DC; admin-only)
@@ -497,6 +502,7 @@ server.listen(config.PORT, () => {
   startPurchaseAnomalies();
   startPostponeSweep();
   startAutomationSweep();
+  startWatchdogSweep();
   startLeaverSweep();
   startBackupCron();
   startTeamsGraphCron();

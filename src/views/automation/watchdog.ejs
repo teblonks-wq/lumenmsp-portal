@@ -1,0 +1,128 @@
+<%- include('../partials/header', { title: w.name + ' — Watchdog', user }) %>
+<%
+  var KLABEL = {}; kinds.forEach(function(k){ KLABEL[k.key] = k.label; });
+  var HLABEL = {}; healTypes.forEach(function(h){ HLABEL[h.key] = h.label; });
+  var p = w.params || {};
+  var what = w.kind === 'service' ? 'Services: ' + (p.services || []).join(', ')
+           : w.kind === 'process' ? ('Process ' + p.process + (p.expect === 'absent' ? ' must NOT be running' : ' must be running'))
+           : w.kind === 'disk' ? ((p.drive === 'any' ? 'Any drive' : 'Drive ' + p.drive) + ' under ' + [p.minFreePct ? p.minFreePct + '% free' : null, p.minFreeGb ? p.minFreeGb + ' GB free' : null].filter(Boolean).join(' or '))
+           : w.kind === 'offline' ? ('Not checked in for more than ' + p.minutes + ' minutes')
+           : w.kind === 'uptime' ? ('No restart for more than ' + p.days + ' days') : '';
+  function when(d){ if (!d) return ''; return new Date(d).toLocaleString('en-GB', { timeZone: 'Europe/London', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }); }
+  function ago(d){ if (!d) return ''; var m = Math.round((Date.now() - new Date(d).getTime())/60000); if (m < 1) return 'just now'; if (m < 60) return m + ' min ago'; if (m < 2880) return Math.round(m/60) + ' h ago'; return Math.round(m/1440) + ' days ago'; }
+  function healWords(h){
+    if (h.type === 'script') return 'Run "' + (scriptNames[h.scriptId] || ('script #' + h.scriptId)) + '"';
+    if (h.type === 'command') return 'Run: ' + h.script;
+    if (h.type === 'restart') return 'Restart the machine' + (h.delaySeconds ? ' (' + h.delaySeconds + 's warning)' : ' immediately');
+    return HLABEL[h.type] || h.type;
+  }
+%>
+<style>
+  .wd-grid { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); gap:20px; align-items:start; }
+  @media (max-width:900px){ .wd-grid { grid-template-columns:1fr; } }
+  .wd-card { padding:16px; border:1px solid var(--line); border-radius:14px; background:var(--card,#fff); margin-bottom:16px; }
+  .wd-card h2 { font-size:13.5px; margin:0 0 10px; }
+  .wd-kv { font-size:12.5px; line-height:1.6; }
+  .wd-kv b { color:var(--muted); font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.3px; display:block; margin-top:8px; }
+  .wd-pill { display:inline-block; font-size:11px; font-weight:700; padding:2px 7px; border-radius:999px; }
+  .wd-pill.ok { background:var(--tint-ok,#ecfdf5); color:var(--ok-fg,#15803d); }
+  .wd-pill.bad { background:var(--tint-bad,#fef2f2); color:var(--bad-fg,#b91c1c); }
+  .wd-pill.unk { background:var(--chip-bg,#eef2f7); color:var(--muted); }
+  .wd-ev { font-size:12.5px; padding:7px 0; border-bottom:1px solid var(--line); display:grid; grid-template-columns:110px 1fr; gap:10px; }
+  .wd-ev:last-child { border-bottom:0; }
+  .wd-ev .t { color:var(--muted); font-size:11.5px; white-space:nowrap; }
+  .wd-ev.failed { border-left:3px solid var(--bad-fg,#b91c1c); padding-left:8px; }
+  .wd-ev.recovered { border-left:3px solid var(--ok-fg,#15803d); padding-left:8px; }
+  .wd-ev.heal, .wd-ev.heal_result { border-left:3px solid var(--accent,#0ea5b7); padding-left:8px; }
+  .wd-ev.escalated { border-left:3px solid var(--warn-deep,#b45309); padding-left:8px; }
+  .wd-actions form { display:inline; }
+</style>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:14px;">
+  <div>
+    <h1 style="margin:0;"><%= w.name %>
+      <% if (!w.enabled) { %><span class="wd-pill unk" style="vertical-align:middle;">off</span><% } %>
+      <% if (w.severity === 'critical') { %><span class="wd-pill bad" style="vertical-align:middle;">critical</span><% } %></h1>
+    <p class="muted" style="margin:4px 0 0;font-size:13px;"><a class="row-link" href="/automation/watchdogs">Watchdogs</a> · <%= KLABEL[w.kind] || w.kind %></p>
+  </div>
+  <div class="wd-actions" style="display:flex;gap:8px;flex-wrap:wrap;">
+    <form method="post" action="/automation/watchdogs/<%= w.id %>/check-now"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit">Check now</button></form>
+    <a class="btn" href="/automation/watchdogs/<%= w.id %>/edit">Edit</a>
+    <form method="post" action="/automation/watchdogs/<%= w.id %>/enabled"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="on" value="<%= w.enabled ? 0 : 1 %>"><button class="btn" type="submit"><%= w.enabled ? 'Switch off' : 'Switch on' %></button></form>
+    <form method="post" action="/automation/watchdogs/<%= w.id %>/delete" onsubmit="return confirm('Remove this watchdog? Its open alerts close and the history is kept.');"><input type="hidden" name="_csrf" value="<%= csrfToken %>"><button class="btn" type="submit" style="color:var(--bad-fg);">Remove</button></form>
+  </div>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div class="wd-grid">
+  <div>
+    <div class="wd-card">
+      <h2>Machines</h2>
+      <% if (!states.length) { %>
+        <p class="muted" style="font-size:12.5px;margin:0;">Nothing checked yet — the first sweep runs within a minute of saving.<% if (!w.enabled) { %> This watchdog is switched off.<% } %></p>
+      <% } else { %>
+      <table class="table">
+        <thead><tr><th>Machine</th><th>State</th><th>What it found</th><th>Checked</th><th></th></tr></thead>
+        <tbody>
+          <% states.forEach(function(s){ %>
+            <tr>
+              <td><% if (s.asset_id) { %><a class="row-link" href="/assets/<%= s.asset_id %>"><%= s.hostname %></a><% } else { %><%= s.hostname %><% } %>
+                <% if (s.customer_name) { %><br><span class="muted" style="font-size:11px;"><%= s.customer_name %></span><% } %></td>
+              <td>
+                <% if (s.status === 'failing') { %><span class="wd-pill bad">failing</span><br><span class="muted" style="font-size:11px;">since <%= when(s.failing_since) %></span>
+                <% } else if (s.status === 'ok') { %><span class="wd-pill ok">ok</span>
+                <% } else { %><span class="wd-pill unk">unknown</span><% } %>
+                <% if (s.escalated_at) { %><br><span class="wd-pill bad" style="margin-top:3px;">needs a person</span><% } %>
+              </td>
+              <td style="font-size:12.5px;"><%= s.detail || '' %>
+                <% if (s.heal_count) { %><br><span class="muted" style="font-size:11px;">self-heal <%= s.heal_count %>× today<%= s.last_heal_at ? ', last ' + ago(s.last_heal_at) : '' %></span><% } %></td>
+              <td style="white-space:nowrap;font-size:12px;"><%= s.last_checked_at ? ago(s.last_checked_at) : (s.probe_command_id ? 'probe out' : '—') %></td>
+              <td>
+                <% if ((w.heal || []).length && w.kind !== 'offline') { %>
+                <form method="post" action="/automation/watchdogs/<%= w.id %>/heal-now" onsubmit="return confirm('Run the self-heal actions on <%= s.hostname %> now?');">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>"><input type="hidden" name="device_id" value="<%= s.device_id %>">
+                  <button class="btn" type="submit" style="font-size:11.5px;padding:2px 8px;">Heal now</button>
+                </form>
+                <% } %>
+              </td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+      <% } %>
+    </div>
+
+    <div class="wd-card">
+      <h2>What happened</h2>
+      <% if (!events.length) { %><p class="muted" style="font-size:12.5px;margin:0;">Nothing yet.</p><% } %>
+      <% events.forEach(function(e){ %>
+        <div class="wd-ev <%= e.kind %>">
+          <div class="t"><%= when(e.created_at) %><% if (e.hostname) { %><br><%= e.hostname %><% } %></div>
+          <div><%= e.detail %></div>
+        </div>
+      <% }); %>
+    </div>
+  </div>
+
+  <div>
+    <div class="wd-card wd-kv">
+      <h2>The check</h2>
+      <b>Watching</b><%= what %>
+      <b>Scope</b><%= w.scope === 'estate' ? 'Every machine we manage' : w.scope === 'customer' ? ('Every machine at ' + (customerName || 'that customer')) : ('Chosen machines (' + states.length + ')') %>
+      <% if (kinds.filter(function(k){ return k.key === w.kind; })[0].probe) { %><b>Cadence</b>Every <%= w.intervalMinutes %> minutes, on machines that are checking in<% } else { %><b>Cadence</b>Every minute, from what the agent already reports<% } %>
+      <b>Severity</b><%= w.severity %>
+      <% if (w.notes) { %><b>Notes</b><%= w.notes %><% } %>
+    </div>
+    <div class="wd-card wd-kv">
+      <h2>Self-heal</h2>
+      <% if (!(w.heal || []).length) { %><p class="muted" style="margin:0;">None — this watchdog only tells you.</p><% } else { %>
+        <ol style="margin:0;padding-left:18px;"><% w.heal.forEach(function(h){ %><li><%= healWords(h) %></li><% }); %></ol>
+        <b>Brakes</b>Up to <%= w.healMaxPerDay %> a day per machine, <%= w.healCooldownMinutes %> minutes apart. When the cap is hit: <%= w.escalateCase ? 'a case is raised and the team told' : 'the team is told' %>.
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>
