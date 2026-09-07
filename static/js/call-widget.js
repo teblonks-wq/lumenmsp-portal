@@ -4,6 +4,17 @@
  * our server over /ws/calls. Call-back is only allowed inside the 24h service window (server
  * enforces it; the history list shows which contacts are still callable). */
 (function () {
+  // ── The phone is OFF ────────────────────────────────────────────────────────────
+  // Terry, 7 Sep 2026: "remove these and stop the WhatsApp phone service."
+  // This file does two jobs. It is the WhatsApp softphone, and it is also the staff notification
+  // socket — website-chat pop-ups, N3twrx alert toasts, estate toasts (device enrolled, Bitdefender
+  // installed) and the nav badges all arrive over the same /ws/calls connection. So the phone is
+  // switched off rather than deleted: no launcher, no ringing, no microphone, no WebRTC, and the
+  // call message types are ignored. Everything else carries on exactly as before.
+  // To bring the phone back: set PHONE to true. The server refuses calls independently — see
+  // CALLS_ENABLED in src/lib/callhub.ts — so both have to be turned back on.
+  var PHONE = false;
+
   if (window.__waPhoneLoaded) return;
   window.__waPhoneLoaded = true;
 
@@ -52,6 +63,7 @@
 
   var launcher = document.createElement('button');
   launcher.id = 'wpLauncher'; launcher.title = 'Phone'; launcher.textContent = '📞';
+  if (!PHONE) launcher.style.display = 'none';
   launcher.onclick = function () { if (current) { renderCurrent(); } else { togglePanel(); } };
   document.body.appendChild(launcher);
 
@@ -158,7 +170,7 @@
     var s = Math.floor((Date.now() - connectedAt) / 1000);
     el.textContent = ('0' + Math.floor(s / 60)).slice(-2) + ':' + ('0' + (s % 60)).slice(-2);
   }
-  function hide() { box.style.display = 'none'; box.innerHTML = ''; box.className = ''; view = null; launcher.style.display = 'flex'; if (durTimer) { clearInterval(durTimer); durTimer = null; } }
+  function hide() { box.style.display = 'none'; box.innerHTML = ''; box.className = ''; view = null; launcher.style.display = PHONE ? 'flex' : 'none'; if (durTimer) { clearInterval(durTimer); durTimer = null; } }
 
   // ── ringtone ─────────────────────────────────────────────────────────────────
   function startRing() {
@@ -244,8 +256,13 @@
 
   // ── signalling ─────────────────────────────────────────────────────────────────
   function sendWs(m) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
+  var CALL_TYPES = { incoming: 1, calling: 1, answer: 1, taken: 1, accepted: 1, ended: 1, error: 1 };
   function onMessage(ev) {
     var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+    // With the phone off, the call half of this socket is ignored outright — no ringing, no
+    // microphone, no alert box. The server should not be sending these at all; this is the belt
+    // to its braces. Chat, alert, wa and estate messages fall through untouched.
+    if (!PHONE && CALL_TYPES[m.type]) return;
     if (m.type === 'incoming') {
       if (current) { sendWs({ type: 'reject', callId: m.callId }); return; }
       current = { callId: m.callId, name: m.name || m.from, peer: m.from, offerSdp: m.offerSdp, direction: 'inbound' };

@@ -99,10 +99,10 @@
 
 <% if (typeof user !== 'undefined' && user) { %>
   <% if (typeof lumenOn !== 'undefined' && lumenOn) { %><%- include('lumen-launcher') %><% } %>
-  <!-- WhatsApp softphone (staff): rings here when a customer calls the WhatsApp number -->
+  <!-- Staff notification socket: website-chat, N3twrx alert and estate toasts, and the nav badges.
+       The WhatsApp softphone this file used to carry was switched off on 7 Sep 2026 (Terry) — the
+       socket stays because the toasts ride on it. See PHONE in call-widget.js. -->
   <script src="/static/js/call-widget.js?v=<%= typeof assetV !== 'undefined' ? assetV : '0' %>" defer></script>
-  <!-- Lumen Chat: the AGENT end of the website chat bot — staff answer web chats from here -->
-  <script src="/static/js/agent-chat.js?v=<%= typeof assetV !== 'undefined' ? assetV : '0' %>" defer></script>
   <!-- N3twrx nav badge: live open-alert count, coloured by worst current severity -->
   <script>
   (function(){
