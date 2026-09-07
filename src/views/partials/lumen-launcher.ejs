@@ -17,6 +17,17 @@
   #lumenDown p { margin:0 0 10px; }
   #lumenDown[hidden] { display:none; }
   #lumenDrawer .lumen-grip { position:absolute; left:0; top:0; width:6px; height:100%; cursor:ew-resize; }
+  /* Squeeze, don't cover (Terry, 7 Sep 2026). The drawer is fixed, so the page has to be told
+     to get out of its way: a right margin on body reflows everything in normal flow — .main and
+     the sticky .topbar included — while .sidebar stays put because it is fixed. The width is
+     whatever the drawer currently is, drag included, so the two always agree.
+     Below 900px there is not enough room to squeeze into and it goes back to covering. */
+  @media (min-width:900px) {
+    html.lumen-open body { margin-right:var(--lumen-w,440px); }
+    html.lumen-open .topnav { right:var(--lumen-w,440px); }
+    html.lumen-open body, html.lumen-open .topnav { transition:margin-right .22s ease-out, right .22s ease-out; }
+    html.lumen-dragging body, html.lumen-dragging .topnav { transition:none; }  /* follow the grip exactly */
+  }
   @media (max-width:640px) { #lumenDrawer { width:100vw; } }
 </style>
 <button id="lumenBtn" type="button" title="Lumen" aria-label="Open Lumen"></button>
@@ -29,6 +40,11 @@
   var origin = null, loaded = false, ready = false, waitTimer = null;
   var down = document.getElementById('lumenDown');
   function screen() { return location.pathname + location.search + location.hash; }
+  // The page's right margin is driven from here so it can never disagree with the drawer.
+  function setWidthVar() {
+    var w = drawer.getBoundingClientRect().width || 440;
+    document.documentElement.style.setProperty('--lumen-w', w + 'px');
+  }
   function showDown(on) { down.hidden = !on; frame.style.display = on ? 'none' : ''; }
   function load(force) {
     if (loaded && !force) return Promise.resolve();
@@ -47,12 +63,15 @@
   }
   function open() {
     load().then(function () {
+      setWidthVar();
+      document.documentElement.classList.add('lumen-open');
       drawer.classList.add('open'); btn.classList.add('open');
       try { sessionStorage.setItem('lumen.open', '1'); } catch (e) {}
     }).catch(function () { btn.title = 'Lumen is not available right now'; });
   }
   document.getElementById('lumenRetry').addEventListener('click', function () { load(true); });
   function close() {
+    document.documentElement.classList.remove('lumen-open');
     drawer.classList.remove('open'); btn.classList.remove('open');
     try { sessionStorage.setItem('lumen.open', '0'); } catch (e) {}
   }
@@ -83,9 +102,10 @@
   (function () {
     var grip = drawer.querySelector('.lumen-grip'), dragging = false;
     try { var w = parseInt(localStorage.getItem('lumen.width') || '', 10); if (w >= 340 && w <= 900) drawer.style.width = w + 'px'; } catch (e) {}
-    grip.addEventListener('mousedown', function (e) { dragging = true; e.preventDefault(); frame.style.pointerEvents = 'none'; });
-    window.addEventListener('mousemove', function (e) { if (!dragging) return; var w = Math.max(340, Math.min(900, window.innerWidth - e.clientX)); drawer.style.width = w + 'px'; });
-    window.addEventListener('mouseup', function () { if (!dragging) return; dragging = false; frame.style.pointerEvents = ''; try { localStorage.setItem('lumen.width', parseInt(drawer.style.width, 10)); } catch (e) {} });
+    setWidthVar();
+    grip.addEventListener('mousedown', function (e) { dragging = true; e.preventDefault(); frame.style.pointerEvents = 'none'; document.documentElement.classList.add('lumen-dragging'); });
+    window.addEventListener('mousemove', function (e) { if (!dragging) return; var w = Math.max(340, Math.min(900, window.innerWidth - e.clientX)); drawer.style.width = w + 'px'; setWidthVar(); });
+    window.addEventListener('mouseup', function () { if (!dragging) return; dragging = false; frame.style.pointerEvents = ''; document.documentElement.classList.remove('lumen-dragging'); setWidthVar(); try { localStorage.setItem('lumen.width', parseInt(drawer.style.width, 10)); } catch (e) {} });
   })();
   // Keyboard: Ctrl+. toggles.
   document.addEventListener('keydown', function (e) { if ((e.ctrlKey || e.metaKey) && e.key === '.') { e.preventDefault(); drawer.classList.contains('open') ? close() : open(); } });
