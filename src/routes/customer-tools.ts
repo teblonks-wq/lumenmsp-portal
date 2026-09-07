@@ -71,7 +71,9 @@ router.get('/customers/:id/tools/users', requireAuth, requireAdmin, async (req: 
   res.render('customers/tools-users', {
     user, customer, dcs, chosen, asset, agentInfo,
     // The tools partial expects these from the device page; none are used in AD-users mode.
-    patches: [], patchMeta: null, agentScripts: [], csrfToken: '',
+    // csrfToken is deliberately NOT set here: res.locals carries the real per-session token and
+    // a render local would override it — an empty one made every tool call fail the CSRF check.
+    patches: [], patchMeta: null, agentScripts: [],
   });
 });
 

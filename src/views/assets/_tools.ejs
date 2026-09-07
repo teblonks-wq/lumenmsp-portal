@@ -2208,8 +2208,16 @@
     document.querySelector('[data-load="activity"]').addEventListener('click', loadActivity);
     document.querySelector('[data-tool="activity"]').addEventListener('click', function(){ if (!activityResult.innerHTML) loadActivity(); });
 
-    // Inline AD-only form: the page IS the tool, so open on the directory straight away.
-    if (INLINE_AD) { showTool('users'); loadAdUsers(); setTimeout(function(){ var q = document.getElementById('adQuery'); if (q) q.focus(); }, 50); }
+    // Inline AD-only form: the page IS the tool, so open on the directory straight away —
+    // but only once the footer has run, because that is what stamps the CSRF token onto
+    // every fetch. Firing before it meant a 403 from the security check, reported as
+    // "session expired".
+    if (INLINE_AD) {
+      showTool('users');
+      var startAd = function(){ loadAdUsers(); var q = document.getElementById('adQuery'); if (q) q.focus(); };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startAd);
+      else setTimeout(startAd, 0);
+    }
   })();
   </script>
   <% } %>

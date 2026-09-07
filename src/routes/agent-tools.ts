@@ -238,11 +238,16 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
       // username rather than a DN because a username is what the form takes in.
       const sam = adText(b.sam);
       if (!sam) { res.status(400).json({ ok: false, error: 'No account name given.' }); return; }
+      // mailNickname is an EXCHANGE schema attribute. A domain whose AD was never
+      // Exchange-extended (Larkmead, 7 Sep 2026) does not have it, and Get-ADUser refuses the
+      // whole read with "One or more properties are invalid" — which left the rename form
+      // empty and its button dead. So it is read on its own, and its absence is fine.
       payload.script = [
         'Import-Module ActiveDirectory -ErrorAction Stop',
-        `$u = Get-ADUser -Identity ${psq(sam)} -Properties GivenName,Surname,DisplayName,UserPrincipalName,EmailAddress,mailNickname,proxyAddresses,Title,Department,Description,OfficePhone,MobilePhone,Office,Company,Manager,DistinguishedName -ErrorAction Stop`,
+        `$u = Get-ADUser -Identity ${psq(sam)} -Properties GivenName,Surname,DisplayName,UserPrincipalName,EmailAddress,proxyAddresses,Title,Department,Description,OfficePhone,MobilePhone,Office,Company,Manager,DistinguishedName -ErrorAction Stop`,
+        `$nick = $null; try { $nick = (Get-ADUser -Identity $u.DistinguishedName -Properties mailNickname -ErrorAction Stop).mailNickname } catch { }`,
         `$m = if ($u.Manager) { try { (Get-ADUser -Identity $u.Manager).SamAccountName } catch { '' } } else { '' }`,
-        `[pscustomobject]@{ sam=$u.SamAccountName; given=$u.GivenName; surname=$u.Surname; display=$u.DisplayName; name=$u.Name; upn=$u.UserPrincipalName; mail=$u.EmailAddress; nick=$u.mailNickname; proxies=@($u.proxyAddresses | ForEach-Object { [string]$_ }); title=$u.Title; department=$u.Department; description=$u.Description; phone=$u.OfficePhone; mobile=$u.MobilePhone; office=$u.Office; company=$u.Company; manager=$m; dn=$u.DistinguishedName } | ConvertTo-Json -Depth 3 -Compress`,
+        `[pscustomobject]@{ sam=$u.SamAccountName; given=$u.GivenName; surname=$u.Surname; display=$u.DisplayName; name=$u.Name; upn=$u.UserPrincipalName; mail=$u.EmailAddress; nick=$nick; proxies=@($u.proxyAddresses | ForEach-Object { [string]$_ }); title=$u.Title; department=$u.Department; description=$u.Description; phone=$u.OfficePhone; mobile=$u.MobilePhone; office=$u.Office; company=$u.Company; manager=$m; dn=$u.DistinguishedName } | ConvertTo-Json -Depth 3 -Compress`,
       ].join('\r\n');
       payload.run_as = 'system';
       wireKind = 'shell.powershell';
@@ -272,8 +277,11 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
       const nick = newMail.split('@')[0];
       payload.script = [
         'Import-Module ActiveDirectory -ErrorAction Stop',
-        `$u = Get-ADUser -Identity ${psq(sam)} -Properties proxyAddresses,EmailAddress,mailNickname,UserPrincipalName,DisplayName,GivenName,Surname -ErrorAction Stop`,
+        `$u = Get-ADUser -Identity ${psq(sam)} -Properties proxyAddresses,EmailAddress,UserPrincipalName,DisplayName,GivenName,Surname -ErrorAction Stop`,
         `$newSam = ${psq(newSam)}; $newUpn = ${psq(newUpn)}; $newMail = ${psq(newMail)}; $display = ${psq(display)}`,
+        // mailNickname only exists in an Exchange-extended schema; asked for elsewhere it fails the
+        // whole call. Written only when the schema has it (the user's own read is the cheapest test).
+        `$hasNick = $true; try { $null = Get-ADUser -Identity $u.DistinguishedName -Properties mailNickname -ErrorAction Stop } catch { $hasNick = $false }`,
         // ── every clash first, so a refusal changes nothing ──
         // Script-block filters with variables: the AD provider binds the values itself, so a
         // name like O'Brien or one with a $ in it can neither break the filter nor expand.
@@ -291,7 +299,8 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
           : `$new = @($new | Where-Object { -not ($oldPrimary -and $_ -ieq ('smtp:' + $oldPrimary.Substring(5))) })`,
         // ── the writes, object rename last ──
         `Set-ADUser -Identity $u -GivenName ${psq(given)} -Surname ${psq(surname)} -DisplayName $display -SamAccountName $newSam -UserPrincipalName $newUpn -EmailAddress $newMail -ErrorAction Stop`,
-        `Set-ADUser -Identity $u -Replace @{ proxyAddresses = [string[]]$new; mailNickname = ${psq(nick)} } -ErrorAction Stop`,
+        `$rep = @{ proxyAddresses = [string[]]$new }; if ($hasNick) { $rep.mailNickname = ${psq(nick)} }`,
+        `Set-ADUser -Identity $u -Replace $rep -ErrorAction Stop`,
         `if ($u.Name -cne $display) { Rename-ADObject -Identity $u.DistinguishedName -NewName $display -ErrorAction Stop }`,
         `$v = Get-ADUser -Identity $newSam -Properties proxyAddresses,EmailAddress,DisplayName`,
         `"Renamed. Now $($v.DisplayName) - signs in as $($v.UserPrincipalName), username $($v.SamAccountName), email $($v.EmailAddress). Addresses: $(($v.proxyAddresses | Where-Object { $_ -like 'smtp:*' }) -join ', ')"`,

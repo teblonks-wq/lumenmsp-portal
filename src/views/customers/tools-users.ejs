@@ -75,7 +75,7 @@
     <p class="muted" style="margin:0;font-size:13px;">Open <a class="row-link" href="/assets?customer=<%= customer.id %>">Assets</a> for <%= customer.name %> and let the agent sync create it (or add it), then come back.</p>
   </div>
 <% } else { %>
-  <%- include('../assets/_tools', { toolsMode: 'ad-users', asset: asset, agentInfo: agentInfo, user: user, patches: patches, patchMeta: patchMeta, agentScripts: agentScripts, csrfToken: csrfToken }) %>
+  <%- include('../assets/_tools', { toolsMode: 'ad-users', asset: asset, agentInfo: agentInfo, user: user, patches: patches, patchMeta: patchMeta, agentScripts: agentScripts, csrfToken: (typeof csrfToken !== 'undefined' ? csrfToken : '') }) %>
 <% } %>
 
 <%- include('../partials/footer') %>
