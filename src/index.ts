@@ -54,6 +54,7 @@ import chatPublicRoutes from './routes/chat-public';
 import leadsApiRoutes from './routes/leads-api';
 import agentApiRoutes from './routes/agent-api';
 import agentToolsRoutes from './routes/agent-tools';
+import customerToolsRoutes from './routes/customer-tools';
 import meshRoutes from './routes/mesh';
 import m365Routes from './routes/m365';
 import patchingRoutes from './routes/patching';
@@ -427,6 +428,7 @@ app.use('/', licenceRoutes);      // per-customer software licences (key is vaul
 app.use('/', ateraRoutes);
 app.use('/', assetRoutes);
 app.use('/', agentToolsRoutes);  // remote tools on the asset page (admin-only)
+app.use('/', customerToolsRoutes); // customer → Tools ▾ (User Management on the DC; admin-only)
 app.use('/', meshRoutes);        // MeshCentral: bridge API (shared-secret) + remote control
 app.use('/', m365Routes);        // Microsoft 365 read-only panel per customer
 app.use('/', patchingRoutes);    // Windows Update reporting across the estate

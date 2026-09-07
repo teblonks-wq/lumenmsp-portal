@@ -14,6 +14,7 @@ import { setSalePrice } from '../lib/service-pricing';
 import { config } from '../config';
 import { syncGraphConsent, graphConsentUrl, testGraphPermissions } from '../lib/graph-consent';
 import { getBackupSummaryForCustomer, listBackupCompanies, ensureBackupTables, classifyPlanStatus, planStatusLabel, fmtBytes } from '../lib/msp360';
+import { domainControllersFor } from './customer-tools';
 import crypto from 'crypto';
 import multer from 'multer';
 import fs from 'fs';
@@ -688,8 +689,12 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
     };
   } catch { /* strip is optional — never block the page */ }
 
+  // Tools ▾ in the header: say up front whether User Management has a domain controller to
+  // talk to, rather than letting the click find out.
+  const dcTools = user.role === 'admin' ? await domainControllersFor(id).catch(() => []) : [];
+
   res.render('customers/detail', {
-    user, customer, contacts, sites: sitesRes.rows, domains: domainsRes.rows, keyContacts, insights, itcloud, itcloudTpl, itcloudHistory,
+    user, customer, contacts, dcTools, sites: sitesRes.rows, domains: domainsRes.rows, keyContacts, insights, itcloud, itcloudTpl, itcloudHistory,
     assets, subs, allocation, remoteTemplate, backupView, backupCompanies, backupCustNames, health, graphConsentUrl,
     quotes: quotesRes.rows, invoices: invoicesRes.rows, contracts: contractsRes.rows,
     serviceItems: serviceItemsRes.rows, lead, credentials, canVault, creditBalance, documents,

@@ -1,0 +1,81 @@
+<%- include('../partials/header', { title: 'User Management — ' + customer.name, user }) %>
+<%
+  // Customer → Tools ▾ → User Management. The device page's User Management partial, shown
+  // inline and pinned to Active Directory. Nothing local here: a company has a domain, a
+  // machine has local users.
+  function ago(secs) {
+    if (secs == null) return 'never';
+    secs = Number(secs);
+    if (secs < 90) return 'just now';
+    if (secs < 3600) return Math.round(secs / 60) + ' min ago';
+    if (secs < 86400) return Math.round(secs / 3600) + ' h ago';
+    return Math.round(secs / 86400) + ' d ago';
+  }
+%>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--blue-bright),var(--accent));">
+<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/customers/<%= customer.id %>">← <%= customer.name %></a></p>
+    <p class="doc-kicker">Tools · <%= customer.account_number || 'no account number' %></p>
+    <h1>User Management</h1>
+    <p class="muted" style="margin:6px 0 0;font-size:14px;">
+      <% if (chosen && asset) { %>
+        Active Directory on <strong><%= chosen.hostname || asset.hostname %></strong>
+        <% if (chosen.domain) { %> · domain <strong><%= chosen.domain %></strong><% } %>
+        · <% if (chosen.is_ad_agent) { %>nominated AD agent<% } else { %>domain controller<% } %>
+        · agent seen <%= ago(chosen.seen_secs) %>
+        <% if (dcs.length > 1) { %>
+          · <a class="row-link" href="#" onclick="document.getElementById('dcSwitch').style.display='block';this.style.display='none';return false;">switch</a>
+        <% } %>
+      <% } else { %>
+        Manage the people in this company's Active Directory — enable, disable, reset passwords, change names and details.
+      <% } %>
+    </p>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <% if (chosen && asset) { %><a class="btn" href="/assets/<%= asset.id %>" title="Open the domain controller's own device page">Open <%= chosen.hostname || asset.hostname %></a><% } %>
+    <a class="btn" href="/agents" title="Tick 'AD agent' on the machine that should answer for this domain">Agents</a>
+  </div>
+</div>
+</div>
+
+<% if (chosen && asset && dcs.length > 1) { %>
+  <div id="dcSwitch" class="card" style="display:none;max-width:720px;">
+    <div class="card-header"><h2>Which domain controller?</h2></div>
+    <p class="muted" style="margin:0 0 10px;font-size:13px;">Any of these can answer for the domain; changes replicate. Tick "AD agent" on the Agents page to make one the default.</p>
+    <% dcs.forEach(function (d) { %>
+      <a class="btn<%= d.device_id === chosen.device_id ? ' btn-primary' : '' %>" href="/customers/<%= customer.id %>/tools/users?dc=<%= d.device_id %>" style="margin:0 6px 6px 0;<%= d.asset_id ? '' : 'opacity:.5;pointer-events:none;' %>">
+        <%= d.hostname || ('device ' + d.device_id) %><% if (d.is_ad_agent) { %> · AD agent<% } %> · <%= ago(d.seen_secs) %>
+      </a>
+    <% }); %>
+  </div>
+<% } %>
+
+<% if (!dcs.length) { %>
+  <div class="card" style="max-width:720px;">
+    <div class="card-header"><h2>No domain controller yet</h2></div>
+    <p style="margin:0 0 10px;">Nothing enrolled for <strong><%= customer.name %></strong> holds Active Directory, so there is no directory to manage from here.</p>
+    <p class="muted" style="margin:0;font-size:13px;">Install the LumenMSP Agent on a domain controller (or a management server with the AD tools), then tick <strong>AD agent</strong> for it on the <a class="row-link" href="/agents">Agents page</a>. This page will light up on its own once the server collector reports the machine as a domain controller.</p>
+  </div>
+<% } else if (!chosen) { %>
+  <div class="card" style="max-width:720px;">
+    <div class="card-header"><h2>Which domain controller?</h2></div>
+    <p class="muted" style="margin:0 0 12px;font-size:13px;"><%= customer.name %> has <%= dcs.length %> machines holding Active Directory and none is nominated as the AD agent. Pick one for now — any of them can answer for the domain — or tick "AD agent" on the <a class="row-link" href="/agents">Agents page</a> so this choice is made for you next time.</p>
+    <% dcs.forEach(function (d) { %>
+      <a class="btn" href="/customers/<%= customer.id %>/tools/users?dc=<%= d.device_id %>" style="margin:0 6px 6px 0;<%= d.asset_id ? '' : 'opacity:.5;pointer-events:none;' %>" <%= d.asset_id ? '' : 'title="No asset record for this agent yet"' %>>
+        <%= d.hostname || ('device ' + d.device_id) %><% if (d.domain) { %> · <%= d.domain %><% } %> · seen <%= ago(d.seen_secs) %>
+      </a>
+    <% }); %>
+  </div>
+<% } else if (!asset) { %>
+  <div class="card" style="max-width:720px;">
+    <div class="card-header"><h2>Domain controller found, no asset record</h2></div>
+    <p style="margin:0 0 10px;"><strong><%= chosen.hostname || ('device ' + chosen.device_id) %></strong> is enrolled and holds Active Directory, but it has no row in Assets yet, and the remote tools key on the asset.</p>
+    <p class="muted" style="margin:0;font-size:13px;">Open <a class="row-link" href="/assets?customer=<%= customer.id %>">Assets</a> for <%= customer.name %> and let the agent sync create it (or add it), then come back.</p>
+  </div>
+<% } else { %>
+  <%- include('../assets/_tools', { toolsMode: 'ad-users', asset: asset, agentInfo: agentInfo, user: user, patches: patches, patchMeta: patchMeta, agentScripts: agentScripts, csrfToken: csrfToken }) %>
+<% } %>
+
+<%- include('../partials/footer') %>

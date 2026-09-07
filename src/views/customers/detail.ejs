@@ -16,6 +16,18 @@
   @media (max-width: 900px) { .tab-key { display:none; } }
   .tab-panel { display:none; }
   .tab-panel.active { display:block; }
+  /* Tools ▾ dropdown in the hero. <details> so it needs no script and closes itself. */
+  .tools-dd { position:relative; }
+  .tools-dd > summary { list-style:none; cursor:pointer; display:inline-block; }
+  .tools-dd > summary::-webkit-details-marker { display:none; }
+  .tools-dd[open] > summary { background:var(--tint-accent); }
+  .tools-dd-menu { position:absolute; right:0; top:calc(100% + 4px); z-index:120; min-width:260px;
+                   background:var(--card,#fff); border:1px solid var(--line-strong, var(--line)); border-radius:9px;
+                   box-shadow:0 14px 36px rgba(15,23,42,.18); padding:6px; }
+  .tools-dd-menu a { display:block; padding:8px 12px; border-radius:6px; text-decoration:none; color:inherit; }
+  .tools-dd-menu a:hover { background:var(--tint-accent); }
+  .tools-dd-menu a span { display:block; font-weight:600; font-size:13.5px; }
+  .tools-dd-menu a small { display:block; color:var(--muted); font-size:11.5px; margin-top:1px; }
 </style>
 
 <div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--blue-bright),var(--accent));">
@@ -39,6 +51,18 @@
     </p>
   </div>
   <div style="display:flex;gap:8px;">
+    <% if (user.role === 'admin') { var _dcs = (typeof dcTools !== 'undefined' && dcTools) ? dcTools : []; var _dcMain = _dcs.find(function(d){ return d.is_ad_agent; }) || (_dcs.length === 1 ? _dcs[0] : null); %>
+    <!-- Tools ▾ — company-level tools (the device page has Manage ▾ for one machine). Grows from here. -->
+    <details class="tools-dd">
+      <summary class="btn" title="Tools that work on the whole company">&#128736; Tools &#9662;</summary>
+      <div class="tools-dd-menu">
+        <a href="/customers/<%= customer.id %>/tools/users">
+          <span>User Management</span>
+          <small><% if (_dcMain) { %>Active Directory on <%= _dcMain.hostname || 'the DC' %><% } else if (_dcs.length > 1) { %><%= _dcs.length %> domain controllers — you'll pick one<% } else { %>No domain controller with the agent yet<% } %></small>
+        </a>
+      </div>
+    </details>
+    <% } %>
     <a class="btn" href="/it-report/<%= customer.id %>" title="Monthly IT Operations &amp; Security Snapshot">IT Report</a>
     <a class="btn" href="/customers/<%= customer.id %>/edit">Edit</a>
     <% if (user.role === 'admin') { %><a class="btn" href="/customers/<%= customer.id %>/merge" title="Merge a duplicate into / out of this customer">Merge</a><% } %>

@@ -65,6 +65,12 @@
   .lb-title { margin:0; font-size:15px; font-weight:700; }
   .lb-sub { margin:2px 0 0; font-size:12px; color:var(--muted); }
   .lb-body { padding:14px 20px 20px; overflow:auto; flex:1; }
+  /* Inline form — the same lightbox rendered as a card on a page of its own (customer →
+     Tools ▾ → User Management). No backdrop, no close, nothing to escape from. */
+  .lb-overlay.lb-inline { display:block !important; position:static; inset:auto; z-index:auto; background:none; padding:0; }
+  .lb-inline .lb-sheet { width:100%; max-width:100%; max-height:none; overflow:visible; box-shadow:none; border:1px solid var(--line); }
+  .lb-inline .lb-body { overflow:visible; }
+  .lb-inline .tool-tabs, .lb-inline #lbMax, .lb-inline #lbClose, .lb-inline [data-load="users"] { display:none !important; }
   /* ── Manage menu (the Atera-style grouped dropdown) ─────────────────────────── */
   .mg-menu { display:none; position:absolute; z-index:890; min-width:230px;
              background:var(--card,#fff); border:1px solid var(--line-strong); border-radius:9px;
@@ -127,16 +133,23 @@
 <%
   // Remote tools, Atera-style: a Manage menu on the device page, every tool in a
   // centred lightbox. This partial renders nothing visible until the menu opens one.
+  // toolsMode 'ad-users' (customer → Tools ▾ → User Management): the same partial rendered
+  // INLINE and pinned to the Active Directory list — tabs, close, and Local users hidden.
+  var inlineAd = (typeof toolsMode !== 'undefined' && toolsMode === 'ad-users');
 %>
 <div id="manageTools">
   <% if (!agentInfo) { %><% } else { %>
 
-  <div class="lb-overlay" id="lbOverlay">
-  <div class="lb-sheet" id="lbSheet" role="dialog" aria-modal="true">
+  <div class="lb-overlay<%= inlineAd ? ' on lb-inline' : '' %>" id="lbOverlay">
+  <div class="lb-sheet" id="lbSheet" role="<%= inlineAd ? 'region' : 'dialog' %>"<%= inlineAd ? '' : ' aria-modal="true"' %>>
   <div class="lb-head">
     <div style="min-width:0;">
-      <h3 class="lb-title" id="lbTitle">Tools</h3>
+      <h3 class="lb-title" id="lbTitle"><%= inlineAd ? 'User Management' : 'Tools' %></h3>
+      <% if (inlineAd) { %>
+      <p class="lb-sub">Active Directory users, read and changed on <strong><%= asset.hostname %></strong> through the LumenMSP Agent; every action is audited. Search by name or username, or leave it blank for everyone.</p>
+      <% } else { %>
       <p class="lb-sub">on <strong><%= asset.hostname %></strong> &mdash; runs as SYSTEM through the LumenMSP Agent; every action is audited. AD actions route via the customer's AD agent.</p>
+      <% } %>
     </div>
     <span style="flex:1;"></span>
     <button type="button" class="btn" id="lbMax" title="Expand" style="padding:2px 10px;">&#10530;</button>
@@ -267,8 +280,8 @@
   <div class="tool-panel" data-panel="users">
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
       <button class="btn btn-primary" type="button" data-load="users">Local users</button>
-      <button class="btn" type="button" id="adLoad">Active Directory</button>
-      <input class="input" id="adQuery" placeholder="AD search (name or username)" style="max-width:260px;font-size:12.5px;">
+      <button class="btn<%= inlineAd ? ' btn-primary' : '' %>" type="button" id="adLoad"><%= inlineAd ? 'Search' : 'Active Directory' %></button>
+      <input class="input" id="adQuery" placeholder="<%= inlineAd ? 'Name or username — blank for everyone' : 'AD search (name or username)' %>" style="max-width:<%= inlineAd ? '380px' : '260px' %>;font-size:12.5px;">
       <span class="tool-busy" id="usersBusy"></span>
     </div>
     <div id="usersResult"></div>
@@ -546,6 +559,7 @@
   (function(){
     var ASSET = <%= asset.id %>;
     var BASE = '/assets/' + ASSET + '/tools';
+    var INLINE_AD = <%= inlineAd ? 'true' : 'false' %>;   // customer → Tools ▾ → User Management
     var AGENT_DEVICE = <%= (typeof agentInfo !== 'undefined' && agentInfo && agentInfo.id) ? agentInfo.id : 'null' %>;
     var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); };
 
@@ -557,7 +571,7 @@
       panels.forEach(function(p){ p.classList.toggle('active', p.getAttribute('data-panel') === k); });
     }
     tabs.forEach(function(b){ b.addEventListener('click', function(){ showTool(b.getAttribute('data-tool')); }); });
-    showTool('console');   // initial active panel for when the lightbox first opens
+    showTool(INLINE_AD ? 'users' : 'console');   // initial active panel for when the lightbox first opens
 
     // Every JSON call goes through here. If the server answers with HTML instead of JSON
     // we say WHY (status + what it looks like) rather than leaking a parser error.
@@ -2193,6 +2207,9 @@
     }
     document.querySelector('[data-load="activity"]').addEventListener('click', loadActivity);
     document.querySelector('[data-tool="activity"]').addEventListener('click', function(){ if (!activityResult.innerHTML) loadActivity(); });
+
+    // Inline AD-only form: the page IS the tool, so open on the directory straight away.
+    if (INLINE_AD) { showTool('users'); loadAdUsers(); setTimeout(function(){ var q = document.getElementById('adQuery'); if (q) q.focus(); }, 50); }
   })();
   </script>
   <% } %>
