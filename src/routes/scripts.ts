@@ -5,6 +5,7 @@ import {
   FILE_TYPES, OS_TYPES, RUN_AS, listScripts, getScript, upsertScript, deleteScript, scriptStats,
 } from '../lib/scripts';
 import { reviewScript, saveReview, reviewIsStale } from '../lib/script-review';
+import { startReviewRun, stopReviewRun, reviewRunState, reviewQueue } from '../lib/script-review-run';
 
 const router = Router();
 
@@ -189,16 +190,31 @@ router.post('/scripts/:id(\\d+)/review', requireAuth, requireAdmin, async (req: 
   }
 });
 
-/** The queue the Review button works through: never reviewed, or edited since. */
+/** The queue a run would work through: never reviewed, or edited since. Kept for the page's
+ *  "N to review" hint; the run itself now happens server-side (below). */
 router.get('/scripts/review-queue', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const all = String(req.query.all || '') === '1';
-  // The shared library (1,100+ community scripts) is NOT reviewed by default — that is a
-  // four-figure Claude bill for scripts nobody has asked to run. Review those one at a
-  // time from the script's own page, or pass ?library=1 to queue them all deliberately.
-  const includeLibrary = String(req.query.library || '') === '1';
-  const scripts = (await listScripts()).filter(s => includeLibrary || s.source !== 'atera-shared');
-  const due = all ? scripts : scripts.filter(s => !s.reviewedAt || reviewIsStale(s));
+  // The shared library (1,100+ community scripts) is IN the queue — Terry wants every
+  // script checked. ?library=0 leaves it out (tens of pounds on Sonnet, not four figures).
+  const due = await reviewQueue({ all: String(req.query.all || '') === '1', library: String(req.query.library || '') !== '0' });
   res.json({ ok: true, ids: due.map(s => ({ id: s.id, name: s.name })) });
+});
+
+// ── The review as a background run ──────────────────────────────────────────────
+// Press once and walk away: the queue lives in the process, each verdict is saved as it
+// lands, a rate-limited call is retried rather than skipped, and whoever pressed it gets a
+// notification with the tally. The page only WATCHES (review-run.json), so it can be left
+// and come back to.
+router.post('/scripts/review-run', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const b = req.body || {};
+  const started = startReviewRun(req.session.user!.id, { all: String(b.all || '') === '1', library: String(b.library || '') !== '0' });
+  if (started) await logActivity(req.session.user!.id, 'script_review', 'scripts', null, 'Script review started');
+  res.json({ ok: true, started, state: reviewRunState() });
+});
+router.get('/scripts/review-run.json', requireAuth, requireAdmin, (_req: Request, res: Response) => {
+  res.json({ ok: true, state: reviewRunState() });
+});
+router.post('/scripts/review-run/stop', requireAuth, requireAdmin, (_req: Request, res: Response) => {
+  res.json({ ok: true, stopping: stopReviewRun(), state: reviewRunState() });
 });
 
 export default router;

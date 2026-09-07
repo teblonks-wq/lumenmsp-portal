@@ -37,8 +37,13 @@
 <% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
 
 <div id="scReviewBox" style="display:none;margin-bottom:12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2,#f8fafc);">
-  <div style="font-size:13px;font-weight:700;" id="scReviewHead">Reviewing…</div>
-  <div style="font-size:12px;color:var(--muted);margin-top:4px;" id="scReviewBody"></div>
+  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <div style="font-size:13px;font-weight:700;flex:1;min-width:0;" id="scReviewHead">Reviewing…</div>
+    <button class="btn btn-ghost" type="button" id="scReviewStop" style="display:none;font-size:12px;padding:3px 10px;">Stop after this one</button>
+  </div>
+  <div style="height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:8px;display:none;" id="scReviewBar"><i style="display:block;height:100%;width:0;background:var(--accent,#0ea5b7);transition:width .4s;"></i></div>
+  <div style="font-size:12px;color:var(--muted);margin-top:6px;" id="scReviewBody"></div>
+  <div style="font-size:12px;color:var(--muted);margin-top:4px;" id="scReviewNote">You don't need to stay on this page — it carries on in the Portal, three at a time, and you'll get a notification when it's done. Every script counts, the shared library included.</div>
 </div>
 
 <div class="stat-band">
@@ -168,37 +173,73 @@ function scPanel(id){ var p = document.getElementById(id); if (p) p.classList.to
 
   document.getElementById('scGo').addEventListener('click', function(){ send(document.getElementById('scJson').value); });
 
-  // Reviewing runs one script at a time from the browser. Forty-eight calls to Claude in a
-  // single request would time out and save nothing; this way each verdict is written as it
-  // lands, and closing the tab only stops the queue rather than losing the work.
+  // Reviewing is a BACKGROUND RUN in the Portal (see lib/script-review-run.ts). This page
+  // only starts it and watches: leave, come back, it is still going; a Claude rate limit is
+  // retried, not skipped; and the person who pressed the button gets a notification at the end.
   var rBox = document.getElementById('scReviewBox');
   var rHead = document.getElementById('scReviewHead');
   var rBody = document.getElementById('scReviewBody');
-  document.getElementById('scReview').addEventListener('click', async function(){
-    var btn = this; btn.disabled = true; rBox.style.display = 'block';
-    rHead.textContent = 'Working out what needs reviewing…'; rBody.textContent = '';
-    try {
-      var q = await (await fetch('/scripts/review-queue')).json();
-      var due = (q.ids || []);
-      if (!due.length) { rHead.textContent = 'Everything is already reviewed.'; btn.disabled = false; return; }
-      var done = 0, broken = 0, warn = 0, failed = 0;
-      for (var i = 0; i < due.length; i++) {
-        rHead.textContent = 'Reviewing ' + (i + 1) + ' of ' + due.length + ' — ' + due[i].name;
-        try {
-          var r = await (await fetch('/scripts/' + due[i].id + '/review', {
-            method: 'POST', headers: { 'x-csrf-token': '<%= csrfToken %>' } })).json();
-          if (r.ok) { done++; if (r.verdict === 'broken') broken++; else if (r.verdict === 'warn') warn++; }
-          else failed++;
-        } catch (e) { failed++; }
-        rBody.textContent = done + ' reviewed · ' + broken + ' broken · ' + warn + ' with a risk'
-                          + (failed ? ' · ' + failed + ' failed' : '');
+  var rBar = document.getElementById('scReviewBar');
+  var rStop = document.getElementById('scReviewStop');
+  var rBtn = document.getElementById('scReview');
+  var CSRF = '<%= csrfToken %>';
+  var rTimer = null, rWasRunning = false;
+
+  function tally(st){
+    return st.done + ' reviewed · ' + st.broken + ' broken · ' + st.warn + ' with a risk · ' + st.ok + ' fine'
+      + (st.failed.length ? ' · ' + st.failed.length + ' could not be reviewed (' + st.failed.map(function(f){ return f.name; }).join(', ') + ')' : '');
+  }
+  function paint(st){
+    rBox.style.display = 'block';
+    var seen = st.done + st.failed.length;
+    if (st.running) {
+      rWasRunning = true;
+      rBtn.disabled = true; rStop.style.display = st.stopRequested ? 'none' : ''; rBar.style.display = 'block';
+      rBar.firstElementChild.style.width = (st.total ? Math.round(100 * seen / st.total) : 0) + '%';
+      var cur = (st.current || []).map(function(c){ return c.name + (c.attempt > 1 ? ' (attempt ' + c.attempt + ')' : ''); }).join(' · ');
+      rHead.textContent = st.total
+        ? 'Reviewed ' + seen + ' of ' + st.total + (cur ? ' — now: ' + cur : '')
+        : 'Working out what needs reviewing…';
+      if (st.stopRequested) rHead.textContent = 'Stopping — finishing ' + (cur || 'the ones in flight') + '…';
+      rBody.textContent = tally(st) + (st.lastError ? ' · last problem: ' + st.lastError : '');
+    } else {
+      rBtn.disabled = false; rStop.style.display = 'none'; rBar.style.display = 'none';
+      if (st.finishedAt && rWasRunning) {
+        rHead.textContent = (st.stopRequested ? 'Stopped — ' : 'Done — ') + tally(st) + '. Reloading…';
+        setTimeout(function(){ location.reload(); }, 1500);
+      } else if (st.finishedAt) {
+        rHead.textContent = (st.stopRequested ? 'Last run stopped ' : 'Last run finished ') + new Date(st.finishedAt).toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' }) + ' — ' + tally(st);
+        rBody.textContent = '';
       }
-      rHead.textContent = 'Done — reloading.';
-      setTimeout(function(){ location.reload(); }, 1200);
-    } catch (e) {
-      rHead.textContent = 'Review failed: ' + e.message; btn.disabled = false;
     }
+  }
+  async function watch(){
+    try {
+      var j = await (await fetch('/scripts/review-run.json')).json();
+      paint(j.state);
+      if (j.state.running) rTimer = setTimeout(watch, 2000);
+    } catch (e) { rHead.textContent = 'Lost sight of the review: ' + e.message; rTimer = setTimeout(watch, 5000); }
+  }
+  rBtn.addEventListener('click', async function(){
+    rBtn.disabled = true; rBox.style.display = 'block';
+    rHead.textContent = 'Starting…'; rBody.textContent = '';
+    try {
+      var j = await (await fetch('/scripts/review-run', { method: 'POST', headers: { 'x-csrf-token': CSRF } })).json();
+      if (!j.ok) throw new Error(j.error || 'Could not start the review.');
+      rWasRunning = true;
+      if (rTimer) clearTimeout(rTimer);
+      watch();
+    } catch (e) { rHead.textContent = 'Review failed to start: ' + e.message; rBtn.disabled = false; }
   });
+  rStop.addEventListener('click', async function(){
+    rStop.disabled = true;
+    try { await fetch('/scripts/review-run/stop', { method: 'POST', headers: { 'x-csrf-token': CSRF } }); } catch (e) {}
+    rStop.disabled = false;
+  });
+  // Coming back to the page mid-run (or after one): show where it got to.
+  fetch('/scripts/review-run.json').then(function(r){ return r.json(); }).then(function(j){
+    if (j.state.running || j.state.finishedAt) { paint(j.state); if (j.state.running) rTimer = setTimeout(watch, 2000); }
+  }).catch(function(){});
 
   // Reading the clipboard needs a real click for user activation — that is why this is a
   // button and not something the page does on load.
