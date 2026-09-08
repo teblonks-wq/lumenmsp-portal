@@ -8,7 +8,16 @@ import { usageBy, usageByDay, usageTotals, biggestCalls } from '../lib/ai-meter'
 // Anthropic's console can only tell you an API key spent money. This tells you WHICH
 // FEATURE spent it, which is the only version of the question anyone can act on.
 const router = Router();
-router.use(requireAuth, requireFinance);
+// SCOPED TO THIS PAGE, and it must stay that way. A pathless `router.use(guard)` here does
+// NOT guard "this file" — this router is mounted at '/', so a pathless layer runs for EVERY
+// request that reaches it, including every route in every router mounted after this one.
+// That is what it did until 2026-09-08: a customer asking for /my hit requireAuth here
+// first, which redirects customers to /my, which came back here — /my redirecting to itself
+// forever, and the browser giving up with ERR_TOO_MANY_REDIRECTS. Nothing in my.ts was
+// wrong; it never got the request. Non-finance staff were also being 403'd out of
+// everything mounted below (assets, patching, watchdogs, mesh, diary), which went unnoticed
+// because admins pass hasFinanceAccess.
+router.use('/admin/ai-usage', requireAuth, requireFinance);
 
 router.get('/admin/ai-usage', async (req: Request, res: Response) => {
   const days = Math.max(1, Math.min(90, parseInt(String(req.query.days || '30'), 10) || 30));
