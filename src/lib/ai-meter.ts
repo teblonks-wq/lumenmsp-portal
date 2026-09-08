@@ -94,10 +94,11 @@ const FEATURE_BY_FN: Array<[RegExp, string]> = [
   // above — and after ticket-ask — so a more specific match always wins.
   [/routes[\\/]tickets/, 'ticket_ask'],
   [/routes[\\/]invoices/, 'invoice_ask'],
-  // These two matched nothing for as long as they existed. The Portal runs compiled dist/*.js,
-  // so a stack frame reads 'dist/lib/loc.js' and never 'loc.ts'. A pattern that cannot fire is
-  // worse than no pattern: it looks like coverage. Fixed 2026-09-08.
-  [/[\\/]loc\.(ts|js)/, 'loc'],
+  // 'loc' removed 2026-09-08: lib/loc.ts counts lines of code and has never made an AI call,
+  // so the pattern could only ever look like coverage it did not have.
+  // 'mcp' kept as a LAST-RESORT catch-all for anything reached through the MCP server, and
+  // fixed at the same time: the Portal runs compiled dist/*.js, so a stack frame reads
+  // 'dist/routes/mcp.js' and never 'mcp.ts'. The original pattern could not fire.
   [/[\\/]mcp\.(ts|js)/, 'mcp'],
 ];
 
@@ -148,4 +149,94 @@ export async function biggestCalls(limit = 20): Promise<any[]> {
     `SELECT * FROM ai_calls WHERE created_at > NOW() - INTERVAL '30 days'
       ORDER BY cost_usd DESC LIMIT $1`, [limit]
   ).catch(() => ({ rows: [] as any[] }))).rows;
+}
+
+// ── What every AI feature is, and which model slot it runs on ───────────────────
+// Deliberately next to FEATURE_BY_FN: a new AI feature needs a pattern AND a row here, and
+// keeping them apart is exactly how one gets added without the other — which is how 125 calls
+// spent six days as 'other'. `feature` matches the label written to ai_calls, so the screen can
+// put the catalogue and the real spend side by side.
+//
+// One row per OPERATION, not per feature: several features call the model twice at different
+// strengths (Ask Portal plans on the cheap slot and answers on the strong one), and a table
+// that hides that cannot answer "why did this cost what it did".
+export type ModelSlot = 'cheap' | 'strong';
+export interface FeatureOp {
+  feature: string;      // the label recorded in ai_calls
+  name: string;         // what a person would call it
+  what: string;         // one line, plain English
+  slot: ModelSlot;
+  where: string;        // source file, so the next person can find it
+  auto: boolean;        // can it fire with nobody pressing anything?
+}
+
+export const FEATURE_CATALOGUE: FeatureOp[] = [
+  { feature: 'purchase_judge',  name: 'Purchase matching',        what: 'Judges whether a document matches a bank transaction.', slot: 'cheap',  where: 'lib/purchase-agent.ts', auto: true },
+  { feature: 'purchase_read',   name: 'Invoice reading — text',   what: 'Turns an invoice\'s extracted text into structured JSON.', slot: 'cheap',  where: 'lib/purchase-agent.ts', auto: true },
+  { feature: 'purchase_read',   name: 'Invoice reading — document', what: 'Sends the PDF or image itself when text extraction fails.', slot: 'strong', where: 'lib/purchase-agent.ts', auto: true },
+  { feature: 'purchase_rules',  name: 'Anomaly reply',            what: 'Drafts the reply to a purchase anomaly.', slot: 'cheap',  where: 'lib/purchase-rules.ts', auto: true },
+  { feature: 'ticket_category', name: 'Ticket auto-category',     what: 'Classifies each incoming email into a category.', slot: 'cheap',  where: 'lib/mailsync.ts, routes/chat.ts', auto: true },
+  { feature: 'ticket_ask',      name: 'Ask Portal — plan',        what: 'Works out what to look up before it answers.', slot: 'cheap',  where: 'lib/ticket-ask.ts', auto: false },
+  { feature: 'ticket_ask',      name: 'Ask Portal — answer',      what: 'Answers the question over the whole ticket thread.', slot: 'strong', where: 'lib/ticket-ask.ts', auto: false },
+  { feature: 'ticket_ask',      name: 'Ticket list question',     what: 'Free-text question from the tickets screen.', slot: 'cheap',  where: 'routes/tickets.ts', auto: false },
+  { feature: 'ticket_phrases',  name: 'Phrase ribbon',            what: 'Three suggested phrases — fires on FIRST FOCUS of every composer, so it is the highest-volume feature here.', slot: 'cheap',  where: 'routes/ai.ts', auto: false },
+  { feature: 'ticket_reply',    name: 'Claude Update',            what: 'Turns a rough draft into a sendable ticket reply.', slot: 'strong', where: 'routes/ai.ts', auto: false },
+  { feature: 'invoice_ask',     name: 'Invoice question',         what: 'Free-text question from the invoices screen.', slot: 'cheap',  where: 'routes/invoices.ts', auto: false },
+  { feature: 'insights_ask',    name: 'Ask Insights',             what: 'Answers questions over the call analytics.', slot: 'strong', where: 'lib/insights-ask.ts', auto: false },
+  { feature: 'call_report',     name: 'Call report narrative',    what: 'Writes the summary paragraph on a call report.', slot: 'cheap',  where: 'lib/call-report.ts', auto: false },
+  { feature: 'it_report',       name: 'IT report narrative',      what: 'Writes the narrative for a customer IT report.', slot: 'cheap',  where: 'lib/it-report/generate.ts', auto: false },
+  { feature: 'gpo_review',      name: 'Group policy review',      what: 'Reviews group policies and answers questions about them.', slot: 'strong', where: 'lib/gpo.ts', auto: false },
+  { feature: 'script_review',   name: 'Script review',            what: 'Reviews an RMM script. Batches of these are the single biggest spend to date.', slot: 'strong', where: 'lib/script-review.ts', auto: false },
+  { feature: 'device_ask',      name: 'Ask a device',             what: 'Answers questions about one device from its collected facts.', slot: 'strong', where: 'lib/device-ask.ts', auto: false },
+  { feature: 'finance_agent',   name: 'Finance agent',            what: 'Answers finance questions over the books.', slot: 'cheap',  where: 'lib/finance-agent.ts', auto: false },
+  { feature: 'marketing',       name: 'Marketing post',           what: 'Drafts a news or blog article.', slot: 'cheap',  where: 'routes/marketing.ts', auto: false },
+  { feature: 'marketing',       name: 'Improve email HTML',       what: 'Tidies an email\'s HTML without changing its structure.', slot: 'cheap',  where: 'routes/marketing.ts', auto: false },
+  { feature: 'marketing',       name: 'Mass-mail draft',          what: 'Writes a mass-mail email from rough notes.', slot: 'strong', where: 'routes/marketing.ts', auto: false },
+  { feature: 'compose',         name: 'Compose message',          what: 'Turns dictated or typed notes into a clean message.', slot: 'cheap',  where: 'routes/ai.ts', auto: false },
+  { feature: 'compose',         name: 'Improve with Claude',      what: 'Polishes any draft into clear British English.', slot: 'cheap',  where: 'routes/ai.ts', auto: false },
+  { feature: 'compose',         name: 'Integrations key test',    what: 'The "test the key" call on the Integrations page.', slot: 'cheap',  where: 'routes/integrations.ts', auto: false },
+  { feature: 'mcp',             name: 'MCP tools',                what: 'Catch-all for anything reached through the Portal\'s MCP server that no other pattern claims.', slot: 'cheap',  where: 'routes/mcp.ts', auto: false },
+];
+
+export interface CatalogueRow extends FeatureOp {
+  model: string;          // what this operation will actually run, right now
+  calls: number;          // for the FEATURE, over the window
+  cost: number;           // for the FEATURE, over the window
+  firstOfFeature: boolean;
+}
+
+/**
+ * The catalogue joined to what the meter has actually seen. Call counts are per FEATURE, not
+ * per operation — the meter records one label per call and cannot split it further — so they
+ * are shown once against the first operation of each feature rather than repeated.
+ */
+export async function featureCatalogue(
+  models: { cheap: string; strong: string }, days = 30,
+): Promise<CatalogueRow[]> {
+  const spend = new Map<string, { calls: number; cost: number }>();
+  for (const r of await usageBy('feature', days)) spend.set(r.label, { calls: r.calls, cost: r.cost });
+
+  // Dearest feature first, so the screen opens on what matters; operations keep their own order
+  // within a feature because that is the order they run in.
+  const costOf = (f: string) => spend.get(f)?.cost ?? 0;
+  const order = [...new Set(FEATURE_CATALOGUE.map((o) => o.feature))]
+    .sort((a, b) => costOf(b) - costOf(a) || a.localeCompare(b));
+
+  const rows: CatalogueRow[] = [];
+  for (const feature of order) {
+    const ops = FEATURE_CATALOGUE.filter((o) => o.feature === feature);
+    ops.forEach((op, i) => rows.push({
+      ...op,
+      model: op.slot === 'strong' ? models.strong : models.cheap,
+      calls: spend.get(feature)?.calls ?? 0,
+      cost: spend.get(feature)?.cost ?? 0,
+      firstOfFeature: i === 0,
+    }));
+  }
+  return rows;
+}
+
+/** A cheap slot pointing at anything but Haiku is a real cost story, so the screen says so. */
+export function cheapSlotIsCheap(model: string): boolean {
+  return /haiku/i.test(model || '');
 }

@@ -8,6 +8,17 @@ import { recordAiCall, callerFeature } from './ai-meter';
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001'; // cheap + plenty for message tidy-up
+const STRONG_MODEL = 'claude-sonnet-4-6';           // reasoning over a thread, a doc, a policy
+
+// The two model slots, resolved with exactly the fallbacks every call site uses. Exported so the
+// AI usage screen can show what a feature will ACTUALLY run rather than a hardcoded list that
+// goes stale the first time someone changes the dropdown. 2026-09-08.
+export async function resolvedModels(): Promise<{ cheap: string; strong: string }> {
+  return {
+    cheap: ((await getSetting('anthropic', 'model')) || '').trim() || DEFAULT_MODEL,
+    strong: ((await getSetting('anthropic', 'model_strong')) || '').trim() || STRONG_MODEL,
+  };
+}
 
 export interface ComposeInput {
   transcript: string;           // the rough dictation / notes
@@ -231,7 +242,7 @@ export interface MassMailDraft { subject: string; bodyHtml: string; }
 export async function aiMassMailEmail(input: MassMailDraftInput): Promise<MassMailDraft> {
   const key = await resolveKey();
   if (!key) throw new Error('Claude is not configured - add your API key in Settings -> Integrations (or ANTHROPIC_API_KEY in the server .env).');
-  const model = ((await getSetting('anthropic', 'model_strong')) || '').trim() || 'claude-sonnet-4-6';
+  const model = ((await getSetting('anthropic', 'model_strong')) || '').trim() || STRONG_MODEL;
 
   const notes = String(input.notes || '').trim();
   if (!notes) throw new Error('Give Claude some notes first - what should the email say?');
@@ -380,7 +391,7 @@ export async function aiAskCached(
   const key = await resolveKey();
   if (!key) throw new Error('Claude is not configured - add your API key in Settings -> Integrations (or ANTHROPIC_API_KEY in the server .env).');
   const model = opts?.strong
-    ? (((await getSetting('anthropic', 'model_strong')) || '').trim() || 'claude-sonnet-4-6')
+    ? (((await getSetting('anthropic', 'model_strong')) || '').trim() || STRONG_MODEL)
     : (((await getSetting('anthropic', 'model')) || '').trim() || DEFAULT_MODEL);
   return callClaudeCached(key, model, system, corpus, question, opts?.maxTokens ?? 1600);
 }
@@ -591,7 +602,7 @@ export function docMediaType(kind: AiDocFile['kind'], contentType: string | null
 export async function aiAskDoc(system: string, question: string, file: AiDocFile, maxTokens = 900): Promise<string> {
   const key = await resolveKey();
   if (!key) throw new Error('Claude is not configured - add your API key in Settings -> Integrations (or ANTHROPIC_API_KEY in the server .env).');
-  const model = ((await getSetting('anthropic', 'model_strong')) || '').trim() || 'claude-sonnet-4-6';
+  const model = ((await getSetting('anthropic', 'model_strong')) || '').trim() || STRONG_MODEL;
   const block = file.kind === 'pdf'
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: file.data } }
     : { type: 'image', source: { type: 'base64', media_type: file.media_type, data: file.data } };
@@ -653,7 +664,7 @@ export async function aiComposeTicketReply(input: TicketReplyInput): Promise<str
   const key = await resolveKey();
   if (!key) throw new Error('Claude is not configured - add your API key in Settings -> Integrations (or ANTHROPIC_API_KEY in the server .env).');
   // Stronger model for reasoning over a whole thread; override via the 'anthropic'/'model_strong' setting.
-  const model = ((await getSetting('anthropic', 'model_strong')) || '').trim() || 'claude-sonnet-4-6';
+  const model = ((await getSetting('anthropic', 'model_strong')) || '').trim() || STRONG_MODEL;
 
   const draft = String(input.draft || '').trim();
   if (!draft) throw new Error('Type or dictate your update first, then use Claude Update.');
@@ -776,7 +787,7 @@ export interface StudioOutput {
 export async function aiGenerateStudio(input: StudioInput): Promise<StudioOutput> {
   const key = await resolveKey();
   if (!key) throw new Error('Claude is not configured - add your API key in Settings -> Integrations.');
-  const model = ((await getSetting('anthropic', 'model_strong')) || '').trim() || 'claude-sonnet-4-6';
+  const model = ((await getSetting('anthropic', 'model_strong')) || '').trim() || STRONG_MODEL;
 
   const topic = String(input.topic || '').trim();
   if (!topic) throw new Error('Add a topic first.');

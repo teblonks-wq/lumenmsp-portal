@@ -32,7 +32,9 @@
                 call_report:'Call reports', it_report:'IT reports', marketing:'Marketing drafts',
                 compose:'Message compose and polish', gpo_review:'Group policy review',
                 script_review:'Script review', finance_agent:'Finance agent', device_ask:'Device questions',
-                mcp:'MCP (Claude working alongside you)', loc:'Location lookups', other:'Unattributed' };
+                ticket_phrases:'Tickets — phrase ribbon', ticket_reply:'Tickets — Claude Update',
+                invoice_ask:'Invoice questions',
+                mcp:'MCP (Claude working alongside you)', other:'Unattributed' };
   var maxDay = 0; (byDay||[]).forEach(function(d){ if (d.cost > maxDay) maxDay = d.cost; });
   var maxFeat = 0; (byFeature||[]).forEach(function(f){ if (f.cost > maxFeat) maxFeat = f.cost; });
 %>
@@ -138,5 +140,49 @@
   </table></div>
 </div>
 <% } %>
+
+
+<div class="card" id="features" style="margin-bottom:18px;">
+  <h2 style="margin:0 0 2px;font-size:16px;">Features and models</h2>
+  <p class="muted" style="font-size:12px;margin:0 0 12px;">Every AI feature in the Portal and the model it will actually run &mdash; read live from settings, not a list kept by hand. There are two model slots, and each operation is wired to one of them. A feature that calls the model twice at different strengths gets a row for each.</p>
+
+  <% if (!cheapIsCheap) { %>
+    <div class="alert alert-danger" style="margin:0 0 14px;font-size:13px;">
+      <strong>The cheap slot is not cheap.</strong> It is set to <code><%= models.cheap %></code>, so every operation below marked <em>cheap</em> &mdash; the phrase ribbon, auto-category, compose &mdash; is paying that model&rsquo;s prices. Setting it back to a Haiku is the single easiest saving on this page.
+    </div>
+  <% } %>
+
+  <form method="post" action="/admin/ai-usage/models" style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <label style="font-size:13px;">Cheap slot <span class="muted">(short, high-volume work)</span><br>
+      <input class="input" type="text" name="model" value="<%= models.cheap %>" style="width:260px;margin-top:4px;">
+    </label>
+    <label style="font-size:13px;">Strong slot <span class="muted">(reasoning over a thread, a doc, a policy)</span><br>
+      <input class="input" type="text" name="model_strong" value="<%= models.strong %>" style="width:260px;margin-top:4px;">
+    </label>
+    <button class="btn btn-primary" type="submit">Save models</button>
+  </form>
+
+  <div class="table-wrap"><table class="table">
+    <thead><tr>
+      <th>Feature</th><th>Operation</th><th>What it does</th><th>Slot</th><th>Runs on</th>
+      <th style="text-align:right;">Calls</th><th style="text-align:right;">Cost</th>
+    </tr></thead>
+    <tbody>
+      <% catalogue.forEach(function(r){ %>
+        <tr<%= r.firstOfFeature ? '' : ' style="border-top:0;"' %>>
+          <td><% if (r.firstOfFeature) { %><strong><%= LABEL[r.feature] || r.feature %></strong><% } else { %><span class="muted">&#8627;</span><% } %></td>
+          <td><%= r.name %><% if (r.auto) { %> <span class="badge" title="Can fire with nobody pressing anything">auto</span><% } %></td>
+          <td class="muted" style="font-size:12px;"><%= r.what %></td>
+          <td><span class="muted" style="font-size:12px;"><%= r.slot %></span></td>
+          <td class="muted" style="font-size:12px;"><%= r.model %></td>
+          <td style="text-align:right;"><% if (r.firstOfFeature) { %><%= num(r.calls) %><% } %></td>
+          <td style="text-align:right;font-weight:<%= r.firstOfFeature ? 700 : 400 %>;"><% if (r.firstOfFeature) { %><%= usd(r.cost) %><% } %></td>
+        </tr>
+      <% }); %>
+    </tbody>
+  </table></div>
+  <p class="muted" style="font-size:11.5px;margin:10px 0 0;">Calls and cost are per feature over the last <%= days %> days, shown once against its first operation &mdash; the meter records one label per call and cannot split it further. <strong>auto</strong> marks the operations that can fire with nobody pressing anything.</p>
+</div>
 
 <%- include('../partials/footer') %>

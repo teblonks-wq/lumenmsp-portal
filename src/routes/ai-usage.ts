@@ -2,7 +2,8 @@ import { Router, Request, Response } from 'express';
 import { requireAuth, requireFinance } from '../middleware/auth';
 import { pool } from '../db/pool';
 import { getSetting, setSetting } from '../lib/settings';
-import { usageBy, usageByDay, usageTotals, biggestCalls } from '../lib/ai-meter';
+import { usageBy, usageByDay, usageTotals, biggestCalls, featureCatalogue, cheapSlotIsCheap } from '../lib/ai-meter';
+import { resolvedModels } from '../lib/ai-compose';
 
 // ── What the Portal is spending on AI ───────────────────────────────────────────
 // Anthropic's console can only tell you an API key spent money. This tells you WHICH
@@ -21,9 +22,12 @@ router.use('/admin/ai-usage', requireAuth, requireFinance);
 
 router.get('/admin/ai-usage', async (req: Request, res: Response) => {
   const days = Math.max(1, Math.min(90, parseInt(String(req.query.days || '30'), 10) || 30));
-  const [totals, byFeature, byModel, byDay, biggest] = await Promise.all([
+  const [totals, byFeature, byModel, byDay, biggest, models] = await Promise.all([
     usageTotals(), usageBy('feature', days), usageBy('model', days), usageByDay(days), biggestCalls(15),
+    resolvedModels(),
   ]);
+  // What each feature will ACTUALLY run, resolved from settings rather than listed by hand.
+  const catalogue = await featureCatalogue(models, days);
   // The scheduled jobs that can spend without anyone pressing anything. This is the list
   // people forget exists, and it is where a quiet trickle comes from.
   const schedules = [
@@ -34,6 +38,7 @@ router.get('/admin/ai-usage', async (req: Request, res: Response) => {
   ];
   res.render('admin/ai-usage', {
     user: req.session.user!, days, totals, byFeature, byModel, byDay, biggest, schedules,
+    catalogue, models, cheapIsCheap: cheapSlotIsCheap(models.cheap),
     aiMatching: (await getSetting('purchases', 'ai_matching')) !== '0',
     // The real setting the mail sync reads, not a new one — a switch that does not switch
     // anything is worse than no switch.
@@ -51,6 +56,17 @@ router.post('/admin/ai-usage/settings', async (req: Request, res: Response) => {
   const budget = Math.max(0, Math.min(100000, parseFloat(String(b.monthly_budget_usd || '0')) || 0));
   await setSetting('anthropic', 'monthly_budget_usd', String(budget));
   res.redirect('/admin/ai-usage?msg=' + encodeURIComponent('Saved.'));
+});
+
+// The two model slots. A SEPARATE endpoint from the switches above on purpose: one form that
+// posts a subset of another form's fields is how a checkbox gets cleared by someone who only
+// meant to change a model. Blank means "use the code default", which the screen shows.
+router.post('/admin/ai-usage/models', async (req: Request, res: Response) => {
+  const b: any = req.body || {};
+  const clean = (v: unknown) => String(v || '').trim().slice(0, 120) || null;
+  await setSetting('anthropic', 'model', clean(b.model));
+  await setSetting('anthropic', 'model_strong', clean(b.model_strong));
+  res.redirect('/admin/ai-usage?msg=' + encodeURIComponent('Models saved.') + '#features');
 });
 
 export default router;
