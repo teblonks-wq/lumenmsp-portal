@@ -126,6 +126,17 @@ const customerNotFound = (ref: CustomerRef, ident: any) =>
     ? { error: `Multiple customers match "${ident}" — pass the id or account_number.`, candidates: ref.ambiguous }
     : { error: `No customer found matching "${ident}".` };
 
+/** Anything that names itself a secret never leaves this connector, whatever table it came
+ *  from. The explicit column lists in the asset tools are the real control; this catches the
+ *  column somebody adds in six months to a table one of them reads with SELECT *. */
+const SECRET_KEY = /(token|secret|password|passwd|recovery_key|key_encrypted|_hash|private_key|api_key)/i;
+function redact<T extends Record<string, any>>(row: T): T {
+  if (!row || typeof row !== 'object') return row;
+  const out: any = {};
+  for (const k of Object.keys(row)) if (!SECRET_KEY.test(k)) out[k] = (row as any)[k];
+  return out;
+}
+
 /** Stored JSON columns are read back for display; malformed data must never break a tool. */
 function safeJson(v: any): any {
   if (v == null) return null;
@@ -915,6 +926,191 @@ const TOOLS: Tool[] = [
         })),
       }));
       return { last_sync: ov.lastSync, totals: ov.totals, exposed_customers: exposed.length, customers: exposed };
+    },
+  },
+
+  // ── The estate ──────────────────────────────────────────────────────────────
+  // Terry, 8 Sep 2026: "I want the MCP to be able to access all data we hold in the asset
+  // including gpo." All of it EXCEPT the secrets — decided the same day. This endpoint is
+  // authenticated by a capability URL and nothing else: no session, no second factor, no
+  // device binding. Whatever it returns is one forwarded link away from being public, so
+  // BitLocker recovery keys and the agent's device token are not on the other side of it.
+  // It will tell you a key EXISTS and when it was escrowed, which is the question worth
+  // asking remotely; reading the key itself stays a signed-in, audited action in the Portal.
+  //
+  // redact() is the belt to that braces: an explicit column list can be quietly widened by
+  // a later `SELECT *`, or by a new column on an existing table. This strips anything that
+  // NAMES itself a secret, whatever it is attached to, so the default for a future column
+  // is closed rather than open.
+  {
+    name: 'list_assets',
+    description:
+      'Find machines across the managed estate. Filter by customer, hostname/serial/user text, device type, operating system, or whether the LumenMSP Agent has checked in recently. Returns a summary row per machine (id, hostname, customer, type, OS, serial, assigned user, agent state, last seen). Use the returned id with get_asset for the full record.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        customer: { type: 'string', description: 'Customer name, account number or id — narrows to one company.' },
+        query: { type: 'string', description: 'Text to match on hostname, serial number, friendly name or the signed-in user.' },
+        device_type: { type: 'string', description: 'e.g. laptop, desktop, server, firewall.' },
+        os: { type: 'string', description: 'Text to match within the operating system, e.g. "Windows 11" or "Server 2019".' },
+        online_only: { type: 'boolean', description: 'Only machines whose agent has checked in within the last 3 minutes.' },
+        include_archived: { type: 'boolean', description: 'Include archived (decommissioned) machines. Default false.' },
+        limit: { type: 'number', description: 'Max rows, default 50, max 200.' },
+      },
+    },
+    run: async (a) => {
+      const where: string[] = ['ca.merged_into_id IS NULL'];
+      const params: any[] = [];
+      if (!a.include_archived) where.push('ca.archived_at IS NULL');
+      if (a.customer) {
+        const ref = await resolveCustomer(a.customer);
+        if (!ref || 'ambiguous' in ref) return customerNotFound(ref, a.customer);
+        params.push(ref.id); where.push(`ca.customer_id = $${params.length}`);
+      }
+      if (a.query) {
+        params.push('%' + String(a.query).trim() + '%');
+        where.push(`(ca.hostname ILIKE $${params.length} OR ca.serial_number ILIKE $${params.length}
+                     OR ca.friendly_name ILIKE $${params.length} OR ad.logged_in_user ILIKE $${params.length})`);
+      }
+      if (a.device_type) { params.push('%' + String(a.device_type) + '%'); where.push(`ca.device_type ILIKE $${params.length}`); }
+      if (a.os) { params.push('%' + String(a.os) + '%'); where.push(`COALESCE(ad.os, ca.os) ILIKE $${params.length}`); }
+      if (a.online_only) where.push(`ad.last_seen_at > NOW() - INTERVAL '180 seconds'`);
+      const limit = Math.max(1, Math.min(200, parseInt(String(a.limit ?? 50), 10) || 50));
+
+      const { rows } = await pool.query(
+        `SELECT ca.id, ca.hostname, ca.device_type, ca.serial_number, ca.friendly_name, ca.archived_at,
+                COALESCE(ad.os, ca.os) AS os, c.name AS customer_name, ca.customer_id,
+                ct.full_name AS assigned_to, ad.id AS agent_device_id, ad.agent_version,
+                ad.logged_in_user, ad.last_seen_at,
+                EXTRACT(EPOCH FROM (NOW() - ad.last_seen_at))::int AS seen_secs
+           FROM customer_assets ca
+           LEFT JOIN customers c ON c.id = ca.customer_id
+           LEFT JOIN customer_contacts ct ON ct.id = ca.assigned_contact_id
+           LEFT JOIN agent_devices ad ON ad.id = ca.agent_device_id AND ad.revoked = false
+          WHERE ${where.join(' AND ')}
+          ORDER BY c.name NULLS LAST, ca.hostname
+          LIMIT ${limit}`, params);
+      return {
+        count: rows.length,
+        note: rows.length === limit ? `Capped at ${limit} — narrow with customer or query for the rest.` : undefined,
+        assets: rows.map((r: any) => redact({ ...r, agent_online: r.seen_secs != null && Number(r.seen_secs) < 180 })),
+      };
+    },
+  },
+
+  {
+    name: 'get_asset',
+    description:
+      'Everything the Portal holds about one machine: the asset record, the LumenMSP Agent reading (OS, hardware, disks, IPs, signed-in user, agent version), security posture, patching state and the outstanding updates, installed software, tags, warranty and end-of-life dates, battery health, recent remote-control sessions, open tickets, and the Group Policy that applies to its domain. BitLocker is reported as protection state per volume WITHOUT recovery keys — those are deliberately not available over this connector. Pass the asset id from list_assets.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        asset_id: { type: 'number', description: 'The asset id, as returned by list_assets.' },
+        include_gpo: { type: 'boolean', description: 'Include the Group Policy objects collected from this machine’s customer domain. Default true; settings are summarised — use get_gpo for one policy in full.' },
+        include_software: { type: 'boolean', description: 'Include the installed-software inventory (can be long). Default true.' },
+      },
+      required: ['asset_id'],
+    },
+    run: async (a) => {
+      const id = parseInt(String(a.asset_id), 10);
+      if (!id) return { error: 'asset_id is required.' };
+      const asset = (await pool.query(
+        `SELECT ca.*, c.name AS customer_name, ct.full_name AS assigned_to, ct.email AS assigned_email
+           FROM customer_assets ca
+           LEFT JOIN customers c ON c.id = ca.customer_id
+           LEFT JOIN customer_contacts ct ON ct.id = ca.assigned_contact_id
+          WHERE ca.id = $1`, [id])).rows[0];
+      if (!asset) return { error: `No asset with id ${id}.` };
+      if (asset.merged_into_id) {
+        return { error: `That record was a duplicate and has been merged.`, merged_into_id: asset.merged_into_id };
+      }
+
+      // The agent row, matched the same way the device page matches it (explicit id first,
+      // then serial, then hostname) so the MCP and the page never disagree about which
+      // agent belongs to which asset. token_hash is NOT in this column list, on purpose.
+      const agent = (await pool.query(
+        `SELECT id, hostname, os, device_type, serial_number, manufacturer, model,
+                agent_version, logged_in_user, local_ips, public_ip, disk_info, cpu, ram_gb,
+                is_ad_agent, last_seen_at, security_json, security_at,
+                patch_scan_at, patch_pending, patch_critical, reboot_required, patch_last_installed,
+                EXTRACT(EPOCH FROM (NOW() - last_seen_at))::int AS seen_secs
+           FROM agent_devices
+          WHERE revoked = false AND customer_id = $1
+            AND (id = $4 OR ($4::int IS NULL AND (($2::text IS NOT NULL AND serial_number = $2)
+                          OR ($3::text IS NOT NULL AND LOWER(hostname) = LOWER($3)))))
+          ORDER BY last_seen_at DESC NULLS LAST LIMIT 1`,
+        [asset.customer_id, asset.serial_number || null, asset.hostname || null, asset.agent_device_id || null]
+      )).rows[0] || null;
+      const devId = agent ? agent.id : null;
+
+      // Everything below is optional data from tables that arrive with features. A missing
+      // one must degrade to null, never fail the whole call — this tool's job is to say what
+      // we hold, and "we hold nothing here yet" is a valid answer.
+      const opt = async <T>(fn: () => Promise<T>): Promise<T | null> => { try { return await fn(); } catch { return null; } };
+      const q = async (sql: string, p: any[]) => (await pool.query(sql, p)).rows;
+
+      const [tags, patches, software, bitlocker, battery, warranty, sessions, tickets, gpos] = await Promise.all([
+        opt(() => q(`SELECT t.name FROM asset_tag_members m JOIN asset_tags t ON t.id = m.tag_id WHERE m.asset_id = $1 ORDER BY t.name`, [id])),
+        devId ? opt(() => q(`SELECT title, kb, severity, source, categories, first_seen FROM device_patches WHERE device_id = $1
+                              ORDER BY (LOWER(COALESCE(severity,'')) IN ('critical','important')) DESC, first_seen LIMIT 200`, [devId])) : null,
+        (a.include_software === false || !devId) ? null
+          : opt(() => q(`SELECT name, version, publisher, scope, install_date FROM agent_software WHERE device_id = $1 ORDER BY name LIMIT 400`, [devId])),
+        // Protection state only. recovery_key_encrypted is never selected here.
+        devId ? opt(() => q(`SELECT mount_point, protection_status, lock_status, encryption_method, volume_type,
+                                    (recovery_key_encrypted IS NOT NULL) AS recovery_key_escrowed, collected_at
+                               FROM asset_bitlocker_keys WHERE device_id = $1 ORDER BY mount_point`, [devId])) : null,
+        devId ? opt(() => q(`SELECT * FROM device_battery_readings WHERE device_id = $1 ORDER BY collected_at DESC LIMIT 1`, [devId])) : null,
+        opt(() => q(`SELECT * FROM asset_warranty_entitlements WHERE asset_id = $1 ORDER BY end_date DESC NULLS LAST LIMIT 10`, [id])),
+        devId ? opt(() => q(`SELECT started_at, ended_at, duration_seconds, engineer, device_name
+                               FROM remote_sessions WHERE agent_device_id = $1 ORDER BY started_at DESC LIMIT 10`, [devId])) : null,
+        opt(() => q(`SELECT id, ticket_number, subject, status, priority, created_at FROM inbox_tickets
+                      WHERE customer_id = $1 AND deleted_at IS NULL AND is_spam = false
+                        AND status NOT IN ('resolved','closed') ORDER BY created_at DESC LIMIT 10`, [asset.customer_id])),
+        a.include_gpo === false ? null
+          : opt(() => q(`SELECT id, gpo_id, name, status, domain, link_count, linked_enabled, enforced,
+                                setting_count, applies_to, links, collected_at, ai_summary
+                           FROM customer_gpos WHERE customer_id = $1 ORDER BY name LIMIT 200`, [asset.customer_id])),
+      ]);
+
+      return {
+        asset: redact(asset),
+        agent: agent ? redact({ ...agent, online: agent.seen_secs != null && Number(agent.seen_secs) < 180, security: safeJson(agent.security_json) }) : null,
+        agent_note: agent ? undefined : 'No LumenMSP Agent is reporting for this machine, so everything below the asset record is unavailable.',
+        tags: tags ? tags.map((t: any) => t.name) : [],
+        patching: agent ? { scanned_at: agent.patch_scan_at, pending: agent.patch_pending, critical: agent.patch_critical, reboot_required: agent.reboot_required, last_installed: agent.patch_last_installed, outstanding: patches || [] } : null,
+        software: software ? software.map(redact) : null,
+        bitlocker: bitlocker ? { note: 'Recovery keys are not available over the MCP connector — read them in the Portal.', volumes: bitlocker.map(redact) } : null,
+        battery: battery && battery.length ? redact(battery[0]) : null,
+        warranty: warranty ? warranty.map(redact) : [],
+        recent_remote_sessions: sessions ? sessions.map(redact) : [],
+        open_tickets_for_customer: tickets || [],
+        group_policy: gpos ? gpos.map((g: any) => redact({ ...g, applies_to: safeJson(g.applies_to), links: safeJson(g.links) })) : null,
+      };
+    },
+  },
+
+  {
+    name: 'get_gpo',
+    description:
+      'One Group Policy object in full — every setting collected from the domain, with its links, security filtering and the Portal’s own findings on it. Pass gpo_id (the Portal id from get_asset or list_gpos). Use this when a summary is not enough and you need the actual settings.',
+    inputSchema: {
+      type: 'object',
+      properties: { gpo_id: { type: 'number', description: 'The Portal id of the policy.' } },
+      required: ['gpo_id'],
+    },
+    run: async (a) => {
+      const id = parseInt(String(a.gpo_id), 10);
+      if (!id) return { error: 'gpo_id is required.' };
+      const g = (await pool.query(
+        `SELECT g.*, c.name AS customer_name FROM customer_gpos g
+           LEFT JOIN customers c ON c.id = g.customer_id WHERE g.id = $1`, [id])).rows[0];
+      if (!g) return { error: `No Group Policy object with id ${id}.` };
+      return redact({
+        ...g,
+        applies_to: safeJson(g.applies_to),
+        links: safeJson(g.links),
+        settings: safeJson(g.settings),
+      });
     },
   },
 ];

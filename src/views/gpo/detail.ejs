@@ -18,6 +18,26 @@ var areas = Object.keys(byArea).sort();
   .gpo-set td { font-size:13px; vertical-align:top; }
 </style>
 
+<%
+  // Where this reader came from. The breadcrumb goes UP (estate > customer); these go BACK
+  // along the chain they actually walked - the machine they opened this from, and the last
+  // policy they were reading. Both come from the session, so four policies deep still knows
+  // which device started it.
+  var _bd = (typeof backDevice !== 'undefined') ? backDevice : null;
+  var _bp = (typeof backPrev !== 'undefined') ? backPrev : null;
+%>
+<% if (_bd || _bp) { %>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px;">
+  <% if (_bp) { %>
+    <a class="btn" href="/gpo/<%= _bp.id %>" style="font-size:12.5px;padding:5px 12px;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+       title="Back to the policy you were just reading">&larr; <%= _bp.name %></a>
+  <% } %>
+  <% if (_bd) { %>
+    <a class="btn" href="<%= _bd %>" style="font-size:12.5px;padding:5px 12px;" title="Back to the machine you opened this from">&larr; Back to device</a>
+  <% } %>
+</div>
+<% } %>
+
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
   <div>
     <p class="muted" style="margin:0 0 3px;font-size:12.5px;"><a class="row-link" href="/gpo">Group Policy</a> &rsaquo;

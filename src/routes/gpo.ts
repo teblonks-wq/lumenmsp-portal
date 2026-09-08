@@ -123,6 +123,38 @@ router.post('/gpo/refresh', requireAuth, requireAdmin, async (req: Request, res:
   }
 });
 
+// -- Getting back out again -----------------------------------------------------
+// Reading Group Policy is a chain: a device, then a policy on it, then the policy that
+// contradicts it, then another. The breadcrumb only ever went up to the customer, so the
+// way back to the MACHINE you started from was the browser button and the way back to the
+// policy you were just reading was nothing at all (Terry, 2026-09-08).
+//
+// Two different needs, so two different mechanisms:
+//   - the DEVICE arrives once, on ?from=, and is remembered for the rest of the chain, so
+//     it survives four policies deep without every link having to carry it.
+//   - the PREVIOUS POLICY is the last different id in a short trail.
+// Both live in the session because they are about this person's path, not about the data.
+
+/** A redirect target from a URL is attacker-shaped input: internal paths only, never '//'. */
+function safeLocalPath(v: unknown): string | null {
+  const p = String(v || '');
+  return /^\/[A-Za-z0-9\/_?=&.#%-]*$/.test(p) && !p.startsWith('//') ? p : null;
+}
+
+interface GpoCrumb { id: number; name: string }
+
+/** Remember this visit; hand back where "back" should point. Cap the trail - it is a
+ *  breadcrumb, not a history, and an unbounded array in a session is a slow leak. */
+function trackGpoVisit(req: Request, g: { id: number; name: string }): { device: string | null; prev: GpoCrumb | null } {
+  const s = req.session as any;
+  const from = safeLocalPath(req.query.from);
+  if (from) s.gpoFrom = from;                      // arrives once, persists through the chain
+  const trail: GpoCrumb[] = Array.isArray(s.gpoTrail) ? s.gpoTrail : [];
+  const prev = trail.filter((t) => Number(t.id) !== Number(g.id)).pop() || null;
+  s.gpoTrail = [...trail.filter((t) => Number(t.id) !== Number(g.id)), { id: g.id, name: g.name }].slice(-8);
+  return { device: s.gpoFrom || null, prev };
+}
+
 // -- One policy -----------------------------------------------------------------
 router.get('/gpo/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
@@ -135,8 +167,11 @@ router.get('/gpo/:id', requireAuth, requireAdmin, async (req: Request, res: Resp
         WHERE g.id=$1`, [id])).rows[0];
     if (!g) { res.redirect('/gpo?err=' + encodeURIComponent('No such policy - it may have been removed from the domain.')); return; }
 
+    const nav = trackGpoVisit(req, { id: g.id, name: g.name });
+
     res.render('gpo/detail', {
       user: req.session.user!, g,
+      backDevice: nav.device, backPrev: nav.prev,
       findings: judgeGpos([g as GpoRow]),
       links: Array.isArray(g.links) ? g.links : [],
       appliesTo: Array.isArray(g.applies_to) ? g.applies_to : [],

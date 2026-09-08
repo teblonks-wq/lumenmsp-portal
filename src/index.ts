@@ -123,6 +123,7 @@ import { startOneBoardBaseline } from './lib/oneboard-baseline';
 import { ensureSiteLogicColumn, ensureReportPoolTables } from './lib/insights/report-generator';
 import { ensureItReportTables } from './lib/it-report/generate';
 import { startItReportScheduler } from './lib/it-report/scheduler';
+import { startGpoNightly } from './lib/gpo-nightly';
 import dmarcRoutes from './routes/dmarc';
 import { ensureDmarcTables } from './lib/dmarc/store';
 import { startDmarcIngest } from './lib/dmarc/ingest';
@@ -573,6 +574,7 @@ server.listen(config.PORT, () => {
   startGraphConsentCheck(); // Graph: which customer tenants have consented the portal app (Customers list badge)
   startAzureBackupSync();   // Azure Backup: Recovery Services vaults per customer tenant (needs Reader RBAC per subscription)
   startAcronisSync();       // Acronis: per-tenant protected workloads + storage (linked like MSP360)
+  startGpoNightly();        // Group Policy: collect every AD customer's GPOs at 00:00, spread over the hour
   startEolSync();           // End-of-life dates pulled nightly from endoflife.date
   startWarrantySync();      // Warranty: nightly lookup against the manufacturers' services (no-op until a provider is configured)
   // Before anything that might need a secret. Never throws - see initVaultKey.

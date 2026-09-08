@@ -173,7 +173,7 @@ _g.rows.forEach(function (p) {
               <% } %>
             </td>
             <td>
-              <a class="row-link" href="/gpo/<%= p.id %>" style="font-weight:600;"><%= p.name %></a>
+              <a class="row-link" href="/gpo/<%= p.id %>?from=<%= encodeURIComponent('/assets/' + asset.id + '#gpo') %>" style="font-weight:600;"><%= p.name %></a>
               <% if (p.ai_summary) { %><span class="gpo-sum"><%= p.ai_summary %></span><% } %>
             </td>
             <td style="white-space:nowrap;">

@@ -58,6 +58,16 @@
   .dash-grid .card.acc-cases     { border-top-color:var(--blue-bright); }
   .dash-grid .card.acc-quotes    { border-top-color:var(--violet); }
   .dash-grid .card.acc-invoices  { border-top-color:var(--ok); }
+  /* Money on the dashboard is hidden until asked for (Terry, 2026-09-08): the dashboard is
+     what is on screen when someone walks past your desk or you share it on a call, and as
+     the team grows not everyone needs the totals in the first place. Deliberately NOT
+     remembered — every page load starts locked, so a machine left open shows nothing. */
+  .fig { filter:blur(8px); cursor:pointer; user-select:none; transition:filter .14s ease; }
+  .fig.shown { filter:none; user-select:auto; }
+  .fig-btn { border:1px solid var(--line-strong); background:var(--surface,#fff); color:var(--muted);
+             border-radius:7px; font:inherit; font-size:11px; font-weight:600; line-height:1;
+             padding:4px 9px; cursor:pointer; white-space:nowrap; }
+  .fig-btn:hover { border-color:var(--accent); color:var(--accent); }
   .dash-grid .card.acc-customers { border-top-color:var(--accent); }
 </style>
 
@@ -77,28 +87,32 @@
   </div>
 
   <div class="card acc-quotes">
-    <div class="card-header"><h2>Quotes</h2><a class="btn btn-primary" href="/quotes/new">+ New</a></div>
+    <div class="card-header"><h2>Quotes</h2>
+      <button type="button" class="fig-btn" data-figs="quotes" title="Pipeline and won value are hidden until you ask. They lock again on the next page load.">&#128274; Show</button>
+      <a class="btn btn-primary" href="/quotes/new">+ New</a></div>
     <div class="stat-grid">
       <div class="stat-cell"><div class="n"><%= q.draft||0 %></div><div class="l">Draft</div></div>
       <div class="stat-cell"><div class="n blue"><%= q.sent||0 %></div><div class="l">Sent</div></div>
       <div class="stat-cell"><div class="n green"><%= q.accepted||0 %></div><div class="l">Accepted</div></div>
       <div class="stat-cell"><div class="n"><%= q.lost||0 %></div><div class="l">Lost</div></div>
-      <div class="stat-cell"><div class="n blue"><%= money(q.pipeline) %></div><div class="l">Pipeline</div></div>
-      <div class="stat-cell"><div class="n green"><%= money(q.won) %></div><div class="l">Won value</div></div>
+      <div class="stat-cell"><div class="n blue fig" data-figs="quotes" title="Click to show"><%= money(q.pipeline) %></div><div class="l">Pipeline</div></div>
+      <div class="stat-cell"><div class="n green fig" data-figs="quotes" title="Click to show"><%= money(q.won) %></div><div class="l">Won value</div></div>
     </div>
     <a class="btn btn-block" href="/quotes">View quotes</a>
   </div>
 
   <% var canFin = (typeof canFinance==='undefined' || canFinance); %>
   <div class="card acc-invoices" style="position:relative;">
-    <div class="card-header"><h2>Invoices</h2><% if (canFin) { %><a class="btn btn-primary" href="/invoices/new">+ New</a><% } %></div>
+    <div class="card-header"><h2>Invoices</h2>
+      <% if (canFin) { %><button type="button" class="fig-btn" data-figs="invoices" title="Billed and collected are hidden until you ask. They lock again on the next page load.">&#128274; Show</button>
+      <a class="btn btn-primary" href="/invoices/new">+ New</a><% } %></div>
     <div class="stat-grid" style="<%= canFin ? '' : 'filter:blur(6px);pointer-events:none;user-select:none;' %>">
       <div class="stat-cell"><div class="n"><%= canFin ? (i.draft||0) : '—' %></div><div class="l">Raised</div></div>
       <div class="stat-cell"><div class="n blue"><%= canFin ? (i.issued||0) : '—' %></div><div class="l">Issued</div></div>
       <div class="stat-cell"><div class="n green"><%= canFin ? (i.paid||0) : '—' %></div><div class="l">Paid</div></div>
       <div class="stat-cell"><div class="n"><%= canFin ? (i.void||0) : '—' %></div><div class="l">Void</div></div>
-      <div class="stat-cell"><div class="n blue"><%= canFin ? money(i.billed) : '—' %></div><div class="l">Total billed</div></div>
-      <div class="stat-cell"><div class="n green"><%= canFin ? money(i.collected) : '—' %></div><div class="l">Collected</div></div>
+      <div class="stat-cell"><div class="n blue<%= canFin ? ' fig' : '' %>" data-figs="invoices" title="Click to show"><%= canFin ? money(i.billed) : '—' %></div><div class="l">Total billed</div></div>
+      <div class="stat-cell"><div class="n green<%= canFin ? ' fig' : '' %>" data-figs="invoices" title="Click to show"><%= canFin ? money(i.collected) : '—' %></div><div class="l">Collected</div></div>
     </div>
     <% if (canFin) { %><a class="btn btn-block" href="/invoices">View invoices</a>
     <% } else { %><div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;"><span class="muted" style="font-size:13px;background:rgba(255,255,255,.7);padding:6px 12px;border-radius:8px;">🔒 Finance access required</span></div><% } %>
@@ -198,3 +212,32 @@
 <% } %>
 
 <%- include('partials/footer') %>
+
+<script>
+// Money on this page is locked on EVERY load. There is deliberately no localStorage and no
+// cookie behind this: "I unlocked it yesterday" must not mean "it is showing now" on a
+// machine somebody has walked away from. One group per card, so showing the quote pipeline
+// does not also show what has been billed.
+(function () {
+  function set(group, on) {
+    document.querySelectorAll('.fig[data-figs="' + group + '"]').forEach(function (el) {
+      el.classList.toggle('shown', on);
+      el.setAttribute('title', on ? 'Click to hide' : 'Click to show');
+    });
+    document.querySelectorAll('.fig-btn[data-figs="' + group + '"]').forEach(function (b) {
+      b.innerHTML = on ? '\uD83D\uDD13 Hide' : '\uD83D\uDD12 Show';
+    });
+  }
+  function shown(group) {
+    var one = document.querySelector('.fig[data-figs="' + group + '"]');
+    return !!one && one.classList.contains('shown');
+  }
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest('.fig-btn, .fig');
+    if (!t) return;
+    var g = t.getAttribute('data-figs');
+    if (!g) return;
+    set(g, !shown(g));
+  });
+})();
+</script>

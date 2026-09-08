@@ -82,8 +82,23 @@ const FEATURE_BY_FN: Array<[RegExp, string]> = [
   [/script-review|scriptReview/, 'script_review'],
   [/finance-agent|financeAgent/, 'finance_agent'],
   [/device-ask|deviceAsk/, 'device_ask'],
-  [/loc\.ts/, 'loc'],
-  [/mcp\.ts/, 'mcp'],
+  // 2026-09-08. The ticket composer's own AI reached the meter with nothing on the stack for
+  // any pattern to catch, so 125 real calls sat under 'other' for six days. The phrase ribbon
+  // fires on first focus of every composer, which is most of that volume — it deserves its own
+  // name, because "the composer is cheap" and "something unnamed is running" read very
+  // differently at 2am.
+  [/aiTicketPhrases/, 'ticket_phrases'],
+  [/aiComposeTicketReply/, 'ticket_reply'],
+  // Route handlers that call aiAskCached inline. The handler is an anonymous arrow, so the
+  // file path is the only thing on the stack to go on. These sit AFTER the named patterns
+  // above — and after ticket-ask — so a more specific match always wins.
+  [/routes[\\/]tickets/, 'ticket_ask'],
+  [/routes[\\/]invoices/, 'invoice_ask'],
+  // These two matched nothing for as long as they existed. The Portal runs compiled dist/*.js,
+  // so a stack frame reads 'dist/lib/loc.js' and never 'loc.ts'. A pattern that cannot fire is
+  // worse than no pattern: it looks like coverage. Fixed 2026-09-08.
+  [/[\\/]loc\.(ts|js)/, 'loc'],
+  [/[\\/]mcp\.(ts|js)/, 'mcp'],
 ];
 
 export function callerFeature(): string {
