@@ -24,6 +24,34 @@ export function protectedGpoName(gpoId: string): string | null {
   return PROTECTED_GPOS[bare] || null;
 }
 
+// ── GUIDs that mean something, resolved BEFORE the model sees them ──────────────
+// A GUID is exactly the kind of fact a language model half-remembers, and half-remembering
+// one is worse than not knowing it. On 2026-09-08 the Ask panel was shown Larkmead's
+// PowerSettings policy, decided that {A1841308-3541-4FAB-BC81-F71556F20B4A} "does not match
+// any Windows built-in plan", called it "almost certainly a custom plan", and raised a
+// warning that it might not exist on the target machines. It is Power saver. It exists on
+// every Windows machine ever shipped. The warning would have sent an engineer looking for a
+// plan that was never missing.
+//
+// So these are resolved in code and annotated into the corpus. A lookup table cannot
+// misremember. Add to it whenever a GUID shows up that has one right answer.
+export const WELL_KNOWN_GUIDS: Record<string, string> = {
+  // Windows built-in power schemes (powercfg /list on any machine).
+  '381b4222-f694-41f0-9685-ff5bb260df2e': 'Windows built-in power scheme: Balanced',
+  '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c': 'Windows built-in power scheme: High performance',
+  'a1841308-3541-4fab-bc81-f71556f20b4a': 'Windows built-in power scheme: Power saver',
+  'e9a42b02-d5df-448d-aa00-03f14749eb61': 'Windows built-in power scheme: Ultimate Performance',
+};
+
+/** Annotate any GUID in a line that we can name, so the model reads a fact instead of guessing. */
+export function annotateGuids(text: string): string {
+  return String(text || '').replace(/\{?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}?/g,
+    (whole, bare: string) => {
+      const known = WELL_KNOWN_GUIDS[bare.toLowerCase()];
+      return known ? `${whole} [${known}]` : whole;
+    });
+}
+
 export type DeleteVerdict = 'never' | 'no' | 'check' | 'safe';
 
 export interface VerdictResult { verdict: DeleteVerdict; label: string; reason: string }
@@ -295,7 +323,7 @@ export function gpoCorpus(g: GpoRow): string {
   lines.push(`\nSETTINGS (${g.setting_count} in total${settings.length < g.setting_count ? `, first ${settings.length} shown` : ''}):`);
   if (!settings.length) lines.push('  (none)');
   for (const s of settings) {
-    lines.push(`  [${s.scope}/${s.area}] ${s.name} = ${s.state}${s.value ? ' (' + String(s.value).slice(0, 200) + ')' : ''}`);
+    lines.push(annotateGuids(`  [${s.scope}/${s.area}] ${s.name} = ${s.state}${s.value ? ' (' + String(s.value).slice(0, 200) + ')' : ''}`));
   }
   return lines.join('\n');
 }
@@ -317,6 +345,7 @@ const SYSTEM = [
   '- Call out anything that WEAKENS security - disabled firewalls or Defender, legacy protocols, relaxed password or lockout policy, scripts running from a share, "Everyone" permissions. Be specific about what it exposes.',
   '- Say when a policy is doing nothing: not linked, links disabled, all settings disabled, or filtered to a group nobody is in.',
   '- Where the setting list was capped, note that your answer covers what was shown.',
+  '- GUIDs you can name are already annotated in square brackets - use that name. If a GUID is NOT annotated, you do not know what it is: say it is unrecognised and say how to identify it. Never assert that a GUID is custom, or is not a built-in Windows identifier, and never raise a risk that rests on that guess.',
   '- British English. Concise. No preamble.',
   '',
   'Reply with STRICT JSON only. No prose before or after it, no markdown fences:',

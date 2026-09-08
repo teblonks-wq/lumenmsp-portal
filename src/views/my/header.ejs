@@ -57,7 +57,9 @@
   // still follows the tab, so the sidebar highlights Insights wherever you are inside it.
   if (P.insights)  items.push(['insights','/my/insights','Insights','chart']);
   if (P.insights)  items.push(['oneboard','/my/oneboard','OneBoard','grid']);
-  if (P.insights)  items.push(['wallboard','/my/wallboard','Wallboard','tv']);
+  // Wallboard is off the customer sidebar (Terry, 2026-09-08). The routes stay live, so an
+  // existing /my/wallboard link and any TV already running on /my/wallboard/tv keep working
+  // - this removes the door, not the room. Put the entry back here to restore it.
   if (P.itReports) items.push(['it-reports','/my/it-reports','IT Reports','shield']);
   if (P.viewUsers) items.push(['users','/my/users','People','people']);
   items.push(['profile','/my/profile','Profile','user']);

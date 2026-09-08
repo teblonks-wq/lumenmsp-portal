@@ -28,6 +28,17 @@
     for (var d = 0; d < 7; d++) maxDow = Math.max(maxDow, s.missedByDow[d] || 0);
   });
   function dowBg(n){ if(!maxDow || !n) return HEAT_STEPS[0]; var i = Math.min(5, Math.max(1, Math.ceil(n / maxDow * 5))); return HEAT_STEPS[i]; }
+  // Branch status from the answer rate — the one number on a scorecard that is a verdict
+  // rather than a count. The heatmaps below already carry colour; the cards did not, so a
+  // branch in trouble looked exactly like a branch doing well until you read four figures.
+  // Thresholds are deliberately blunt and stated here rather than buried in the markup.
+  function branchStatus(rate){
+    var r = Number(rate);
+    if (!isFinite(r)) return { key:'none', colour:'var(--line-strong)', label:'' };
+    if (r >= 90) return { key:'good',  colour:'var(--ok)',   label:'Answering well' };
+    if (r >= 75) return { key:'watch', colour:'var(--warn)', label:'Worth watching' };
+    return { key:'poor', colour:'var(--bad)', label:'Missing too many' };
+  }
   function dowInk(n){ if(!maxDow || !n) return 'var(--faint)'; return (Math.ceil(n / maxDow * 5) >= 4) ? '#ffffff' : 'var(--ink)'; }
   function per(n, d){ return d > 0 ? (n / d).toFixed(1) : '0.0'; }
   // Same shape as formatWait() in insights-journeys.ts — the board must say a wait the
@@ -172,15 +183,20 @@
 <% } else { %>
 
 <!-- Branch scorecards -->
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:16px;">
-  <% included.forEach(function(s){ var m = s.metrics, p = s.prev; %>
-  <div class="card" style="margin:0;">
-    <div style="font-size:13px;font-weight:700;color:var(--ink);margin-bottom:10px;"><%= esc(s.label) %></div>
-    <div style="display:flex;gap:18px;flex-wrap:wrap;">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:18px;">
+  <% included.forEach(function(s){ var m = s.metrics, p = s.prev; var st = branchStatus(m.rate); %>
+  <div class="card" style="margin:0;padding-top:0;overflow:hidden;position:relative;">
+    <div style="height:4px;margin:0 -18px 14px;background:<%= st.colour %>;"></div>
+    <div style="display:flex;align-items:center;gap:7px;margin-bottom:12px;">
+      <span title="<%= esc(st.label) %>" style="width:9px;height:9px;border-radius:50%;background:<%= st.colour %>;flex:none;"></span>
+      <span style="font-size:13px;font-weight:700;color:var(--ink);"><%= esc(s.label) %></span>
+      <% if (st.label) { %><span style="margin-left:auto;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:<%= st.colour %>;"><%= st.label %></span><% } %>
+    </div>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;">
       <div><div style="font-size:26px;font-weight:700;line-height:1;color:var(--ink);"><%= m.total %></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Calls <%- delta(m.total, p ? p.total : null, false) %></div></div>
       <div><div style="font-size:26px;font-weight:700;line-height:1;color:var(--ok);"><%= m.answered %></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Answered</div></div>
       <div><div style="font-size:26px;font-weight:700;line-height:1;color:var(--bad);"><%= m.missed %></div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Missed <%- delta(m.missed, p ? p.missed : null, true) %></div></div>
-      <div><div style="font-size:26px;font-weight:700;line-height:1;color:var(--ink);"><%= m.rate %>%</div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Answer rate <%- p ? delta(m.rate, p.rate, false) : '' %></div></div>
+      <div><div style="font-size:26px;font-weight:700;line-height:1;color:<%= st.colour %>;"><%= m.rate %>%</div><div style="font-size:11px;color:var(--muted);margin-top:4px;">Answer rate <%- p ? delta(m.rate, p.rate, false) : '' %></div></div>
     </div>
     <div style="font-size:11.5px;color:var(--muted);margin-top:10px;padding-top:8px;border-top:1px solid var(--line);"
          title="How long callers waited before the call was answered, and before the ones we lost gave up. Shown separately on purpose — blending them describes neither.">
