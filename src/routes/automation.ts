@@ -111,13 +111,16 @@ router.get('/automation/scheduled-tasks/new', requireAuth, requireAdmin, async (
         ORDER BY c.name NULLS LAST, ad.hostname`, [seedIds])).rows
     : [];
   const seedAction = ACTIONS.some((a) => a.key === String(req.query.action || '')) ? String(req.query.action) : '';
+  // Started from ONE machine's Manage menu on its asset page: the customer travels with it,
+  // so the picker below opens showing that site rather than all 200 machines with one ticked.
+  const seedCustomerId = parseInt(String(req.query.customer || ''), 10) || null;
 
   res.render('automation/task-new', {
     user: req.session.user!,
     actions: ACTIONS, conditions: CONDITIONS, recurrences: RECURRENCES,
     scripts: scripts.filter((s) => s.osType === 'windows'),
     packages: packages.rows, customers: customers.rows, catalogue,
-    seedDevices, seedAction,
+    seedDevices, seedAction, seedCustomerId,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });

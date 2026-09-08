@@ -204,8 +204,20 @@ router.post('/patching/device/:id/install', requireAuth, requireAdmin, async (re
     if (!rows.length) { go('Nothing selected, and nothing pending.'); return; }
 
     const at = when === 'window' ? nextWindowStart(await resolvePolicy(id)) : null;
-    const windows = rows.filter((r: any) => (r.source || 'windows') === 'windows').map((r: any) => r.update_id);
-    const apps = rows.filter((r: any) => r.source === 'winget' || r.source === 'choco');
+    // OS updates vs application updates. "OS" is Windows Update, apt/dnf or softwareupdate
+    // depending on the machine — one `patch.install` command covers all three, because each
+    // agent knows its own package manager. What must NOT happen is calling a Linux box's apt
+    // packages "Windows updates", which is what this said until 7 Sep 2026.
+    const APP_SOURCES = ['winget', 'choco'];
+    const osRows = rows.filter((r: any) => !APP_SOURCES.includes(String(r.source || '')));
+    const windows = osRows.map((r: any) => r.update_id);
+    const apps = rows.filter((r: any) => APP_SOURCES.includes(String(r.source || '')));
+
+    // Name them after whatever the machine actually runs.
+    const platform = osRows.find((r: any) => r.source === 'linux') ? 'linux'
+      : osRows.find((r: any) => r.source === 'macos') ? 'macos' : 'windows';
+    const osWord = platform === 'linux' ? 'package update' : platform === 'macos' ? 'macOS update' : 'Windows update';
+    const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
     let queued = 0;
     if (windows.length) {
@@ -233,9 +245,12 @@ router.post('/patching/device/:id/install', requireAuth, requireAdmin, async (re
     if (queued && !at) wakeAgent(id);
 
     await logActivity(user.id, 'patch_install', 'agent_devices', id,
-      `Queued ${windows.length} Windows update(s) and ${apps.length} application update(s)`);
+      `Queued ${plural(windows.length, osWord)} and ${plural(apps.length, 'application update')}`);
 
-    go(`Queued ${windows.length} Windows update${windows.length === 1 ? '' : 's'} and ${apps.length} application update${apps.length === 1 ? '' : 's'}. `
+    // Say only what was actually queued — "and 0 application updates" is noise on a Linux box
+    // that has no WinGet to begin with.
+    const parts = [windows.length ? plural(windows.length, osWord) : '', apps.length ? plural(apps.length, 'application update') : ''].filter(Boolean);
+    go(`Queued ${parts.join(' and ') || 'nothing'}. `
       + (at ? `Held until ${at.toLocaleString('en-GB')}.` : 'Started immediately on a machine that is on; an offline one runs it when it comes back.')
       + ' Nothing will be restarted.');
   } catch (e: any) {

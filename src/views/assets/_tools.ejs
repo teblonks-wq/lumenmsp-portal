@@ -424,7 +424,8 @@
         </table></div>
       </form>
       <p class="muted" style="font-size:11.5px;margin:10px 0 0;">
-        Windows updates install as one batch; applications go through WinGet or Chocolatey. Nothing here restarts the machine.
+        Operating-system updates install as one batch — Windows Update, apt or dnf, whichever this machine uses;
+        applications go through WinGet or Chocolatey. Nothing here restarts the machine.
         Policy, exclusions and scheduling live on the <a class="row-link" href="/patching/device/<%= _pm.deviceId %>">full patching page</a>.
       </p>
     </div>
@@ -544,6 +545,12 @@
   <button type="button" data-mg="console-ps">PowerShell</button>
   <div class="mg-sep"></div>
   <button type="button" data-mg="activity">User activity</button>
+  <div class="mg-sep"></div>
+  <!-- Automation is not a tool that runs here and now, so these two LEAVE the page. They
+       carry the machine and its customer on the URL: the form opens with this machine
+       already ticked and the picker already showing its site. -->
+  <button type="button" data-mg="sched-task" title="Automation &rarr; new scheduled task, with this machine already picked">Scheduled task &#8599;</button>
+  <button type="button" data-mg="watchdog" title="Automation &rarr; new watchdog, with this machine already picked">Watchdog &#8599;</button>
   <div class="mg-has-sub">
     <button type="button">More tools</button>
     <div class="mg-sub">
@@ -561,6 +568,7 @@
     var BASE = '/assets/' + ASSET + '/tools';
     var INLINE_AD = <%= inlineAd ? 'true' : 'false' %>;   // customer → Tools ▾ → User Management
     var AGENT_DEVICE = <%= (typeof agentInfo !== 'undefined' && agentInfo && agentInfo.id) ? agentInfo.id : 'null' %>;
+    var CUSTOMER_ID = <%= asset.customer_id ? asset.customer_id : 'null' %>;
     var esc = function(s){ return String(s==null?'':s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); };
 
     // ── tool sub-tabs ──────────────────────────────────────────────────────────
@@ -2001,6 +2009,15 @@
           var pw = document.querySelector('.pw-btn');
           if (pw && window.pwOpen) window.pwOpen(pw);
           else alert('No live agent on this machine, so there is nothing to restart or shut down remotely.');
+          return;
+        }
+        // Automation opens its own page rather than a tool in this lightbox. Everything the
+        // form needs to arrive filled in travels on the URL, which is the entire reason for
+        // starting from the device page instead of the Automation section.
+        if (k === 'sched-task' || k === 'watchdog') {
+          if (!AGENT_DEVICE) { alert('There is no agent on this machine, so there is nothing to schedule or watch on it.'); return; }
+          location.href = (k === 'watchdog' ? '/automation/watchdogs/new' : '/automation/scheduled-tasks/new')
+            + '?devices=' + AGENT_DEVICE + (CUSTOMER_ID ? '&customer=' + CUSTOMER_ID : '');
           return;
         }
         if (k === 'software-install') { openTool('software'); swOpen(true); return; }

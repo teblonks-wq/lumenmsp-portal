@@ -42,6 +42,11 @@ export const ASSET_FIELDS: Record<string, FieldDef> = {
   os_version:    { label: 'OS version',    col: 'a.os_version',    kind: 'text', lookup: true },
   serial:        { label: 'Serial number', col: 'a.serial_number', kind: 'text' },
   last_user:     { label: 'Last user',     col: 'a.last_login_user', kind: 'text' },
+  // The Portal-owned assignment (customer_contacts via assigned_contact_id). "is empty" is
+  // the missing-assignments list - every machine nobody has claimed yet, whether or not
+  // somebody happens to have signed in on it. Distinct from the "No known user" tile,
+  // which also requires no last-login user.
+  assigned_user: { label: 'Assigned user', col: 'ac.full_name',      kind: 'text', lookup: true },
   agent_version: { label: 'Agent version', col: 'agd.agent_version', kind: 'text', lookup: true },
   last_seen:     { label: 'Last seen',     col: 'a.last_seen_at',  kind: 'date' },
   // Warranty. warranty_end as a date makes "everything out of cover before Christmas"

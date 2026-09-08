@@ -214,7 +214,14 @@ app.get('/static/js/chat-widget.js', (_req, res, next) => {
 // the stylesheet it already had. Caught 2026-08-18: a views deploy put the new CSS on the
 // server, the markup went live instantly, and the CSS silently did not - the nav looked
 // half-fixed. Stat is cheap and cached for 10s, so this costs nothing per request.
+// It used to stamp from app.css ALONE, while every versioned asset — including the widget
+// scripts — carried that same stamp. So a JS-only change was invisible: the URL did not move, and
+// /static is served with maxAge 30d, so a returning browser kept the old file for a month. Found
+// on 7 Sep 2026 when the softphone was switched off in call-widget.js and the phone button
+// stubbornly stayed on screen. The stamp is now the NEWEST mtime across app.css and static/js, so
+// changing any of them moves every versioned URL. A dozen stats every ten seconds costs nothing.
 const ASSET_CSS = path.join(__dirname, '../static/app.css');
+const ASSET_JS_DIR = path.join(__dirname, '../static/js');
 let assetVCache = 'dev';
 let assetVCheckedAt = 0;
 function assetV(): string {
@@ -222,7 +229,15 @@ function assetV(): string {
   if (now - assetVCheckedAt > 10_000) {
     assetVCheckedAt = now;
     try {
-      assetVCache = String(Math.floor(fs.statSync(ASSET_CSS).mtimeMs)).slice(-9);
+      let newest = fs.statSync(ASSET_CSS).mtimeMs;
+      try {
+        for (const f of fs.readdirSync(ASSET_JS_DIR)) {
+          if (!f.endsWith('.js')) continue;
+          const m = fs.statSync(path.join(ASSET_JS_DIR, f)).mtimeMs;
+          if (m > newest) newest = m;
+        }
+      } catch { /* no js directory - the css stamp still stands */ }
+      assetVCache = String(Math.floor(newest)).slice(-9);
     } catch { /* keep the last good stamp - worst case we are where we were before */ }
   }
   return assetVCache;

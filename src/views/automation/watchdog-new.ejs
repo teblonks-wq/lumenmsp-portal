@@ -189,6 +189,7 @@
   var SEED = <%- JSON.stringify((seedDevices || []).map(function(d){ return { id: d.id, hostname: d.hostname }; })) %>;
   var picked = Object.create(null);
   SEED.forEach(function(d){ picked[d.id] = d.hostname || String(d.id); });
+  var SEED_CUSTOMER = <%- JSON.stringify(typeof seedCustomerId !== 'undefined' ? seedCustomerId : null) %>;
   var devices = [];
   var $ = function(id){ return document.getElementById(id); };
   function show(el, on){ if (el) el.classList.toggle('hide', !on); }
@@ -391,6 +392,9 @@
     (EXISTING.heal || []).forEach(healRow);
   } else {
     healRow({ type: 'service_start' });
+    // Started from a machine's Manage menu: it is already ticked (SEED), and the list behind
+    // it is narrowed to its site, because the next machine you want is nearly always there.
+    if (SEED_CUSTOMER) $('ntCustomer').value = String(SEED_CUSTOMER);
   }
   syncKind(); syncScope(); syncPicked(); load();
 })();

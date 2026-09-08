@@ -15,6 +15,7 @@ import { powerWhenText } from '../lib/device-power';
 import { deviceSecurity, deployLog, REQUIRED_EXCLUSIONS } from '../lib/gravityzone-deploy';
 import { customerEnabled } from '../lib/gravityzone';
 import { ASSET_FIELDS, ASSET_OPS, parseConditions, conditionsToSql } from '../lib/asset-query';
+import { stickyAssetFilter } from '../lib/asset-filter';
 import { BITLOCKER_SCAN_SCRIPT, bitlockerSuspendScript, bitlockerForDevice, revealBitlockerKey, bitlockerState } from '../lib/bitlocker';
 import { vaultConfigured } from '../lib/vault';
 import { startScan, scansFor, scanInFlight, type ScanType } from '../lib/gravityzone-scan';
@@ -44,6 +45,14 @@ function safeBack(raw: unknown, fallback: string): string {
 // ── Portal-wide asset list ──────────────────────────────────────────────────────
 router.get('/assets', requireAuth, async (req: Request, res: Response) => {
   await backfillOnce();
+
+  // The filter stays set until it is cleared - lib/asset-filter.ts explains why and decides
+  // what this request means. Nothing below runs until the URL carries the filter, so the
+  // whole page (tiles, counts, batch selection) sees exactly what is in the address bar.
+  const sticky = stickyAssetFilter(req.query, req.session.assetFilter);
+  if (sticky.kind === 'clear') { delete req.session.assetFilter; res.redirect('/assets'); return; }
+  if (sticky.kind === 'restore') { res.redirect(sticky.to); return; }
+  if (sticky.save) req.session.assetFilter = sticky.save; else delete req.session.assetFilter;
   const q = String(req.query.q || '').trim();
   const custId = parseInt(String(req.query.customer || ''), 10) || null;
   const type = String(req.query.type || '').trim();
@@ -454,6 +463,7 @@ router.get('/assets/field-values', requireAuth, async (req: Request, res: Respon
       `SELECT ${def.col} AS v, COUNT(*)::int AS n
          FROM customer_assets a
          LEFT JOIN customers c ON c.id = a.customer_id
+         LEFT JOIN customer_contacts ac ON ac.id = a.assigned_contact_id
          LEFT JOIN agent_devices agd ON agd.id = a.agent_device_id
         WHERE a.merged_into_id IS NULL AND a.archived_at IS NULL
           AND ${def.col} IS NOT NULL AND ${def.col} <> ''
@@ -469,6 +479,64 @@ router.get('/assets/field-values', requireAuth, async (req: Request, res: Respon
 // Portal-owned. The Atera sync is not allowed near it (see the schema comment) because
 // the whole value of this field is that a human chose it - "Cholsey Rec Left" is worth
 // more on a support call than DESKTOP-J4K2P9 will ever be.
+// Move a device to another customer, from the device page's Device relations block.
+//
+// This is not one column. An asset and the agent device that reports it are two rows, and the
+// agent's customer is what scopes watchdogs, patch policies, the site key and the AD-agent flag —
+// so leaving it behind means the machine is listed under one company and managed under another.
+// The assigned contact cannot survive either: contacts are customer-scoped, and keeping one would
+// put another company's person on this machine (and on any case it raises). Open cases follow the
+// machine with their requester cleared, exactly as /agents/:id/customer does; closed ones stay
+// where they were, because history belongs to who owned it at the time.
+router.post('/assets/:id/customer', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const customerId = parseInt(String(req.body.customer_id), 10);
+  const back = `/assets/${id}`;
+  if (!customerId) { res.redirect(back + '?err=' + encodeURIComponent('Pick a customer.')); return; }
+  const client = await pool.connect();
+  try {
+    const a = (await client.query(
+      'SELECT id, hostname, friendly_name, customer_id, agent_device_id FROM customer_assets WHERE id=$1', [id])).rows[0];
+    if (!a) { res.redirect('/assets?err=' + encodeURIComponent('Device not found.')); return; }
+    const c = (await client.query('SELECT id, name FROM customers WHERE id=$1 AND deleted_at IS NULL', [customerId])).rows[0];
+    if (!c) { res.redirect(back + '?err=' + encodeURIComponent('Unknown customer.')); return; }
+    if (a.customer_id === customerId) { res.redirect(back + '?msg=' + encodeURIComponent('Already with that customer.')); return; }
+
+    await client.query('BEGIN');
+    await client.query(
+      'UPDATE customer_assets SET customer_id=$1, assigned_contact_id=NULL, updated_at=NOW() WHERE id=$2',
+      [customerId, id]);
+    let movedCases = 0;
+    let movedAgent = false;
+    if (a.agent_device_id) {
+      await client.query(
+        'UPDATE agent_devices SET customer_id=$1, is_ad_agent=false, updated_at=NOW() WHERE id=$2',
+        [customerId, a.agent_device_id]);
+      movedAgent = true;
+      const moved = await client.query(
+        `UPDATE inbox_tickets SET customer_id=$1, contact_id=NULL, updated_at=NOW()
+          WHERE agent_device_id=$2 AND deleted_at IS NULL AND status NOT IN ('resolved','closed')
+          RETURNING id`, [customerId, a.agent_device_id]);
+      movedCases = moved.rows.length;
+    }
+    await client.query('COMMIT');
+
+    const name = a.friendly_name || a.hostname || `device ${id}`;
+    await logActivity(req.session.user!.id, 'asset_reassigned', 'customer_assets', id,
+      `${name} moved to ${c.name}${movedAgent ? ' (agent moved too)' : ''}${movedCases ? ` (${movedCases} open case(s) moved)` : ''}`);
+    res.redirect(back + '?msg=' + encodeURIComponent(
+      `${name} moved to ${c.name}. The assigned user was cleared — contacts belong to a customer.`
+      + (movedAgent ? ' Its agent moved with it.' : '')
+      + (movedCases ? ` ${movedCases} open case(s) moved too — set the requester on each.` : '')));
+  } catch (e: any) {
+    try { await client.query('ROLLBACK'); } catch { /* already gone */ }
+    console.error('[assets] reassign failed:', e.message);
+    res.redirect(back + '?err=' + encodeURIComponent('Could not move that device.'));
+  } finally {
+    client.release();
+  }
+});
+
 router.post('/assets/:id/friendly-name', requireAuth, async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const back = safeBack(req.body.back, `/assets/${id}`);
@@ -848,6 +916,11 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     ? (await pool.query('SELECT id, full_name FROM customer_contacts WHERE customer_id=$1 AND archived=false ORDER BY full_name', [row.customer_id])).rows
     : [];
 
+  // Every customer, for the "reassign this device" picker. Admins only use it, but the list is
+  // small and loading it unconditionally keeps the render simple.
+  const customerOptions = (await pool.query(
+    `SELECT id, name FROM customers WHERE deleted_at IS NULL AND is_placeholder = false ORDER BY name`)).rows;
+
   // Ask Portal: what has already been worked out about this machine, and the customer's
   // cases so one can be attached to a question as context.
   const findings = await listFindings(id, 50);
@@ -1099,7 +1172,7 @@ router.get('/assets/:id', requireAuth, async (req: Request, res: Response) => {
     // this machine - not when Atera happens to know about it, which is what it used to key
     // on and is meaningless now Atera is on its way out.
     remoteUrl: mesh && mesh.hasNode ? `/assets/${id}/remote-mesh` : null,
-    back: safeBack(req.query.back, '/assets'), contactOptions, warranty, findings, askCases,
+    back: safeBack(req.query.back, '/assets'), contactOptions, customerOptions, warranty, findings, askCases,
     rawJson: showDebug ? JSON.stringify(row.raw, null, 2) : null,
     // Whether remote control is ready on this machine, and if not, which of the several
     // possible reasons it is — so the page can offer the install rather than a dead end.

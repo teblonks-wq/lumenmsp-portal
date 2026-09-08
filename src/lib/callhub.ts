@@ -57,10 +57,40 @@ async function identifyCaller(from: string): Promise<{ name: string; contactId: 
   return { name: '+' + from, contactId: null, customerId: null };
 }
 
+// ── The WhatsApp phone is OFF ───────────────────────────────────────────────────
+// Terry, 7 Sep 2026: "remove these and stop the WhatsApp phone service." Calling is being turned
+// off on the number itself in Meta's WhatsApp Manager; this is the Portal end.
+//
+// This module has two halves and only one of them is stopping. The CALL half — ringing staff,
+// answering, placing call-backs, relaying WebRTC — is off. The SOCKET half is untouched:
+// notifyAgents() is what puts website-chat pop-ups, N3twrx alert toasts and estate toasts in front
+// of staff, and alerts.ts, staff-toast.ts, chat.ts and chat-public.ts all depend on it.
+//
+// An inbound call is now rejected the moment it arrives, so a caller gets a clean refusal rather
+// than ringing into a Portal where nobody can pick up. It is still logged to the channel log, so
+// "they tried to phone us" is still answerable — and that log is how we would know if turning it
+// off at Meta's end has not taken effect.
+//
+// To bring it back: CALLS_ENABLED = true here AND PHONE = true in static/js/call-widget.js, and
+// re-enable calling on the number.
+const CALLS_ENABLED = false;
+
 // ── Inbound call entry points (called from the WhatsApp webhook) ────────────────
 
 export async function onInboundCall(call: WaCallEvent): Promise<void> {
   if (calls.has(call.callId)) return; // dedupe re-delivered webhooks
+
+  if (!CALLS_ENABLED) {
+    const who = await identifyCaller(call.from);
+    await rejectCall(call.callId).catch(() => {});
+    // 'received' is the only honest status the channel log offers here — the call did reach us.
+    // What happened to it is in the preview.
+    await logChannel({ channel: 'whatsapp', direction: 'inbound', status: 'received',
+      contactId: who.contactId, peer: '+' + call.from, peerName: who.name,
+      preview: '📞 WhatsApp call refused — calling is switched off', externalId: call.callId });
+    console.log('[callhub] WhatsApp call from %s refused: calling is switched off', call.from);
+    return;
+  }
   const who = await identifyCaller(call.from);
   const ac: ActiveCall = {
     call, direction: 'inbound', callerName: who.name, contactId: who.contactId, customerId: who.customerId,
@@ -287,11 +317,15 @@ export function attachCallSocket(server: Server, sessionMiddleware: RequestHandl
         ws.on('message', async (raw) => {
           let m: any; try { m = JSON.parse(String(raw)); } catch { return; }
           try {
+            // Ping keeps the toast socket alive and is always allowed. Everything else on this
+            // socket is a phone action, and the phone is off — a stale browser tab left open from
+            // before the change must not be able to place or answer a call.
+            if (m.type === 'ping') { send(ws, { type: 'pong' }); return; }
+            if (!CALLS_ENABLED) { send(ws, { type: 'error', message: 'The WhatsApp phone has been switched off.' }); return; }
             if (m.type === 'accept' && m.callId && m.answerSdp) await handleAccept(agent, m.callId, m.answerSdp);
             else if (m.type === 'reject' && m.callId) await handleReject(m.callId);
             else if (m.type === 'hangup' && m.callId) await handleHangup(m.callId);
             else if (m.type === 'callback' && m.to && m.offerSdp) await handleCallback(agent, m.to, m.offerSdp);
-            else if (m.type === 'ping') send(ws, { type: 'pong' });
           } catch (e) { console.error('[callhub] action failed:', (e as Error).message); }
         });
         ws.on('close', () => { agents.delete(agent); });
@@ -300,7 +334,7 @@ export function attachCallSocket(server: Server, sessionMiddleware: RequestHandl
     });
   });
 
-  console.log('✓ WhatsApp call socket attached at /ws/calls');
+  console.log('✓ Staff notification socket attached at /ws/calls (WhatsApp calling is OFF)');
 }
 
 export function agentsOnline(): number { return agents.size; }

@@ -857,6 +857,24 @@ router.post('/agent/api/patches', requireDevice, async (req: Request, res: Respo
   const apps: any[] = (Array.isArray(rawApps) ? rawApps : (rawApps ? [rawApps] : []))
     .filter((a) => a && String(a.id || '').trim());
 
+  // The OS updates in this scan are not necessarily Windows ones. The Posix agent reports apt
+  // and dnf packages through the same `updates` array, and this used to hardcode 'windows' as the
+  // source — so a Linux box's apt packages sat in the table claiming to be Windows updates, and
+  // the install screen then told the operator it had queued "10 Windows updates". The command was
+  // always right (the Posix agent runs apt-get/dnf for patch.install); only the label lied.
+  // The agent tells us what it found — "Package update" on Linux, "macOS update" on a Mac — and
+  // the device's own OS is the fallback.
+  const osHint = String(d.os || '').toLowerCase();
+  const devicePlatform = /windows/.test(osHint) ? 'windows'
+    : /darwin|mac ?os/.test(osHint) ? 'macos'
+    : osHint ? 'linux' : 'windows';
+  const sourceOf = (u: any): string => {
+    const cat = String(u.categories || '').toLowerCase();
+    if (cat.includes('package update')) return 'linux';
+    if (cat.includes('macos update')) return 'macos';
+    return devicePlatform;
+  };
+
   const rebootRequired = p.reboot_required === true || p.reboot_required === 'True';
   const lastInstalled = s(p.last_installed, 20);
   const isUrgent = (sev: any) => ['critical', 'important'].includes(String(sev || '').toLowerCase());
@@ -873,18 +891,19 @@ router.post('/agent/api/patches', requireDevice, async (req: Request, res: Respo
       await client.query(
         `INSERT INTO device_patches
            (device_id, update_id, title, kb, severity, categories, size_mb, downloaded, source, first_seen, last_seen)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'windows',NOW(),NOW())
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
          ON CONFLICT (device_id, update_id) DO UPDATE SET
            title = EXCLUDED.title, kb = EXCLUDED.kb, severity = EXCLUDED.severity,
            categories = EXCLUDED.categories, size_mb = EXCLUDED.size_mb,
-           downloaded = EXCLUDED.downloaded, last_seen = NOW()`,
+           downloaded = EXCLUDED.downloaded, source = EXCLUDED.source, last_seen = NOW()`,
         [d.id, id,
          s(u.title, 500) || '',
          s(u.kb, 100),
          s(u.severity, 40),
          s(u.categories, 300),
          u.size_mb != null && !isNaN(Number(u.size_mb)) ? Number(u.size_mb) : null,
-         u.downloaded === true]);
+         u.downloaded === true,
+         sourceOf(u)]);
     }
 
     for (const a of apps.slice(0, 500)) {

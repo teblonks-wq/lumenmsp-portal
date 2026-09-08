@@ -194,6 +194,9 @@
   var SEED = <%- JSON.stringify((typeof seedDevices !== 'undefined' ? seedDevices : []).map(function(d){ return { id: d.id, hostname: d.hostname }; })) %>;
   var picked = Object.create(null);   // id -> hostname, kept across searches
   SEED.forEach(function(d){ picked[d.id] = d.hostname || String(d.id); });
+  // Its customer comes too. Ticking the machine is not enough on its own: the list behind
+  // it should be the rest of THAT site, which is what you reach for next.
+  var SEED_CUSTOMER = <%- JSON.stringify(typeof seedCustomerId !== 'undefined' ? seedCustomerId : null) %>;
   var devices = [];
 
   var action = document.getElementById('ntAction');
@@ -304,6 +307,7 @@
     }
   });
 
+  if (SEED_CUSTOMER) { var _sc = document.getElementById('ntCustomer'); if (_sc) _sc.value = String(SEED_CUSTOMER); }
   syncAction(); syncCondition(); syncPicked(); load();
 })();
 

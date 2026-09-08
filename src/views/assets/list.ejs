@@ -42,28 +42,52 @@ var _pct     = rows.length ? Math.round((_agent / rows.length) * 100) : 0;
 var _patchDue = rows.filter(function (a) { return a.patch_due; }).length;
 var _secBad   = rows.filter(function (a) { return a.security_bad === true; }).length;
 var _secKnown = rows.filter(function (a) { return a.security_bad !== null && a.security_bad !== undefined; }).length;
-var _anyFilter = !!(filters.q || filters.customer || filters.type || filters.online || filters.nouser || filters.agent || filters.servers || filters.patch || filters.sec);
-// Each tile is a filter you can click. Carries the other filters through (so "servers" inside
-// one customer works) and clicking an active tile clears just that one.
+// Every filter on this page, counted in one place. The hardware boxes, the group and the
+// advanced conditions are filters too — leaving them out of the count is what let somebody
+// sit in front of a list "missing machines" with a condition still set two panels down.
+var _adv    = (typeof f !== 'undefined' && f) ? f : {};
+var _condN  = (typeof conds !== 'undefined' && conds) ? conds.length : 0;
+var _advN   = ['make','model','cpu','ip','domain','rammin','rammax','tag'].filter(function (k) { return _adv[k]; }).length;
+var _basicN = ['q','customer','type','online','nouser','agent','servers','patch','sec'].filter(function (k) { return filters[k]; }).length;
+var _filterN   = _basicN + _advN + _condN;
+var _anyFilter = _filterN > 0;
+// Each tile is a filter you can click. Carries EVERY other filter through — the hardware
+// boxes and the advanced conditions as well as the dropdowns — so clicking "servers" while
+// looking at one customer's Dells narrows what is on screen instead of quietly widening it.
 function tileHref(over){
-  var f = { q: filters.q, customer: filters.customer, type: filters.type,
-            online: filters.online ? '1' : '', agent: filters.agent,
-            nouser: filters.nouser ? '1' : '', servers: filters.servers ? '1' : '',
-            patch: filters.patch ? '1' : '', sec: filters.sec ? '1' : '' };
-  Object.keys(over).forEach(function (k) { f[k] = over[k]; });
+  var f2 = { q: filters.q, customer: filters.customer, type: filters.type,
+             online: filters.online ? '1' : '', agent: filters.agent,
+             nouser: filters.nouser ? '1' : '', servers: filters.servers ? '1' : '',
+             patch: filters.patch ? '1' : '', sec: filters.sec ? '1' : '',
+             make: _adv.make, model: _adv.model, cpu: _adv.cpu, ip: _adv.ip,
+             domain: _adv.domain, rammin: _adv.rammin, rammax: _adv.rammax, tag: _adv.tag,
+             cj: (typeof condJoin !== 'undefined' && condJoin === 'or') ? 'or' : '' };
+  Object.keys(over).forEach(function (k) { f2[k] = over[k]; });
   var parts = [];
-  ['q','customer','type','online','agent','nouser','servers','patch','sec'].forEach(function (k) {
-    if (f[k]) parts.push(k + '=' + encodeURIComponent(f[k]));
+  ['q','customer','type','online','agent','nouser','servers','patch','sec',
+   'make','model','cpu','ip','domain','rammin','rammax','tag','cj'].forEach(function (k) {
+    if (f2[k]) parts.push(k + '=' + encodeURIComponent(f2[k]));
   });
+  // The three condition arrays stay aligned by index, so they are emitted as a set.
+  for (var i = 0; i < _condN; i++) {
+    var cd = conds[i];
+    parts.push('cf=' + encodeURIComponent(cd.field));
+    parts.push('co=' + encodeURIComponent(cd.op));
+    parts.push('cv=' + encodeURIComponent(cd.value == null ? '' : cd.value));
+  }
   return '/assets' + (parts.length ? '?' + parts.join('&') : '');
 }
 %>
 <style>
   .hero-actions { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 18px; }
+  /* The filter now outlives the page, so the way out of it has to be the loudest control on
+     the filter bar - not another grey button in a row of grey buttons. */
+  .btn-clear { border-color:var(--bad-fg); color:var(--bad-fg); font-weight:700; white-space:nowrap; }
+  .btn-clear:hover { background:var(--tint-bad); border-color:var(--bad); color:var(--bad-fg); }
 </style>
 
 <div class="stat-band acc-assets">
-  <a class="tile" href="/assets" title="Show every device - clears every filter"><div class="n"><%= rows.length %></div><div class="l">devices shown</div><div class="h"><%= _anyFilter ? 'show all devices' : 'all devices' %></div></a>
+  <a class="tile" href="/assets?clear=1" title="Show every device - clears every filter, including the advanced ones"><div class="n"><%= rows.length %></div><div class="l">devices shown</div><div class="h"><%= _anyFilter ? 'show all devices' : 'all devices' %></div></a>
   <a class="tile<%= filters.online ? ' on' : '' %>" href="<%= tileHref({ online: filters.online ? '' : '1' }) %>" title="Only devices the LumenMSP Agent has checked in from recently"><div class="n good" id="tileOnline"><%= _online %></div><div class="l">online now</div><div class="h"><%= filters.online ? 'filtering - click to clear' : 'click to filter' %></div></a>
   <a class="tile<%= filters.agent === '1' ? ' on' : '' %>" href="<%= tileHref({ agent: filters.agent === '1' ? '' : '1' }) %>" title="Only devices with the LumenMSP Agent installed"><div class="n"><%= _agent %> <span style="font-size:14px;font-weight:600;color:var(--muted);"><%= _pct %>%</span></div><div class="l">running our agent</div><div class="h"><%= filters.agent === '1' ? 'filtering - click to clear' : 'click to filter' %></div></a>
   <a class="tile<%= filters.servers ? ' on' : '' %>" href="<%= tileHref({ servers: filters.servers ? '' : '1', type: '' }) %>" title="Only devices typed as a server"><div class="n"><%= _servers %></div><div class="l">servers</div><div class="h"><%= filters.servers ? 'filtering - click to clear' : 'click to filter' %></div></a>
@@ -76,6 +100,11 @@ function tileHref(over){
 </div>
 
 <div class="hero-actions">
+  <%# Batch acts on whatever is ticked in the list below. It lives here rather than appearing
+      by itself at the foot of the page (Terry, 7 Sep 2026): the actions are one click away and
+      nothing slides in over the table while you are still choosing machines. %>
+  <button class="btn btn-primary" type="button" id="batchBtn" disabled
+          title="Tick some machines in the list first">⚡ Batch</button>
   <a class="btn btn-primary" href="/patching">🛡 Patch management</a>
   <a class="btn" href="/software">📦 Software</a>
   <a class="btn" href="/ce">✅ Cyber Essentials</a>
@@ -119,7 +148,12 @@ function tileHref(over){
           title="How many devices the filters above are letting through">
       <%= rows.length %> in view
     </span>
-    <% if (_anyFilter) { %><a class="btn" href="/assets">Clear</a><% } %>
+    <%# The filter is remembered until this is pressed (see the sticky-filter block in
+        routes/assets.ts), so there has to be one obvious place to let go of it. It carries the
+        count because the thing being cleared may be a condition two panels down that you
+        cannot see from here. A bare /assets would only put the filter back. %>
+    <% if (_anyFilter) { %><a class="btn btn-clear" href="/assets?clear=1"
+         title="Forget the filter. It is remembered until you do — including on the way back from a device.">✕ Clear filter<%= _filterN > 1 ? 's (' + _filterN + ')' : '' %></a><% } %>
     <%
        var flt = (typeof f !== 'undefined' && f) ? f : {};
        /* Count what is hidden. A filter you cannot see is a filter you forget you set,
@@ -245,7 +279,17 @@ function tileHref(over){
       function sync() {
         var picked = rows().filter(function (c) { return c.checked; });
         if (!bar || !lbl) return;
-        bar.style.display = picked.length ? 'flex' : 'none';
+        // The panel is opened by the Batch button, not by ticking — but a selection of none
+        // has nothing to act on, so it closes itself.
+        var bBtn = document.getElementById('batchBtn');
+        if (bBtn) {
+          bBtn.disabled = !picked.length;
+          bBtn.textContent = picked.length ? '⚡ Batch (' + picked.length + ')' : '⚡ Batch';
+          bBtn.title = picked.length
+            ? 'Deploy software, run a script or a command on the ' + picked.length + ' machine' + (picked.length === 1 ? '' : 's') + ' ticked'
+            : 'Tick some machines in the list first';
+        }
+        if (!picked.length) bar.style.display = 'none';
         // "8 selected" on its own invites acting on eight when you meant the hundred and
         // forty-two the filter is showing. Say both.
         var total = parseInt(bar.getAttribute('data-total') || '0', 10) || rows().length;
@@ -566,6 +610,7 @@ function tileHref(over){
     margin:14px 0 0; padding:12px 16px; border:1px solid var(--line-strong); border-radius:12px;
     background:var(--card,#fff); box-shadow:0 -6px 20px rgba(0,0,0,.10); }
   .bulk-bar .sep { width:1px; align-self:stretch; background:var(--line); margin:0 4px; }
+  #batchBtn[disabled] { opacity:.45; cursor:default; box-shadow:none; }
   .bulk-bar select, .bulk-bar input[type=text] { font:inherit; font-size:12.5px; padding:5px 8px;
     border:1px solid var(--line-strong); border-radius:7px; background:var(--card,#fff); color:var(--ink); }
 </style>
@@ -603,6 +648,15 @@ function tileHref(over){
   // The bulk bar is a real form, so the machines it acts on are the ticks - no hidden
   // state, and a stale selection cannot survive a filter change.
   (function () {
+    var batch = document.getElementById('batchBtn');
+    var bar = document.getElementById('bulk-form');
+    if (batch && bar) {
+      batch.addEventListener('click', function () {
+        var open = bar.style.display === 'flex';
+        bar.style.display = open ? 'none' : 'flex';
+        if (!open) bar.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+    }
     var clear = document.getElementById('sel-clear');
     if (!clear) return;
     clear.addEventListener('click', function () {

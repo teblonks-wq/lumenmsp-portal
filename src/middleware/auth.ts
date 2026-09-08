@@ -106,5 +106,8 @@ declare module 'express-session' {
     // The invoice list's filter, as a query string. A filter stays set until it is
     // explicitly cleared - see the sticky-filter block in routes/invoices.ts.
     invoiceFilter?: string;
+    // The asset list's filter, as a query string. Same rule as the invoice one: it stays set
+    // until it is explicitly cleared - see the sticky-filter block in routes/assets.ts.
+    assetFilter?: string;
   }
 }

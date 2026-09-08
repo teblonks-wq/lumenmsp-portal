@@ -39,10 +39,22 @@ async function formLocals(req: Request, existing: any | null) {
          FROM customers c JOIN agent_devices ad ON ad.customer_id = c.id AND ad.revoked IS NOT TRUE
         WHERE c.deleted_at IS NULL GROUP BY c.id, c.name HAVING COUNT(ad.id) > 0 ORDER BY c.name`),
   ]);
+  // Editing shows what this watchdog already watches. Creating from a machine's Manage menu
+  // (/automation/watchdogs/new?devices=<agent device id>&customer=<id>) arrives with that
+  // machine ticked and the picker narrowed to its site — the same seeding a scheduled task
+  // has always had. Ids are agent device ids; anything unknown or revoked is simply not
+  // preselected rather than silently widening what the watchdog will act on.
+  const seedIds = existing ? [] : String(req.query.devices || '').split(',')
+    .map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isInteger(n) && n > 0).slice(0, 500);
   const seedDevices = existing
     ? (await pool.query(
       `SELECT ad.id, ad.hostname FROM watchdog_targets t JOIN agent_devices ad ON ad.id=t.device_id WHERE t.watchdog_id=$1 ORDER BY ad.hostname`, [existing.id])).rows
-    : [];
+    : seedIds.length
+      ? (await pool.query(
+        `SELECT ad.id, ad.hostname FROM agent_devices ad
+          WHERE ad.id = ANY($1::int[]) AND ad.revoked IS NOT TRUE ORDER BY ad.hostname`, [seedIds])).rows
+      : [];
+  const seedCustomerId = existing ? null : (parseInt(String(req.query.customer || ''), 10) || null);
   const [tags, types, inventory] = await Promise.all([
     pool.query(`SELECT t.id, t.name, COUNT(m.asset_id)::int AS n FROM asset_tags t LEFT JOIN asset_tag_members m ON m.tag_id = t.id GROUP BY t.id, t.name ORDER BY t.name`).catch(() => ({ rows: [] as any[] })),
     pool.query(`SELECT device_type AS t, COUNT(*)::int AS n FROM agent_devices WHERE revoked IS NOT TRUE AND device_type IS NOT NULL GROUP BY 1 ORDER BY 2 DESC`).catch(() => ({ rows: [] as any[] })),
@@ -52,7 +64,7 @@ async function formLocals(req: Request, existing: any | null) {
     user: req.session.user!, kinds: KINDS, healTypes: HEAL_TYPES,
     scripts: scripts.filter((s) => s.osType === 'windows'), customers: customers.rows,
     tags: tags.rows, deviceTypes: types.rows, inventory,
-    existing, seedDevices, notice: req.query.msg || null, error: req.query.err || null,
+    existing, seedDevices, seedCustomerId, notice: req.query.msg || null, error: req.query.err || null,
   };
 }
 

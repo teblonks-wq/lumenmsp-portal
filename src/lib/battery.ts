@@ -17,7 +17,7 @@ const ATTEMPT_GUARD_MINUTES = 30;   // a finished-but-unstorable probe must not 
 
 export const BATTERY_SCRIPT = [
   '$ErrorActionPreference = "SilentlyContinue"',
-  '$r = [ordered]@{ lumen_battery = 1; present = $false; batteries = @() }',
+  '$r = [ordered]@{ lumen_battery = 1; present = $false; source = ""; batteries = @() }',
   '$static = @(Get-CimInstance -Namespace root\\wmi -ClassName BatteryStaticData)',
   '$full   = @(Get-CimInstance -Namespace root\\wmi -ClassName BatteryFullChargedCapacity)',
   '$cyc    = @(Get-CimInstance -Namespace root\\wmi -ClassName BatteryCycleCount)',
@@ -32,6 +32,35 @@ export const BATTERY_SCRIPT = [
   '}',
   '$r.present = ($static.Count -gt 0) -or ($w.Count -gt 0)',
   'if ($w.Count) { $r.charge_pct = [int]$w[0].EstimatedChargeRemaining; $r.win32_status = [int]$w[0].BatteryStatus; $r.win32_name = [string]$w[0].Name }',
+  '$haveCap = @($r.batteries | Where-Object { $_.design_mwh -gt 0 -and $_.full_mwh -gt 0 }).Count -gt 0',
+  'if ($haveCap) { $r.source = "wmi" }',
+  'else {',
+  '  # root\\wmi BatteryStaticData is missing on plenty of laptops - the driver simply does not',
+  '  # publish it, which is why health came back unknown. powercfg is the one that always answers:',
+  '  # it is what the Windows battery report itself reads, and what every RMM ends up using.',
+  '  $tmp = Join-Path $env:TEMP ("lumen-batt-" + [guid]::NewGuid().ToString("N") + ".xml")',
+  '  try {',
+  '    & powercfg /batteryreport /output $tmp /xml 2>$null | Out-Null',
+  '    if (Test-Path -LiteralPath $tmp) {',
+  '      [xml]$doc = Get-Content -LiteralPath $tmp -Raw',
+  '      $list = @()',
+  '      foreach ($b in @($doc.GetElementsByTagName("Battery"))) {',
+  '        $d = [int64]0; $f = [int64]0; $cc = 0; $nm = ""',
+  '        foreach ($c in $b.ChildNodes) {',
+  '          switch ($c.LocalName) {',
+  '            "DesignCapacity"     { $d  = [int64]($c.InnerText) }',
+  '            "FullChargeCapacity" { $f  = [int64]($c.InnerText) }',
+  '            "CycleCount"         { $cc = [int]($c.InnerText) }',
+  '            "Id"                 { $nm = [string]$c.InnerText }',
+  '          }',
+  '        }',
+  '        if ($d -gt 0 -or $f -gt 0) { $list += [ordered]@{ name = $nm; design_mwh = $d; full_mwh = $f; cycles = $cc } }',
+  '      }',
+  '      if ($list.Count) { $r.batteries = $list; $r.present = $true; $r.source = "powercfg" }',
+  '    }',
+  '  } catch { }',
+  '  Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue',
+  '}',
   '$r | ConvertTo-Json -Compress -Depth 4',
 ].join('\r\n');
 
@@ -40,7 +69,7 @@ export function looksLikeBatteryProbe(output: string | null | undefined): boolea
 }
 
 export interface BatteryReading {
-  collectedAt: Date; present: boolean; batteries: number;
+  collectedAt: Date; present: boolean; batteries: number; source?: string | null;
   designMwh: number | null; fullMwh: number | null; healthPct: number | null; cycleCount: number | null;
   chargePct: number | null; status: string | null; name: string | null;
 }
@@ -54,7 +83,7 @@ export function parseBatteryOutput(output: string): Omit<BatteryReading, 'collec
   if (!j || j.lumen_battery !== 1) return null;
   const packs: any[] = Array.isArray(j.batteries) ? j.batteries : (j.batteries ? [j.batteries] : []);
   const present = !!j.present && (packs.length > 0 || j.charge_pct != null);
-  if (!present) return { present: false, batteries: 0, designMwh: null, fullMwh: null, healthPct: null, cycleCount: null, chargePct: null, status: null, name: null };
+  if (!present) return { present: false, batteries: 0, designMwh: null, fullMwh: null, healthPct: null, cycleCount: null, chargePct: null, status: null, name: null, source: j.source || null };
   let design = 0, full = 0, cycles = 0, anyCap = false, charging = false, discharging = false, ac = false;
   for (const p of packs) {
     const d = Number(p.design_mwh) || 0, f = Number(p.full_mwh) || 0;
@@ -64,12 +93,21 @@ export function parseBatteryOutput(output: string): Omit<BatteryReading, 'collec
   }
   // Some firmware reports a full-charge figure above design after a calibration; 100% is the ceiling.
   const health = anyCap ? Math.min(100, Math.round((full / design) * 1000) / 10) : null;
-  const status = charging ? 'charging' : (ac ? 'on mains' : (discharging ? 'on battery' : null));
+  // A powercfg pack has capacity but no charge flags, so fall back to Win32_Battery's code.
+  // 1 = discharging, 2 = on AC, 3 = fully charged (so plugged in), 6-9 = charging.
+  const ws = Number(j.win32_status);
+  const status = charging ? 'charging'
+    : ac ? 'on mains'
+    : discharging ? 'on battery'
+    : ws >= 6 && ws <= 9 ? 'charging'
+    : ws === 2 || ws === 3 ? 'on mains'
+    : ws === 1 ? 'on battery'
+    : null;
   return {
     present: true, batteries: packs.length, designMwh: anyCap ? design : null, fullMwh: anyCap ? full : null,
     healthPct: health, cycleCount: cycles || null,
     chargePct: j.charge_pct == null ? null : Math.max(0, Math.min(100, Number(j.charge_pct))),
-    status, name: packs[0]?.name || j.win32_name || null,
+    status, name: packs[0]?.name || j.win32_name || null, source: j.source || null,
   };
 }
 
@@ -81,7 +119,7 @@ export async function ingestBatteryProbe(deviceId: number, output: string): Prom
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
     [deviceId, r.present, r.batteries, r.designMwh, r.fullMwh, r.healthPct, r.cycleCount, r.chargePct, r.status, r.name ? String(r.name).slice(0, 120) : null]);
   if (!r.present) return 'Battery probe stored — no battery in this machine.';
-  return `Battery probe stored — health ${r.healthPct == null ? 'unknown' : r.healthPct + '%'}, ${r.cycleCount ?? '?'} cycles, ${r.chargePct ?? '?'}% charged.`;
+  return `Battery probe stored — health ${r.healthPct == null ? 'unknown' : r.healthPct + '%'}, ${r.cycleCount ?? '?'} cycles, ${r.chargePct ?? '?'}% charged${r.source ? ` (via ${r.source})` : ''}.`;
 }
 
 const DUE_SQL = `

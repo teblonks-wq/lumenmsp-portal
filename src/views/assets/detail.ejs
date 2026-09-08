@@ -399,8 +399,25 @@ function _ago(d) {
         <div class="dev-field-row">
           <div class="k">Customer</div>
           <div class="v">
-            <% if (asset.customer_id) { %><a class="row-link" href="/customers/<%= asset.customer_id %>#assets"><%= asset.customer_name %></a>
-            <% } else { %><span class="muted">Not matched yet</span><% } %>
+            <% if (user.role === 'admin') { %>
+              <%# Editable for admins: a machine does get sold on, moved between sites or matched
+                  to the wrong company by an import. Changing it moves the agent and any open
+                  cases with it, and clears the assigned user — the confirm says so. %>
+              <form method="post" action="/assets/<%= asset.id %>/customer" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;"
+                    onsubmit="var s=this.customer_id; if(!s.value){alert('Pick a customer.');return false;}
+                              return confirm('Move this device to ' + s.options[s.selectedIndex].text + '?\n\nIts agent and any OPEN cases move with it, and the assigned user is cleared because contacts belong to a customer. Closed cases stay where they are.');">
+                <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+                <select class="input" name="customer_id" style="font-size:12px;padding:4px 8px;max-width:230px;">
+                  <% if (!asset.customer_id) { %><option value="">&mdash; not matched &mdash;</option><% } %>
+                  <% (customerOptions || []).forEach(function(c){ %><option value="<%= c.id %>" <%= asset.customer_id===c.id?'selected':'' %>><%= c.name %></option><% }); %>
+                </select>
+                <button class="btn" type="submit" style="padding:4px 10px;font-size:12px;">Move</button>
+                <% if (asset.customer_id) { %><a class="row-link" href="/customers/<%= asset.customer_id %>#assets" style="font-size:12px;">open</a><% } %>
+              </form>
+            <% } else { %>
+              <% if (asset.customer_id) { %><a class="row-link" href="/customers/<%= asset.customer_id %>#assets"><%= asset.customer_name %></a>
+              <% } else { %><span class="muted">Not matched yet</span><% } %>
+            <% } %>
           </div>
         </div>
         <div class="dev-field-row"><div class="k">Assigned user</div><div class="v">
