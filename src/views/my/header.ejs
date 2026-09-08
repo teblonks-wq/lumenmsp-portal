@@ -75,11 +75,26 @@
   </div>
   <% if (typeof company !== 'undefined' && company) { %><div class="sidebar-sub"><%= company %></div><% } %>
   <nav class="sidebar-nav">
-    <% items.forEach(function(it){ var isIns = it[0] === 'insights' || it[0] === 'number-lookup' || it[0] === 'answered-by'; %>
+    <%
+      // The surfaces we give a customer BEYOND day-to-day support — the ones worth their
+      // eye landing on. Insights carried the gradient alone; OneBoard and IT Reports now
+      // carry it too (Terry, 2026-09-08), because they are the same class of thing and a
+      // plain label read as second-rate next to a coloured one.
+      // One family, three stops: related at a glance, still distinguishable. Add a key here
+      // to promote another item; nothing else needs touching.
+      var NAV_GRADIENT = {
+        'insights':      '#10b981,#2563eb',   // emerald -> blue (the original)
+        'number-lookup': '#10b981,#2563eb',
+        'answered-by':   '#10b981,#2563eb',
+        'oneboard':      '#14b8a6,#6366f1',   // teal -> indigo
+        'it-reports':    '#38bdf8,#8b5cf6',   // sky -> violet
+      };
+    %>
+    <% items.forEach(function(it){ var grad = NAV_GRADIENT[it[0]]; %>
       <a href="<%= it[1] %>" class="nav-item <%= active === it[0] ? 'active' : '' %>" title="<%= it[2] %>">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><%- ic(it[3]) %></svg>
-        <% if (isIns) { %>
-          <span class="nav-label" style="font-weight:800;background:linear-gradient(90deg,#10b981,#2563eb);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;"><%= it[2] %></span>
+        <% if (grad) { %>
+          <span class="nav-label" style="font-weight:800;background:linear-gradient(90deg,<%= grad %>);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;"><%= it[2] %></span>
         <% } else { %>
           <span class="nav-label"><%= it[2] %></span>
         <% } %>
