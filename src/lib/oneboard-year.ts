@@ -20,6 +20,9 @@ export interface YearSeries {
   dowTotal: number[];           // 7
   dowMissed: number[];          // 7
   dowDays: number[];            // 7 — how many Mondays, Tuesdays… the year holds
+  dowOpenDays: number[];        // 7 — …and how many of those the branch actually took a call on
+  dowHourTotal: number[][];     // [7][24] — kept split by weekday so an hour can be divided
+                                //            by the days it was OPEN, not by every day
 }
 
 export function yearSeries(stats: SiteYearStats): YearSeries {
@@ -28,18 +31,22 @@ export function yearSeries(stats: SiteYearStats): YearSeries {
   const dowTotal = Array(7).fill(0) as number[];
   const dowMissed = Array(7).fill(0) as number[];
   const dowDays = Array(7).fill(0) as number[];
+  const dowOpenDays = Array(7).fill(0) as number[];
+  const dowHourTotal = Array.from({ length: 7 }, () => Array(24).fill(0)) as number[][];
   let days = 0;
   stats.byDow.forEach((b, d) => {
     days += b.days;
     dowDays[d] = b.days;
+    dowOpenDays[d] = b.openDays;
     dowTotal[d] = b.total;
     dowMissed[d] = b.missed;
     for (let h = 0; h < 24; h++) {
+      dowHourTotal[d][h] = b.hourTotal[h] || 0;
       hourTotal[h] += b.hourTotal[h] || 0;
       hourMissed[h] += Math.max(0, (b.hourTotal[h] || 0) - (b.hourAnswered[h] || 0));
     }
   });
-  return { days, from: stats.firstDay, to: stats.lastDay, hourTotal, hourMissed, dowTotal, dowMissed, dowDays };
+  return { days, from: stats.firstDay, to: stats.lastDay, hourTotal, hourMissed, dowTotal, dowMissed, dowDays, dowOpenDays, dowHourTotal };
 }
 
 /** Across a whole year, a slot carrying fewer than this many calls cannot support a
@@ -173,7 +180,7 @@ export function rateBand(pct: number | null): number {
   return RATE_BANDS.length;
 }
 
-// ── "How many calls do we actually get at 9am?" ───────────────────────────────────
+// ── "How many calls do we actually get at 9am?" ───────────────────────────────
 // Alex Cumiskey, 2026-08-26: "the average incoming calls per hour per branch … for all
 // calls since we have been on the new system."
 //
@@ -181,48 +188,125 @@ export function rateBand(pct: number | null): number {
 // hour"), and a percentage cannot be staffed against. This one is a COUNT: on a typical
 // day, this many calls arrive in this hour.
 //
-// The denominator is the trap. Dividing by every day in the year would spread the week's
-// calls across the branch's closed Sundays and quietly understate every working hour —
-// the same mistake the baseline avoids by weighting per weekday. So the divisor is OPEN
-// days only: weekdays the branch actually took calls on across the year.
+// THE DENOMINATOR IS THE WHOLE PROBLEM, and the first cut of this got it wrong twice.
+// It judged openness a WHOLE WEEKDAY at a time — one stray call on any Saturday all year
+// made all 36 Saturdays open days — and then divided EVERY hour by that one number, so a
+// branch trading Saturday mornings had its Tuesday afternoons averaged over Saturdays it
+// was shut. Wantage read 21 calls a day against a daily table showing c.35 (Alex
+// Cumiskey, 8 Sep 2026), and an average that reads low tells a manager to cut cover.
+//
+// So openness is now judged twice, per weekday AND per hour, and both have to hold:
+//   1. the site's own business hours say it is open that weekday, in that hour. This is
+//      the same config the journey builder filters on, so the board and the average agree
+//      about what "open" means. No business hours configured → fall back to the evidence
+//      ("did this weekday ever carry a call across the whole year").
+//   2. that individual day actually carried a call — which drops bank holidays, Christmas
+//      and one-off closures without anyone maintaining a calendar of them.
+//
+// A day the branch was open and the phone genuinely never rang is counted as closed by
+// (2), which reads very slightly high. At 20–60 calls a day that day does not exist; the
+// error is a rounding artefact against the 40% understatement it replaces.
+
+/** The site's open pattern, Monday-first. `dow[d]` = open that weekday at all;
+ *  `hour[d][h]` = open in that hour on that weekday. */
+export interface OpenPattern { dow: boolean[]; hour: boolean[][]; }
+
+const BH_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+
+/** Read a site's configured business hours into a weekday × hour grid. Accepts both
+ *  shapes isInHours() accepts. Returns null when nothing is configured, so the caller
+ *  falls back to the evidence rather than inventing a schedule. */
+export function hoursPattern(bh: any): OpenPattern | null {
+  if (!bh || typeof bh !== 'object') return null;
+  const dow = Array(7).fill(false) as boolean[];
+  const hour = Array.from({ length: 7 }, () => Array(24).fill(false)) as boolean[][];
+  const mark = (open: string, close: string, d: number) => {
+    const oh = Number(String(open).split(':')[0]);
+    const cparts = String(close).split(':').map(Number);
+    const ch = cparts[0], cm = cparts[1] || 0;
+    if (!Number.isFinite(oh) || !Number.isFinite(ch)) return;
+    // A close at 18:30 means 18:00 IS an open hour — half of it is trading.
+    const last = cm > 0 ? ch : ch - 1;
+    for (let h = Math.max(0, oh); h <= Math.min(23, last); h++) { hour[d][h] = true; dow[d] = true; }
+  };
+  if (typeof bh.start === 'string' && typeof bh.end === 'string') {
+    for (let d = 0; d < 5; d++) mark(bh.start, bh.end, d);   // Mon–Fri, exactly as isInHours reads this shape
+    return dow.some(Boolean) ? { dow, hour } : null;
+  }
+  let described = false;
+  for (let d = 0; d < 7; d++) {
+    const day = bh[BH_KEYS[(d + 1) % 7]];                    // 0 = Monday here, Sunday-first there
+    if (!day || typeof day !== 'object') continue;
+    described = true;
+    if (day.closed || !day.open || !day.close) continue;
+    mark(String(day.open), String(day.close), d);
+  }
+  return described ? { dow, hour } : null;
+}
+
+/** What the data says, for a site with no business hours configured: a weekday carrying
+ *  nothing across a whole year is a closed day, not a quiet one. */
+function evidencePattern(y: YearSeries): OpenPattern {
+  const dow = Array(7).fill(false) as boolean[];
+  const hour = Array.from({ length: 7 }, () => Array(24).fill(true)) as boolean[][];
+  for (let d = 0; d < 7; d++) dow[d] = (y.dowTotal[d] || 0) > 0;
+  return { dow, hour };
+}
+
+/** Config first, evidence as the fallback — and config never outvotes an empty year:
+ *  a weekday the rota says is open but which has never taken a call is still closed. */
+export function openPattern(y: YearSeries, businessHours?: any): OpenPattern {
+  const cfg = hoursPattern(businessHours);
+  if (!cfg) return evidencePattern(y);
+  return { dow: cfg.dow.map((v, d) => v && (y.dowOpenDays[d] || 0) > 0), hour: cfg.hour };
+}
+
+/** Days the branch was actually open across the window. */
+export function openDays(y: YearSeries, pattern?: OpenPattern): number {
+  const p = pattern || evidencePattern(y);
+  let n = 0;
+  for (let d = 0; d < 7; d++) if (p.dow[d]) n += y.dowOpenDays[d] || 0;
+  return n;
+}
 
 export interface AvgCell {
   key: string; label: string;
   avg: number | null;      // calls per open day in this hour; null = never open in this hour
   total: number;           // calls in this hour across the year
-  days: number;            // open days the average is over
+  days: number;            // open days THIS hour's average is over
 }
 
-/** Days the branch was open, judged by whether that weekday carried any calls all year.
- *  A weekday with nothing across a whole year is a closed day, not a quiet one. */
-export function openDays(y: YearSeries): number {
-  let n = 0;
-  for (let d = 0; d < 7; d++) if ((y.dowTotal[d] || 0) > 0) n += y.dowDays[d] || 0;
-  return n;
-}
-
-/** Average incoming calls per hour, on a typical open day. */
-export function yearAvgCallsByHour(y: YearSeries, hours: number[]): AvgCell[] {
-  const days = openDays(y);
-  return hours.map((h) => ({
-    key: String(h), label: String(h).padStart(2, '0') + ':00',
-    avg: days > 0 && (y.hourTotal[h] || 0) > 0 ? (y.hourTotal[h] || 0) / days : (days > 0 ? 0 : null),
-    total: y.hourTotal[h] || 0, days,
-  }));
+/** Average incoming calls per hour, on a typical open day. Each hour divides by the days
+ *  the branch was open IN THAT HOUR, so a Saturday-morning branch does not have its
+ *  weekday afternoons spread across Saturdays it was shut. */
+export function yearAvgCallsByHour(y: YearSeries, hours: number[], pattern?: OpenPattern): AvgCell[] {
+  const p = pattern || evidencePattern(y);
+  return hours.map((h) => {
+    let total = 0, days = 0;
+    for (let d = 0; d < 7; d++) {
+      if (!p.dow[d] || !p.hour[d][h]) continue;
+      total += y.dowHourTotal[d]?.[h] || 0;
+      days += y.dowOpenDays[d] || 0;
+    }
+    return {
+      key: String(h), label: String(h).padStart(2, '0') + ':00',
+      avg: days > 0 ? total / days : null, total, days,
+    };
+  });
 }
 
 /** "Busiest at 09:00 with 14.2 calls an hour; the day averages 6.1 across 11 open hours." */
 export function observeAvgCallsByHour(cells: AvgCell[]): string {
-  const live = cells.filter((c) => c.avg != null && (c.total > 0));
+  const live = cells.filter((c) => c.avg != null && c.total > 0);
   if (!live.length) return 'No calls recorded in any hour across the year.';
   let peak = live[0];
   for (const c of live) if ((c.avg as number) > (peak.avg as number)) peak = c;
-  const totalCalls = live.reduce((n, c) => n + c.total, 0);
-  const days = live[0].days;
-  const perDay = days ? totalCalls / days : 0;
-  const mean = live.length ? perDay / live.length : 0;
+  const perDay = live.reduce((n, c) => n + (c.avg as number), 0);
+  const mean = perDay / live.length;
+  const days = Math.max(...live.map((c) => c.days));
   const one = (n: number) => (n >= 10 ? n.toFixed(0) : n.toFixed(1));
   return `**${peak.label}** is the busiest hour at **${one(peak.avg as number)} calls an hour** on a typical day. `
     + `The branch takes ${one(perDay)} calls a day across ${live.length} open hour${live.length === 1 ? '' : 's'}, `
-    + `averaging ${one(mean)} an hour. Based on ${days} open day${days === 1 ? '' : 's'}.`;
+    + `averaging ${one(mean)} an hour. Measured over the ${days} day${days === 1 ? '' : 's'} the branch was open — `
+    + `days it was closed are left out of the average, not counted as quiet ones.`;
 }

@@ -50,6 +50,12 @@ export async function fetchRowsBetween(insCustomerId: number, fromTs: string, to
 
 export interface DowBucket {
   days: number; total: number; answered: number; missed: number;
+  /** Days of this weekday that actually carried a call. `days` counts every calendar
+   *  occurrence; this counts the ones the branch was open. The two differ on bank
+   *  holidays, Christmas closures and weekends a site is only sometimes open on — and
+   *  dividing by the wrong one is what made the year averages read low (Alex Cumiskey,
+   *  8 Sep 2026). See openDays() in oneboard-year.ts. */
+  openDays: number;
   hourTotal: number[];     // 24
   hourAnswered: number[];  // 24
 }
@@ -63,7 +69,7 @@ export interface SiteYearStats {
 }
 
 function emptyDow(): DowBucket {
-  return { days: 0, total: 0, answered: 0, missed: 0, hourTotal: Array(24).fill(0), hourAnswered: Array(24).fill(0) };
+  return { days: 0, total: 0, answered: 0, missed: 0, openDays: 0, hourTotal: Array(24).fill(0), hourAnswered: Array(24).fill(0) };
 }
 
 // ── Storage ───────────────────────────────────────────────────────────────────────
@@ -133,6 +139,7 @@ export async function loadSiteBaselines(
     for (const row of live) {
       const b = byDow[dowIndex(row.day)];
       b.days++;
+      if ((Number(row.total) || 0) > 0) b.openDays++;
       b.total += Number(row.total) || 0;
       b.answered += Number(row.answered) || 0;
       b.missed += Number(row.missed) || 0;

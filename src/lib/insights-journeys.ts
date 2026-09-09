@@ -49,6 +49,11 @@ export interface CallJourney {
   in_hours:    boolean;
   wait:        string;
   wait_secs:   number;
+  /** Talk time on this call, seconds — 0 when nobody answered, and 0 for calls older
+   *  than the duration backfill or sourced from the ContactGroupDetail CSVs, which never
+   *  carried it. Read `talk_secs > 0` as "we know how long this call was", never as
+   *  "this call was zero seconds long". */
+  talk_secs:   number;
   answered_by: string | null;
   steps:       JourneyStep[];
   ivr_label:   string | null;
@@ -237,12 +242,17 @@ export function buildJourneys(rows: CallEventRow[], config: LogicConfig = {}): C
     const startMs = Math.min(...group.map((r) => toTs(r.event_datetime)));
     const endMs = Math.max(...group.map((r) => toTs(r.event_datetime) + (Number(r.wait_seconds) || 0) * 1000));
     const wait_secs = Math.max(0, Math.round((endMs - startMs) / 1000));
+    // MAX, not SUM. Only the leg that connected carries a duration, but a journey can be
+    // several legs glued together by the call_id fragment merge (see [[insights-callid-
+    // fragmentation]]) and summing those would count one conversation twice. Max is the
+    // longest connected leg, which is the call the caller experienced.
+    const talk_secs = Math.max(0, ...group.map((r) => Number(r.duration_secs) || 0));
     return {
       datetime: new Date(first.event_datetime).toISOString(),
       number: first.number_normalised || first.number_raw,
       ddi: first.ddi || '',
       status, overflowed, in_hours,
-      wait: formatWait(wait_secs), wait_secs,
+      wait: formatWait(wait_secs), wait_secs, talk_secs,
       answered_by: (() => {
         // The end result: the PERSON's extension who answered — never a hunt group / pilot. If no
         // person took it but the call was answered by voicemail, report "Voicemail".

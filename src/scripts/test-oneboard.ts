@@ -9,12 +9,13 @@
  * Everything under test is pure, so this suite needs no database and no .env. Run with:
  *   npm run build && node dist/scripts/test-oneboard.js     (or: npx tsx src/scripts/test-oneboard.ts)
  *
- *   M1–M5   average wait: split, weighted, and the ten longest
+ *   M1–M8   average wait: split, weighted, and the ten longest; average talk time
  *   B1–B6   the baseline window and its January edge
  *   W1–W6   weekday-weighted scaling of a year onto the dates on screen
  *   C1–C6   the curve, its verdicts and the "too few calls to judge" floor
  *   S1–S3   the branch summary
  *   V1–V4   the drawing itself
+ *   D1–D8   the year average and the days it is allowed to divide by
  */
 import { asDay, baselineLabel, baselineWindow, dowIndex, metricsOf, ONEBOARD_HOURS } from '../lib/oneboard-core';
 import type { CallJourney } from '../lib/insights-journeys';
@@ -22,6 +23,9 @@ import {
   baselineForRange, buildCurve, curveSvg, summariseCurve, verdictFor,
   CURVE_MIN_SAMPLE, CURVE_TARGET_DEFAULT,
 } from '../lib/oneboard-curve';
+import {
+  yearSeries, yearAvgCallsByHour, openPattern, hoursPattern, observeAvgCallsByHour,
+} from '../lib/oneboard-year';
 import type { DowBucket, SiteYearStats } from '../lib/oneboard-baseline';
 
 let pass = 0, fail = 0;
@@ -32,11 +36,11 @@ function check(name: string, cond: boolean, detail = ''): void {
 function near(a: number, b: number, tol = 0.001): boolean { return Math.abs(a - b) <= tol; }
 
 // A weekday bucket whose calls all land in one hour, so hour maths is checkable by eye.
-function dow(days: number, total: number, answered: number, hour = 9): DowBucket {
+function dow(days: number, total: number, answered: number, hour = 9, openDays = days): DowBucket {
   const hourTotal = Array(24).fill(0) as number[];
   const hourAnswered = Array(24).fill(0) as number[];
   hourTotal[hour] = total; hourAnswered[hour] = answered;
-  return { days, total, answered, missed: total - answered, hourTotal, hourAnswered };
+  return { days, openDays, total, answered, missed: total - answered, hourTotal, hourAnswered };
 }
 function stats(byDow: DowBucket[], firstDay = '2026-01-05', lastDay = '2026-08-23'): SiteYearStats {
   return { siteId: 1, daysCovered: byDow.reduce((n, b) => n + b.days, 0), firstDay, lastDay, byDow };
@@ -46,9 +50,9 @@ const NOTHING = () => dow(0, 0, 0);
 console.log('\n── M: average wait ──────────────────────────────────────────────────');
 {
   // Minimal journeys — only the fields metricsOf reads.
-  const j = (status: CallJourney['status'], waitSecs: number, number = '07700900000'): CallJourney => ({
+  const j = (status: CallJourney['status'], waitSecs: number, number = '07700900000', talkSecs = 0): CallJourney => ({
     datetime: '2026-08-24 09:00:00', number, ddi: '', status,
-    overflowed: false, in_hours: true, wait: '', wait_secs: waitSecs, answered_by: null,
+    overflowed: false, in_hours: true, wait: '', wait_secs: waitSecs, talk_secs: talkSecs, answered_by: null,
     steps: [], ivr_label: null, is_emergency: false, is_voicemail: false,
     is_ivr_voicemail: false, is_overflow_voicemail: false,
   });
@@ -71,6 +75,18 @@ console.log('\n── M: average wait ──────────────
   const allMissed = metricsOf([j('Missed', 60), j('Missed', 120)]);
   check('M5 a period with no answered calls still reports the missed wait',
     allMissed.avgWaitAnswered === 0 && allMissed.avgWaitMissed === 90, String(allMissed.avgWaitMissed));
+
+  // Talk time. Two answered calls of 60s and 120s, one answered call from before the
+  // duration backfill (no talk time at all), and a missed call — which by definition has
+  // none. Averaging the unknown one in as a zero would give 60s and describe nobody.
+  const t = metricsOf([j('Answered', 10, 'a', 60), j('Answered', 10, 'b', 120), j('Answered', 10, 'c', 0), j('Missed', 200)]);
+  check('M6 average talk time is the mean of the calls we know the length of',
+    t.avgTalk === 90, String(t.avgTalk));
+  check('M7 an answered call with no recorded talk time is unknown, never zero',
+    t.talkKnown === 2 && t.talkTotal === 3, `${t.talkKnown}/${t.talkTotal}`);
+  const noTalk = metricsOf([j('Answered', 10), j('Answered', 20)]);
+  check('M8 a period with no talk time at all reports none, so the corpus can say so',
+    noTalk.talkKnown === 0 && noTalk.avgTalk === 0, `${noTalk.talkKnown}/${noTalk.avgTalk}`);
 }
 
 console.log('\n── B: the baseline window ───────────────────────────────────────────');
@@ -209,6 +225,74 @@ console.log('\n── the label a customer reads ──────────�
   // dowIndex is Monday-first everywhere on this board; a Sunday-first slip would shift
   // every weekday mean by one day and still look plausible.
   check('X1 dowIndex is Monday-first', dowIndex('2026-08-24') === 0 && dowIndex('2026-08-23') === 6);
+}
+
+console.log('\n── D: the year average and the days it divides by ───────────────────');
+{
+  // Wantage, 8 Sep 2026. The daily table read c.35 calls a day; the year average said 21.
+  // Nothing was wrong with the calls — the divisor counted days the branch was shut.
+  // TWO mistakes, so the fixture carries both: a handful of Sunday emergency calls that
+  // turned all 36 Sundays into "open days", and one divisor shared by every hour, so a
+  // branch trading Saturday MORNINGS had its Tuesday afternoons divided by Saturdays too.
+  const bucket = (days: number, openDays: number, byHour: Array<[number, number]>): DowBucket => {
+    const hourTotal = Array(24).fill(0) as number[];
+    const hourAnswered = Array(24).fill(0) as number[];
+    let total = 0;
+    for (const [h, n] of byHour) { hourTotal[h] = n; hourAnswered[h] = n; total += n; }
+    return { days, openDays, total, answered: total, missed: 0, hourTotal, hourAnswered };
+  };
+  const WEEKDAY = (): DowBucket => bucket(36, 36, [[9, 360], [15, 360]]);   // 10 calls in each hour, each day
+  const y = yearSeries(stats([
+    WEEKDAY(), WEEKDAY(), WEEKDAY(), WEEKDAY(), WEEKDAY(),
+    bucket(36, 36, [[9, 36]]),          // Saturday: mornings only, 1 call a day at 09:00
+    bucket(36, 4, [[9, 4]]),            // Sunday: shut, but four emergency calls all year
+  ]));
+  const HOURS = {
+    mon: { open: '09:00', close: '18:00' }, tue: { open: '09:00', close: '18:00' },
+    wed: { open: '09:00', close: '18:00' }, thu: { open: '09:00', close: '18:00' },
+    fri: { open: '09:00', close: '18:00' }, sat: { open: '09:00', close: '12:00' },
+    sun: { closed: true },
+  };
+  const cells = yearAvgCallsByHour(y, ONEBOARD_HOURS, openPattern(y, HOURS));
+  const at = (h: number) => cells.find((c) => Number(c.key) === h)!;
+
+  check('D1 a stray Sunday call no longer turns every Sunday into an open day',
+    at(9).days === 216, String(at(9).days));
+  check('D2 …and those Sunday calls leave the numerator with them',
+    at(9).total === 1836 && near(at(9).avg as number, 1836 / 216), `${at(9).total} / ${at(9).avg}`);
+  check('D3 an hour the branch is shut on Saturday divides by weekdays only',
+    at(15).days === 180 && near(at(15).avg as number, 10), `${at(15).days} / ${at(15).avg}`);
+  // The bug, stated as arithmetic: one divisor of 252 for every hour.
+  check('D4 the old whole-weekday divisor really did read low',
+    near(1840 / 252, 7.30, 0.01) && (at(9).avg as number) > 8.4 && (at(15).avg as number) > 9.9,
+    `${at(9).avg} / ${at(15).avg}`);
+  check('D5 an hour outside every open day is closed, not zero',
+    at(7).avg === null && at(19).avg === null, `${at(7).avg} / ${at(19).avg}`);
+  check('D6 the observation says how many open days it is measured over',
+    observeAvgCallsByHour(cells).includes('216 days'), observeAvgCallsByHour(cells));
+
+  // No business hours configured: fall back to the evidence, and still drop the days that
+  // carried nothing — four bank-holiday Mondays are closed days, not quiet ones.
+  const yBank = yearSeries(stats([
+    bucket(36, 32, [[9, 320]]), bucket(36, 36, [[9, 360]]), bucket(36, 36, [[9, 360]]),
+    bucket(36, 36, [[9, 360]]), bucket(36, 36, [[9, 360]]), bucket(36, 0, []), bucket(36, 0, []),
+  ]));
+  const bank = yearAvgCallsByHour(yBank, ONEBOARD_HOURS, openPattern(yBank, null)).find((c) => Number(c.key) === 9)!;
+  check('D7 with no hours configured, days that carried nothing are still left out',
+    bank.days === 176 && near(bank.avg as number, 10), `${bank.days} / ${bank.avg}`);
+
+  // A weekday the rota says is open but which has never taken a call is closed, and an
+  // empty year divides by nothing rather than producing NaN.
+  const yEmpty = yearSeries(stats(Array.from({ length: 7 }, () => bucket(36, 0, []))));
+  const empty = yearAvgCallsByHour(yEmpty, ONEBOARD_HOURS, openPattern(yEmpty, HOURS));
+  check('D8 config never outvotes an empty year, and nothing divides by zero',
+    empty.every((c) => c.avg === null) && !empty.some((c) => Number.isNaN(c.avg as number)));
+
+  check('D9 business hours with no per-day detail are read as Mon–Fri, as isInHours reads them',
+    (() => { const p = hoursPattern({ start: '08:00', end: '18:30' })!;
+             return p.dow[0] && p.dow[4] && !p.dow[5] && !p.dow[6] && p.hour[0][18] && !p.hour[0][19]; })());
+  check('D10 no hours configured at all reads as "not configured", not "never open"',
+    hoursPattern(null) === null && hoursPattern({}) === null);
 }
 
 console.log(`\n${fail === 0 ? '✓ ALL PASS' : '✗ FAILURES'} — ${pass} passed, ${fail} failed\n`);

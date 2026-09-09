@@ -41,6 +41,19 @@ function siteBlock(s: OneBoardSite, data: OneBoardData): string {
   lines.push(`  AVERAGE WAIT: ${formatWait(m.avgWaitAnswered)} before a call was answered; ${formatWait(m.avgWaitMissed)} before a caller we lost gave up. These two are deliberately separate - never average them together, and never quote one as "the average wait".`);
   // The aggregates cannot answer "which call waited longest" - an average never names a
   // caller. Ten is enough to show a pattern without spoiling the cached corpus.
+  // "How long are our calls?" is a different question from "how long did people wait",
+  // and until 8 Sep 2026 the corpus held no answer to it at all - the model was refusing
+  // because talk time genuinely was not in front of it (Alex Cumiskey). Coverage is stated
+  // because duration only reaches call_events from 1 Sep 2026 and the backfill before it:
+  // an average of six calls out of nine hundred must never be quoted as "our average call".
+  if (m.talkKnown) {
+    const cover = pct(m.talkKnown, m.talkTotal);
+    lines.push(`  AVERAGE CALL DURATION (talk time on answered calls): ${formatWait(m.avgTalk)}, measured over ${m.talkKnown} of the ${m.talkTotal} answered calls (${cover}%).`
+      + (cover < 90 ? ' The rest have no talk time recorded, so present this as the average of the calls we can measure, not of every call.' : '')
+      + ' This is TIME ON THE PHONE. It is NOT the wait above - never add the two together, and never call a wait "the average call length".');
+  } else {
+    lines.push('  AVERAGE CALL DURATION: NOT HELD for this period. Talk time is only recorded from 1 September 2026 onwards. If asked about average call duration, call length or time on the phone, say plainly that it is not held for these dates and that a range from September 2026 onwards will have it. Do NOT answer with the wait times instead.');
+  }
   if (s.longestWaits.length) {
     const w = s.longestWaits[0];
     lines.push(`  LONGEST WAIT in this period: ${w.wait} - ${w.number} at ${w.datetime}, ${w.status.toLowerCase()}${w.answeredBy ? ` by ${w.answeredBy}` : ''}.`);
@@ -121,17 +134,23 @@ function combinedBlock(sites: OneBoardSite[]): string {
   const withMetrics = sites.filter((s) => s.metrics);
   if (!withMetrics.length) return '';
   let total = 0, answered = 0, missed = 0, waitAnsSum = 0, waitMissSum = 0;
+  let talkSum = 0, talkKnown = 0, talkTotal = 0;
   for (const s of withMetrics) {
     const m = s.metrics!;
     total += m.total; answered += m.answered; missed += m.missed;
     waitAnsSum  += m.avgWaitAnswered * m.answered;   // weight by the calls behind each mean
     waitMissSum += m.avgWaitMissed   * m.missed;
+    talkSum += m.avgTalk * m.talkKnown;              // …and by the calls we know the length of
+    talkKnown += m.talkKnown; talkTotal += m.talkTotal;
   }
   const rate = total ? Math.round((answered / total) * 100) : 0;
   const lines: string[] = [];
   lines.push(`ALL SITES COMBINED (${withMetrics.map((s) => s.label).join(', ')})`);
   lines.push(`  Totals: ${total} calls, ${answered} answered, ${missed} missed (${rate}% answered)`);
   lines.push(`  AVERAGE WAIT across the whole business: ${formatWait(answered ? Math.round(waitAnsSum / answered) : 0)} before answer; ${formatWait(missed ? Math.round(waitMissSum / missed) : 0)} before a lost caller gave up.`);
+  lines.push(talkKnown
+    ? `  AVERAGE CALL DURATION across the whole business: ${formatWait(Math.round(talkSum / talkKnown))} on the phone, over ${talkKnown} of ${talkTotal} answered calls (${pct(talkKnown, talkTotal)}%).`
+    : '  AVERAGE CALL DURATION across the whole business: NOT HELD for this period (talk time is only recorded from 1 September 2026 onwards).');
   lines.push('  These combined figures are weighted by the calls behind each site. Use THEM for any "altogether" or whole-business question - do NOT average the per-site averages, which would treat a 40-call site and a 900-call site as equals.');
   const worst = withMetrics.flatMap((s) => s.longestWaits.map((w) => ({ ...w, site: s.label })))
     .sort((a, b) => b.waitSecs - a.waitSecs).slice(0, 10);
@@ -153,6 +172,7 @@ const SYSTEM = [
   '- Staffing and cover questions are the point of this tool. Commit to a specific recommendation: named weekdays, clock hours, and how many of the missed calls that shift would have covered.',
   '- Prefer PER-DAY averages when comparing weekdays. The range rarely holds the same number of each weekday, and raw weekday totals mislead - the grid gives you both, use the average.',
   '- Distinguish "lots of calls" from "lots of MISSED calls". A busy hour that is fully answered needs no help; a quiet hour where half the callers give up does.',
+  '- "Average call duration", "call length" and "time on the phone" mean TALK TIME, and the only talk time you have is the AVERAGE CALL DURATION line. Where that line says NOT HELD, say so - never derive a call length from wait times, and never present a wait as a duration.',
   '- Be honest about thin data, but do not let it stop you answering. Give the recommendation, then say how confident it is and what would firm it up.',
   '- British English. Concise and direct. No preamble, no restating the question.',
   '',

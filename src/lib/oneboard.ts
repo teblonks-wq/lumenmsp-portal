@@ -14,7 +14,7 @@ import {
 } from './oneboard-curve';
 import {
   yearSeries, yearMissedRateByHour, yearMissedRateByDow, yearShareByHour,
-  yearAvgCallsByHour, observeAvgCallsByHour, type AvgCell,
+  yearAvgCallsByHour, observeAvgCallsByHour, openPattern, type AvgCell,
   observeMissedByHour, observeMissedByDow, observeCallShare,
   type RateCell, type YearSeries,
 } from './oneboard-year';
@@ -301,7 +301,9 @@ export async function buildOneBoard(
       const yDow = year ? yearMissedRateByDow(year) : [];
       const yCalls = year ? yearShareByHour(year, ONEBOARD_HOURS) : [];
       // Alex Cumiskey's ask: the COUNT, not the share — a percentage cannot be staffed against.
-      const yAvg = year ? yearAvgCallsByHour(year, ONEBOARD_HOURS) : [];
+      // Divided by the days (and hours) THIS site was actually open, read from its own
+      // business hours — see the denominator note in oneboard-year.ts.
+      const yAvg = year ? yearAvgCallsByHour(year, ONEBOARD_HOURS, openPattern(year, logic.business_hours)) : [];
       const yearPanels = {
         yearMissedByHour: yHour, yearMissedByDow: yDow, yearCallsByHour: yCalls,
         yearAvgByHour: yAvg, yearNoteAvg: year ? observeAvgCallsByHour(yAvg) : '',

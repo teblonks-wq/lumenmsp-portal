@@ -131,6 +131,13 @@ export interface BoardMetrics {
   rate: number;             // % answered
   avgWaitAnswered: number;  // seconds, mean over ANSWERED journeys only
   avgWaitMissed: number;    // seconds, mean over everything not answered
+  // How long the conversations lasted, which is a different question from how long the
+  // caller waited to have one. Added 8 Sep 2026: talk time reached call_events on 1 Sep
+  // but never reached the journey, so Ask Insights had no answer to "what is our average
+  // call duration" and correctly refused to invent one (Alex Cumiskey).
+  avgTalk: number;          // seconds, mean over answered journeys that HAVE a talk time
+  talkKnown: number;        // how many answered journeys that mean is built from
+  talkTotal: number;        // …out of how many answered journeys, so coverage is visible
 }
 
 export function metricsOf(journeys: CallJourney[]): BoardMetrics {
@@ -147,10 +154,18 @@ export function metricsOf(journeys: CallJourney[]): BoardMetrics {
   const meanWait = (js: CallJourney[]): number =>
     js.length ? Math.round(js.reduce((sum, j) => sum + (j.wait_secs || 0), 0) / js.length) : 0;
 
+  // Answered calls we actually know the length of. A call with no duration is UNKNOWN,
+  // not zero — averaging the unknowns in as zeroes would halve the answer on any period
+  // that straddles the 1 Sep backfill.
+  const talked = answeredJourneys.filter((j) => (j.talk_secs || 0) > 0);
+
   return {
     total, answered, missed,
     rate: total ? Math.round((answered / total) * 100) : 0,
     avgWaitAnswered: meanWait(answeredJourneys),
     avgWaitMissed: meanWait(missedJourneys),
+    avgTalk: talked.length ? Math.round(talked.reduce((sum, j) => sum + (j.talk_secs || 0), 0) / talked.length) : 0,
+    talkKnown: talked.length,
+    talkTotal: answered,
   };
 }

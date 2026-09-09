@@ -203,6 +203,7 @@
       Avg wait
       &middot; answered <strong style="color:var(--ink);"><%= fmtWait(m.avgWaitAnswered) %></strong><%- p ? waitDelta(m.avgWaitAnswered, p.avgWaitAnswered) : '' %>
       &middot; missed <strong style="color:var(--ink);"><%= fmtWait(m.avgWaitMissed) %></strong><%- p ? waitDelta(m.avgWaitMissed, p.avgWaitMissed) : '' %>
+      <% if (m.talkKnown) { %><span title="Time on the phone once the call connected &mdash; a different thing from the wait. Averaged over the <%= m.talkKnown %> of <%= m.talkTotal %> answered calls that have a talk time recorded; talk time only exists from 1 Sep 2026.">&middot; on the phone <strong style="color:var(--ink);"><%= fmtWait(m.avgTalk) %></strong></span><% } %>
     </div>
     <% if (s.baseline) { var eb = s.baseline.expected; %>
       <div style="font-size:11px;color:var(--muted);margin-top:9px;padding-top:8px;border-top:1px solid var(--line);" title="The mean for these same weekdays across <%= baselineFrom %> to <%= baselineTo %>">
@@ -539,7 +540,7 @@
 <% if (included.some(function(s){ return s.yearAvgByHour && s.yearAvgByHour.length; })) { %>
 <div class="card" style="padding:0;margin-top:16px;">
   <div class="card-header" style="padding:14px 18px;"><h2 style="margin:0;">Average incoming calls per hour &mdash; <%= obBaseName.replace(' average', '') %> so far</h2>
-    <span class="muted" style="font-size:12px;">Every day since <%= baselineFrom %>, not the dates above. Each cell is how many calls arrive in that hour on a typical open day &mdash; closed days are left out of the average, not averaged in.</span></div>
+    <span class="muted" style="font-size:12px;">Every day since <%= baselineFrom %>, not the dates above. Each cell is how many calls arrive in that hour on a typical open day, divided by the days this branch was open <em>in that hour</em> &mdash; days it was closed, weekends it does not trade and bank holidays are left out, not averaged in. Hover a cell for the calls and the days behind it.</span></div>
   <div class="table-wrap"><table class="table" style="margin:0;">
     <thead><tr><th style="min-width:110px;"></th><% hours.forEach(function(h){ %><th class="muted" style="text-align:center;font-size:11px;"><%= ('0'+h).slice(-2) %>:00</th><% }); %><th class="muted" style="text-align:center;font-size:11px;">Day</th></tr></thead>
     <tbody>
