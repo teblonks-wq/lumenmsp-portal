@@ -27,7 +27,7 @@
 <div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--accent),var(--violet));margin-bottom:14px;">
   <p class="doc-kicker">What customers can put in your diary</p>
   <h1>Bookable services</h1>
-  <p class="doc-sub">Customers see these under <strong>Book</strong> in their portal. Slots are worked out from your live diary and Outlook, so nothing is offered that would land on top of something you already have — and a booking becomes an ordinary diary entry, clash rules and all.</p>
+  <p class="doc-sub">Customers see these under <strong>Book</strong> in their portal, and — for anything ticked as public — on the open booking page linked at the bottom of every email we send. Slots are worked out from your live diary and Outlook, so nothing is offered that would land on top of something you already have — and a booking becomes an ordinary diary entry, clash rules and all.</p>
 </div>
 
 <% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
@@ -35,7 +35,28 @@
 
 <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
   <a class="btn" href="/diary/week">← Back to the diary</a>
-  <button class="btn btn-primary" type="button" onclick="bsToggle('new')">+ New bookable service</button>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <a class="btn" href="/diary/services/import">⤓ Import from Microsoft Bookings</a>
+    <form method="post" action="/diary/services/standard" style="margin:0;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <button class="btn" type="submit">+ Add the four standard services</button>
+    </form>
+    <form method="post" action="/diary/services/templates" style="margin:0;">
+      <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+      <button class="btn" type="submit">⟳ Rebuild composer templates</button>
+    </form>
+    <button class="btn btn-primary" type="button" onclick="bsToggle('new')">+ New bookable service</button>
+  </div>
+</div>
+
+<div class="bs-card" style="padding:14px;margin-bottom:14px;">
+  <div style="font-size:12.5px;color:var(--muted);line-height:1.65;">
+    <strong style="color:var(--ink);">The public booking page</strong> lives at
+    <code><%= (typeof appUrl !== 'undefined' ? appUrl : '') %>/book</code> and needs no sign-in. Only services ticked
+    <em>“Offer it on the public booking page”</em> appear there. The link at the bottom of every email carries a token
+    identifying who we sent it to, so a customer who clicks it finds their own details already filled in — it grants
+    nothing else, and a forwarded link simply shows the ordinary page.
+  </div>
 </div>
 
 <%
@@ -78,10 +99,16 @@
       <select name="colour"><option value="">Kind's own colour</option><% Object.keys(COLOURS).forEach(function(c){ %><option value="<%= c %>" <%= s && s.colour===c?'selected':'' %>><%= COLOURS[c].label %></option><% }); %></select></div>
     <div><label>Order on the page</label><input type="number" name="sort_order" min="0" max="999" value="<%= s ? s.sortOrder : 0 %>"></div>
   </div>
+  <div class="bs-grid">
+    <div style="grid-column:1/-1;"><label>Where it happens — what the customer is told</label>
+      <input type="text" name="location_text" value="<%= s && s.locationText ? s.locationText : '' %>" placeholder="e.g. Microsoft Teams, or At your site"></div>
+  </div>
   <div class="bs-chk" style="margin-top:12px;">
     <label><input type="checkbox" name="teams_meeting" value="1" <%= s && s.teamsMeeting ? 'checked' : '' %>> Create a Teams meeting and send the join link</label>
     <label><input type="checkbox" name="itsm_only" value="1" <%= s && s.itsmOnly ? 'checked' : '' %>> Managed IT customers only</label>
+    <label><input type="checkbox" name="is_public" value="1" <%= s && s.isPublic ? 'checked' : '' %>> <strong>Offer it on the public booking page</strong></label>
   </div>
+  <p class="muted" style="font-size:11.5px;margin:8px 0 0;">Public means the open web: anyone with the link can book it, signed in or not. A Managed-IT-only service is never shown to someone we cannot recognise — we would only have to withdraw it.</p>
   <p class="muted" style="font-size:11.5px;margin:8px 0 0;">A Teams link needs the Portal app registration to hold <strong>Calendars.ReadWrite</strong> with admin consent. Without it the booking still confirms and the customer is told the link will follow — it is never promised and then missing.</p>
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
     <button class="btn" type="button" onclick="bsToggle('<%= id %>', false)">Cancel</button>
@@ -116,6 +143,14 @@
           <% if (s.teamsMeeting) { %><span>· Teams</span><% } %>
           <% if (s.itsmOnly) { %><span>· Managed IT only</span><% } %>
         </div>
+        <% if (s.isPublic && s.slug) { %>
+          <div class="bs-meta" style="margin-top:5px;">
+            <a href="/book/<%= s.slug %>" target="_blank" rel="noopener" style="font-weight:700;">/book/<%= s.slug %></a>
+            <span>· public</span>
+          </div>
+        <% } else if (s.slug) { %>
+          <div class="bs-meta" style="margin-top:5px;"><span>not on the public page</span></div>
+        <% } %>
       </div>
       <div style="display:flex;gap:8px;align-items:center;">
         <form method="post" action="/diary/services/<%= s.id %>/active" style="margin:0;">

@@ -37,6 +37,10 @@ export interface MailMessage {
   signatureName?: string;        // if set, append the signature with this sender name
   attachments?: GraphAttachment[];
   autoSubmitted?: boolean;       // mark machine-generated (status acks) so other systems don't auto-reply
+  // The recipient's signed booking token. Only changes the "Book time with us" link in
+  // the signature, so that the person clicking it lands on a page that knows their name.
+  // Omitting it is harmless — the link is then the plain public one.
+  bookToken?: string;
 }
 
 // Wrap an agent-composed message so every customer-facing email renders at a consistent 11pt,
@@ -46,7 +50,7 @@ export function customerEmailHtml(inner: string): string {
 }
 
 export async function sendMail(msg: MailMessage): Promise<void> {
-  const html = msg.signatureName ? msg.html + (await getSignatureHtml(msg.signatureName)) : msg.html;
+  const html = msg.signatureName ? msg.html + (await getSignatureHtml(msg.signatureName, msg.bookToken || '')) : msg.html;
   const toStr = Array.isArray(msg.to) ? msg.to.join(', ') : msg.to;
   const fromAddr = msg.from || config.GRAPH_SEND_FROM || config.FROM_EMAIL;
   const attNames = (msg.attachments || []).map((a) => a.filename);

@@ -18,19 +18,67 @@ function filterItr(q){
 }
 </script>
 
+<%
+  // Readiness = can this customer's report FILL ITSELF IN. Five sources, one column each.
+  // A tick is "this section will have real data in it"; a dash is "this section will be
+  // blank or typed by hand". Being switched On with no ticks is the failure mode this
+  // board exists to catch.
+  function ready(c){
+    return {
+      agents:  (c.agents || 0) > 0 && (c.agents_scanned || 0) > 0,
+      av:      (c.agents_secreporting || 0) > 0,
+      intune:  !!c.entra_tenant_id && String(c.graph_status || '') === 'ok',
+      backup:  (c.backup_links || 0) > 0,
+      domain:  (c.domains || 0) > 0,
+      people:  (c.recipients||'').split(/[\n,;]+/).filter(function(s){return s.indexOf('@')>=0;}).length > 0
+    };
+  }
+  var totals = { n: customers.length, on: 0, full: 0 };
+  customers.forEach(function(c){
+    var r = ready(c);
+    if (c.is_active) totals.on++;
+    if (r.agents && r.av && r.intune && r.backup && r.domain && r.people) totals.full++;
+  });
+%>
+
+<div class="card" style="padding:14px 20px;margin-bottom:16px;">
+  <p style="margin:0;font-size:15px;"><strong><%= totals.full %></strong> of <strong><%= totals.n %></strong> managed customers can produce a fully auto-filled report today;
+  <strong><%= totals.on %></strong> <%= totals.on === 1 ? 'is' : 'are' %> switched on for the monthly run.</p>
+  <p class="muted" style="margin:4px 0 0;font-size:13px;">A dash is not a blocker — the section is simply blank or typed by hand. Hover any dash for what is missing. <strong>Agents</strong> drives the patch card, <strong>AV</strong> the endpoint-protection line, <strong>Intune</strong> device compliance, <strong>Backup</strong> the backup card, <strong>Domain</strong> the email-security and DMARC cards.</p>
+</div>
+
 <div class="card">
   <div class="table-wrap"><table class="table" id="itrTable">
-    <thead><tr><th>Customer</th><th>Monthly</th><th>Tenant</th><th>Recipients</th><th style="text-align:right;">Actions</th></tr></thead>
+    <thead><tr>
+      <th>Customer</th><th>Monthly</th>
+      <th title="Devices carrying the LumenMSP Agent that have reported a patch scan in the last 7 days">Agents</th>
+      <th title="Devices reporting their endpoint-protection state">AV</th>
+      <th title="Entra tenant on file AND Graph consent granted">Intune</th>
+      <th title="A backup provider linked to this customer">Backup</th>
+      <th title="A domain on the customer record, for DNS / DMARC / email security">Domain</th>
+      <th>Recipients</th><th style="text-align:right;">Actions</th>
+    </tr></thead>
     <tbody>
-      <% customers.forEach(function(c){ %>
+      <% customers.forEach(function(c){ var r = ready(c);
+         function cell(ok, txt, missing){ %>
+           <td style="white-space:nowrap;" title="<%= ok ? txt : missing %>">
+             <% if (ok) { %><span style="color:#16a34a;font-weight:800;">&#10004;</span> <span class="muted" style="font-size:12px;"><%= txt %></span>
+             <% } else { %><span style="color:#94a3b8;font-weight:800;">&mdash;</span><% } %>
+           </td>
+      <% } %>
       <tr>
-        <td><a class="row-link" href="/it-report/<%= c.id %>"><%= c.name %></a></td>
+        <td><a class="row-link" href="/it-report/<%= c.id %>"><%= c.name %></a>
+          <% if (!c.sent_runs) { %><span class="badge badge-inactive" style="font-size:11px;margin-left:6px;">never sent</span><% } %></td>
         <td>
           <% if (c.is_active) { %><span class="badge badge-sent">On<%= c.auto_send ? ' · auto-send' : ' · review' %></span>
           <% } else { %><span class="badge badge-inactive">Off</span><% } %>
         </td>
-        <td><% if (c.entra_tenant_id) { %><span class="badge badge-primary">Graph ready</span><% } else { %><span class="badge badge-inactive">No tenant</span><% } %></td>
-        <td class="muted" style="font-size:13px;"><%= (c.recipients||'').split(/[\n,;]+/).filter(function(s){return s.indexOf('@')>=0;}).length %> recipient(s)</td>
+        <% cell(r.agents, (c.agents_scanned || 0) + '/' + (c.agents || 0), (c.agents ? (c.agents + ' agent(s), none scanned in the last 7 days') : 'No LumenMSP Agent on any device — the patch card will be empty')) %>
+        <% cell(r.av, String(c.agents_secreporting || 0), 'No device is reporting its endpoint-protection state') %>
+        <% cell(r.intune, 'consented', (!c.entra_tenant_id ? 'No Entra tenant ID on the customer record' : 'Tenant on file but Graph consent reads ‘' + (c.graph_status || 'never checked') + '’')) %>
+        <% cell(r.backup, String(c.backup_links || 0), 'No backup provider linked — link one on the customer\u2019s Assets tab') %>
+        <% cell(r.domain, String(c.domains || 0), 'No domain on the customer record — DNS, DMARC and email security stay blank') %>
+        <td class="muted" style="font-size:13px;<%= r.people ? '' : 'color:#d97706;font-weight:700;' %>"><%= (c.recipients||'').split(/[\n,;]+/).filter(function(s){return s.indexOf('@')>=0;}).length %></td>
         <td style="text-align:right;white-space:nowrap;">
           <a class="btn" href="/it-report/<%= c.id %>/preview" target="_blank" title="Preview last month's report">Preview</a>
           <a class="btn btn-primary" href="/it-report/<%= c.id %>">Settings</a>

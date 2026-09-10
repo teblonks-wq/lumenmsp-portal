@@ -19,6 +19,7 @@ import { logChannel } from '../lib/commslog';
 import { aiTicketCategoryEnabled } from '../lib/ai-compose';
 import { ensureReplyTemplates, listReplyTemplates, saveReplyTemplate, deleteReplyTemplate } from '../lib/reply-templates';
 import { syncBookingsTemplates } from '../lib/bookings';
+import { mintBookToken } from '../lib/book-token';
 import { config } from '../config';
 import { maybeInviteCaseFeedback } from '../lib/questionnaires';
 import { pollBlockHtml, pollBlockText } from '../lib/questionnaire-email';
@@ -32,13 +33,17 @@ router.get('/ticket-templates', requireAuth, async (req: Request, res: Response)
   res.render('tickets/templates', { user: req.session.user, templates, saved: req.query.saved === '1', notice: req.query.msg || null, err: req.query.err || null });
 });
 
-// Sync Microsoft Bookings services → one template per service (with the booking link).
+// One composer template per PUBLIC bookable service, each linking to our own booking page.
+// (It used to link to the Microsoft Bookings page — that dependency is what the Portal's
+// own booking engine replaced.)
 router.post('/ticket-templates/sync-bookings', requireAuth, async (req: Request, res: Response) => {
   try {
     const r = await syncBookingsTemplates();
-    res.redirect('/ticket-templates?msg=' + encodeURIComponent(`Bookings sync: ${r.services} service(s) across ${r.businesses} booking page(s) — ${r.created} template(s) created, ${r.updated} updated.`));
+    res.redirect('/ticket-templates?msg=' + encodeURIComponent(r.services
+      ? `${r.services} public service(s) — ${r.created} template(s) created, ${r.updated} updated.`
+      : 'No services are published to the public booking page yet, so there was nothing to build a template from. Tick "Offer it on the public booking page" under Diary → Bookable services first.'));
   } catch (e: any) {
-    res.redirect('/ticket-templates?err=' + encodeURIComponent((e.message || 'Bookings sync failed').slice(0, 160)));
+    res.redirect('/ticket-templates?err=' + encodeURIComponent((e.message || 'Templates could not be rebuilt').slice(0, 160)));
   }
 });
 router.post('/ticket-templates', requireAuth, async (req: Request, res: Response) => {
@@ -1192,7 +1197,8 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
         try {
           const rcpt = await ticketRecipient(id);
           const subj = rcpt ? (rcpt.ticketNumber + (rcpt.subject ? ': ' + rcpt.subject : '')) : 'Lumen IT';
-          if (toAddr) await sendMail({ to: toAddr, cc, bcc, subject: subj, html: customerEmailHtml(body), signatureName: user.displayName, attachments: graph });
+          const bookTok = mintBookToken((await pool.query('SELECT contact_id FROM inbox_tickets WHERE id=$1', [id])).rows[0]?.contact_id);
+          if (toAddr) await sendMail({ to: toAddr, cc, bcc, subject: subj, html: customerEmailHtml(body), signatureName: user.displayName, attachments: graph, bookToken: bookTok });
         } catch (e) { console.error('Side convo email failed:', e); }
       } else if (channel === 'whatsapp') { await recordWaSent(); }
       else if (channel === 'teams') { await recordTeamsSent(); }
@@ -1232,7 +1238,8 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
           }
 
           const subj = rcpt ? (rcpt.ticketNumber + (rcpt.subject ? ': ' + rcpt.subject : '')) : 'Update on your ticket';
-          await sendMail({ to: finalTo, cc, bcc, subject: subj, html: customerEmailHtml(body), signatureName: user.displayName, attachments: graph });
+          const bookTok = mintBookToken((await pool.query('SELECT contact_id FROM inbox_tickets WHERE id=$1', [id])).rows[0]?.contact_id);
+          await sendMail({ to: finalTo, cc, bcc, subject: subj, html: customerEmailHtml(body), signatureName: user.displayName, attachments: graph, bookToken: bookTok });
         } catch (e: any) {
           console.error('Public reply email failed:', e);
           // SAY WHAT ACTUALLY HAPPENED. This used to read "check mail settings / Graph

@@ -66,6 +66,7 @@ import thirdPartyRoutes from './routes/third-party';
 import scriptRoutes from './routes/scripts';
 import automationRoutes from './routes/automation';
 import bookingRoutes from './routes/booking';
+import bookPublicRoutes from './routes/book-public';
 import leaverRoutes from './routes/leaver';
 import securityRoutes from './routes/security';
 import ceRoutes from './routes/ce';
@@ -426,6 +427,7 @@ app.use('/', agentApiRoutes);     // LumenMSP Agent API (device-token auth, no s
 app.use('/', mcpRoutes);          // Claude MCP connector (capability-URL token, read-only, no session
                                   // → the CSRF guard's !req.session.user branch already exempts it)
 app.use('/', signupRoutes);      // public self-registration (no session, throttled)
+app.use('/', bookPublicRoutes);   // public booking page (no session, throttled + honeypot)
 app.use('/', pulseRoutes);       // mobile Pulse feed + Web Push (staff only, session)
 app.use('/', authRoutes);
 app.use('/', dashboardRoutes);

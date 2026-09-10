@@ -38,6 +38,32 @@
   </div>
 
   <div class="card">
+    <div class="card-header"><h2>Report figures — live values, editable</h2></div>
+    <p class="muted" style="margin-top:0;">Every headline number the report prints. Each box shows <strong>what would be deployed right now</strong>, greyed in, straight from Intune, the agents and the backup provider. Leave a box empty and the report keeps using that live figure every month. Type in it and your value wins until you clear it again — an overridden figure is flagged amber here, and the report says the figures were confirmed by the service delivery manager.</p>
+    <p class="muted" id="figLoad" style="margin:0 0 14px;font-size:13px;">Reading the live figures…</p>
+    <%
+      var groups = {};
+      (figKeys || []).forEach(function(f){ (groups[f.group] = groups[f.group] || []).push(f); });
+      var ovr = (m && m.ovr) || {};
+    %>
+    <% Object.keys(groups).forEach(function(g){ %>
+      <h3 style="margin:14px 0 8px;font-size:15px;"><%= g %></h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;">
+        <% groups[g].forEach(function(f){ %>
+          <div class="form-group fig-wrap" data-fig="<%= f.key %>">
+            <label style="display:block;"><%= f.label %></label>
+            <div style="display:flex;gap:6px;">
+              <input class="input fig-input" name="ovr_<%= f.key %>" data-fig-input="<%= f.key %>" value="<%= ovr[f.key] || '' %>" placeholder="—" style="flex:1;" autocomplete="off">
+              <button type="button" class="btn fig-clear" title="Use the live figure" style="padding:2px 9px;" onclick="clearFig('<%= f.key %>')">&#8630;</button>
+            </div>
+            <p class="muted fig-live" data-fig-live="<%= f.key %>" style="margin:4px 0 0;font-size:12px;">&nbsp;</p>
+          </div>
+        <% }); %>
+      </div>
+    <% }); %>
+  </div>
+
+  <div class="card">
     <div class="card-header"><h2>Service Delivery Manager — standing notes</h2></div>
     <p class="muted" style="margin-top:0;">Persistent commentary that always feeds the report. Month-specific observations go in the running log below. <strong>Prune completed items after each report</strong> — anything left here is fed to Claude every month and can resurface as if it were new.</p>
     <textarea class="input" name="sdm_notes" rows="4" style="width:100%;"><%= cfg ? cfg.sdm_notes : '' %></textarea>
@@ -47,22 +73,22 @@
     <div class="card-header"><h2>Manual sections (interim, until each API is wired)</h2></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
       <div>
-        <div class="form-group"><label>Backup &amp; Recovery — bullets (one per line)</label>
-          <textarea class="input" name="backupBullets" rows="4" style="width:100%;" placeholder="On-site NAS providing local data protection&#10;Acronis Microsoft 365 Backup protecting cloud data&#10;All scheduled backups completed successfully"><%= m.backupBullets || '' %></textarea></div>
+        <div class="form-group"><label>Backup &amp; Recovery — bullets <span class="muted" style="font-weight:400;font-size:12px;">(empty = the auto lines shown greyed below)</span></label>
+          <textarea class="input auto-text" name="backupBullets" data-auto="backupBullets" rows="4" style="width:100%;" placeholder="Loading the auto bullets…"><%= m.backupBullets || '' %></textarea>
+          <p class="muted auto-hint" data-auto-hint="backupBullets" style="margin:4px 0 0;font-size:12px;">&nbsp;</p></div>
         <div class="form-group" style="margin-top:8px;"><label>Backup status</label>
           <input class="input" name="backupStatus" value="<%= m.backupStatus || '' %>" placeholder="Healthy"></div>
-        <div class="form-group" style="margin-top:8px;"><label>Patch — extra bullets (one per line)</label>
-          <textarea class="input" name="patchBullets" rows="3" style="width:100%;" placeholder="Antivirus definitions fully up to date&#10;Installed software fully updated"><%= m.patchBullets || '' %></textarea></div>
+        <div class="form-group" style="margin-top:8px;"><label>Patch — extra bullets <span class="muted" style="font-weight:400;font-size:12px;">(empty = the auto lines shown greyed below)</span></label>
+          <textarea class="input auto-text" name="patchBullets" data-auto="patchBullets" rows="3" style="width:100%;" placeholder="Loading the auto bullets…"><%= m.patchBullets || '' %></textarea>
+          <p class="muted auto-hint" data-auto-hint="patchBullets" style="margin:4px 0 0;font-size:12px;">&nbsp;</p></div>
         <div class="form-group" style="margin-top:8px;"><label>Patch status</label>
           <input class="input" name="patchStatus" value="<%= m.patchStatus || '' %>" placeholder="Healthy"></div>
       </div>
       <div>
-        <div class="form-group"><label>Firewall threats blocked (number)</label>
-          <input class="input" name="firewallBlocked" value="<%= m.firewallBlocked || '' %>" placeholder="8"></div>
-        <div class="form-group" style="margin-top:8px;"><label>Endpoint threats detected/removed (number)</label>
-          <input class="input" name="endpointThreats" value="<%= m.endpointThreats || '' %>" placeholder="1"></div>
-        <div class="form-group" style="margin-top:8px;"><label>Threat protection — extra bullets (one per line)</label>
-          <textarea class="input" name="threatBullets" rows="3" style="width:100%;" placeholder="No persistent infections identified&#10;No security incidents escalated"><%= m.threatBullets || '' %></textarea></div>
+        <p class="muted" style="margin:0 0 8px;font-size:12px;">Firewall and endpoint threat counts have moved up to <strong>Report figures</strong> — endpoint threats are counted from the Bitdefender sync; firewall blocks have no source yet and stay typed.</p>
+        <div class="form-group" style="margin-top:8px;"><label>Threat protection — extra bullets <span class="muted" style="font-weight:400;font-size:12px;">(empty = the auto lines shown greyed below)</span></label>
+          <textarea class="input auto-text" name="threatBullets" data-auto="threatBullets" rows="3" style="width:100%;" placeholder="Loading the auto bullets…"><%= m.threatBullets || '' %></textarea>
+          <p class="muted auto-hint" data-auto-hint="threatBullets" style="margin:4px 0 0;font-size:12px;">&nbsp;</p></div>
         <div class="form-group" style="margin-top:8px;"><label>Threat status</label>
           <input class="input" name="threatStatus" value="<%= m.threatStatus || '' %>" placeholder="Healthy"></div>
         <p class="muted" style="margin-top:8px;font-size:12px;">Email authentication % is now drawn automatically from Domain Health (DMARC reports) — no manual entry needed.</p>
@@ -143,6 +169,77 @@
 </div>
 
 <script>
+  var CID_FIG = <%= c.id %>;
+  // The live figures arrive after the page, so settings opens instantly and the numbers
+  // land a moment later. A box the operator has typed in keeps its value — the live figure
+  // is shown underneath it instead, so what was replaced stays visible.
+  function markFig(el){
+    var wrap = el.closest('.fig-wrap');
+    var on = !!(el.value || '').trim();
+    el.style.borderColor = on ? '#d97706' : '';
+    el.style.background = on ? '#fffbeb' : '';
+    var live = wrap.querySelector('.fig-live');
+    if (live) live.style.color = on ? '#b45309' : '';
+  }
+  function clearFig(key){
+    var el = document.querySelector('[data-fig-input="' + key + '"]');
+    if (!el) return;
+    el.value = '';
+    markFig(el);
+    el.focus();
+  }
+  (function(){
+    document.querySelectorAll('.fig-input').forEach(function(el){
+      markFig(el);
+      el.addEventListener('input', function(){ markFig(el); });
+    });
+    fetch('/it-report/' + CID_FIG + '/figures.json', { headers: { 'Accept': 'application/json' } })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        var live = (j && j.live) || {};
+        var note = document.getElementById('figLoad');
+        var got = 0;
+        document.querySelectorAll('.fig-input').forEach(function(el){
+          var key = el.getAttribute('data-fig-input');
+          var v = live[key];
+          var lbl = document.querySelector('[data-fig-live="' + key + '"]');
+          if (v === undefined || v === null || v === '') {
+            if (lbl) lbl.textContent = 'No live figure — nothing reporting for this one yet.';
+            return;
+          }
+          got++;
+          el.setAttribute('placeholder', v);
+          if (lbl) lbl.textContent = ((el.value || '').trim() ? 'Overriding live value: ' + v : 'Live now: ' + v);
+        });
+        var bl = (j && j.bullets) || {};
+        document.querySelectorAll('.auto-text').forEach(function(ta){
+          var key = ta.getAttribute('data-auto');
+          var lines = bl[key] || [];
+          var hint = document.querySelector('[data-auto-hint="' + key + '"]');
+          if (!lines.length) {
+            ta.setAttribute('placeholder', 'Nothing to auto-fill for this customer yet — anything you type here is printed as-is.');
+            if (hint) hint.textContent = '';
+            return;
+          }
+          ta.setAttribute('placeholder', lines.join('\n'));
+          var typed = (ta.value || '').trim();
+          ta.style.borderColor = typed ? '#d97706' : '';
+          ta.style.background = typed ? '#fffbeb' : '';
+          if (hint) {
+            hint.textContent = typed ? 'Replacing the auto lines above.' : 'These lines will print. Type here to replace them.';
+            hint.style.color = typed ? '#b45309' : '';
+          }
+        });
+        if (note) note.textContent = got
+          ? 'Live figures read just now — greyed values are what this month\u2019s report would print.'
+          : 'No live figures available for this customer yet (no Intune access, no agents, no backup provider linked). Type the figures in and the report will use them.';
+      })
+      .catch(function(){
+        var note = document.getElementById('figLoad');
+        if (note) note.textContent = 'Could not read the live figures just now — anything you type here is still used.';
+      });
+  })();
+
   var CID = <%= c.id %>;
   function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
   function esc(s){ var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }

@@ -1,0 +1,135 @@
+<%- include('../partials/header', { title: booking.serviceName, user }) %>
+<style>
+  .bd-grid { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); gap:16px; align-items:start; }
+  @media (max-width:900px){ .bd-grid { grid-template-columns:1fr; } }
+  .bd-card { background:var(--surface,#fff); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin-bottom:14px; }
+  .bd-card h2 { margin:0 0 10px; font-size:15px; }
+  .bd-rows td { padding:4px 16px 4px 0; font-size:13.5px; vertical-align:top; }
+  .bd-rows td.k { color:var(--muted); font-size:12.5px; white-space:nowrap; }
+  .bd-case { display:flex; gap:9px; align-items:flex-start; padding:7px 0; border-bottom:1px solid var(--line); }
+  .bd-case:last-child { border-bottom:0; }
+  .bd-case input { margin-top:3px; width:16px; height:16px; }
+  .bd-case .n { font-weight:700; font-size:12.5px; }
+  .bd-case .s { font-size:12.5px; color:var(--muted); }
+  textarea.bd-ag { width:100%; font:inherit; font-size:13.5px; padding:10px 12px; border:1px solid var(--line-strong); border-radius:9px;
+                   background:var(--card,#fff); color:var(--ink); box-sizing:border-box; min-height:150px; resize:vertical; }
+  .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:1px 8px; border-radius:999px; background:var(--surface-2,#f1f5f9); color:var(--muted); }
+  .pill.warn { background:#fffbeb; color:#92400e; }
+  .pill.ok { background:var(--tint-ok,#f0fdf4); color:var(--ok-fg,#15803d); }
+</style>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--accent),var(--violet));margin-bottom:14px;">
+  <p class="doc-kicker"><%= booking.serviceName %></p>
+  <h1><%= booking.whenText %></h1>
+  <p class="doc-sub">
+    <%= booking.bookedByName || 'Someone' %><% if (booking.customerName) { %> · <%= booking.customerName %><% } %>
+    <% if (!booking.customerName) { %><span class="pill warn">no customer matched</span><% } %>
+    <% if (booking.status === 'cancelled') { %><span class="pill warn">cancelled</span><% } %>
+  </p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+
+<div style="margin-bottom:12px;"><a class="btn" href="/diary/week">← Back to the diary</a></div>
+
+<div class="bd-grid">
+  <div>
+    <div class="bd-card">
+      <h2>The agenda</h2>
+      <p class="muted" style="font-size:12.5px;margin:0 0 10px;">
+        This goes on the calendar invitation itself, not on a page behind a link — so what the meeting is for
+        is what their diary says it is. Save it as often as you like; the customer only hears about it when you
+        tick the box below.
+      </p>
+      <form method="post" action="/diary/booking/<%= booking.id %>/agenda">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <textarea class="bd-ag" name="agenda" placeholder="1. Where we got to on the firewall replacement&#10;2. Licence review — the five unused E3s&#10;3. Anything from your side"><%= booking.agenda || '' %></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;margin:0;">
+            <input type="checkbox" name="resend" value="1" style="width:auto;"> Send an updated invitation to <%= booking.bookedByEmail || 'the customer' %>
+          </label>
+          <button class="btn btn-primary" type="submit">Save agenda</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="bd-card">
+      <h2>Cases this meeting covers</h2>
+      <% if (!customerId) { %>
+        <p class="muted" style="font-size:13px;margin:0;">
+          This booking is not attached to a customer yet, so there are no cases to offer. Open the diary entry,
+          set the customer, and the list will appear here.
+        </p>
+      <% } else if (!open.length && !tagged.length) { %>
+        <p class="muted" style="font-size:13px;margin:0;">No open cases for <%= booking.customerName || 'this customer' %> right now.</p>
+      <% } else { %>
+        <p class="muted" style="font-size:12.5px;margin:0 0 10px;">Ticked cases are listed on the invitation, so the customer arrives knowing what will be covered.</p>
+        <form method="post" action="/diary/booking/<%= booking.id %>/cases">
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+          <%
+            var seen = {};
+            var all = tagged.concat(open.filter(function(c){ return !tagged.some(function(t){ return t.id === c.id; }); }));
+          %>
+          <% all.forEach(function(c){ %>
+            <label class="bd-case">
+              <input type="checkbox" name="ticket_id" value="<%= c.id %>" <%= tagged.some(function(t){ return t.id === c.id; }) ? 'checked' : '' %>>
+              <span style="flex:1;">
+                <span class="n"><%= c.ticketNumber %></span>
+                <span class="s"> — <%= c.subject %></span>
+                <span class="pill"><%= c.status.replace(/_/g, ' ') %></span>
+              </span>
+            </label>
+          <% }); %>
+          <div style="display:flex;justify-content:flex-end;margin-top:12px;">
+            <button class="btn btn-primary" type="submit">Save cases</button>
+          </div>
+        </form>
+      <% } %>
+    </div>
+  </div>
+
+  <div>
+    <div class="bd-card">
+      <h2>The booking</h2>
+      <table class="bd-rows">
+        <tr><td class="k">Service</td><td><%= booking.serviceName %></td></tr>
+        <tr><td class="k">When</td><td><strong><%= booking.whenText %></strong><br><%= booking.timeText %></td></tr>
+        <tr><td class="k">Where</td><td><%= booking.joinUrl ? 'Microsoft Teams' : (booking.locationText || (booking.kind === 'onsite' ? 'At their site' : 'Remote')) %></td></tr>
+        <tr><td class="k">With</td><td><%= booking.staff || '—' %></td></tr>
+        <tr><td class="k">Booked by</td><td><%= booking.bookedByName || '—' %><br><span class="muted" style="font-size:12px;"><%= booking.bookedByEmail || '' %></span></td></tr>
+        <tr><td class="k">Customer</td><td><%= booking.customerName || '(not matched)' %></td></tr>
+      </table>
+      <% if (booking.joinUrl) { %>
+        <p style="margin:14px 0 0;"><a class="btn btn-primary" href="<%= booking.joinUrl %>" target="_blank" rel="noopener">Join the Teams meeting</a></p>
+      <% } else if (booking.wantsTeams) { %>
+        <div class="alert" style="margin:14px 0 0;font-size:12.5px;">Teams link not created yet — it needs <strong>Calendars.ReadWrite</strong> on the app registration.</div>
+      <% } %>
+    </div>
+
+    <% if (notes) { %>
+      <div class="bd-card">
+        <h2>What they said when booking</h2>
+        <div style="font-size:13.5px;white-space:pre-line;color:var(--ink);"><%= notes %></div>
+      </div>
+    <% } %>
+
+    <div class="bd-card">
+      <h2>Send it again</h2>
+      <p class="muted" style="font-size:12.5px;margin:0 0 10px;">
+        The same meeting, updated — it replaces the invitation already in their calendar rather than adding a second one.
+      </p>
+      <form method="post" action="/diary/booking/<%= booking.id %>/resend">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <button class="btn" type="submit">Re-send the invitation</button>
+      </form>
+      <% if (booking.cancelToken) { %>
+        <p class="muted" style="font-size:11.5px;margin:12px 0 0;">
+          Their self-service link: <a href="/book/manage/<%= booking.cancelToken %>" target="_blank" rel="noopener">/book/manage/…</a>
+        </p>
+      <% } %>
+    </div>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

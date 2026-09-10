@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Book time with Lumen IT Solutions</title>
+  <link rel="icon" type="image/png" href="/static/lumen-crest.png">
+  <style>
+    :root { --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --accent:#0e7490; --accent-2:#22d3ee; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#eef2f6; color:var(--ink); font:15px/1.55 'Segoe UI',system-ui,-apple-system,Arial,sans-serif; }
+    .wrap { max-width:940px; margin:0 auto; padding:28px 16px 64px; }
+    .brand { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; margin-bottom:20px; }
+    .brand img { max-width:190px; height:auto; }
+    .brand .ph { font-size:13px; color:var(--muted); }
+    .brand .ph a { color:var(--accent); text-decoration:none; font-weight:600; }
+    .hero { background:linear-gradient(120deg,#0b3a5b,#0e7490); color:#fff; border-radius:16px; padding:26px 28px; margin-bottom:18px; }
+    .hero h1 { margin:0 0 6px; font-size:25px; letter-spacing:-.4px; }
+    .hero p { margin:0; opacity:.9; font-size:14.5px; max-width:60ch; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:14px; padding:20px 22px; margin-bottom:16px; box-shadow:0 1px 3px rgba(15,23,42,.05); }
+    .note { border-radius:10px; padding:11px 14px; font-size:13.5px; margin-bottom:14px; }
+    .note.ok { background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; }
+    .note.bad { background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; }
+    .note.warn { background:#fffbeb; color:#92400e; border:1px solid #fde68a; }
+    .svcs { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; }
+    .svc { display:block; background:#fff; border:1px solid var(--line); border-radius:14px; padding:18px 20px; text-decoration:none; color:inherit;
+           transition:box-shadow .13s, transform .13s, border-color .13s; }
+    .svc:hover { box-shadow:0 8px 22px rgba(15,23,42,.10); transform:translateY(-2px); border-color:var(--accent); }
+    .svc.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+    .svc h3 { margin:0 0 5px; font-size:16px; }
+    .svc p { margin:0 0 10px; font-size:13.5px; color:var(--muted); }
+    .tag { display:inline-block; font-size:11px; font-weight:700; background:#f1f5f9; color:#475569; padding:3px 9px; border-radius:999px; margin-right:5px; }
+    .week { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:8px; align-items:start; }
+    @media (max-width:820px){ .week { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    .day { border:1px solid var(--line); border-radius:11px; overflow:hidden; background:#fff; }
+    .day h4 { margin:0; padding:9px 10px; font-size:12px; border-bottom:1px solid var(--line); background:#f8fafc; font-weight:700; }
+    .day .list { padding:8px; display:flex; flex-direction:column; gap:6px; max-height:330px; overflow:auto; }
+    .slot { width:100%; font:inherit; font-size:13px; font-weight:700; padding:8px 6px; border-radius:8px; cursor:pointer;
+            border:1px solid var(--accent); background:#fff; color:var(--accent); }
+    .slot:hover { background:var(--accent); color:#fff; }
+    .none { text-align:center; color:#94a3b8; font-size:11.5px; padding:18px 0; }
+    .btn { display:inline-block; font:inherit; font-size:14px; font-weight:600; padding:10px 18px; border-radius:9px; cursor:pointer;
+           border:1px solid var(--line); background:#fff; color:var(--ink); text-decoration:none; }
+    .btn:hover { border-color:#94a3b8; }
+    .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+    .btn.primary:hover { background:#0b5c73; }
+    .btn.danger { color:#b91c1c; border-color:#fecaca; background:#fff; }
+    .nav { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin:4px 0 14px; }
+    .nav h2 { margin:0; font-size:17px; }
+    label { display:block; font-size:12px; font-weight:700; color:var(--muted); margin:12px 0 4px; }
+    input[type=text], input[type=email], input[type=tel], textarea {
+      width:100%; font:inherit; font-size:14px; padding:9px 11px; border:1px solid #cbd5e1; border-radius:9px; background:#fff; color:var(--ink); }
+    input:focus, textarea:focus { outline:2px solid var(--accent-2); outline-offset:1px; border-color:var(--accent); }
+    .hp { position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden; }
+    .overlay { display:none; position:fixed; inset:0; z-index:900; background:rgba(15,23,42,.5); align-items:flex-start; justify-content:center; padding:5vh 16px; overflow:auto; }
+    .overlay.on { display:flex; }
+    .modal { background:#fff; border-radius:16px; width:min(540px,100%); padding:24px; box-shadow:0 26px 64px rgba(15,23,42,.32); }
+    .rows { border-collapse:collapse; }
+    .rows td { padding:5px 16px 5px 0; font-size:14px; vertical-align:top; }
+    .rows td.k { color:var(--muted); font-size:13px; white-space:nowrap; }
+    .agenda { margin-top:18px; padding:14px 16px; background:#f8fafc; border-left:3px solid var(--accent); border-radius:0 9px 9px 0; }
+    .agenda .h { font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:var(--accent); margin-bottom:6px; }
+    .foot { text-align:center; color:#94a3b8; font-size:12px; margin-top:26px; line-height:1.7; }
+    .foot a { color:#64748b; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="brand">
+    <img src="/static/lumen-msp-logo.png" alt="Lumen IT Solutions">
+    <div class="ph">Prefer to talk? <a href="tel:03333350170">0333 3350170</a> · <a href="mailto:sp@lumenmsp.co.uk">sp@lumenmsp.co.uk</a></div>
+  </div>
+
+  <% if (notice) { %><div class="note ok"><%= notice %></div><% } %>
+  <% if (error) { %><div class="note bad"><%= error %></div><% } %>
+
+<%
+  function dayLabel(dk){ return new Date(dk+'T12:00:00Z').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}); }
+  function mins(n){ return n >= 60 ? (n % 60 === 0 ? (n/60) + (n === 60 ? ' hour' : ' hours') : Math.floor(n/60) + 'h ' + (n%60) + 'm') : n + ' minutes'; }
+  var known = booker && booker.name;
+%>
+
+<% if (mode === 'gone') { %>
+
+  <div class="card" style="text-align:center;padding:46px 24px;">
+    <h1 style="margin:0 0 8px;font-size:21px;">We can't find that booking</h1>
+    <p style="color:var(--muted);margin:0 0 20px;">The link may have expired, or the booking may already have been cancelled.</p>
+    <a class="btn primary" href="/book">Book a new time</a>
+  </div>
+
+<% } else if (mode === 'cancelled') { %>
+
+  <div class="card" style="text-align:center;padding:44px 24px;">
+    <h1 style="margin:0 0 8px;font-size:21px;">That booking is cancelled</h1>
+    <p style="color:var(--muted);margin:0 0 6px;"><strong><%= booking.serviceName %></strong> — <%= booking.whenText %></p>
+    <p style="color:var(--muted);margin:0 0 20px;">The time has been released. Nothing further is needed from you.</p>
+    <a class="btn primary" href="/book">Book another time</a>
+  </div>
+
+<% } else if (mode === 'manage') { %>
+
+  <div class="hero">
+    <h1><%= justBooked ? 'You\'re booked in' : 'Your booking' %></h1>
+    <p><%= justBooked
+      ? 'That time is now held for you. A calendar invitation is on its way to your inbox — accept it and it will sit in your own diary.'
+      : 'Everything about your booking with us, and the one button you need if it has to move.' %></p>
+  </div>
+
+  <div class="card">
+    <table class="rows">
+      <tr><td class="k">What</td><td><strong><%= booking.serviceName %></strong></td></tr>
+      <tr><td class="k">When</td><td><strong><%= booking.whenText %>–<%= booking.timeText.split('–')[1] %></strong></td></tr>
+      <tr><td class="k">Where</td><td><%= booking.joinUrl ? 'Microsoft Teams' : (booking.locationText || (booking.kind === 'onsite' ? 'At your site' : 'Remote')) %></td></tr>
+      <% if (booking.staff) { %><tr><td class="k">With</td><td><%= booking.staff %></td></tr><% } %>
+    </table>
+
+    <% if (booking.joinUrl) { %>
+      <p style="margin:20px 0 0;"><a class="btn primary" href="<%= booking.joinUrl %>" target="_blank" rel="noopener">Join the Teams meeting</a></p>
+    <% } else if (booking.wantsTeams) { %>
+      <div class="note warn" style="margin:18px 0 0;">The Teams joining link will follow before the meeting.</div>
+    <% } %>
+
+    <% if (booking.agenda) { %>
+      <div class="agenda">
+        <div class="h">Agenda</div>
+        <div style="font-size:14px;color:#374151;white-space:pre-line;"><%= booking.agenda %></div>
+      </div>
+    <% } %>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 6px;font-size:16px;">Need to change it?</h2>
+    <p style="color:var(--muted);font-size:13.5px;margin:0 0 14px;">Cancel here and book a time that suits you better — or just reply to the confirmation email and we will move it for you.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <a class="btn primary" href="/book">Book a different time</a>
+      <form method="post" action="/book/manage/<%= booking.cancelToken %>/cancel" style="margin:0;"
+            onsubmit="return confirm('Cancel this booking? The time will be released.');">
+        <button class="btn danger" type="submit">Cancel this booking</button>
+      </form>
+    </div>
+  </div>
+
+<% } else { %>
+
+  <div class="hero">
+    <h1><%= known ? 'Hello ' + booker.name.split(' ')[0] + ' — book time with us' : 'Book time with Lumen IT Solutions' %></h1>
+    <p>Pick whatever suits you. Every time shown is genuinely free in our engineers' diaries, so what you choose is confirmed there and then — no waiting to hear back.</p>
+  </div>
+
+  <% if (!services.length) { %>
+    <div class="card">
+      <p style="margin:0;">There is nothing open for booking just now. Email <a href="mailto:sp@lumenmsp.co.uk" style="color:var(--accent);">sp@lumenmsp.co.uk</a> or call <a href="tel:03333350170" style="color:var(--accent);">0333 3350170</a> and we will find you a time.</p>
+    </div>
+  <% } else { %>
+
+    <div class="svcs" style="margin-bottom:18px;">
+      <% services.forEach(function(s){ %>
+        <a class="svc <%= service && service.id === s.id ? 'on' : '' %>" href="/book/<%= s.slug %><%= token ? '?t=' + encodeURIComponent(token) : '' %>">
+          <h3><%= s.name %></h3>
+          <% if (s.blurb) { %><p><%= s.blurb %></p><% } %>
+          <span class="tag"><%= mins(s.durationMins) %></span>
+          <% if (s.teamsMeeting) { %><span class="tag">Microsoft Teams</span><% } %>
+          <% if (s.kind === 'onsite') { %><span class="tag">At your site</span><% } %>
+        </a>
+      <% }); %>
+    </div>
+
+    <% if (mode === 'pick' && service) { %>
+      <%
+        var totalSlots = (days || []).reduce(function(a, d){ return a + d.slots.length; }, 0);
+        var q = token ? '&t=' + encodeURIComponent(token) : '';
+      %>
+      <div class="nav">
+        <h2><%= service.name %> — pick a time</h2>
+        <div style="display:flex;gap:8px;">
+          <a class="btn" href="/book/<%= service.slug %>?w=<%= prevW %><%= q %>">‹ Earlier</a>
+          <a class="btn" href="/book/<%= service.slug %><%= token ? '?t=' + encodeURIComponent(token) : '' %>">This week</a>
+          <a class="btn" href="/book/<%= service.slug %>?w=<%= nextW %><%= q %>">Later ›</a>
+        </div>
+      </div>
+
+      <% if (outlookWarning) { %>
+        <div class="note warn">We could not reach our calendars just now, so a time you pick may need moving. We will confirm either way — nothing will be left in doubt.</div>
+      <% } %>
+
+      <div class="week">
+        <% days.forEach(function(d){ %>
+          <div class="day">
+            <h4><%= dayLabel(d.dayKey) %></h4>
+            <div class="list">
+              <% if (d.slots.length) { %>
+                <% d.slots.forEach(function(s){ %>
+                  <button type="button" class="slot"
+                          onclick="bkPick(<%= s.start %>, '<%= s.label %>', '<%= dayLabel(d.dayKey) %>')"><%= s.label.split('–')[0] %></button>
+                <% }); %>
+              <% } else { %>
+                <div class="none"><%= d.past ? '—' : (d.beyond ? 'not open yet' : 'nothing free') %></div>
+              <% } %>
+            </div>
+          </div>
+        <% }); %>
+      </div>
+
+      <% if (!totalSlots) { %>
+        <p style="color:var(--muted);font-size:13.5px;margin-top:14px;">
+          Nothing free that week — try <a href="/book/<%= service.slug %>?w=<%= nextW %><%= q %>" style="color:var(--accent);">the week after</a>,
+          or email <a href="mailto:sp@lumenmsp.co.uk" style="color:var(--accent);">sp@lumenmsp.co.uk</a> and we will make room.
+        </p>
+      <% } %>
+
+      <div class="overlay" id="ov">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ovTitle">
+          <h2 id="ovTitle" style="margin:0 0 4px;font-size:19px;">Confirm your booking</h2>
+          <p style="color:var(--muted);margin:0 0 4px;font-size:14px;"><strong><%= service.name %></strong> · <%= mins(service.durationMins) %></p>
+          <p style="margin:0 0 4px;font-size:16px;font-weight:700;" id="ovWhen"></p>
+          <form method="post" action="/book/<%= service.slug %>" id="bkForm">
+            <input type="hidden" name="t" value="<%= token %>">
+            <input type="hidden" name="start" id="ovStart">
+            <div class="hp" aria-hidden="true"><label>Leave this blank</label><input type="text" name="website" tabindex="-1" autocomplete="off"></div>
+
+            <label for="f-name">Your name</label>
+            <input id="f-name" type="text" name="name" required autocomplete="name" value="<%= (booker && booker.name) || '' %>">
+
+            <label for="f-email">Email for the invitation</label>
+            <input id="f-email" type="email" name="email" required autocomplete="email" value="<%= (booker && booker.email) || '' %>">
+
+            <label for="f-company">Company</label>
+            <input id="f-company" type="text" name="company" autocomplete="organization" value="<%= (booker && booker.customerName) || '' %>">
+
+            <label for="f-phone">Best number to reach you <span style="font-weight:400;">(optional)</span></label>
+            <input id="f-phone" type="tel" name="phone" autocomplete="tel" value="<%= (booker && booker.phone) || '' %>">
+
+            <label for="f-notes">What would you like to cover?</label>
+            <textarea id="f-notes" name="notes" rows="3" placeholder="A line or two is plenty — it means we can come prepared."></textarea>
+
+            <div style="display:flex;gap:9px;justify-content:flex-end;margin-top:20px;">
+              <button class="btn" type="button" onclick="bkClose()">Back</button>
+              <button class="btn primary" type="submit" id="bkGo">Confirm booking</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <script>
+      (function(){
+        var ov = document.getElementById('ov');
+        window.bkPick = function(start, label, day){
+          document.getElementById('ovStart').value = String(start);
+          document.getElementById('ovWhen').textContent = day + ', ' + label;
+          ov.classList.add('on');
+          var n = document.getElementById('f-name');
+          if (n && !n.value) n.focus();
+        };
+        window.bkClose = function(){ ov.classList.remove('on'); };
+        ov.addEventListener('click', function(e){ if (e.target === ov) bkClose(); });
+        document.addEventListener('keydown', function(e){ if (e.key === 'Escape') bkClose(); });
+        // One click only: a double submit is two bookings, and the second one fails ugly.
+        document.getElementById('bkForm').addEventListener('submit', function(){
+          var b = document.getElementById('bkGo'); b.disabled = true; b.textContent = 'Booking…';
+        });
+      })();
+      </script>
+    <% } %>
+
+  <% } %>
+<% } %>
+
+  <div class="foot">
+    Lumen IT Solutions Limited · Gemini House, Hargreaves Road, Groundwell Industrial Estate, Swindon SN25 5AZ<br>
+    Registered in England and Wales, company number 14951068 · <a href="https://www.lumenmsp.co.uk">www.lumenmsp.co.uk</a>
+  </div>
+
+</div>
+</body>
+</html>

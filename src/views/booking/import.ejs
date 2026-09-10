@@ -1,0 +1,79 @@
+<%- include('../partials/header', { title: 'Import from Microsoft Bookings', user }) %>
+<%
+  function mins(n){ return n >= 60 ? (n % 60 === 0 ? (n/60) + 'h' : Math.floor(n/60) + 'h ' + (n%60) + 'm') : n + ' min'; }
+  var DAYS = ['','Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+%>
+<style>
+  .im-row { background:var(--surface,#fff); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:10px; display:flex; gap:14px; align-items:flex-start; }
+  .im-row input[type=checkbox] { margin-top:4px; width:17px; height:17px; }
+  .im-row .nm { font-weight:800; font-size:14.5px; }
+  .im-meta { color:var(--muted); font-size:12px; margin-top:4px; display:flex; gap:8px; flex-wrap:wrap; }
+  .pill { display:inline-block; font-size:10.5px; font-weight:700; padding:1px 8px; border-radius:999px; background:var(--surface-2,#f1f5f9); color:var(--muted); }
+  .pill.new { background:var(--tint-ok,#f0fdf4); color:var(--ok-fg,#15803d); }
+  .pill.upd { background:#eff6ff; color:#1d4ed8; }
+  .pill.warn { background:#fffbeb; color:#92400e; }
+</style>
+
+<div class="doc-hero" style="--hero-accent:linear-gradient(90deg,var(--accent),var(--violet));margin-bottom:14px;">
+  <p class="doc-kicker">One way, one time</p>
+  <h1>Import from Microsoft Bookings</h1>
+  <p class="doc-sub">Every service on your Bookings pages, mapped onto the Portal's own diary. Nothing is written back to Microsoft, and re-running this updates the same rows rather than making a second copy. Once a service is here and published, the Bookings page it came from can be unpublished.</p>
+</div>
+
+<% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
+<% if (error) { %>
+  <div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div>
+  <p><a class="btn" href="/diary/services">← Back to bookable services</a></p>
+<% } else if (!preview || !preview.services.length) { %>
+  <div class="alert" style="margin-bottom:12px;">No services found on any Bookings page — there may be nothing left to bring across.</div>
+  <p><a class="btn" href="/diary/services">← Back to bookable services</a></p>
+<% } else { %>
+
+  <form method="post" action="/diary/services/import">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+      <a class="btn" href="/diary/services">← Back</a>
+      <div style="display:flex;gap:8px;">
+        <button class="btn" type="button" onclick="document.querySelectorAll('.imck').forEach(function(c){c.checked=true;});">Tick all</button>
+        <button class="btn btn-primary" type="submit">Import the ticked services</button>
+      </div>
+    </div>
+
+    <% preview.services.forEach(function(m){ %>
+      <label class="im-row">
+        <input class="imck" type="checkbox" name="ms_id" value="<%= m.msServiceId %>" <%= m.existingId ? '' : 'checked' %>>
+        <div style="flex:1;">
+          <span class="nm"><%= m.name %></span>
+          <span class="pill <%= m.existingId ? 'upd' : 'new' %>"><%= m.existingId ? 'already here — will update' : 'new' %></span>
+          <% if (!m.staffIds.length) { %><span class="pill warn">no Portal staff matched</span><% } %>
+          <% if (m.blurb) { %><div class="muted" style="font-size:12.5px;margin-top:3px;"><%= m.blurb %></div><% } %>
+          <div class="im-meta">
+            <span><%= m.businessName %></span>
+            <span>· <%= m.kind === 'onsite' ? 'onsite visit' : 'remote' %></span>
+            <span>· <%= mins(m.durationMins) %> every <%= m.slotStepMins %>m</span>
+            <span>· <%= m.windowStart %>–<%= m.windowEnd %></span>
+            <span>· <%= m.weekdays.map(function(d){ return DAYS[d]; }).join(' ') %></span>
+            <span>· <%= m.leadTimeHours %>h notice, <%= m.horizonDays %>d ahead</span>
+            <% if (m.bufferMins) { %><span>· <%= m.bufferMins %>m travel each side</span><% } %>
+            <% if (m.teamsMeeting) { %><span>· Teams</span><% } %>
+          </div>
+          <% if (m.unmatchedStaff.length) { %>
+            <div class="muted" style="font-size:11.5px;margin-top:5px;color:#92400e;">
+              Not Portal users, so they cannot be offered: <%= m.unmatchedStaff.join(', ') %>.
+              Pick who takes this on the Bookable services page after importing.
+            </div>
+          <% } %>
+        </div>
+      </label>
+    <% }); %>
+
+    <p class="muted" style="font-size:12px;margin-top:14px;">
+      Imported services arrive <strong>closed to the public</strong>. Nothing appears on the public booking page until you tick
+      “Offer it on the public booking page” for that service — publishing to the open web stays a deliberate act.
+    </p>
+  </form>
+
+<% } %>
+
+<%- include('../partials/footer') %>

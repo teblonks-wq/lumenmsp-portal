@@ -3510,6 +3510,14 @@ model DiaryEntry {
   bookedByPhone    String? @map("booked_by_phone")
   onlineMeetingUrl String? @map("online_meeting_url")  // Teams join link, when the service needs one
   cancelToken      String? @map("cancel_token")        // lets the booker cancel from the confirmation email
+  // A PUBLIC booking has no Portal login behind it, so bookedByUserId is null and the
+  // company is whatever the person typed. Kept verbatim beside the customer match so an
+  // unmatched booking can still be triaged by a human.
+  bookedByCompany  String? @map("booked_by_company")
+  // The agenda staff build up before the meeting. Goes on the calendar invite and on any
+  // reminder, so what was agreed to discuss is what the invite actually says.
+  agenda           String?
+
   createdBy  Int?      @map("created_by")
   graphSync  Json?     @map("graph_sync") // { "<userId>": "<graph event id>", ... } — pushed M365 events
   createdAt  DateTime  @default(now()) @map("created_at")
@@ -3583,6 +3591,16 @@ model BookingService {
   teamsMeeting  Boolean  @default(false) @map("teams_meeting") // create a Teams join link
   itsmOnly      Boolean  @default(false) @map("itsm_only")     // offer only to Managed IT customers
   colour        String?                                  // DIARY_COLOURS key for its diary cards
+  // ── Public booking (no Portal login) ──────────────────────────────────
+  // slug is the public URL: /book/<slug>. A service is reachable there only when
+  // isPublic is true AND it is active — closing a service closes both doors at once.
+  slug          String?  @unique
+  isPublic      Boolean  @default(false) @map("is_public")   // offered on the public /book page
+  locationText  String?  @map("location_text")               // shown to the booker ("At your site", "Microsoft Teams")
+  // Provenance of an imported Microsoft Bookings service, so a re-import updates the
+  // same row rather than making a second copy of every service.
+  msServiceId   String?  @unique @map("ms_service_id")
+  msBusinessId  String?  @map("ms_business_id")
   isActive      Boolean  @default(true) @map("is_active")
   sortOrder     Int      @default(0) @map("sort_order")
   createdAt     DateTime @default(now()) @map("created_at")
@@ -3591,6 +3609,21 @@ model BookingService {
   @@map("booking_services")
 }
 
+// Cases tagged to a diary entry. Deliberately many-to-many and SEPARATE from
+// diary_entries.ticket_id: one review meeting routinely covers several open cases, and
+// ticket_id (the single case an entry was raised FROM) cannot say that.
+model DiaryEntryTicket {
+  id        Int      @id @default(autoincrement())
+  entryId   Int      @map("entry_id")
+  ticketId  Int      @map("ticket_id")
+  addedBy   Int?     @map("added_by")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([entryId, ticketId])
+  @@index([entryId])
+  @@index([ticketId])
+  @@map("diary_entry_tickets")
+}
 model DiaryEntryPerson {
   id      Int @id @default(autoincrement())
   entryId Int @map("entry_id")

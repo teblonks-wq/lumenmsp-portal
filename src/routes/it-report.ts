@@ -5,7 +5,7 @@ import { sendMail } from '../lib/mailer';
 import { htmlToPdf } from '../lib/pdf';
 import {
   ensureItReportTables, getItConfig, getReportNotes, compileSdmNotes,
-  generateItReport, reportDomain, type ItManual,
+  generateItReport, reportDomain, liveFigures, FIG_KEYS, type ItManual,
 } from '../lib/it-report/generate';
 
 // Monthly IT Operations & Security Snapshot — staff area. Per-customer config + running
@@ -40,8 +40,24 @@ function periodFromQuery(q: any): { from: Date; to: Date; label: string } {
   }
   return prevMonth();
 }
+// Every figure box on the settings page posts as ovr_<key>. Blank means "use the live
+// figure", so blanks are dropped rather than stored as empty strings — that way the report
+// asks one question ("is there an override?") and gets one answer.
+function overridesFromBody(b: any): Record<string, string> {
+  const out: Record<string, string> = {};
+  const allowed = new Set<string>(FIG_KEYS.map((f) => f.key as string));
+  for (const k of Object.keys(b || {})) {
+    if (!k.startsWith('ovr_')) continue;
+    const key = k.slice(4);
+    if (!allowed.has(key)) continue;
+    const v = String(b[k] ?? '').trim();
+    if (v) out[key] = v.slice(0, 60);
+  }
+  return out;
+}
 function manualFromBody(b: any): ItManual {
   return {
+    ovr: overridesFromBody(b),
     backupBullets: b.backupBullets || '', backupStatus: b.backupStatus || '',
     patchBullets: b.patchBullets || '', patchStatus: b.patchStatus || '',
     firewallBlocked: b.firewallBlocked || '', endpointThreats: b.endpointThreats || '',
@@ -65,17 +81,34 @@ async function customer(id: number): Promise<{ id: number; name: string; entra_t
 // ── List ─────────────────────────────────────────────────────────────────────────
 router.get('/it-report', requireAuth, async (req: Request, res: Response) => {
   await ensureItReportTables().catch(() => {});
+  const period = prevMonth();
   const rows = (await pool.query(
     `SELECT c.id, c.name, c.entra_tenant_id,
-            cfg.is_active, cfg.auto_send, cfg.recipients, cfg.primary_domain
+            cfg.is_active, cfg.auto_send, cfg.recipients, cfg.primary_domain,
+            gc.status AS graph_status,
+            (SELECT COUNT(*)::int FROM agent_devices ad
+              WHERE ad.customer_id = c.id AND COALESCE(ad.revoked,false) = false
+                AND COALESCE(ad.patch_excluded,false) = false) AS agents,
+            (SELECT COUNT(*)::int FROM agent_devices ad
+              WHERE ad.customer_id = c.id AND COALESCE(ad.revoked,false) = false
+                AND COALESCE(ad.patch_excluded,false) = false
+                AND ad.patch_scan_at > NOW() - INTERVAL '7 days') AS agents_scanned,
+            (SELECT COUNT(*)::int FROM agent_devices ad
+              WHERE ad.customer_id = c.id AND COALESCE(ad.revoked,false) = false
+                AND ad.security_json IS NOT NULL) AS agents_secreporting,
+            (SELECT COUNT(*)::int FROM backup_provider_links bl WHERE bl.customer_id = c.id) AS backup_links,
+            (SELECT COUNT(*)::int FROM customer_domains d
+              WHERE d.customer_id = c.id AND COALESCE(TRIM(d.domain),'') <> '') AS domains,
+            (SELECT COUNT(*)::int FROM it_report_runs r
+              WHERE r.customer_id = c.id AND r.status = 'sent') AS sent_runs
        FROM customers c
        LEFT JOIN it_report_configs cfg ON cfg.customer_id = c.id
+       LEFT JOIN graph_consent_status gc ON gc.customer_id = c.id
       WHERE c.deleted_at IS NULL AND COALESCE(c.is_placeholder, false) = false
         AND COALESCE(c.is_itsm, false) = true
       ORDER BY (cfg.is_active IS TRUE) DESC, c.name`
   )).rows;
-  const { label } = prevMonth();
-  res.render('it-report/index', { user: req.session.user, customers: rows, periodLabel: label });
+  res.render('it-report/index', { user: req.session.user, customers: rows, periodLabel: period.label });
 });
 
 // ── Per-customer settings + running notes + recent runs ──────────────────────────
@@ -107,9 +140,27 @@ router.get('/it-report/:id', requireAuth, async (req: Request, res: Response) =>
   const excludedSet = new Set(String((cfg?.manual as any)?.excludedTickets || '').split(/[\n,;]+/)
     .map((t) => t.trim().toUpperCase()).filter(Boolean));
   res.render('it-report/edit', {
-    user: req.session.user, c, cfg, notes, runs, cases, excludedSet,
+    user: req.session.user, c, cfg, notes, runs, cases, excludedSet, figKeys: FIG_KEYS,
     periodLabel: period.label, saved: req.query.saved === '1', err: req.query.err || null,
   });
+});
+
+// ── What would go in the report right now ────────────────────────────────────────
+// Fetched by the settings page after it renders, so opening settings stays instant while
+// Intune, the agents and the backup provider are asked what they currently say. These are
+// the UNOVERRIDDEN figures on purpose: the point is to show what would be deployed, next
+// to the box where you can type something else.
+router.get('/it-report/:id/figures.json', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const c = await customer(id);
+  if (!c) { res.status(404).json({ ok: false, error: 'Customer not found' }); return; }
+  try {
+    const p = periodFromQuery(req.query);
+    const { figures, bullets } = await liveFigures(id, c.entra_tenant_id, p.from, p.to, p.label);
+    res.json({ ok: true, live: figures, bullets });
+  } catch (e: any) {
+    res.json({ ok: false, error: String(e?.message || e).slice(0, 200), live: {}, bullets: {} });
+  }
 });
 
 // ── Save config ──────────────────────────────────────────────────────────────────

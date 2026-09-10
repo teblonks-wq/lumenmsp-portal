@@ -11,11 +11,11 @@
 <% if (typeof err !== 'undefined' && err) { %><div class="alert alert-error"><%= err %></div><% } %>
 
 <div class="card">
-  <div class="card-header"><h2>Microsoft Bookings</h2></div>
-  <p class="muted" style="margin:0 0 10px;">Pull every service from your Bookings pages and create/update a template per service ("Booking — Service name") with the booking link — same shape as the remote-service template. Re-run any time services change. Needs the <code>Bookings.Read.All</code> application permission on the Graph app registration.</p>
+  <div class="card-header"><h2>Booking templates</h2></div>
+  <p class="muted" style="margin:0 0 10px;">Build one composer template per service that is published on the <strong>public booking page</strong> — "Booking — Remote Services", and so on — each carrying a branded button that links straight to it, plus an "all services" catch-all. Re-run whenever you publish or rename a service. Services are configured under <a href="/diary/services">Diary → Bookable services</a>.</p>
   <form method="post" action="/ticket-templates/sync-bookings">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-    <button class="btn btn-primary" type="submit">⟳ Sync templates from Bookings</button>
+    <button class="btn btn-primary" type="submit">⟳ Rebuild booking templates</button>
   </form>
 </div>
 

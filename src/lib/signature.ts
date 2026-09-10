@@ -7,9 +7,34 @@ import { getSetting } from './settings';
 // in that template for the sender's name.
 
 const CONTACT_URL = 'https://www.lumenmsp.co.uk/contact/';
+const APP_URL = String(config.APP_URL || 'https://portal.lumenmsp.co.uk').replace(/\/+$/, '');
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+}
+
+// ── "You can book us" ──────────────────────────────────────────────────────────
+// On every email that carries a signature, because the whole point is that a customer
+// never has to wonder whether they are allowed to take half an hour of an engineer. It
+// is an open invitation, not a reply to whatever this particular email is about — so it
+// says nothing about a case, and it links to the service list rather than one service.
+//
+// `token` identifies the person we are writing to, so they land on a page that already
+// knows their name. It is signed, it grants nothing, and a signature sent to a stranger
+// simply carries the plain link.
+function bookingHtml(token: string, heading: string, sub: string): string {
+  const url = `${APP_URL}/book${token ? '?t=' + encodeURIComponent(token) : ''}`;
+  return `<table cellpadding="0" cellspacing="0" style="margin-top:14px;width:100%;max-width:520px;border:1px solid #d7e3e8;border-radius:8px;background:#f6fbfc;">
+      <tr>
+        <td style="padding:12px 14px;font-family:Arial,Helvetica,sans-serif;vertical-align:middle;">
+          <div style="font-size:13px;font-weight:700;color:#0b3a5b;">${escapeHtml(heading)}</div>
+          <div style="font-size:11.5px;color:#5b7684;margin-top:2px;">${escapeHtml(sub)}</div>
+        </td>
+        <td style="padding:12px 14px;text-align:right;vertical-align:middle;white-space:nowrap;">
+          <a href="${url}" style="display:inline-block;background:#0e7490;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-weight:700;font-size:12px;padding:9px 16px;border-radius:20px;text-decoration:none;">Book time with us &rsaquo;</a>
+        </td>
+      </tr>
+    </table>`;
 }
 
 // Cyber Readiness banner — uses the hosted banner image if one is configured,
@@ -44,7 +69,7 @@ const DISCLAIMER =
   'please contact us at <a href="mailto:sp@lumenmsp.co.uk" style="color:#9ca3af;">sp@lumenmsp.co.uk</a>.';
 
 // Default signature (used when no custom one is saved in Branding).
-export function buildSignatureHtml(senderName: string, bannerImg = ''): string {
+export function buildSignatureHtml(senderName: string, bannerImg = '', booking = ''): string {
   const name = escapeHtml((senderName || 'The Lumen MSP Team').trim());
   return `
   <br>
@@ -58,6 +83,7 @@ export function buildSignatureHtml(senderName: string, bannerImg = ''): string {
         <tr><td style="padding:1px 12px 1px 0;color:#6b7280;">Email:</td><td><a href="mailto:sp@lumenmsp.co.uk" style="color:#0e7490;text-decoration:none;">sp@lumenmsp.co.uk</a></td></tr>
         <tr><td style="padding:1px 12px 1px 0;color:#6b7280;">Web:</td><td><a href="https://www.lumenmsp.co.uk" style="color:#0e7490;text-decoration:none;">www.lumenmsp.co.uk</a></td></tr>
       </table>
+      ${booking}
       ${bannerHtml(bannerImg)}
       <div style="margin-top:14px;border-top:1px solid #e5e7eb;padding-top:9px;color:#9ca3af;font-size:10px;line-height:1.55;">${DISCLAIMER}</div>
     </td></tr>
@@ -66,12 +92,26 @@ export function buildSignatureHtml(senderName: string, bannerImg = ''): string {
 
 // Returns the effective signature: a custom one from Branding if set (with {{name}}
 // substituted), otherwise the default. Always awaited from the mailer.
-export async function getSignatureHtml(senderName: string): Promise<string> {
+export async function getSignatureHtml(senderName: string, bookToken = ''): Promise<string> {
   const name = (senderName || 'The Lumen MSP Team').trim();
+
+  // The booking block, unless Branding has switched it off. Both lines are editable there,
+  // so the wording is Terry's, not this file's.
+  const off = (await getSetting('branding', 'booking_cta_off')) === '1';
+  const heading = (await getSetting('branding', 'booking_cta_heading')) || 'Need time with one of our engineers?';
+  const sub = (await getSetting('branding', 'booking_cta_sub')) || 'Pick a slot straight from our diary — remote, Teams or onsite.';
+  const booking = off ? '' : bookingHtml(bookToken, heading, sub);
+
   const custom = await getSetting('branding', 'email_signature');
   if (custom && custom.trim()) {
-    return custom.replace(/\{\{\s*name\s*\}\}/gi, escapeHtml(name));
+    // A hand-written signature keeps full control: {{booking}} places the block wherever
+    // it is wanted, and leaving the placeholder out means no block at all — the wording of
+    // a bespoke signature is not ours to append to.
+    return custom
+      .replace(/\{\{\s*name\s*\}\}/gi, escapeHtml(name))
+      .replace(/\{\{\s*booking(?:_link|_url)?\s*\}\}/gi, booking)
+      .replace(/\{\{\s*booking_href\s*\}\}/gi, `${APP_URL}/book${bookToken ? '?t=' + encodeURIComponent(bookToken) : ''}`);
   }
   const bannerImg = (await getSetting('branding', 'email_banner_url')) || '';
-  return buildSignatureHtml(senderName, bannerImg);
+  return buildSignatureHtml(senderName, bannerImg, booking);
 }

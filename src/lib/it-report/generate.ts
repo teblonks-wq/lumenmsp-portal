@@ -5,6 +5,8 @@ import { getHelpdeskStats, fmtResponse, type HelpdeskStats } from './helpdesk';
 import { getDnsSecurity, type DnsResult } from './dns';
 import { getDmarcMonthSummary, getDomainHealth, type DmarcMonthSummary, type DomainHealth } from '../dmarc/store';
 import { getBackupSummaryForCustomer, classifyPlanStatus, planStatusLabel, planTypeLabel, fmtBytes, type BackupSummary } from '../msp360';
+import { getRmmPatchSummary, type RmmPatchSummary, type RmmUnavailable } from './rmm';
+import { getAutoContent, type AutoContent } from './auto';
 import { aiWriteItReport } from '../ai-compose';
 
 // ── Monthly "IT Operations & Security Snapshot" ──────────────────────────────────
@@ -36,6 +38,12 @@ export interface ItManual {
   vulnBullets?: string;
   vulnStatus?: string;         // e.g. "Secured"
   excludedTickets?: string;    // newline-separated ticket numbers hidden from the report (internal noise)
+  // FIGURE OVERRIDES. Every headline number in the report has a live source (Intune, the
+  // RMM agents, the backup provider) and a key here. Blank or missing = use the live
+  // figure, which is the normal state. A value typed on the settings page WINS — the
+  // report then prints what Terry typed, and the settings page flags the figure as
+  // overridden so it is never a surprise six months later. Keys are FIG_KEYS below.
+  ovr?: Record<string, string>;
 }
 
 export interface ItReportConfig {
@@ -148,10 +156,12 @@ export interface ItReportData {
   dmarcMon: DmarcMonthSummary | null;  // LITS-DMARC — null unless the domain is monitored
   domainHealth: DomainHealth | null;   // LITS-DMARC deep check (score, SPF/DKIM/DMARC, platform DNS)
   backup: BackupSummary | null;        // MSP360 (and future providers) via backup_provider_links
+  rmm: RmmPatchSummary | RmmUnavailable; // OUR agents: patch position + endpoint protection
+  auto: AutoContent;                     // what the Portal can state for itself this period
 }
 
-export async function collectItReportData(customerId: number, tenant: string | null, domain: string, from: Date, to: Date, excludedTickets: string[] = []): Promise<ItReportData> {
-  const [intune, secureScore, helpdesk, dns, dmarcMon, domainHealth, backup] = await Promise.all([
+export async function collectItReportData(customerId: number, tenant: string | null, domain: string, from: Date, to: Date, excludedTickets: string[] = [], periodLabel = 'the period'): Promise<ItReportData> {
+  const [intune, secureScore, helpdesk, dns, dmarcMon, domainHealth, backup, rmm, auto] = await Promise.all([
     getIntuneSummary(tenant),
     getSecureScoreSummary(tenant),
     getHelpdeskStats(customerId, from, to, excludedTickets),
@@ -159,11 +169,13 @@ export async function collectItReportData(customerId: number, tenant: string | n
     domain ? getDmarcMonthSummary(domain, from, to).catch(() => null) : Promise.resolve(null),
     domain ? getDomainHealth(domain).catch(() => null) : Promise.resolve(null),
     getBackupSummaryForCustomer(customerId).catch(() => null),
+    getRmmPatchSummary(customerId).catch((e) => ({ available: false as const, note: 'patch data unavailable (' + String(e && e.message).slice(0, 60) + ')' })),
+    getAutoContent(customerId, from, to, periodLabel),
   ]);
   // Vulnerability comes from the monthly external RoboShadow scan (entered manually — no remote
   // access to auto-pull). Defender TVM stays available as a future auto-source but isn't called here.
   const vulnerability: Unavailable = { available: false, note: 'Provided from the monthly external scan.' };
-  return { intune, secureScore, vulnerability, helpdesk, dns, dmarcMon, domainHealth, backup };
+  return { intune, secureScore, vulnerability, helpdesk, dns, dmarcMon, domainHealth, backup, rmm, auto };
 }
 
 // A full plain-text digest of EVERY collected + manual metric, so Claude forms a complete picture
@@ -174,9 +186,15 @@ function metricsBrief(d: ItReportData, m: ItManual): string {
   if (d.intune.available) L.push(`Devices (Intune): ${d.intune.total} managed, ${d.intune.compliant} compliant (${d.intune.compliancePct}%), ${d.intune.nonCompliant} non-compliant, ${d.intune.encrypted} encrypted.`);
   else L.push(`Devices (Intune): not available (${d.intune.note}).`);
   const patch: string[] = [];
-  if (d.intune.available) patch.push(`Windows patch compliance ${d.intune.compliancePct}%`);
+  if (d.rmm.available) {
+    const r = d.rmm;
+    patch.push(`security patch compliance ${figN(m, 'patch_pct', r.compliancePct)}% across ${figN(m, 'patch_total', r.total)} device(s) carrying the LumenMSP Agent`);
+    patch.push(`${figN(m, 'patch_critical', r.criticalOutstanding)} critical/important update(s) outstanding, ${figN(m, 'patch_reboot', r.rebootPending)} device(s) awaiting a restart`);
+    if (r.notReporting) patch.push(`${r.notReporting} device(s) have not reported a patch scan in the last week`);
+    patch.push(`endpoint protection on ${r.avProtected}/${r.total} device(s)${r.avProducts.length ? ` (${fig(m, 'patch_av', r.avProducts.join(', '))})` : ''}, ${r.avCurrentCount} with current definitions`);
+  } else patch.push(`agent patch data not available (${d.rmm.note})`);
   bulletsFromText(m.patchBullets).forEach((b) => patch.push(b));
-  if (patch.length || m.patchStatus) L.push(`Patch/endpoint: ${patch.join('; ') || 'see status'}${m.patchStatus ? ` (status: ${m.patchStatus})` : ''}.`);
+  L.push(`Patch/endpoint (measured by our RMM agents, NOT the same figure as Intune device compliance): ${patch.join('; ')}${m.patchStatus ? ` (status: ${m.patchStatus})` : ''}.`);
   if (d.backup) {
     const b = d.backup;
     const failing = b.plans.filter((pl) => classifyPlanStatus(pl.status) === 'failed').map((pl) => `${pl.computer} (${pl.planName} — ${planStatusLabel(pl.status)})`);
@@ -209,6 +227,96 @@ function metricsBrief(d: ItReportData, m: ItManual): string {
   if (h.byCategory.length) L.push(`Support case mix: ${h.byCategory.map((c) => `${c.category} ×${c.count}`).join(', ')}.`);
   if (h.notable.length) L.push(`Cases worked this period (newest first): ${h.notable.map((n) => `${n.subject} [${n.status}]`).join('; ')}.`);
   return L.join('\n');
+}
+
+// ── Figure overrides ───────────────────────────────────────────────────
+// One place that knows every editable figure: its key, the label the settings page shows,
+// and where the live value comes from (liveFigures below). Adding a figure means adding a
+// row here and reading it through fig()/figN() in the section — nothing else.
+export const FIG_KEYS = [
+  // Device Management & Compliance (Intune)
+  { key: 'dev_total',     label: 'Devices enrolled in Intune',        group: 'Devices (Intune)' },
+  { key: 'dev_compliant', label: 'Devices compliant',                 group: 'Devices (Intune)' },
+  { key: 'dev_pct',       label: 'Device compliance %',               group: 'Devices (Intune)' },
+  { key: 'dev_encrypted', label: 'Devices with disk encryption',      group: 'Devices (Intune)' },
+  // Patch Management & Endpoint Protection (our RMM agents)
+  { key: 'patch_total',    label: 'Devices under patch management',   group: 'Patching & endpoint (RMM)' },
+  { key: 'patch_pct',      label: 'Security patch compliance %',      group: 'Patching & endpoint (RMM)' },
+  { key: 'patch_critical', label: 'Critical updates outstanding',     group: 'Patching & endpoint (RMM)' },
+  { key: 'patch_reboot',   label: 'Devices awaiting a restart',       group: 'Patching & endpoint (RMM)' },
+  { key: 'patch_av',       label: 'Endpoint protection product(s)',   group: 'Patching & endpoint (RMM)' },
+  { key: 'patch_avpct',    label: 'Endpoints protected %',            group: 'Patching & endpoint (RMM)' },
+  // Security Threat Protection
+  { key: 'threat_endpoint', label: 'Endpoint threats detected/removed', group: 'Threat protection' },
+  { key: 'threat_firewall', label: 'Firewall threats blocked',          group: 'Threat protection' },
+  // Backup & Recovery Readiness
+  { key: 'bk_protected', label: 'Total protected data',               group: 'Backup & recovery' },
+  { key: 'bk_plans',     label: 'Backup plans monitored',             group: 'Backup & recovery' },
+  { key: 'bk_failed',    label: 'Plans needing attention',            group: 'Backup & recovery' },
+] as const;
+export type FigKey = typeof FIG_KEYS[number]['key'];
+
+/** The typed override for a figure, trimmed — '' when there isn't one. */
+function ovrRaw(m: ItManual, key: FigKey): string {
+  return String((m.ovr || {})[key] ?? '').trim();
+}
+/** Text figure: the override if there is one, else the live value. */
+function fig(m: ItManual, key: FigKey, live: string | number | null | undefined): string {
+  const o = ovrRaw(m, key);
+  return o || (live == null ? '' : String(live));
+}
+/** Numeric figure: the override only when it parses as a number, else the live value. */
+function figN(m: ItManual, key: FigKey, live: number): number {
+  const o = ovrRaw(m, key);
+  if (!o) return live;
+  const n = Number(o.replace(/[^0-9.\-]/g, ''));
+  return isNaN(n) ? live : n;
+}
+/** True when this figure is currently being overridden — used to mark the report source line. */
+function isOvr(m: ItManual, ...keys: FigKey[]): boolean {
+  return keys.some((k) => !!ovrRaw(m, k));
+}
+
+/**
+ * The live figures exactly as the report would print them RIGHT NOW, with no overrides
+ * applied — what the settings page shows in each box so Terry can see what would be
+ * deployed before deciding to type over it. Deliberately cheap: Intune, the agents and the
+ * backup provider only. No DNS, no Claude, no ticket maths.
+ */
+export async function liveFigures(customerId: number, tenant: string | null, from?: Date, to?: Date, periodLabel = 'the period'): Promise<{ figures: Record<string, string>; bullets: Record<string, string[]> }> {
+  const [intune, backup, rmm, auto] = await Promise.all([
+    getIntuneSummary(tenant).catch(() => ({ available: false as const, note: 'unavailable' })),
+    getBackupSummaryForCustomer(customerId).catch(() => null),
+    getRmmPatchSummary(customerId).catch(() => ({ available: false as const, note: 'unavailable' })),
+    (from && to) ? getAutoContent(customerId, from, to, periodLabel).catch(() => null) : Promise.resolve(null),
+  ]);
+  const out: Record<string, string> = {};
+  if (intune.available) {
+    out.dev_total = String(intune.total);
+    out.dev_compliant = String(intune.compliant);
+    out.dev_pct = String(intune.compliancePct);
+    out.dev_encrypted = String(intune.encrypted);
+  }
+  if (rmm.available) {
+    out.patch_total = String(rmm.total);
+    out.patch_pct = String(rmm.compliancePct);
+    out.patch_critical = String(rmm.criticalOutstanding);
+    out.patch_reboot = String(rmm.rebootPending);
+    out.patch_av = rmm.avProducts.join(', ');
+    out.patch_avpct = String(rmm.total ? Math.round((rmm.avProtected / rmm.total) * 100) : 0);
+  }
+  if (backup) {
+    out.bk_protected = fmtBytes(backup.totalStorageBytes);
+    out.bk_plans = String(backup.plans.length);
+    out.bk_failed = String(backup.failedPlans);
+  }
+  // Firewall blocks are deliberately absent: nothing ingests them, so there is no live
+  // value to show. The settings page says so rather than leaving an unexplained gap.
+  if (auto) out.threat_endpoint = String(auto.endpointThreats);
+  const bullets: Record<string, string[]> = auto
+    ? { backupBullets: auto.backupBullets, patchBullets: auto.patchBullets, threatBullets: auto.threatBullets }
+    : {};
+  return { figures: out, bullets };
 }
 
 // ── HTML helpers ─────────────────────────────────────────────────────────────────
@@ -275,6 +383,14 @@ function ticks(lines: string[]): string {
   return `<ul style="list-style:none;margin:0;padding:0;">` + lines.filter(Boolean).map((t) =>
     `<li style="padding:5px 0 5px 28px;position:relative;font-size:16px;"><span style="position:absolute;left:0;color:#16a34a;font-weight:800;">&#10004;</span>${t}</li>`).join('') + `</ul>`;
 }
+// A bullet box on the settings page works like every figure box: empty means "use what the
+// Portal worked out", and anything typed REPLACES it outright. Not appends — replaces. The
+// settings page shows the auto lines as the box's placeholder, so overtyping is editing
+// something visible rather than guessing what you are adding to.
+function bulletsOrAuto(typed: string | undefined, auto: string[]): string[] {
+  const t = bulletsFromText(typed);
+  return t.length ? t : auto;
+}
 function bulletsFromText(txt?: string): string[] {
   return String(txt || '').split('\n').map((s) => s.replace(/^[\s•\-*✔]+/, '').trim()).filter(Boolean);
 }
@@ -295,8 +411,13 @@ function reportMarkers(d: ItReportData, m: ItManual): Marker[] {
   const out: Marker[] = [];
 
   // Backup
-  if (d.backup) out.push({ label: 'Backup & recovery', state: d.backup.failedPlans ? 'attention' : 'ok',
-    note: d.backup.failedPlans ? `${d.backup.failedPlans} plan(s) need attention` : `${d.backup.plans.length} plans healthy · ${fmtBytes(d.backup.totalStorageBytes)}` });
+  if (d.backup) {
+    const failed = figN(m, 'bk_failed', d.backup.failedPlans);
+    const plans = figN(m, 'bk_plans', d.backup.plans.length);
+    out.push({ label: 'Backup & recovery', state: failed ? 'attention' : 'ok',
+      note: failed ? `${failed} plan(s) need attention` : `${plans} plans healthy · ${fig(m, 'bk_protected', fmtBytes(d.backup.totalStorageBytes))}` });
+  }
+  else if (isOvr(m, 'bk_protected', 'bk_plans', 'bk_failed')) out.push({ label: 'Backup & recovery', state: figN(m, 'bk_failed', 0) ? 'attention' : 'ok', note: m.backupStatus || 'reported manually' });
   else out.push({ label: 'Backup & recovery', state: 'pending', note: 'no provider linked' });
 
   // Email security (Domain Health preferred, else live DNS)
@@ -310,14 +431,24 @@ function reportMarkers(d: ItReportData, m: ItManual): Marker[] {
     out.push({ label: 'Email security', state: d.dns.rows.every((r) => r.ok) ? 'ok' : 'attention', note: `${d.dns.rows.filter((r) => r.ok).length}/${d.dns.rows.length} DNS controls present` });
   } else out.push({ label: 'Email security', state: 'pending', note: 'no domain monitored' });
 
-  // Device compliance (Intune only)
-  if (d.intune.available) out.push({ label: 'Device compliance', state: d.intune.compliancePct >= 90 ? 'ok' : 'attention', note: `${d.intune.compliancePct}% of ${d.intune.total} devices compliant` });
-  else out.push({ label: 'Device compliance', state: 'pending', note: 'Intune access not yet granted' });
+  // Device compliance (Intune only — the compliance-POLICY verdict, not patching)
+  if (d.intune.available) {
+    const pct = figN(m, 'dev_pct', d.intune.compliancePct), tot = figN(m, 'dev_total', d.intune.total);
+    out.push({ label: 'Device compliance', state: pct >= 90 ? 'ok' : 'attention', note: `${pct}% of ${tot} devices compliant` });
+  } else out.push({ label: 'Device compliance', state: 'pending', note: 'Intune access not yet granted' });
 
-  // Patch/endpoint (Intune-derived or manual)
-  if (d.intune.available) out.push({ label: 'Patching & endpoint', state: d.intune.compliancePct >= 90 ? 'ok' : 'attention', note: `${d.intune.compliancePct}% patch compliance` });
-  else if (m.patchStatus || (m.patchBullets || '').trim()) out.push({ label: 'Patching & endpoint', state: /attention|review|risk|improv|medium|low|poor|action/i.test(m.patchStatus || '') ? 'attention' : 'ok', note: m.patchStatus || 'monitored' });
-  else out.push({ label: 'Patching & endpoint', state: 'pending', note: 'not reported this period' });
+  // Patching & endpoint — its own marker off its own source (our agents), so it can read
+  // Attention while Intune compliance reads OK, and vice versa. They are different things.
+  if (d.rmm.available) {
+    const pct = figN(m, 'patch_pct', d.rmm.compliancePct);
+    const crit = figN(m, 'patch_critical', d.rmm.criticalOutstanding);
+    const forced = (m.patchStatus || '').trim();
+    const state: MarkerState = forced ? (/attention|review|risk|improv|poor|action/i.test(forced) ? 'attention' : 'ok')
+      : (crit === 0 && pct >= 85) ? 'ok' : 'attention';
+    out.push({ label: 'Patching & endpoint', state, note: `${pct}% patched · ${crit} critical outstanding` });
+  }
+  else if (m.patchStatus || (m.patchBullets || '').trim() || isOvr(m, 'patch_pct', 'patch_total')) out.push({ label: 'Patching & endpoint', state: /attention|review|risk|improv|medium|low|poor|action/i.test(m.patchStatus || '') ? 'attention' : 'ok', note: m.patchStatus || 'monitored' });
+  else out.push({ label: 'Patching & endpoint', state: 'pending', note: 'no agent reporting for this customer' });
 
   // Threat protection (manual figures/status)
   if ((m.firewallBlocked || '').trim() || (m.endpointThreats || '').trim() || (m.threatStatus || '').trim() || (m.threatBullets || '').trim())
@@ -360,8 +491,15 @@ function statusBoard(d: ItReportData, m: ItManual): string {
   return `<div class="table-wrap"><table class="tbl" style="width:100%;"><tbody>${rows}</tbody></table></div>`;
 }
 
+// Where a section's numbers came from — and, when a figure has been typed over on the
+// settings page, that it was. Said once, quietly, at the foot of the card: a customer
+// reading a percentage is entitled to know what measured it.
+function srcNote(text: string, overridden = false): string {
+  return `<p style="margin:10px 0 0;font-size:13px;color:#94a3b8;">${esc(text)}${overridden ? ' Figures reviewed and confirmed by your service delivery manager.' : ''}</p>`;
+}
+
 // ── Section renderers ────────────────────────────────────────────────────────────
-function sectionDevices(d: ItReportData): string {
+function sectionDevices(d: ItReportData, m: ItManual): string {
   // Device Management & Compliance is INTUNE ONLY. Backups (incl. Acronis M365 cloud
   // backup) belong in Backup & Recovery, never here — so when Intune isn't available this
   // is a straight "data pending" card, no backup fallback.
@@ -378,42 +516,100 @@ function sectionDevices(d: ItReportData): string {
   const table = s.devices.length ? `<div class="table-wrap"><table class="tbl">
       <thead><tr><th>Device</th><th>Assigned to</th><th>OS</th><th>Compliance</th></tr></thead>
       <tbody>${rows}</tbody></table></div>` : '';
+  // Every figure here can be typed over on the settings page; blank there = the live one.
+  const total = figN(m, 'dev_total', s.total);
+  const compliant = figN(m, 'dev_compliant', s.compliant);
+  const pct = figN(m, 'dev_pct', s.compliancePct);
+  const encrypted = figN(m, 'dev_encrypted', s.encrypted);
+  const review = Math.max(0, isOvr(m, 'dev_total', 'dev_compliant') ? total - compliant : s.nonCompliant + s.unknown);
   const inner = `${ticks([
-    `<strong>${s.total}</strong> device${s.total === 1 ? '' : 's'} enrolled in Microsoft Intune`,
-    `${s.compliant} of ${s.total} compliant (${s.compliancePct}%)`,
-    s.encrypted ? `${s.encrypted} device${s.encrypted === 1 ? '' : 's'} with disk encryption enabled` : '',
+    `<strong>${total}</strong> device${total === 1 ? '' : 's'} enrolled in Microsoft Intune`,
+    `${compliant} of ${total} compliant (${pct}%)`,
+    encrypted ? `${encrypted} device${encrypted === 1 ? '' : 's'} with disk encryption enabled` : '',
     `Security baselines and policies enforced`,
     `Centralised visibility and compliance reporting enabled`,
-  ])}${splitBar('Compliant', s.compliant, 'Needs review', s.nonCompliant + s.unknown)}<div style="height:12px;"></div>${table}`;
-  const status = s.compliancePct >= 90 ? 'Healthy' : 'Attention';
+  ])}${splitBar('Compliant', compliant, 'Needs review', review)}<div style="height:12px;"></div>${table}${srcNote('Microsoft Intune compliance policies. This is the policy verdict for each device — patching is reported separately below.', isOvr(m, 'dev_total', 'dev_compliant', 'dev_pct', 'dev_encrypted'))}`;
+  const status = pct >= 90 ? 'Healthy' : 'Attention';
   return card('Device Management & Compliance', inner, status);
 }
 
+// Patch Management & Endpoint Protection stands on its OWN measurement — the agents on the
+// endpoints — and is deliberately NOT Intune's device-compliance percentage. A device can
+// satisfy every Intune compliance policy and still be three months behind on updates; a
+// device can fail one policy for an unrelated reason and be perfectly patched. Reporting
+// one number as the other is how a customer is told the wrong thing in good faith.
 function sectionPatch(d: ItReportData, m: ItManual): string {
-  const bl = bulletsFromText(m.patchBullets);
-  const base = d.intune.available ? [
-    `Windows security patches ${d.intune.compliancePct}% compliant`,
-    `Automatic update policies enforced via Intune`,
-  ] : [];
-  const lines = [...base, ...bl];
-  if (!lines.length) return card('Patch Management & Endpoint Protection', pending('No patch data yet — add notes or connect Intune.'), 'Data pending');
-  return card('Patch Management & Endpoint Protection', ticks(lines), m.patchStatus || (d.intune.available && d.intune.compliancePct >= 90 ? 'Healthy' : 'Active monitoring'));
+  const bl = bulletsOrAuto(m.patchBullets, d.auto.patchBullets);
+  const overridden = isOvr(m, 'patch_total', 'patch_pct', 'patch_critical', 'patch_reboot', 'patch_av', 'patch_avpct');
+
+  if (!d.rmm.available) {
+    // No agents (or nothing scanned yet) — anything printed here has to have been typed.
+    const lines = [...(overridden ? patchTicks(m, null) : []), ...bl];
+    if (!lines.length) return card('Patch Management & Endpoint Protection', pending(`No patch data yet — ${d.rmm.note}.`, 'Deploy the LumenMSP Agent, or enter the figures in the report settings.'), 'Data pending');
+    return card('Patch Management & Endpoint Protection', ticks(lines) + srcNote('Entered in the report settings.', true), m.patchStatus || 'Healthy');
+  }
+
+  const r = d.rmm;
+  const total = figN(m, 'patch_total', r.total);
+  const pct = figN(m, 'patch_pct', r.compliancePct);
+  const crit = figN(m, 'patch_critical', r.criticalOutstanding);
+  const bar = isOvr(m, 'patch_pct', 'patch_total')
+    ? meterBar(pct, CHART_GOOD) + `<p style="margin:6px 0 0;font-size:13px;color:#475569;"><strong>${pct}%</strong> of ${total} device${total === 1 ? '' : 's'} up to date</p>`
+    : (total ? splitBar('Up to date', r.compliant, 'Updates outstanding', Math.max(0, r.total - r.compliant)) : '');
+  const scanned = r.lastScanAt ? `, last checked ${new Date(r.lastScanAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : '';
+  const inner = ticks([...patchTicks(m, r), ...bl]) + bar
+    + srcNote(`Measured on ${total} managed endpoint${total === 1 ? '' : 's'} by the LumenMSP Agent${scanned}. A device counts as patched when it has checked in within the last 7 days with no critical or important updates outstanding.`, overridden);
+  const status = m.patchStatus || ((crit === 0 && pct >= 85) ? 'Healthy' : 'Active monitoring');
+  return card('Patch Management & Endpoint Protection', inner, status);
+}
+
+/** The tick list for the patch card. `r` is null when there are no agents and every figure was typed. */
+function patchTicks(m: ItManual, r: RmmPatchSummary | null): string[] {
+  const total = figN(m, 'patch_total', r ? r.total : 0);
+  const pct = figN(m, 'patch_pct', r ? r.compliancePct : 0);
+  const crit = figN(m, 'patch_critical', r ? r.criticalOutstanding : 0);
+  const reboot = figN(m, 'patch_reboot', r ? r.rebootPending : 0);
+  const avPct = figN(m, 'patch_avpct', r && r.total ? Math.round((r.avProtected / r.total) * 100) : 0);
+  const avName = fig(m, 'patch_av', r ? r.avProducts.join(', ') : '');
+  const avCurrent = r ? r.avCurrentCount >= r.avProtected : true;
+  const lines: string[] = [];
+  lines.push(`Windows security patches <strong>${pct}%</strong> compliant${total ? ` across ${total} managed device${total === 1 ? '' : 's'}` : ''}`);
+  lines.push(crit
+    ? `${crit} critical update${crit === 1 ? '' : 's'} outstanding, scheduled into the next maintenance window`
+    : `No critical or important updates outstanding`);
+  if (reboot) lines.push(`${reboot} device${reboot === 1 ? '' : 's'} awaiting a restart to finish installing updates`);
+  if (r && r.notReporting && !isOvr(m, 'patch_total', 'patch_pct')) lines.push(`${r.notReporting} device${r.notReporting === 1 ? '' : 's'} have not checked in this week and are being followed up`);
+  lines.push(`Automatic update policies enforced and monitored`);
+  lines.push(avPct >= 100 && avCurrent
+    ? `Antivirus is updated and fully deployed${avName ? ` (${esc(avName)})` : ''}`
+    : `Endpoint protection deployed on ${avPct}% of devices${avName ? ` (${esc(avName)})` : ''}${avCurrent ? '' : ', definitions being refreshed on the remainder'}`);
+  return lines;
 }
 
 function sectionBackup(d: ItReportData, m: ItManual): string {
-  const bl = bulletsFromText(m.backupBullets);
+  const bl = bulletsOrAuto(m.backupBullets, d.auto.backupBullets);
   const b = d.backup;
+  const bkOvr = isOvr(m, 'bk_protected', 'bk_plans', 'bk_failed');
   if (!b) {
-    // No provider linked (or nothing synced yet) — the manual path, exactly as before.
-    if (!bl.length) return card('Backup & Recovery Readiness', pending('Backup details not yet recorded.', 'Link a backup provider or add the configuration in the report settings.'), 'Data pending');
-    return card('Backup & Recovery Readiness', ticks(bl), m.backupStatus || 'Healthy');
+    // No provider linked (or nothing synced yet) — bullets and/or typed figures carry it.
+    if (!bl.length && !bkOvr) return card('Backup & Recovery Readiness', pending('Backup details not yet recorded.', 'Link a backup provider or add the configuration in the report settings.'), 'Data pending');
+    const mGrid = bkOvr ? `<div class="stat-grid">
+      <div class="stat"><div class="stat-val">${esc(fig(m, 'bk_protected', '—'))}</div><div class="stat-lbl">Total protected data</div></div>
+      <div class="stat"><div class="stat-val">${esc(fig(m, 'bk_plans', '—'))}</div><div class="stat-lbl">Backup plans monitored</div></div>
+      <div class="stat ${figN(m, 'bk_failed', 0) ? '' : 'stat-good'}"><div class="stat-val">${esc(fig(m, 'bk_failed', '0'))}</div><div class="stat-lbl">Plans needing attention</div></div>
+    </div>` : '';
+    return card('Backup & Recovery Readiness', mGrid + ticks(bl) + srcNote('Entered in the report settings.', true), m.backupStatus || 'Healthy');
   }
+  const bkProtected = fig(m, 'bk_protected', fmtBytes(b.totalStorageBytes));
+  const bkPlans = figN(m, 'bk_plans', b.plans.length);
+  const bkFailed = figN(m, 'bk_failed', b.failedPlans);
+  const bkOk = isOvr(m, 'bk_plans', 'bk_failed') ? Math.max(0, bkPlans - bkFailed) : b.okPlans;
   const grid = `<div class="stat-grid">
-    <div class="stat"><div class="stat-val">${esc(fmtBytes(b.totalStorageBytes))}</div><div class="stat-lbl">Total protected data</div></div>
-    <div class="stat"><div class="stat-val">${b.plans.length}</div><div class="stat-lbl">Backup plans monitored</div></div>
-    <div class="stat ${b.failedPlans ? '' : 'stat-good'}"><div class="stat-val">${b.failedPlans}</div><div class="stat-lbl">Plans needing attention</div></div>
+    <div class="stat"><div class="stat-val">${esc(bkProtected)}</div><div class="stat-lbl">Total protected data</div></div>
+    <div class="stat"><div class="stat-val">${bkPlans}</div><div class="stat-lbl">Backup plans monitored</div></div>
+    <div class="stat ${bkFailed ? '' : 'stat-good'}"><div class="stat-val">${bkFailed}</div><div class="stat-lbl">Plans needing attention</div></div>
   </div>`;
-  const bar = (b.okPlans + b.failedPlans) ? splitBar('Healthy plans', b.okPlans, 'Failing', b.failedPlans) : '';
+  const bar = (bkOk + bkFailed) ? splitBar('Healthy plans', bkOk, 'Failing', bkFailed) : '';
   const planRows = b.plans.slice(0, 20).map((pl) => {
     const cls = classifyPlanStatus(pl.status);
     const badge = cls === 'ok' ? '<span class="badge badge-answered">OK</span>'
@@ -426,9 +622,9 @@ function sectionBackup(d: ItReportData, m: ItManual): string {
   const table = b.plans.length
     ? `<div class="table-wrap" style="margin-top:12px;"><table class="tbl"><thead><tr><th>Protected item</th><th>Backup plan</th><th>Last run</th><th>Status</th></tr></thead><tbody>${planRows}</tbody></table></div>`
     : '';
-  const src = `<p style="margin:10px 0 0;font-size:13px;color:#94a3b8;">Monitored via ${esc(b.providers.join(', '))}${b.syncedAt ? `, checked ${new Date(b.syncedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}.</p>`;
+  const src = srcNote(`Monitored via ${b.providers.join(', ')}${b.syncedAt ? `, checked ${new Date(b.syncedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}.`, bkOvr);
   const extras = bl.length ? `<div style="margin-top:10px;">${ticks(bl)}</div>` : '';
-  const status = m.backupStatus || (b.failedPlans ? 'Attention' : 'Healthy');
+  const status = m.backupStatus || (bkFailed ? 'Attention' : 'Healthy');
   return card('Backup & Recovery Readiness', grid + bar + table + extras + src, status);
 }
 
@@ -556,14 +752,23 @@ function dmarcMonitorBlock(d: ItReportData): string {
   return dmarcBlock;
 }
 
+// Endpoint threats are now MEASURED — every Bitdefender detection the GravityZone sync
+// recorded for this customer in this period, with our own tools (MeshCentral filed as a
+// PUP) excluded, because those are an exclusion to add and not an incident to report.
+// Inbound firewall blocks have no source: nothing ingests a counter from the UniFi
+// gateways, so that figure is typed or it is absent — it is never guessed.
 function sectionThreat(d: ItReportData, m: ItManual): string {
   const lines: string[] = [];
-  if (m.firewallBlocked) lines.push(`${esc(m.firewallBlocked)} inbound firewall threats blocked`);
-  if (m.endpointThreats) lines.push(`${esc(m.endpointThreats)} endpoint threat(s) detected and removed`);
-  lines.push(...bulletsFromText(m.threatBullets));
+  const fw = fig(m, 'threat_firewall', m.firewallBlocked || '');
+  const ep = fig(m, 'threat_endpoint', d.rmm.available || d.auto.endpointThreats ? String(d.auto.endpointThreats) : (m.endpointThreats || ''));
+  if (String(fw).trim()) lines.push(`${esc(fw)} inbound firewall threats blocked`);
+  if (String(ep).trim() && Number(ep) > 0) lines.push(`${esc(ep)} endpoint threat${Number(ep) === 1 ? '' : 's'} detected and removed`);
+  lines.push(...bulletsOrAuto(m.threatBullets, d.auto.threatBullets));
   if (d.vulnerability.available && d.vulnerability.exposureScore != null) lines.push(`Defender exposure score: ${d.vulnerability.exposureScore}`);
-  if (!lines.length) return card('Security Threat Protection', pending('No threat metrics recorded for this period.', 'Add firewall/endpoint figures in the report settings.'), 'Data pending');
-  return card('Security Threat Protection', ticks(lines), m.threatStatus || 'Healthy');
+  if (!lines.length) return card('Security Threat Protection', pending('No threat metrics recorded for this period.', 'Deploy endpoint protection, or add the figures in the report settings.'), 'Data pending');
+  const measured = d.auto.endpointThreats > 0 || d.rmm.available;
+  const note = measured ? srcNote('Endpoint detections are counted from the Bitdefender GravityZone sync for this period. Detections of our own remote-support tooling are excluded.', isOvr(m, 'threat_endpoint', 'threat_firewall')) : '';
+  return card('Security Threat Protection', ticks(lines) + note, m.threatStatus || (d.auto.endpointThreats && !d.auto.casesRaised ? 'Active monitoring' : 'Healthy'));
 }
 
 function sectionCyber(d: ItReportData): string {
@@ -686,7 +891,7 @@ function reportCoverEmail(customerName: string, periodLabel: string, execSummary
 
 export async function generateItReport(opts: GenerateOpts): Promise<{ html: string; coverHtml: string; subject: string; data: ItReportData }> {
   const manual = opts.manual || {};
-  const data = await collectItReportData(opts.customerId, opts.tenant, opts.domain, opts.from, opts.to, bulletsFromText(manual.excludedTickets));
+  const data = await collectItReportData(opts.customerId, opts.tenant, opts.domain, opts.from, opts.to, bulletsFromText(manual.excludedTickets), opts.periodLabel);
 
   // Claude writes the narrative from the SDM notes + metrics, consolidating & polishing every note
   // (spelling, grammar, IT terminology) into the Executive Summary, Commentary and Overall Status.
@@ -721,7 +926,7 @@ export async function generateItReport(opts: GenerateOpts): Promise<{ html: stri
   const body = [
     card('Executive Summary', `<p style="margin:0;font-size:16px;line-height:1.6;">${esc(execSummary).replace(/\n/g, '<br>')}</p>`),
     commentaryCard,
-    sectionDevices(data),
+    sectionDevices(data, manual),
     sectionPatch(data, manual),
     sectionBackup(data, manual),
     sectionDns(data, manual),
