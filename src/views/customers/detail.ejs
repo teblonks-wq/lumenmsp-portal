@@ -1792,6 +1792,21 @@
         <form method="post" action="/customers/<%= customer.id %>/sync-directory" style="margin:0;"><button class="btn btn-primary" type="submit">2. Sync directory now</button></form>
       </div>
       <p class="muted" style="font-size:12px;margin:8px 0 0;">First time only: click <strong>Grant Microsoft consent</strong>, sign in as a global admin of this client and accept. The page it lands on afterwards may show an error — that's fine, the consent still works. Then Sync imports active users and archives ones removed/disabled.</p>
+      <form method="post" action="/customers/<%= customer.id %>/dir-sync-auto" style="margin:10px 0 0;padding:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;">
+        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+        <label style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;">
+          <input type="checkbox" name="dir_sync_enabled" <%= customer.dir_sync_enabled ? 'checked' : '' %>>
+          Keep it in step automatically — twice a day
+        </label>
+        <p class="muted" style="font-size:12px;margin:6px 0 8px;">
+          Runs at 07:15 and 13:15. Only worth switching on once you have run a sync by hand and are
+          happy with what it did — it archives contacts who have left the tenant, so it needs the
+          <em>right</em> tenant ID.
+          <% if (customer.dir_synced_at) { %><br>Last automatic run: <strong><%= new Date(customer.dir_synced_at).toLocaleString('en-GB') %></strong>.<% } %>
+          <% if (customer.dir_sync_error) { %><br><span style="color:var(--danger-fg,#b91c1c);">Last run failed: <%= customer.dir_sync_error %></span><% } %>
+        </p>
+        <button class="btn" type="submit">Save</button>
+      </form>
     <% } else { %>
       <p class="muted" style="font-size:12px;margin:0;">Set the tenant ID to enable directory sync.</p>
     <% } %>

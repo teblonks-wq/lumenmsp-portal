@@ -13,6 +13,8 @@ import {
   DIARY_KINDS, DIARY_COLOURS, dayKeyOf, addDays, mondayOf, diaryPeople, diaryWhenText, londonHM,
 } from '../lib/diary';
 import { pushEntry, removeEntry } from '../lib/diary-graph';
+import { getGroup, setSetting } from '../lib/settings';
+import { buildDailyBrief, postDailyBrief } from '../lib/daily-brief';
 
 const router = Router();
 
@@ -30,13 +32,83 @@ const iInt = (v: any, d: number, lo: number, hi: number): number => {
 // ── Staff: what can be booked ───────────────────────────────────────────────────
 
 router.get('/diary/services', requireAuth, requireAdmin, async (req: Request, res: Response) => {
-  const [services, people] = await Promise.all([listServices(false), diaryPeople()]);
+  const [services, people, sync, integrations] = await Promise.all([
+    listServices(false), diaryPeople(), getGroup('diary'), getGroup('integrations'),
+  ]);
   res.render('booking/services', {
     user: req.session.user!, services, people,
     appUrl: String(process.env.APP_URL || 'https://portal.lumenmsp.co.uk').replace(/\/+$/, ''),
     KINDS: DIARY_KINDS, COLOURS: DIARY_COLOURS,
+    sync,
+    briefWebhookSet: !!(integrations.teams_channel_webhook || integrations.teams_webhook),
+    briefWebhookOwn: !!integrations.teams_channel_webhook,
     notice: req.query.msg || null, error: req.query.err || null,
   });
+});
+
+/**
+ * The 06:00 brief: its settings, a preview, and a send-now.
+ *
+ * Preview matters more than it looks. A scheduled post nobody can see until 06:00 the
+ * next morning is a thing you debug one day at a time; this renders exactly what would
+ * be sent, from today's real data, in the browser.
+ */
+router.post('/diary/brief/settings', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const t = String(req.body.brief_time || '').trim();
+  if (t && !/^\d{1,2}:\d{2}$/.test(t)) {
+    res.redirect('/diary/services?err=' + encodeURIComponent('Use a 24-hour time like 06:00.')); return;
+  }
+  const hook = String(req.body.teams_channel_webhook || '').trim();
+  if (hook && !/^https:\/\//i.test(hook)) {
+    res.redirect('/diary/services?err=' + encodeURIComponent('The channel webhook must be an https URL.')); return;
+  }
+  await setSetting('diary', 'brief_time', t || '06:00');
+  await setSetting('diary', 'brief_weekends', req.body.brief_weekends ? 'on' : '');
+  await setSetting('diary', 'brief_quiet', req.body.brief_quiet ? '' : 'off');
+  await setSetting('integrations', 'teams_channel_webhook', hook || null);
+  res.redirect('/diary/services?msg=' + encodeURIComponent('Daily brief settings saved.'));
+});
+
+router.get('/diary/brief/preview', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const dk = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.day || '')) ? String(req.query.day) : undefined;
+  const brief = await buildDailyBrief(dk);
+  res.type('html').send(
+    '<!doctype html><meta charset="utf-8"><title>Daily brief preview</title>' +
+    '<body style="font:14px/1.6 system-ui,sans-serif;max-width:640px;margin:32px auto;padding:0 16px;">' +
+    '<p style="color:#64748b;font-size:12px;">This is exactly what would be posted. Nothing has been sent.</p>' +
+    '<div style="border:1px solid #e2e8f0;border-radius:10px;padding:14px;">' + brief.html + '</div>' +
+    '<h3 style="font-size:13px;color:#64748b;margin-top:24px;">Plain-text version (what a relay shows if it ignores HTML)</h3>' +
+    '<pre style="white-space:pre-wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;font-size:12.5px;">' +
+    brief.text.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>' +
+    '<p><a href="/diary/services">← Back to bookable services</a></p></body>');
+});
+
+router.post('/diary/brief/send', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const brief = await buildDailyBrief();
+  const r = await postDailyBrief(brief);
+  res.redirect('/diary/services?' + (r.ok
+    ? 'msg=' + encodeURIComponent('Today\u2019s brief posted to Teams.')
+    : 'err=' + encodeURIComponent('Not posted: ' + (r.error || r.skipped))));
+});
+
+/**
+ * Diary sync settings. Two values, both deliberately settings rather than constants:
+ * the shared calendar Terry and Andrew both watch, and which kinds of work mirror into
+ * it. Changing either is a form post, not a deploy - and a deploy logs everyone out.
+ */
+router.post('/diary/settings', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const addr = String(req.body.shared_mailbox || '').trim().toLowerCase();
+  if (addr && !addr.includes('@')) {
+    res.redirect('/diary/services?err=' + encodeURIComponent('That does not look like a mailbox address.'));
+    return;
+  }
+  const kinds = (Array.isArray(req.body.shared_kinds) ? req.body.shared_kinds : req.body.shared_kinds != null ? [req.body.shared_kinds] : [])
+    .map((k: any) => String(k).trim().toLowerCase())
+    .filter((k: string) => Object.prototype.hasOwnProperty.call(DIARY_KINDS, k));
+  await setSetting('diary', 'shared_mailbox', addr || null);
+  await setSetting('diary', 'shared_kinds', kinds.join(','));
+  res.redirect('/diary/services?msg=' + encodeURIComponent(
+    addr ? `Remote work will mirror into ${addr}.` : 'Shared-calendar mirroring is off.'));
 });
 
 function serviceFields(b: any): any[] {

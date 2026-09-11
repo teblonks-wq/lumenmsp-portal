@@ -424,6 +424,24 @@ router.post('/customers/:id/sync-directory', requireAuth, async (req: Request, r
   }
 });
 
+// Turn automatic twice-daily directory sync on or off for this customer.
+// Opt-in per customer on purpose - the sync archives contacts who have left the tenant,
+// so pointing it at the wrong tenant would archive the lot. See lib/dirsync.ts.
+router.post('/customers/:id/dir-sync-auto', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const on = !!req.body.dir_sync_enabled;
+  const c = (await pool.query('SELECT entra_tenant_id FROM customers WHERE id=$1', [id])).rows[0];
+  if (on && !(c && c.entra_tenant_id)) {
+    res.redirect('/customers/' + id + '?err=' + encodeURIComponent('Set the Entra tenant ID before switching automatic sync on.') + '#contacts');
+    return;
+  }
+  await pool.query('UPDATE customers SET dir_sync_enabled=$2, dir_sync_error=NULL WHERE id=$1', [id, on]);
+  await logActivity(req.session.user!.id, on ? 'dirsync_on' : 'dirsync_off', 'customers', id,
+    on ? 'Automatic directory sync ON (twice daily)' : 'Automatic directory sync OFF');
+  res.redirect('/customers/' + id + '?msg=' + encodeURIComponent(
+    on ? 'Directory will sync automatically, twice a day.' : 'Automatic directory sync is off.') + '#contacts');
+});
+
 // ── Detail (Customer 360) ─────────────────────────────────────────────────────
 router.get('/customers/:id', requireAuth, async (req: Request, res: Response) => {
   const user = req.session.user!;

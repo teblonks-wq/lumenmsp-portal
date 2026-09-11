@@ -1,5 +1,6 @@
 import { pool } from '../db/pool';
 import { getGraphToken, graphConfigured } from './graph';
+import { getSetting } from './settings';
 
 // ── Diary ↔ Microsoft 365 — push + busy-check, PORTAL IS MASTER ─────────────────
 // Two jobs only (no two-way sync, ever — see the Diary brief):
@@ -18,6 +19,40 @@ import { getGraphToken, graphConfigured } from './graph';
 
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 const CATEGORY = 'LumenMSP Diary';
+
+// ── The shared remote-work calendar ─────────────────────────────────────────────
+// SP@lumenmsp.co.uk is a mailbox Terry and Andrew both have open. It is where remote
+// work is meant to be visible without opening the Portal. It is a MIRROR, not a second
+// master: the entry is still pushed to the named person's own calendar (that is what
+// makes their phone right and what free/busy reads), and the shared copy sits beside it.
+//
+// Anything a HUMAN puts in that mailbox directly — a block, a shared commitment — is
+// read back as busy for EVERYONE, because a block in the shared diary means nobody is
+// taking remote work then. Our own mirrors never double-block: freeBusy skips any item
+// whose subject carries the CATEGORY tag, and every pushed event carries it.
+//
+// Address and kinds are settings, not constants, so neither needs a deploy to change:
+//   Admin → Settings → Diary   group 'diary', keys 'shared_mailbox' / 'shared_kinds'.
+const SHARED_KEY = 'shared';                 // reserved key in diary_entries.graph_sync
+const SHARED_KINDS_DEFAULT = ['remote'];
+
+/** The shared calendar's address, or null when Terry has not named one. */
+export async function sharedMailbox(): Promise<string | null> {
+  try {
+    const v = ((await getSetting('diary', 'shared_mailbox')) || '').trim().toLowerCase();
+    return v.includes('@') ? v : null;
+  } catch { return null; }
+}
+
+/** Which DIARY_KINDS mirror into the shared calendar. */
+export async function sharedKinds(): Promise<string[]> {
+  try {
+    const raw = ((await getSetting('diary', 'shared_kinds')) || '').trim();
+    if (!raw) return SHARED_KINDS_DEFAULT;
+    const list = raw.split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+    return list.length ? list : SHARED_KINDS_DEFAULT;
+  } catch { return SHARED_KINDS_DEFAULT; }
+}
 
 function localIso(epochSecs: number): string {
   // 'YYYY-MM-DDTHH:mm:ss' in Europe/London — what Graph wants next to a timeZone.
@@ -41,15 +76,31 @@ async function greq(method: string, path: string, body?: any): Promise<any> {
   return data;
 }
 
-export interface BusyBlock { email: string; s: number; e: number; status: string }
-export interface FreeBusyResult { busy: BusyBlock[]; warning: string | null }
+export interface BusyBlock { email: string; s: number; e: number; status: string; shared?: boolean }
+export interface FreeBusyResult { busy: BusyBlock[]; warning: string | null; sharedEmail: string | null }
 
-/** Outlook busy blocks for the given mailboxes over [startEpoch, endEpoch). */
+/**
+ * Outlook busy blocks for the given mailboxes over [startEpoch, endEpoch).
+ *
+ * The shared remote-work calendar is ALWAYS added to the list when one is configured,
+ * even if the caller did not ask for it, and its blocks come back flagged `shared:true`.
+ * A caller that maps blocks onto a specific person must handle those separately — they
+ * belong to the company, not to one mailbox. Anything the Portal itself pushed is
+ * skipped, so a mirrored booking never blocks the person it was booked for.
+ */
 export async function freeBusy(emails: string[], startEpoch: number, endEpoch: number): Promise<FreeBusyResult> {
-  if (!graphConfigured() || !emails.length) return { busy: [], warning: null };
+  const shareTo = await sharedMailbox();
+  if (!graphConfigured() || (!emails.length && !shareTo)) return { busy: [], warning: null, sharedEmail: shareTo };
   const busy: BusyBlock[] = [];
+  const seen = new Set<string>();
+  const mailboxes: string[] = [];
+  for (const e of [...emails, ...(shareTo ? [shareTo] : [])]) {
+    const k = String(e || '').trim().toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.add(k); mailboxes.push(e);
+  }
   try {
-    for (const email of emails) {
+    for (const email of mailboxes) {
       // Ask in UTC on purpose: getSchedule echoes times in the REQUESTED zone with
       // no offset, so requesting UTC is the only way `Date.parse(x + 'Z')` is exact
       // across the BST boundary (portal-timestamp-timezone-trap, Graph edition).
@@ -66,15 +117,16 @@ export async function freeBusy(emails: string[], startEpoch: number, endEpoch: n
         if (String(it.subject || '').includes(CATEGORY)) continue; // our own pushed events are not "Outlook"
         const s = Math.floor(Date.parse(it.start?.dateTime + 'Z') / 1000);
         const e = Math.floor(Date.parse(it.end?.dateTime + 'Z') / 1000);
-        if (Number.isFinite(s) && Number.isFinite(e)) busy.push({ email, s, e, status: st });
+        const isShared = !!shareTo && email.trim().toLowerCase() === shareTo;
+        if (Number.isFinite(s) && Number.isFinite(e)) busy.push({ email, s, e, status: st, shared: isShared });
       }
     }
-    return { busy, warning: null };
+    return { busy, warning: null, sharedEmail: shareTo };
   } catch (e: any) {
     const why = e?.status === 403
       ? 'Outlook could not be checked — the app registration still needs Calendars.ReadWrite with admin consent.'
       : `Outlook could not be checked (${e.message}).`;
-    return { busy: [], warning: why };
+    return { busy: [], warning: why, sharedEmail: shareTo };
   }
 }
 
@@ -143,9 +195,39 @@ export async function pushEntry(entryId: number): Promise<void> {
         }
       }
     }
+    // ── Mirror into the shared remote-work calendar ─────────────────────────────
+    // One copy for the company, beside the personal copies, so Terry and Andrew both
+    // see remote work without opening the Portal. It never asks for its own Teams
+    // meeting: it carries the join link the organiser's copy produced, because two
+    // requests would make two different meetings for one appointment.
+    const shareTo = await sharedMailbox();
+    const shareThis = !!shareTo && (await sharedKinds()).includes(String(e.kind)) && e.status !== 'cancelled';
+    if (shareThis) {
+      try {
+        const existing = sync[SHARED_KEY];
+        const sharedPayload = joinUrl
+          ? { ...payload, body: { contentType: 'text', content: (payload.body.content || '') + '\n\nJoin: ' + joinUrl } }
+          : payload;
+        if (existing) {
+          await greq('PATCH', `/users/${encodeURIComponent(shareTo!)}/events/${encodeURIComponent(existing)}`, sharedPayload);
+        } else {
+          const created = await greq('POST', `/users/${encodeURIComponent(shareTo!)}/events`, sharedPayload);
+          if (created?.id) sync[SHARED_KEY] = String(created.id);
+        }
+      } catch (err: any) {
+        if (err?.status === 404 && sync[SHARED_KEY]) delete sync[SHARED_KEY];   // deleted there — recreate next push
+        else console.error(`[diary] Graph push to the shared calendar (${shareTo}) failed:`, err.message);
+      }
+    } else if (sync[SHARED_KEY] && shareTo) {
+      // The kind changed, or sharing was turned off: take the mirror back out.
+      await greq('DELETE', `/users/${encodeURIComponent(shareTo)}/events/${encodeURIComponent(sync[SHARED_KEY])}`).catch(() => {});
+      delete sync[SHARED_KEY];
+    }
+
     // People removed from the entry lose their calendar copy.
     const keep = new Set(people.map((p: any) => String(p.id)));
     for (const uid of Object.keys(sync)) {
+      if (uid === SHARED_KEY) continue;   // not a person — handled above
       if (keep.has(uid)) continue;
       const em = (await pool.query(`SELECT email FROM users WHERE id=$1`, [Number(uid)])).rows[0];
       if (em) await greq('DELETE', `/users/${encodeURIComponent(em.email)}/events/${encodeURIComponent(sync[uid])}`).catch(() => {});
@@ -164,9 +246,13 @@ export async function removeEntry(entryId: number): Promise<void> {
   try {
     const e = (await pool.query(`SELECT graph_sync FROM diary_entries WHERE id=$1`, [entryId])).rows[0];
     const sync: Record<string, string> = (e?.graph_sync && typeof e.graph_sync === 'object') ? e.graph_sync : {};
+    const shareTo = await sharedMailbox();
     for (const [uid, evId] of Object.entries(sync)) {
-      const em = (await pool.query(`SELECT email FROM users WHERE id=$1`, [Number(uid)])).rows[0];
-      if (em) await greq('DELETE', `/users/${encodeURIComponent(em.email)}/events/${encodeURIComponent(evId)}`).catch(() => {});
+      // SHARED_KEY is the company mirror, not a user id — look it up in settings, not users.
+      const addr = uid === SHARED_KEY
+        ? shareTo
+        : ((await pool.query(`SELECT email FROM users WHERE id=$1`, [Number(uid)])).rows[0] || {}).email || null;
+      if (addr) await greq('DELETE', `/users/${encodeURIComponent(addr)}/events/${encodeURIComponent(evId)}`).catch(() => {});
     }
     await pool.query(`UPDATE diary_entries SET graph_sync='{}'::jsonb WHERE id=$1`, [entryId]);
   } catch (err: any) {

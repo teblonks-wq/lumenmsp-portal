@@ -66,6 +66,13 @@ model Customer {
   leadSource           String?   @map("lead_source")
   leadStatus           String?   @map("lead_status") // sales pipeline: new | open | proposed | won | lost
   entraTenantId        String?   @map("entra_tenant_id") // customer's Microsoft 365 / Entra tenant for directory sync
+  // Automatic directory sync. OFF by default and per customer ON PURPOSE: the sync
+  // archives contacts that have left the tenant, so switching it on for a customer whose
+  // entra_tenant_id points at the wrong tenant would quietly archive their whole contact
+  // list. It is a decision per customer, made once, not an estate-wide default.
+  dirSyncEnabled       Boolean   @default(false) @map("dir_sync_enabled")
+  dirSyncedAt          DateTime? @map("dir_synced_at")   // last automatic run, for the page and the skip rule
+  dirSyncError         String?   @map("dir_sync_error")  // why the last automatic run failed, null when it worked
   lastReviewedAt       DateTime? @map("last_reviewed_at") // last Customer A-Z review
   ateraCustomerId      String?   @map("atera_customer_id")
   agentSiteKey         String?   @unique @map("agent_site_key") // LumenMSP Agent install key (MSI SITEKEY=...) — null disables new enrollments
@@ -3519,7 +3526,10 @@ model DiaryEntry {
   agenda           String?
 
   createdBy  Int?      @map("created_by")
-  graphSync  Json?     @map("graph_sync") // { "<userId>": "<graph event id>", ... } — pushed M365 events
+  graphSync  Json?     @map("graph_sync") // { "<userId>": "<graph event id>", ... } — pushed M365 events.
+  // The key "shared" is RESERVED: it is the event id of the copy mirrored into the shared
+  // remote-work calendar (lib/diary-graph.ts), not a user id. The sweep that removes
+  // calendar copies for people taken off an entry skips it.
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @default(now()) @map("updated_at")
 

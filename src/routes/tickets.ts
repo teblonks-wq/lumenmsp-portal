@@ -20,6 +20,7 @@ import { aiTicketCategoryEnabled } from '../lib/ai-compose';
 import { ensureReplyTemplates, listReplyTemplates, saveReplyTemplate, deleteReplyTemplate } from '../lib/reply-templates';
 import { syncBookingsTemplates } from '../lib/bookings';
 import { mintBookToken } from '../lib/book-token';
+import { listServices } from '../lib/booking';
 import { config } from '../config';
 import { maybeInviteCaseFeedback } from '../lib/questionnaires';
 import { pollBlockHtml, pollBlockText } from '../lib/questionnaire-email';
@@ -91,6 +92,30 @@ function autoReturnAt(status: string, manualPostpone: Date | null): Date | null 
 }
 
 // Resolve the customer-facing recipient for a ticket (contact first, else customer).
+/**
+ * The subject line an outgoing side conversation carries.
+ *
+ * Until now it was the case's own subject, verbatim: "LITS-102570: printer keeps going
+ * offline". That is the CUSTOMER'S words, and a side convo goes to a third party -
+ * Openreach, a carrier, a supplier - who should be reading ours. So the composer lets
+ * it be typed.
+ *
+ * The one thing it may not lose is the case token. Inbound mail is matched back to a
+ * case by /LITS-\d+/ against the SUBJECT and nothing else (lib/mailsync.ts): strip the
+ * token and the supplier's reply lands in the unmatched inbox with the thread broken,
+ * which is precisely the failure this feature must not introduce. So whatever is typed,
+ * the token goes back on the front unless it is already somewhere in the line.
+ */
+export function sideConvoSubject(typed: any, ticketNumber: string, caseSubject: string): string {
+  const clean = String(typed == null ? '' : typed).replace(/[\r\n]+/g, ' ').trim().slice(0, 200);
+  const num = String(ticketNumber || '').trim();
+  const fallback = num ? (num + (caseSubject ? ': ' + caseSubject : '')) : (caseSubject || 'Lumen IT');
+  const base = clean || fallback;
+  if (!num) return base;
+  const tokenRe = new RegExp('\\b' + num.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+  return tokenRe.test(base) ? base : num + ': ' + base;
+}
+
 async function ticketRecipient(ticketId: number): Promise<{ email: string; name: string; ticketNumber: string; subject: string } | null> {
   const r = await pool.query(
     `SELECT t.ticket_number, t.subject, co.email AS c_email, co.full_name AS c_name, cu.email AS cust_email, cu.name AS cust_name
@@ -542,6 +567,33 @@ async function closeReviewSession(req: Request, outcome: string): Promise<string
 
 /// Everything the composer partial needs — the same lookups the case screen does,
 /// kept separate so the hot detail handler stays untouched.
+/**
+ * The booking links the composer can insert, for one case.
+ *
+ * Every link carries the REQUESTER'S token, so the person who clicks it finds their own
+ * name and address already filled in rather than being asked to type them. The token
+ * says who we wrote to and nothing else - see lib/book-token.ts - so a forwarded link
+ * is simply the ordinary public page, which is why it is safe to put one in an email
+ * that gets forwarded around an office.
+ *
+ * Only services ticked "offer it on the public booking page" appear. A link to a service
+ * that is not public would 404 in front of a customer.
+ */
+async function bookingLinksFor(contactId: number | null | undefined) {
+  const base = String(config.APP_URL || 'https://portal.lumenmsp.co.uk').replace(/\/+$/, '');
+  const tok = mintBookToken(contactId);
+  const q = tok ? '?t=' + tok : '';
+  try {
+    const svcs = (await listServices(true)).filter((s: any) => s.isPublic && s.slug);
+    return {
+      bookAllUrl: `${base}/book${q}`,
+      bookServices: svcs.map((s: any) => ({
+        name: s.name, mins: s.durationMins, url: `${base}/book/${encodeURIComponent(s.slug)}${q}`,
+      })),
+    };
+  } catch { return { bookAllUrl: `${base}/book${q}`, bookServices: [] as any[] }; }
+}
+
 async function composerContext(ticket: any) {
   const cid = ticket.customer_id;
   const contacts = cid ? (await pool.query("SELECT full_name AS name, email FROM customer_contacts WHERE customer_id=$1 AND email IS NOT NULL AND email<>'' ORDER BY is_primary DESC, full_name", [cid]).catch(() => ({ rows: [] }))).rows : [];
@@ -558,7 +610,8 @@ async function composerContext(ticket: any) {
   const replyTemplates = await listReplyTemplates().catch(() => [] as any[]);
   const thirdParties = (await listThirdParties(false).catch(() => [])).map(tp => ({
     id: tp.id, name: tp.name, chaseBy: chaseByDefault(tp.typicalDays) }));
-  return { contacts, customerDomain, lastChannel, waNum, waWindowOpen, teamsSendOk, agentSendOk, aiCatOn, replyTemplates, thirdParties };
+  const booking = await bookingLinksFor(ticket.contact_id);
+  return { contacts, customerDomain, lastChannel, waNum, waWindowOpen, teamsSendOk, agentSendOk, aiCatOn, replyTemplates, thirdParties, ...booking };
 }
 
 router.get('/tickets/review', requireAuth, async (req: Request, res: Response) => {
@@ -842,7 +895,8 @@ router.get('/tickets/:id', requireAuth, async (req: Request, res: Response) => {
   const thirdParties = (await listThirdParties(false).catch(() => [])).map(tp => ({
     id: tp.id, name: tp.name, chaseBy: chaseByDefault(tp.typicalDays) }));
 
-  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, requesterAssets, subjectInvoice, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, agentSendOk, teamsChatId, aiCatOn, replyTemplates, thirdParties, ourDomains, DEPARTMENTS, STATUSES, CATEGORIES, error: req.query.err || null, notice: req.query.msg || null });
+  const booking = await bookingLinksFor(r.rows[0].contact_id);
+  res.render('tickets/detail', { user, ticket: r.rows[0], timeline, caseLog, requesterAssets, subjectInvoice, quotes: quotesRes.rows, users: users.rows, contacts, customerDomain, requesterEmail, requesterName, lastChannel, waNum, waName, waWindowOpen, teamsSendOk, agentSendOk, teamsChatId, aiCatOn, replyTemplates, thirdParties, ourDomains, DEPARTMENTS, STATUSES, CATEGORIES, ...booking, error: req.query.err || null, notice: req.query.msg || null });
 });
 
 /**
@@ -1164,9 +1218,18 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
         res.redirect(back + '?err=' + encodeURIComponent('This case is not linked to a LumenMSP Agent device, so an Agent reply cannot be delivered. Reply by another channel.')); return;
       }
     }
+    // The side-convo subject is settled BEFORE the note is written, so the note on the
+    // case shows the subject the third party actually saw - otherwise the thread reads as
+    // if we sent something nobody can identify.
+    let sideSubject = '';
+    if (noteType === 'side_convo' && channel === 'email') {
+      const tk = (await pool.query('SELECT ticket_number, subject FROM inbox_tickets WHERE id=$1', [id])).rows[0];
+      sideSubject = sideConvoSubject(req.body.side_subject, String(tk?.ticket_number || ''), String(tk?.subject || ''));
+    }
     // Side convo: stamp who it went to at the top so the (private) note shows the recipient.
     const storeBody = noteType === 'side_convo'
-      ? `<div style="font-size:12px;color:#7c3aed;margin-bottom:6px;">Side conversation → ${escHtml(toAddr)}${cc ? ' · cc ' + escHtml(cc) : ''}</div>` + body
+      ? `<div style="font-size:12px;color:#7c3aed;margin-bottom:6px;">Side conversation → ${escHtml(toAddr)}${cc ? ' · cc ' + escHtml(cc) : ''}`
+        + (sideSubject ? `<br>Subject: ${escHtml(sideSubject)}` : '') + `</div>` + body
       : body;
     // Record who the email went to so To/CC show on the thread (only for the emailing modes).
     const isEmail = noteType === 'public_reply' || noteType === 'side_convo';
@@ -1195,8 +1258,7 @@ router.post('/tickets/:id/note', requireAuth, attachmentUpload.array('attachment
       await applyStatus(setStatus);
       if (channel === 'email') {
         try {
-          const rcpt = await ticketRecipient(id);
-          const subj = rcpt ? (rcpt.ticketNumber + (rcpt.subject ? ': ' + rcpt.subject : '')) : 'Lumen IT';
+          const subj = sideSubject || 'Lumen IT';
           const bookTok = mintBookToken((await pool.query('SELECT contact_id FROM inbox_tickets WHERE id=$1', [id])).rows[0]?.contact_id);
           if (toAddr) await sendMail({ to: toAddr, cc, bcc, subject: subj, html: customerEmailHtml(body), signatureName: user.displayName, attachments: graph, bookToken: bookTok });
         } catch (e) { console.error('Side convo email failed:', e); }

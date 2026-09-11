@@ -202,7 +202,9 @@
         lastChannel: (typeof lastChannel !== 'undefined' ? lastChannel : 'email'),
         waWindowOpen: (typeof waWindowOpen !== 'undefined' && waWindowOpen),
         waNum: (typeof waNum !== 'undefined' ? waNum : ''),
-        aiCatOn: (typeof aiCatOn !== 'undefined' && aiCatOn)
+        aiCatOn: (typeof aiCatOn !== 'undefined' && aiCatOn),
+        bookServices: (typeof bookServices !== 'undefined' ? bookServices : []),
+        bookAllUrl: (typeof bookAllUrl !== 'undefined' ? bookAllUrl : '')
       }) %>
 
       <% if (timeline.length===0) { %><div class="empty-state">No messages or notes yet.</div><% } %>

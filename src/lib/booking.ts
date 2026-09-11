@@ -197,6 +197,14 @@ export async function availableSlots(
   outlookWarning = fb.warning;
   for (const b of fb.busy) {
     if (b.status === 'tentative') continue;          // tentative does not block, same as the staff rule
+    if (b.shared) {
+      // A block somebody put in the shared remote-work diary by hand. It belongs to the
+      // company, not to one mailbox, so while it stands nobody is offered that slot.
+      // Mirrors the Portal wrote are not in this list - freeBusy drops anything tagged
+      // [LumenMSP Diary] - so a booking never blocks the person it was booked for.
+      for (const p of eligible) busy.get(p.id)!.push({ start: b.s, end: b.e });
+      continue;
+    }
     const person = eligible.find(p => p.email.toLowerCase() === String(b.email).toLowerCase());
     if (person) busy.get(person.id)!.push({ start: b.s, end: b.e });
   }

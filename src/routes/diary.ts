@@ -92,7 +92,11 @@ async function checkAndSave(req: Request, res: Response, id: number | null) {
     for (const bzy of fb.busy) {
       if (bzy.s < inp.endEpoch! + buf && bzy.e > inp.startEpoch! - buf) {
         clashes.push({
-          id: null, who: bzy.email, title: bzy.status === 'oof' ? 'Out of office (Outlook)' : 'Busy (Outlook)',
+          id: null,
+          who: bzy.email,
+          title: bzy.shared
+            ? 'Blocked in the shared diary'
+            : (bzy.status === 'oof' ? 'Out of office (Outlook)' : 'Busy (Outlook)'),
           kind: 'outlook', whenText: diaryWhenText(bzy.s), source: 'outlook',
         });
       }

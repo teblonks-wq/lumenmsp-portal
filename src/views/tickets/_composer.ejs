@@ -39,6 +39,16 @@ var _standalone = (typeof standalone !== 'undefined' && !!standalone);
         <div id="tkRecipients" style="margin-bottom:10px;">
           <%- include('../partials/recipients', { id: 'tk', contacts: contacts, domain: customerDomain, custName: (ticket.customer_name || 'the customer'), custId: (ticket.customer_id || ''), to: (ticket.contact_email || ''), cc: (ticket.persistent_cc || ''), bcc: (ticket.persistent_bcc || ''), persist: !!(ticket.persistent_cc || ticket.persistent_bcc), showPersist: true }) %>
         </div>
+        <div id="tkSideSubject" class="form-group" style="display:none;margin-bottom:10px;">
+          <label>Subject <span class="muted" style="font-weight:400;">(what the third party sees)</span></label>
+          <input class="input" type="text" name="side_subject" maxlength="200" style="width:100%;"
+                 value="<%= ticket.ticket_number %><%= ticket.subject ? ': ' + ticket.subject : '' %>">
+          <div class="muted" style="font-size:11.5px;margin-top:4px;">
+            Rewrite it however you like — but leave <strong><%= ticket.ticket_number %></strong> in the line.
+            Their reply is matched back to this case by that reference, and nothing else. If you do remove it,
+            we put it back on the front rather than lose the thread.
+          </div>
+        </div>
         <div class="form-group" style="margin-bottom:10px;">
           <label>Update</label>
           <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
@@ -49,6 +59,22 @@ var _standalone = (typeof standalone !== 'undefined' && !!standalone);
               <% }); %>
             </select>
             <button type="button" class="btn" id="lnkBtn" style="padding:3px 10px;font-size:12px;" title="Insert a link with your own label (e.g. 'Book your appointment' instead of the raw URL)">🔗 Labelled link</button>
+<%
+  /* Booking links. Every URL already carries the requester's token, so the page they land
+     on knows who they are — see lib/book-token.ts. Nothing renders when no service is
+     published, rather than an empty dropdown that looks broken. */
+  var bookSvcs = (typeof bookServices !== 'undefined' && bookServices) ? bookServices : [];
+%>
+<% if (bookSvcs.length) { %>
+            <select id="bookSelect" class="input" style="width:auto;padding:3px 8px;font-size:12px;"
+                    title="Drops a booking link into your reply. The customer picks a time and it lands in the diary — confirmed, no back and forth.">
+              <option value="">📅 Booking link…</option>
+              <% bookSvcs.forEach(function(b){ %>
+              <option value="<%= b.url %>" data-name="<%= b.name %>"><%= b.name %> — <%= b.mins %> min</option>
+              <% }); %>
+              <option value="<%= typeof bookAllUrl !== 'undefined' ? bookAllUrl : '' %>" data-name="Book time with us">Everything we offer</option>
+            </select>
+<% } %>
             <button type="button" class="btn" id="promiseBtn" style="padding:3px 10px;font-size:12px;" title="&quot;I'll call you Thursday&quot; — log it to your Diary and to this case in one click">🤝 Promise</button>
             <a class="muted" href="/ticket-templates" style="font-size:12px;" title="Add or edit templates">manage</a>
           </div>
@@ -320,6 +346,24 @@ var _standalone = (typeof standalone !== 'undefined' && !!standalone);
             q.insertText(idx, label, 'link', url, 'user');
             q.setSelection(idx + label.length, 0);
           });
+
+          // Booking link: inserts the service's own public page as a worded link, not a
+          // naked URL — "Book a remote support session" reads as an offer, a 90-character
+          // URL with a token on the end reads as spam. Resets itself so the same link can
+          // be inserted twice without hunting for a different option first.
+          var bs = document.getElementById('bookSelect');
+          if (bs) bs.addEventListener('change', function(){
+            var q = window.ticketQuill; if (!q) { bs.value = ''; return; }
+            var url = bs.value; if (!url) return;
+            var name = bs.options[bs.selectedIndex].getAttribute('data-name') || 'Book time with us';
+            var label = 'Book ' + name.replace(/^Book\s+/i, '');
+            if (/^Everything we offer$/i.test(name) || /^Book time with us$/i.test(name)) label = 'Book time with us';
+            var sel = q.getSelection(true);
+            var idx = sel ? sel.index : q.getLength();
+            q.insertText(idx, label, 'link', url, 'user');
+            q.setSelection(idx + label.length, 0);
+            bs.value = '';
+          });
         })();
       })();
       </script>
@@ -431,11 +475,18 @@ var _standalone = (typeof standalone !== 'undefined' && !!standalone);
 
   // Show the To/CC/BCC block only for public replies (it emails the customer).
   var rcptWrap = document.getElementById('tkRecipients');
+  var sideSubjWrap = document.getElementById('tkSideSubject');
   function toggleRcpt(){
     var r = f.querySelector('input[name="note_type"]:checked');
     var v = r ? r.value : '';
     if (rcptWrap) rcptWrap.style.display = (v === 'public_reply' || v === 'side_convo') ? '' : 'none';
+    // The subject is only editable on a side convo. A public reply keeps the case's own
+    // subject on purpose - the customer is already reading that thread.
+    var ch = f.querySelector('input[name="channel"]:checked');
+    var byEmail = !ch || ch.value === 'email';
+    if (sideSubjWrap) sideSubjWrap.style.display = (v === 'side_convo' && byEmail) ? '' : 'none';
   }
+  f.querySelectorAll('input[name="channel"]').forEach(function(r){ r.addEventListener('change', toggleRcpt); });
   f.querySelectorAll('input[name="note_type"]').forEach(function(r){ r.addEventListener('change', toggleRcpt); });
   toggleRcpt();
 

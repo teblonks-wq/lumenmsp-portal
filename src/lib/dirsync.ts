@@ -1,6 +1,7 @@
 import { pool } from '../db/pool';
 import { graphListTenantUsers } from './graph';
 import { config } from '../config';
+import { getSetting } from './settings';
 
 export interface DirSyncResult { added: number; updated: number; archived: number; total: number; }
 
@@ -116,4 +117,89 @@ export async function syncCustomerDirectory(customerId: number): Promise<DirSync
   }
 
   return { added, updated, archived, total: users.length };
+}
+
+
+// ── Scheduled customer directory sync ───────────────────────────────────────────
+// Twice a weekday, for customers that have been switched ON individually.
+//
+// Why opt-in per customer rather than "everyone with a tenant id": the sync ARCHIVES
+// contacts that are no longer in the tenant. Point it at the wrong tenant and it
+// quietly archives a customer's entire contact list. That is a decision worth making
+// once, per customer, with eyes open - so `customers.dir_sync_enabled` gates it and
+// nothing happens to anybody until Terry ticks the box.
+//
+// Why a clock tick rather than setInterval(12h): a deploy at 15:00 would move a
+// 12-hourly timer to 15:00 and 03:00 for good, and BST would drag it an hour twice a
+// year. This wakes every minute, asks London what time it is, and runs on the first
+// tick of a configured time.
+//
+// Customers are walked ONE AT A TIME with a gap. Graph throttles per tenant, but the
+// app registration is shared - twenty tenants asked at once is how a 429 storm starts,
+// and a storm makes every OTHER Graph feature in the Portal (mail, calendar, agent
+// enrolment) fail at the same moment.
+
+const DIR_SYNC_TIMES_DEFAULT = '07:15,13:15';
+const DIR_SYNC_GAP_MS = 20 * 1000;      // between customers
+let dirSyncRunning = false;
+let dirSyncLastSlot: string | null = null;   // 'YYYY-MM-DD HH:MM' - a restart cannot double-run
+
+/** Sync every customer that has automatic directory sync switched on. */
+export async function syncEnabledCustomerDirectories(): Promise<{ ran: number; failed: number }> {
+  if (dirSyncRunning) { console.warn('[dirsync] previous run still going - skipping'); return { ran: 0, failed: 0 }; }
+  dirSyncRunning = true;
+  let ran = 0, failed = 0;
+  try {
+    const rows = (await pool.query(
+      `SELECT id, name FROM customers
+        WHERE deleted_at IS NULL AND dir_sync_enabled = true
+          AND entra_tenant_id IS NOT NULL AND entra_tenant_id <> ''
+        ORDER BY id`)).rows;
+    if (!rows.length) return { ran: 0, failed: 0 };
+    console.log('[dirsync] scheduled run: %d customer(s)', rows.length);
+
+    for (const c of rows) {
+      try {
+        const r = await syncCustomerDirectory(Number(c.id));
+        await pool.query('UPDATE customers SET dir_synced_at=NOW(), dir_sync_error=NULL WHERE id=$1', [c.id]);
+        ran++;
+        console.log('[dirsync] %s: +%d ~%d -%d of %d', c.name, r.added, r.updated, r.archived, r.total);
+      } catch (e: any) {
+        failed++;
+        // The error is STORED, not just logged: a sync that has been failing for a week
+        // is invisible in a log nobody opens, and the contact list silently goes stale.
+        await pool.query('UPDATE customers SET dir_sync_error=$2 WHERE id=$1',
+          [c.id, String(e.message || e).slice(0, 500)]).catch(() => {});
+        console.error('[dirsync] %s failed: %s', c.name, e.message);
+      }
+      await new Promise((r) => setTimeout(r, DIR_SYNC_GAP_MS));
+    }
+  } finally { dirSyncRunning = false; }
+  return { ran, failed };
+}
+
+export function startCustomerDirSync(): void {
+  const tick = async () => {
+    try {
+      const raw = ((await getSetting('dirsync', 'times').catch(() => null)) || DIR_SYNC_TIMES_DEFAULT);
+      const times = raw.split(',').map((t) => t.trim()).filter((t) => /^\d{1,2}:\d{2}$/.test(t))
+        .map((t) => { const [h, m] = t.split(':'); return String(parseInt(h, 10)).padStart(2, '0') + ':' + m; });
+      if (!times.length) return;
+
+      const now = new Date().toLocaleString('en-GB', {
+        timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hour12: false,
+      });
+      if (!times.includes(now)) return;
+
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+      const slot = today + ' ' + now;
+      if (dirSyncLastSlot === slot) return;
+      dirSyncLastSlot = slot;
+
+      const r = await syncEnabledCustomerDirectories();
+      if (r.ran || r.failed) console.log('[dirsync] %s done: %d synced, %d failed', slot, r.ran, r.failed);
+    } catch (e: any) { console.error('[dirsync] scheduler failed:', e.message); }
+  };
+  setInterval(() => { tick().catch(() => {}); }, 60 * 1000);
+  console.log('[dirsync] scheduled customer directory sync started (%s)', DIR_SYNC_TIMES_DEFAULT);
 }

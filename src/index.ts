@@ -112,6 +112,8 @@ import { startWatchdogSweep } from './lib/watchdogs';
 import { startLeaverSweep } from './lib/leaver';
 import { startBackupCron } from './lib/backup';
 import { startTeamsGraphCron } from './lib/teamsgraph';
+import { startDailyBriefCron } from './lib/daily-brief';
+import { startCustomerDirSync } from './lib/dirsync';
 import { startGiacomSync } from './lib/giacom-sync';
 import { startMsSubscriptionsSync } from './lib/ms-subscriptions';
 import { startRenewalWatch } from './lib/renewal-watch';
@@ -536,6 +538,8 @@ server.listen(config.PORT, () => {
   startLeaverSweep();
   startBackupCron();
   startTeamsGraphCron();
+  startDailyBriefCron();    // 06:00 weekdays: one Teams post saying what the day holds
+  startCustomerDirSync();   // 07:15 + 13:15: directory sync for customers switched on for it
   startGiacomSync();
   startMsSubscriptionsSync(); // 05:20 nightly: mirror the Giacom NCE subscription report
   startRenewalWatch();        // 06:25 nightly: raise 60/30/7-day renewal warnings into the Diary

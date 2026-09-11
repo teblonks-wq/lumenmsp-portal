@@ -50,6 +50,85 @@
 </div>
 
 <div class="bs-card" style="padding:14px;margin-bottom:14px;">
+  <div style="font-weight:800;font-size:13.5px;margin-bottom:4px;">Diary sync</div>
+  <div style="font-size:12.5px;color:var(--muted);line-height:1.65;margin-bottom:10px;">
+    Every booking is already pushed into the calendar of whoever is taking it, and every
+    booking is checked against that person's Outlook first — so a dentist appointment you
+    blocked out yourself stops a slot being offered, without ever touching the Portal.
+    <strong style="color:var(--ink);">The shared calendar below is the one extra place work is mirrored</strong>,
+    so anyone with it open sees the day without signing in. It is a mirror: the Portal stays
+    the master, and anything you block out <em>in</em> that shared calendar by hand blocks the
+    slot for everyone.
+  </div>
+  <form method="post" action="/diary/settings" style="margin:0;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <div class="bs-grid">
+      <div>
+        <label>Shared calendar (mailbox address)</label>
+        <input type="text" name="shared_mailbox" placeholder="SP@lumenmsp.co.uk"
+               value="<%= (sync && sync.shared_mailbox) ? sync.shared_mailbox : '' %>">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">Leave empty to switch mirroring off.</div>
+      </div>
+      <div>
+        <label>Mirror these kinds into it</label>
+        <div class="bs-chk">
+          <%
+            var chosen = (sync && sync.shared_kinds != null && sync.shared_kinds !== '')
+              ? String(sync.shared_kinds).split(',') : ['remote'];
+          %>
+          <% TIMED.forEach(function(k){ %>
+            <label><input type="checkbox" name="shared_kinds" value="<%= k %>" <%= chosen.indexOf(k) >= 0 ? 'checked' : '' %>> <%= KINDS[k].label %></label>
+          <% }); %>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:12px;"><button class="btn btn-primary" type="submit">Save diary sync</button></div>
+  </form>
+</div>
+
+<div class="bs-card" style="padding:14px;margin-bottom:14px;">
+  <div style="font-weight:800;font-size:13.5px;margin-bottom:4px;">The 06:00 brief</div>
+  <div style="font-size:12.5px;color:var(--muted);line-height:1.65;margin-bottom:10px;">
+    One post to the team channel each morning: what is booked, who is out, what was promised
+    for today, and anything promised earlier that is still open. One post, not one each —
+    the value is that you can see Andrew's day and he can see yours.
+  </div>
+  <form method="post" action="/diary/brief/settings" style="margin:0;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <div class="bs-grid">
+      <div>
+        <label>Post at</label>
+        <input type="text" name="brief_time" placeholder="06:00"
+               value="<%= (sync && sync.brief_time) ? sync.brief_time : '06:00' %>">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">London time, all year.</div>
+      </div>
+      <div>
+        <label>Channel webhook</label>
+        <input type="text" name="teams_channel_webhook" placeholder="https://… (leave empty to use the existing Teams webhook)"
+               value="">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">
+          <% if (briefWebhookOwn) { %>A channel webhook is saved. Leave this empty to keep it.
+          <% } else if (briefWebhookSet) { %>None saved — the existing staff Teams webhook will be used.
+          <% } else { %><strong style="color:var(--ink);">Nothing is configured yet — the brief cannot post.</strong><% } %>
+        </div>
+      </div>
+    </div>
+    <div class="bs-chk" style="margin-top:10px;">
+      <label><input type="checkbox" name="brief_weekends" <%= (sync && sync.brief_weekends === 'on') ? 'checked' : '' %>> Post at weekends too</label>
+      <label><input type="checkbox" name="brief_quiet" <%= (sync && sync.brief_quiet === 'off') ? '' : 'checked' %>> Post even when the day is empty</label>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="btn btn-primary" type="submit">Save the brief</button>
+      <a class="btn" href="/diary/brief/preview" target="_blank" rel="noopener">Preview today&rsquo;s</a>
+    </div>
+  </form>
+  <form method="post" action="/diary/brief/send" style="margin:8px 0 0;">
+    <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+    <button class="btn" type="submit">Post it now</button>
+  </form>
+</div>
+
+<div class="bs-card" style="padding:14px;margin-bottom:14px;">
   <div style="font-size:12.5px;color:var(--muted);line-height:1.65;">
     <strong style="color:var(--ink);">The public booking page</strong> lives at
     <code><%= (typeof appUrl !== 'undefined' ? appUrl : '') %>/book</code> and needs no sign-in. Only services ticked

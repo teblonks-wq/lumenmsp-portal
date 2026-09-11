@@ -15,6 +15,7 @@ import { pool } from '../../db/pool';
 
 const FRESH_DAYS = 7;          // a scan older than this tells us nothing about today
 const SIG_STALE_DAYS = 7;      // Defender signatures older than this are not "updated"
+const SIG_NEVER = 65535;       // Defender's sentinel for "no signatures at all", not an age
 
 export interface RmmDevice {
   hostname: string;
@@ -50,24 +51,65 @@ export interface RmmUnavailable { available: false; note: string; }
 const str = (v: any) => (v == null ? '' : String(v));
 const num = (v: any) => (v == null || v === '' || isNaN(Number(v)) ? null : Number(v));
 const bool = (v: any) => v === true || v === 'true' || v === 1 || v === '1';
+/**
+ * Microsoft's own engine, under any of the names Security Center gives it. Same test as
+ * routes/assets.ts, and it has to be this precise: a bare /defender/ also matches
+ * BITDEFENDER, which would file the one engine actually running as Microsoft's and report
+ * the machine unprotected. Caught by the fixture test on CHO-006.
+ */
+const isMsAv = (n: any) => {
+  const t = str(n).trim();
+  return /(^|\s)(windows|microsoft)\s+defender/i.test(t) || /^microsoft\b/i.test(t);
+};
 
-/** What the agent's security collector said about malware protection on one device. */
+/**
+ * What the agent's security collector said about malware protection on one device.
+ *
+ * The shape this reads is the shape the agent actually sends, which is NOT what this
+ * function assumed when it was written (it was lifted from lib/ce.ts, which has the same
+ * bug):
+ *   defender: { av_enabled, rtp_enabled, antispyware_enabled, av_sig_age_days, ... }
+ *   av: [ { name, enabled, updated, present, last_update }, ... ]
+ * It was reading `defender.enabled`, `defender.signatureAge` and `antivirus` - three keys
+ * that do not exist - so EVERY device on the estate came back unprotected and every report
+ * printed "Endpoint protection deployed on 0% of devices". routes/assets.ts is the
+ * authoritative reader of this blob; the rules below match it.
+ */
 function avOf(securityJson: any): { name: string; protected: boolean; current: boolean } {
   let f: any = {};
   try { f = typeof securityJson === 'string' ? JSON.parse(securityJson || '{}') : (securityJson || {}); }
   catch { return { name: '', protected: false, current: false }; }
+
   const def = f.defender || {};
-  const av: any[] = Array.isArray(f.antivirus) ? f.antivirus : [];
-  const thirdParty = av.filter((p) => !/windows defender/i.test(str(p.name))).map((p) => str(p.name)).filter(Boolean);
-  const defenderOn = bool(def.enabled);
+  const reg: any[] = Array.isArray(f.av) ? f.av : [];
+
+  // present === false is a registration left behind by an uninstall: Security Center still
+  // lists the product, its files are gone, it protects nothing. Counting one is how a
+  // machine was reported as running OpenText months after it was removed (18 Aug). Drop
+  // them before anything else looks at the list.
+  const live = reg.filter((p) => p && p.present !== false);
+  const thirdParty = live.filter((p) => !isMsAv(p.name) && bool(p.enabled));
+
   if (thirdParty.length) {
-    // A third-party product does not publish its signature age through Security Center;
-    // Windows registering it as up to date is the only reading there is, so take it.
-    return { name: thirdParty.join(', '), protected: true, current: true };
+    // Security Center holds several registrations for the same product after a reinstall,
+    // so collapse by name - four Webroot rows is one antivirus, not four.
+    const names = Array.from(new Set(thirdParty.map((p) => str(p.name).trim()).filter(Boolean)));
+    // A third-party engine does not publish a signature age; Windows registering it as up
+    // to date is the only reading there is, so take it - but take it per product, not as a
+    // blanket true. `updated` missing means the agent did not say, which is not a failure.
+    const current = thirdParty.every((p) => p.updated !== false);
+    return { name: names.join(', '), protected: true, current };
   }
-  if (!defenderOn) return { name: '', protected: false, current: false };
-  const age = num(def.signatureAge);
-  return { name: 'Microsoft Defender', protected: true, current: age == null ? true : age <= SIG_STALE_DAYS };
+
+  // No third-party engine on the box: Defender is the protection, if it is switched on.
+  if (!bool(def.av_enabled)) return { name: '', protected: false, current: false };
+  const age = num(def.av_sig_age_days);
+  // 65535 is Defender's "no signatures at all" sentinel, seen in the wild on machines where
+  // a third-party engine has taken over. Treated as a real age it reads as 179 years stale
+  // and is meaningless; treated as unknown it would read as fine. It is neither - it means
+  // not updated.
+  const current = age == null ? true : (age >= SIG_NEVER ? false : age <= SIG_STALE_DAYS);
+  return { name: 'Microsoft Defender', protected: true, current };
 }
 
 /**
