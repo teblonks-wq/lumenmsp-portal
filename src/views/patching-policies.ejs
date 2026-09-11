@@ -34,9 +34,9 @@ function reboot(m) {
 <div class="card" style="padding:0;">
   <div class="card-header" style="padding:20px 24px 0;"><h2>Policies</h2></div>
   <div class="table-wrap">
-    <table class="table">
+    <table class="table sortable">
       <thead>
-        <tr><th>Name</th><th>Applies to</th><th>State</th><th>Window</th><th>Restarts</th><th style="text-align:right;">In use</th><th></th></tr>
+        <tr><th>Name</th><th>Applies to</th><th>State</th><th>Window</th><th>Restarts</th><th style="text-align:right;">In use</th><th data-nosort></th></tr>
       </thead>
       <tbody>
         <% if (!policies.length) { %><tr><td colspan="7"><div class="empty-state">No policies yet — the two defaults are created on first load.</div></td></tr><% } %>
@@ -77,8 +77,8 @@ function reboot(m) {
     </p>
   </div>
   <div class="table-wrap">
-    <table class="table">
-      <thead><tr><th>Customer</th><th style="text-align:right;">Machines</th><th>Workstations</th><th>Servers</th><th></th></tr></thead>
+    <table class="table sortable">
+      <thead><tr><th>Customer</th><th style="text-align:right;">Machines</th><th>Workstations</th><th>Servers</th><th data-nosort></th></tr></thead>
       <tbody>
         <% if (!customers.length) { %><tr><td colspan="5"><div class="empty-state">No customers have agents installed yet.</div></td></tr><% } %>
         <% customers.forEach(function (c) { %>

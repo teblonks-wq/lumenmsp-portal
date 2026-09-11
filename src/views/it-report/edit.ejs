@@ -19,7 +19,7 @@
 </div>
 <p class="muted" style="margin:0 0 18px;font-size:13px;">Claude consolidates and proof-reads all your notes for the period into the write-up. Save your settings and add notes first, then preview.</p>
 
-<form method="post" action="/it-report/<%= c.id %>">
+<form method="post" action="/it-report/<%= c.id %>" id="itReportForm">
   <div class="card">
     <div class="card-header"><h2>Delivery</h2></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
@@ -39,7 +39,7 @@
 
   <div class="card">
     <div class="card-header"><h2>Report figures — live values, editable</h2></div>
-    <p class="muted" style="margin-top:0;">Every headline number the report prints. Each box shows <strong>what would be deployed right now</strong>, greyed in, straight from Intune, the agents and the backup provider. Leave a box empty and the report keeps using that live figure every month. Type in it and your value wins until you clear it again — an overridden figure is flagged amber here, and the report says the figures were confirmed by the service delivery manager.</p>
+    <p class="muted" style="margin-top:0;">Every headline number the report prints, <strong>filled in with what would be deployed right now</strong> — straight from Intune, the agents and the backup provider. Leave a figure alone and it keeps tracking live every month, so next month's report is this month's truth, not this month's numbers. Change one and your value wins until you press <span style="font-family:inherit;">&#8630;</span> to put it back — a changed figure is flagged amber here, and the report then says the figures were confirmed by the service delivery manager.</p>
     <p class="muted" id="figLoad" style="margin:0 0 14px;font-size:13px;">Reading the live figures…</p>
     <%
       var groups = {};
@@ -173,18 +173,35 @@
   // The live figures arrive after the page, so settings opens instantly and the numbers
   // land a moment later. A box the operator has typed in keeps its value — the live figure
   // is shown underneath it instead, so what was replaced stays visible.
+  // A figure counts as OVERRIDDEN when it differs from the live value — not merely when
+  // the box has something in it. Once every box is filled in, "non-empty" would mean
+  // "everything is an override", which is exactly the wrong answer.
+  function figLive(el){ return el.getAttribute('data-fig-live-value'); }
+  function figOverridden(el){
+    var typed = (el.value || '').trim();
+    var live = figLive(el);
+    if (live === null) return !!typed;               // no live figure: anything typed is ours
+    return typed !== '' && typed !== String(live);
+  }
   function markFig(el){
     var wrap = el.closest('.fig-wrap');
-    var on = !!(el.value || '').trim();
+    var on = figOverridden(el);
+    var live = figLive(el);
     el.style.borderColor = on ? '#d97706' : '';
     el.style.background = on ? '#fffbeb' : '';
-    var live = wrap.querySelector('.fig-live');
-    if (live) live.style.color = on ? '#b45309' : '';
+    var lbl = wrap.querySelector('.fig-live');
+    if (!lbl) return;
+    lbl.style.color = on ? '#b45309' : '';
+    if (live === null) return;                        // its label is set by the loader
+    lbl.textContent = on ? ('Overriding the live figure of ' + live) : ('Live now: ' + live + ' — tracking');
   }
+  // The ↺ button puts the live figure back rather than emptying the box, which is what
+  // "use the live figure" has always meant.
   function clearFig(key){
     var el = document.querySelector('[data-fig-input="' + key + '"]');
     if (!el) return;
-    el.value = '';
+    var live = figLive(el);
+    el.value = (live === null) ? '' : String(live);
     markFig(el);
     el.focus();
   }
@@ -192,6 +209,17 @@
     document.querySelectorAll('.fig-input').forEach(function(el){
       markFig(el);
       el.addEventListener('input', function(){ markFig(el); });
+    });
+    // On save, a box still showing its live figure is posted EMPTY. The server contract is
+    // unchanged — blank means "keep using the live figure" (routes/it-report.ts,
+    // overridesFromBody) — so filling the boxes in is purely what the person sees. Without
+    // this, opening the page and pressing Save would freeze every number at today's value
+    // and the report would quietly stop tracking live next month.
+    var figForm = document.getElementById('itReportForm');
+    if (figForm) figForm.addEventListener('submit', function(){
+      document.querySelectorAll('.fig-input').forEach(function(el){
+        if (!figOverridden(el) && figLive(el) !== null) el.value = '';
+      });
     });
     fetch('/it-report/' + CID_FIG + '/figures.json', { headers: { 'Accept': 'application/json' } })
       .then(function(r){ return r.json(); })
@@ -204,12 +232,18 @@
           var v = live[key];
           var lbl = document.querySelector('[data-fig-live="' + key + '"]');
           if (v === undefined || v === null || v === '') {
-            if (lbl) lbl.textContent = 'No live figure — nothing reporting for this one yet.';
+            if (lbl) lbl.textContent = 'No live figure — nothing reporting for this one yet. Type one and the report prints it.';
             return;
           }
           got++;
           el.setAttribute('placeholder', v);
-          if (lbl) lbl.textContent = ((el.value || '').trim() ? 'Overriding live value: ' + v : 'Live now: ' + v);
+          // The live figure is remembered on the element, and the box is FILLED with it
+          // unless a saved override already occupies it. The submit hook below blanks any
+          // box still equal to its live figure, so a filled box is not the same thing as a
+          // stored override — the form looks like a form, and the live tracking survives.
+          el.setAttribute('data-fig-live-value', v);
+          if (!(el.value || '').trim()) el.value = v;
+          markFig(el);
         });
         var bl = (j && j.bullets) || {};
         document.querySelectorAll('.auto-text').forEach(function(ta){
@@ -231,7 +265,7 @@
           }
         });
         if (note) note.textContent = got
-          ? 'Live figures read just now — greyed values are what this month\u2019s report would print.'
+          ? 'Live figures read just now — these are the numbers this month\u2019s report would print.'
           : 'No live figures available for this customer yet (no Intune access, no agents, no backup provider linked). Type the figures in and the report will use them.';
       })
       .catch(function(){

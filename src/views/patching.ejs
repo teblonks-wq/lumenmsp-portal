@@ -20,6 +20,17 @@ function sev(s) {
   if (t === 'important') return 'badge-primary';
   return 'badge-inactive';
 }
+// Severity sorts by DANGER, not by alphabet. Sorted as text, "Critical" lands under
+// "Important" and above "Moderate", which is worse than not sorting at all - the most
+// urgent updates end up in the middle of the list looking handled.
+function sevRank(s) {
+  var t = String(s || '').toLowerCase();
+  if (t === 'critical') return 4;
+  if (t === 'important') return 3;
+  if (t === 'moderate') return 2;
+  if (t === 'low') return 1;
+  return 0;
+}
 %>
 
 <div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
@@ -89,7 +100,7 @@ function sev(s) {
 <% if (view === 'updates') { %>
 <div class="card" style="padding:0;">
   <div class="table-wrap">
-    <table class="table">
+    <table class="table sortable">
       <thead><tr><th>Update</th><th>Source</th><th>KB</th><th>Severity</th><th style="text-align:right;">Machines</th><th style="text-align:right;">Outstanding</th></tr></thead>
       <tbody>
         <% if (!updates.length) { %><tr><td colspan="6"><div class="empty-state">No updates match. Clear the filters, or nothing has been scanned yet.</div></td></tr><% } %>
@@ -97,10 +108,10 @@ function sev(s) {
           <tr>
             <td><%= u.title %></td>
             <td><%- include('partials/srcbadge', { s: srcOf(u), small: true }) %></td>
-            <td class="muted"><%= u.kb ? 'KB' + String(u.kb).replace(/^KB/i, '') : '—' %></td>
-            <td><% if (u.severity) { %><span class="badge <%= sev(u.severity) %>"><%= u.severity %></span><% } else { %><span class="muted">—</span><% } %></td>
-            <td style="text-align:right;font-weight:600;"><%= u.devices %></td>
-            <td style="text-align:right;"><%= u.oldest_days %>d</td>
+            <td class="muted" data-sort="<%= u.kb ? String(u.kb).replace(/^KB/i, '') : '' %>"><%= u.kb ? 'KB' + String(u.kb).replace(/^KB/i, '') : '—' %></td>
+            <td data-sort="<%= sevRank(u.severity) %>"><% if (u.severity) { %><span class="badge <%= sev(u.severity) %>"><%= u.severity %></span><% } else { %><span class="muted">—</span><% } %></td>
+            <td style="text-align:right;font-weight:600;" data-sort="<%= u.devices == null ? -1 : u.devices %>"><%= u.devices %></td>
+            <td style="text-align:right;" data-sort="<%= u.oldest_days == null ? -1 : u.oldest_days %>"><%= u.oldest_days %>d</td>
           </tr>
         <% }); %>
       </tbody>
@@ -110,9 +121,9 @@ function sev(s) {
 <% } else { %>
 <div class="card" style="padding:0;">
   <div class="table-wrap">
-    <table class="table">
+    <table class="table sortable">
       <thead>
-        <tr><th></th><th>Machine</th><th>Customer</th><th style="text-align:right;">Critical</th><th style="text-align:right;">Pending</th><th style="text-align:right;">Oldest</th><th>Restart</th><th>Last scan</th><th></th></tr>
+        <tr><th data-nosort></th><th>Machine</th><th>Customer</th><th style="text-align:right;">Critical</th><th style="text-align:right;">Pending</th><th style="text-align:right;">Oldest</th><th>Restart</th><th>Last scan</th><th data-nosort></th></tr>
       </thead>
       <tbody>
         <% if (!devices.length) { %><tr><td colspan="9"><div class="empty-state">No machines match. Clear the filters, or check an agent is reporting.</div></td></tr><% } %>
@@ -120,13 +131,15 @@ function sev(s) {
           <tr>
             <% var _live = d.seen_secs != null && Number(d.seen_secs) < (typeof onlineWindowSecs !== 'undefined' ? onlineWindowSecs : 180); %>
             <td><span title="<%= _live ? 'Online' : 'Offline — anything you queue runs when it next comes online' %>" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:<%= _live ? 'var(--ok)' : 'var(--line-strong)' %>;"></span></td>
-            <td><a class="row-link" href="/patching/device/<%= d.id %>"><%= d.hostname %></a><% if (d.os) { %> <span class="muted" style="font-size:12px;"><%= d.os %></span><% } %><% if (d.logged_in_user) { %><div class="muted" style="font-size:11px;"><%= String(d.logged_in_user).split('\\').pop() %> signed in</div><% } %></td>
+            <td data-sort="<%= d.hostname || '' %>"><a class="row-link" href="/patching/device/<%= d.id %>"><%= d.hostname %></a><% if (d.os) { %> <span class="muted" style="font-size:12px;"><%= d.os %></span><% } %><% if (d.logged_in_user) { %><div class="muted" style="font-size:11px;"><%= String(d.logged_in_user).split('\\').pop() %> signed in</div><% } %></td>
             <td class="muted"><% if (d.customer_id) { %><a class="row-link" href="/customers/<%= d.customer_id %>"><%= d.customer_name %></a><% } else { %>—<% } %></td>
-            <td style="text-align:right;<%= d.patch_critical ? 'color:var(--bad-fg);font-weight:600;' : '' %>"><%= d.patch_critical == null ? '—' : d.patch_critical %></td>
-            <td style="text-align:right;"><%= d.patch_pending == null ? '—' : d.patch_pending %></td>
-            <td style="text-align:right;"><%= d.oldest_critical_days != null ? d.oldest_critical_days + 'd' : '—' %></td>
-            <td><% if (d.reboot_required) { %><span class="badge badge-failed">Needed</span><% } else if (d.patch_scan_at) { %><span class="muted">—</span><% } else { %><span class="muted">—</span><% } %></td>
-            <td class="muted"><%= d.patch_scan_at ? ago(d.scan_age_secs) : 'never' %></td>
+            <td style="text-align:right;<%= d.patch_critical ? 'color:var(--bad-fg);font-weight:600;' : '' %>" data-sort="<%= d.patch_critical == null ? -1 : d.patch_critical %>"><%= d.patch_critical == null ? '—' : d.patch_critical %></td>
+            <td style="text-align:right;" data-sort="<%= d.patch_pending == null ? -1 : d.patch_pending %>"><%= d.patch_pending == null ? '—' : d.patch_pending %></td>
+            <td style="text-align:right;" data-sort="<%= d.oldest_critical_days != null ? d.oldest_critical_days : -1 %>"><%= d.oldest_critical_days != null ? d.oldest_critical_days + 'd' : '—' %></td>
+            <td data-sort="<%= d.reboot_required ? 1 : 0 %>"><% if (d.reboot_required) { %><span class="badge badge-failed">Needed</span><% } else if (d.patch_scan_at) { %><span class="muted">—</span><% } else { %><span class="muted">—</span><% } %></td>
+            <%# A machine that has NEVER been scanned is the stalest thing on the page, not the
+                freshest - so it sorts as the largest age, not as a missing value. %>
+            <td class="muted" data-sort="<%= d.patch_scan_at ? (d.scan_age_secs == null ? 0 : d.scan_age_secs) : 9999999999 %>"><%= d.patch_scan_at ? ago(d.scan_age_secs) : 'never' %></td>
             <td style="text-align:right;white-space:nowrap;">
               <div class="pw-wrap" style="position:relative;display:inline-block;">
                 <% if (d.patch_pending) { %>
