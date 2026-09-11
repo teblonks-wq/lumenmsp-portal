@@ -29,15 +29,40 @@
 <% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
 <% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
 
+<% var CUSTS = (typeof customers !== 'undefined' && customers) ? customers : []; %>
+<% if (CUSTS.length) { %>
+<form method="get" action="/automation/scheduled-tasks" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+  <label class="muted" style="font-size:12px;font-weight:600;">Customer</label>
+  <select name="customer" class="input" style="width:auto;padding:5px 8px;font-size:12.5px;" onchange="this.form.submit()">
+    <option value="">Everyone</option>
+    <% CUSTS.forEach(function(c){ %>
+      <option value="<%= c.id %>" <%= (typeof filterCustomer !== 'undefined' && filterCustomer === c.id) ? 'selected' : '' %>><%= c.name %></option>
+    <% }); %>
+  </select>
+  <noscript><button class="btn" type="submit">Filter</button></noscript>
+  <% if (typeof filterCustomer !== 'undefined' && filterCustomer) { %>
+    <a class="btn" href="/automation/scheduled-tasks" style="padding:4px 10px;font-size:12px;">Clear</a>
+    <span class="muted" style="font-size:12px;">
+      Showing work that touches <strong><%= filterCustomerName || 'this customer' %></strong>.
+      A task reaching other customers too is still listed — the machine counts are the whole task, not just theirs.
+    </span>
+  <% } %>
+</form>
+<% } %>
+
 <%
 function taskTable(rows, showProgress) { %>
   <table class="table">
-    <thead><tr><th>Task</th><th>Action</th><th>When</th><th>Machines</th><th>Status</th></tr></thead>
+    <thead><tr><th>Task</th><th>Customer</th><th>Action</th><th>When</th><th>Machines</th><th>Status</th></tr></thead>
     <tbody>
       <% rows.forEach(function(t){ %>
         <tr>
           <td><a class="row-link" href="/automation/scheduled-tasks/<%= t.id %>"><strong><%= t.name %></strong></a>
             <% if (t.recurrence && t.recurrence !== 'none') { %><br><span class="muted" style="font-size:11px;">repeats <%= t.recurrence %> until <%= t.recurrence_end %></span><% } %></td>
+          <%# A task targets machines, so it has no single customer. One name when it stays
+              inside one; the first plus a count when it crosses, because the full list of
+              nine names makes the row unreadable and the number is the point. %>
+          <td class="muted"><% if (!t.customer_count) { %>—<% } else if (t.customer_count === 1) { %><%= t.customer_names %><% } else { %><%= String(t.customer_names).split(', ')[0] %> <span title="<%= t.customer_names %>">+<%= t.customer_count - 1 %> more</span><% } %></td>
           <td><%= actionLabel(t.action) %></td>
           <td style="white-space:nowrap;"><%= t.condition === 'datetime' ? when(t.run_at)
               : t.condition === 'window' ? when(t.run_at) + ' \u2192 ' + when(t.run_until)
@@ -88,7 +113,8 @@ function taskTable(rows, showProgress) { %>
 
 <div class="au-sec">
   <h2>Recently finished</h2>
-  <% if (recent.length) { taskTable(recent, true); } else { %><div class="au-empty">Nothing has run yet.</div><% } %>
+  <p class="muted-sub">The last 48 hours. Older work is not deleted — open the task, or the machine, to see what it did.</p>
+  <% if (recent.length) { taskTable(recent, true); } else { %><div class="au-empty">Nothing has finished in the last 48 hours.</div><% } %>
 </div>
 
 <%- include('../partials/footer') %>

@@ -43,19 +43,54 @@ router.get('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req:
   // Read the outcomes back first, so the page is never a minute behind the sweep.
   await reconcileTasks().catch(() => {});
 
+  // ── Filter by customer ────────────────────────────────────────────────────────
+  // A task targets DEVICES, and a device belongs to a customer - so a task has no customer
+  // of its own and can legitimately span several. The filter is therefore "tasks with at
+  // least one machine at this customer", and the table names the customers a task covers
+  // so a filtered row still says whether it reaches anyone else.
+  const custId = parseInt(String(req.query.customer || ''), 10);
+  const cust = Number.isInteger(custId) && custId > 0 ? custId : null;
+  const taskWhere = cust
+    ? ` AND EXISTS (SELECT 1 FROM automation_task_devices d
+                      JOIN agent_devices ad ON ad.id = d.device_id
+                     WHERE d.task_id = t.id AND ad.customer_id = ${cust})`
+    : '';
+
   const SELECT = `SELECT t.id, t.name, t.action, t.condition, t.run_at, t.run_until, t.recurrence, t.recurrence_end,
                          t.series_id, t.status, t.armed_at, t.finished_at, t.created_at,
                          u.display_name AS created_by_name,
                          (SELECT COUNT(*)::int FROM automation_task_devices d WHERE d.task_id=t.id) AS devices,
                          (SELECT COUNT(*)::int FROM automation_task_devices d WHERE d.task_id=t.id AND d.status='done') AS done,
-                         (SELECT COUNT(*)::int FROM automation_task_devices d WHERE d.task_id=t.id AND d.status IN ('failed','skipped')) AS failed
+                         (SELECT COUNT(*)::int FROM automation_task_devices d WHERE d.task_id=t.id AND d.status IN ('failed','skipped')) AS failed,
+                         (SELECT string_agg(DISTINCT c.name, ', ' ORDER BY c.name)
+                            FROM automation_task_devices d
+                            JOIN agent_devices ad ON ad.id = d.device_id
+                            JOIN customers c ON c.id = ad.customer_id
+                           WHERE d.task_id = t.id) AS customer_names,
+                         (SELECT COUNT(DISTINCT ad.customer_id)::int
+                            FROM automation_task_devices d
+                            JOIN agent_devices ad ON ad.id = d.device_id
+                           WHERE d.task_id = t.id AND ad.customer_id IS NOT NULL) AS customer_count
                     FROM automation_tasks t
                     LEFT JOIN users u ON u.id = t.created_by`;
 
-  const [upcoming, running, recent, legacy] = await Promise.all([
-    pool.query(`${SELECT} WHERE t.status='scheduled' ORDER BY t.run_at NULLS FIRST, t.id LIMIT 200`),
-    pool.query(`${SELECT} WHERE t.status='armed' ORDER BY t.armed_at DESC LIMIT 100`),
-    pool.query(`${SELECT} WHERE t.status IN ('done','cancelled') ORDER BY COALESCE(t.finished_at, t.cancelled_at) DESC LIMIT 50`),
+  const [upcoming, running, recent, legacy, custList] = await Promise.all([
+    pool.query(`${SELECT} WHERE t.status='scheduled'${taskWhere} ORDER BY t.run_at NULLS FIRST, t.id LIMIT 200`),
+    pool.query(`${SELECT} WHERE t.status='armed'${taskWhere} ORDER BY t.armed_at DESC LIMIT 100`),
+    // Finished work falls off this screen after 48 hours. It is a board of what is
+    // HAPPENING; a task that ended on Tuesday sitting under today's is noise that makes
+    // the screen less trustworthy, not more complete. Nothing is deleted - the task and
+    // its per-machine results stay on its own page and in the history.
+    //
+    // The cut is made entirely in SQL (NOW() - INTERVAL), never by handing node-pg a JS
+    // Date: that is the timestamp-timezone trap this codebase has been bitten by before,
+    // and it would silently shift the window by an hour for half the year.
+    //
+    // created_at is the last-resort basis so a row with no finish stamp - a data fault,
+    // but they happen - ages out too instead of sitting there for ever.
+    pool.query(`${SELECT} WHERE t.status IN ('done','cancelled')${taskWhere}
+                  AND COALESCE(t.finished_at, t.cancelled_at, t.created_at) > NOW() - INTERVAL '48 hours'
+                ORDER BY COALESCE(t.finished_at, t.cancelled_at, t.created_at) DESC LIMIT 50`),
     // Reboots and shutdowns scheduled from a device page before this screen existed — and
     // still scheduled that way today. They are real pending work on real machines, so they
     // belong on the one screen that claims to show everything scheduled, even though they
@@ -74,13 +109,28 @@ router.get('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req:
          ) ast ON true
         WHERE ac.kind LIKE 'power.%' AND ac.status='queued' AND ac.run_after IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM automation_task_devices d WHERE d.command_id = ac.id)
+          ${cust ? `AND ad.customer_id = ${cust}` : ''}
         ORDER BY ac.run_after LIMIT 100`),
+    // Only customers that actually HAVE work on this screen. A dropdown of every customer
+    // on the books, most of them with nothing scheduled ever, is a worse way to find
+    // Larkmead than scrolling. Note this list is deliberately NOT filtered by `cust` -
+    // it has to keep offering the other customers so the filter can be changed.
+    pool.query(
+      `SELECT c.id, c.name FROM customers c
+        WHERE c.deleted_at IS NULL AND EXISTS (
+              SELECT 1 FROM agent_devices ad WHERE ad.customer_id = c.id AND (
+                    EXISTS (SELECT 1 FROM automation_task_devices d WHERE d.device_id = ad.id)
+                 OR EXISTS (SELECT 1 FROM agent_commands ac WHERE ac.device_id = ad.id
+                              AND ac.kind LIKE 'power.%' AND ac.status='queued' AND ac.run_after IS NOT NULL)))
+        ORDER BY lower(c.name)`),
   ]);
+
+  const custName = cust ? (custList.rows.find((r: any) => Number(r.id) === cust) || {}).name || null : null;
 
   res.render('automation/tasks', {
     user: req.session.user!, when,
     upcoming: upcoming.rows, running: running.rows, recent: recent.rows, legacy: legacy.rows,
-    actions: ACTIONS,
+    actions: ACTIONS, customers: custList.rows, filterCustomer: cust, filterCustomerName: custName,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
