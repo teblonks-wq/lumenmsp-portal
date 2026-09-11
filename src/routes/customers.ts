@@ -5,6 +5,8 @@ import { pool, insightsPool } from '../db/pool';
 import { getComms } from './comms';
 import { logActivity } from '../lib/activity';
 import { syncCustomerDirectory } from '../lib/dirsync';
+import { mintBookToken } from '../lib/book-token';
+import { listServices } from '../lib/booking';
 import { sendMail } from '../lib/mailer';
 import { onboardingEmailHtml, sendCustomerWelcomeEmail, getContactMethods } from '../lib/emails';
 import { alertGroup } from '../lib/notifications';
@@ -711,8 +713,30 @@ router.get('/customers/:id', requireAuth, async (req: Request, res: Response) =>
   // talk to, rather than letting the click find out.
   const dcTools = user.role === 'admin' ? await domainControllersFor(id).catch(() => []) : [];
 
+  // ── Booking links for this customer ──────────────────────────────────────────
+  // One link per published appointment type, each tokenised to the customer's PRIMARY
+  // contact so the page greets them and pre-fills their details. Copyable, because half
+  // the time the link goes into a Teams chat or a signature rather than a Portal reply.
+  // The token identifies a contact and nothing else (lib/book-token.ts), so a link
+  // forwarded round their office is just the ordinary public page.
+  let bookLinks: Array<{ name: string; mins: number; url: string }> = [];
+  let bookAllUrl = '';
+  try {
+    const appBase = String(config.APP_URL || 'https://portal.lumenmsp.co.uk').replace(/\/+$/, '');
+    const primary = (await pool.query(
+      `SELECT id FROM customer_contacts
+        WHERE customer_id=$1 AND COALESCE(archived,false)=false AND email IS NOT NULL AND email <> ''
+        ORDER BY is_primary DESC, id LIMIT 1`, [id])).rows[0];
+    const tok = mintBookToken(primary ? Number(primary.id) : null);
+    const q = tok ? '?t=' + tok : '';
+    bookAllUrl = `${appBase}/book${q}`;
+    bookLinks = (await listServices(true))
+      .filter((s: any) => s.isPublic && s.slug)
+      .map((s: any) => ({ name: s.name, mins: s.durationMins, url: `${appBase}/book/${encodeURIComponent(s.slug)}${q}` }));
+  } catch (e: any) { console.error('[customers] booking links failed:', e.message); }
+
   res.render('customers/detail', {
-    user, customer, contacts, dcTools, sites: sitesRes.rows, domains: domainsRes.rows, keyContacts, insights, itcloud, itcloudTpl, itcloudHistory,
+    user, customer, contacts, dcTools, bookLinks, bookAllUrl, sites: sitesRes.rows, domains: domainsRes.rows, keyContacts, insights, itcloud, itcloudTpl, itcloudHistory,
     assets, subs, allocation, remoteTemplate, backupView, backupCompanies, backupCustNames, health, graphConsentUrl,
     quotes: quotesRes.rows, invoices: invoicesRes.rows, contracts: contractsRes.rows,
     serviceItems: serviceItemsRes.rows, lead, credentials, canVault, creditBalance, documents,

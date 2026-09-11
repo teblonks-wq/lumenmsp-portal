@@ -1772,6 +1772,55 @@
     <p class="muted" style="font-size:12px;margin:10px 0 0;">Supplier accounts (Giacom / Lumen) and CLI/Ref → customer mappings are managed centrally on the <a class="row-link" href="/settings/giacom/match">supplier-account matching screen</a>. Charges from matched accounts appear under the <strong>Cloud</strong> and <strong>Comms</strong> tabs.</p>
   </div>
 
+  <% if (typeof bookLinks !== 'undefined' && bookLinks && bookLinks.length) { %>
+  <div class="card" style="max-width:560px;margin-bottom:14px;">
+    <div class="card-header"><h2>Booking links</h2></div>
+    <p class="muted" style="font-size:12px;margin:0 0 10px;">
+      Send these to <strong><%= customer.name %></strong> and they put time straight in the diary — every
+      slot offered is genuinely free, so whatever they pick is confirmed there and then. The link knows
+      who they are, so they are not asked to type their own details. Forwarding one just shows the
+      ordinary public page.
+    </p>
+    <table class="table" style="font-size:12.5px;">
+      <tbody>
+        <% bookLinks.forEach(function(b){ %>
+        <tr>
+          <td style="white-space:nowrap;"><strong><%= b.name %></strong><br><span class="muted"><%= b.mins %> min</span></td>
+          <td style="word-break:break-all;"><a href="<%= b.url %>" target="_blank" rel="noopener"><%= b.url %></a></td>
+          <td style="white-space:nowrap;"><button type="button" class="btn bookcopy" data-url="<%= b.url %>" style="padding:3px 10px;font-size:12px;">Copy</button></td>
+        </tr>
+        <% }); %>
+        <tr>
+          <td style="white-space:nowrap;"><strong>Everything we offer</strong><br><span class="muted">all types</span></td>
+          <td style="word-break:break-all;"><a href="<%= bookAllUrl %>" target="_blank" rel="noopener"><%= bookAllUrl %></a></td>
+          <td style="white-space:nowrap;"><button type="button" class="btn bookcopy" data-url="<%= bookAllUrl %>" style="padding:3px 10px;font-size:12px;">Copy</button></td>
+        </tr>
+      </tbody>
+    </table>
+    <script>
+      (function(){
+        document.querySelectorAll('.bookcopy').forEach(function(b){
+          b.addEventListener('click', function(){
+            var url = b.getAttribute('data-url') || '';
+            // navigator.clipboard needs a secure context and can be refused; the textarea
+            // fallback is what makes Copy work rather than silently do nothing.
+            var done = function(){ var t = b.textContent; b.textContent = 'Copied'; setTimeout(function(){ b.textContent = t; }, 1200); };
+            if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(url).then(done).catch(fallback); }
+            else fallback();
+            function fallback(){
+              var ta = document.createElement('textarea');
+              ta.value = url; ta.style.position = 'fixed'; ta.style.opacity = '0';
+              document.body.appendChild(ta); ta.select();
+              try { document.execCommand('copy'); done(); } catch (e) { window.prompt('Copy this link:', url); }
+              document.body.removeChild(ta);
+            }
+          });
+        });
+      })();
+    </script>
+  </div>
+  <% } %>
+
   <div class="card" style="max-width:560px;">
     <div class="card-header"><h2>Microsoft 365 directory</h2></div>
     <form method="post" action="/customers/<%= customer.id %>/entra-tenant" style="margin-bottom:10px;">

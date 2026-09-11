@@ -1,6 +1,6 @@
 import { pool } from '../db/pool';
 import { getSetting } from './settings';
-import { DIARY_KINDS, londonHM, dayKeyOf } from './diary';
+import { DIARY_KINDS, londonHM } from './diary';
 
 /**
  * The 06:00 company brief — one Teams post, once a weekday morning, that says what the
@@ -291,4 +291,4 @@ export function startDailyBriefCron(): void {
   console.log('[brief] daily Teams brief scheduler started');
 }
 
-export { londonToday, dayKeyOf };
+export { londonToday };
