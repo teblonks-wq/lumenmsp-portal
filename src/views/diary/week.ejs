@@ -8,13 +8,29 @@
 
   // Which entries this lens shows. company = everything; u<id> = that person's;
   // support = remote work; onsite = onsite work. One pool, many lenses.
+  function isOutlook(e){ return String(e.feed || '').indexOf('outlook') === 0; }
+  function isShared(e){ return e.feed === 'outlook-shared'; }
+  // An Outlook block is not a KIND of work, it is time that is already gone. So it belongs
+  // in EVERY lens that shows a day — filter it out of the onsite lens and that lens quietly
+  // says an afternoon is free when it is not, which is the exact failure these cards exist
+  // to stop. The only narrowing is a person lens, which shows that person's own blocks
+  // (plus the shared diary, which is everybody's).
   function inLens(e){
     if (view === 'company') return true;
+    if (isOutlook(e)) {
+      var ouid = view === 'mine' ? ME : (view.charAt(0) === 'u' ? parseInt(view.slice(1), 10) : NaN);
+      if (isNaN(ouid)) return true;
+      return isShared(e) || e.people.some(function(p){ return p.id === ouid; });
+    }
     if (view === 'support') return e.kind === 'remote' || e.kind === 'meeting' || (e.feed === 'maintenance');
     if (view === 'onsite')  return e.kind === 'onsite';
     var uid = view === 'mine' ? ME : (view.charAt(0) === 'u' ? parseInt(view.slice(1), 10) : NaN);
     if (!isNaN(uid)) return e.people.some(function(p){ return p.id === uid; });
     return true;
+  }
+  function kindLabel(e){
+    if (isOutlook(e)) return isShared(e) ? 'Shared diary' : 'Outlook';
+    return KINDS[e.kind] ? KINDS[e.kind].label : e.kind;
   }
   var shown = entries.filter(inLens);
   // A multi-day entry appears once per day it covers, so the counters de-duplicate by id —
@@ -113,12 +129,22 @@
 </div>
 <div class="dy-key">
   <% Object.keys(KINDS).forEach(function(k){ %><span><i style="background:<%= KINDS[k].accent %>"></i><%= KINDS[k].label %></span><% }); %>
+  <span><i style="background:#94a3b8"></i>Outlook &amp; shared diary</span>
   <span style="opacity:.75;">· ↻ repeats · ⇥ spans days · dashed arrives on its own</span>
 </div>
 </div>
 
 <% if (notice) { %><div class="alert alert-success" style="margin-bottom:12px;"><%= notice %></div><% } %>
 <% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
+<%# Say it out loud when Outlook could not be read. The read degrades quietly on purpose —
+    a booking is never blocked because a permission is missing — but a silent degrade here
+    would make an unasked calendar look like a free week. %>
+<% if (typeof outlookWarning !== 'undefined' && outlookWarning) { %>
+  <div class="muted" style="margin:0 0 12px;font-size:12px;padding:8px 12px;border:1px dashed var(--warn-line,#fcd34d);border-radius:9px;background:var(--tint-orange,#fffbeb);">
+    <strong>The grey Outlook cards are missing.</strong> <%= outlookWarning %>
+    Everything below is Portal work only — someone's personal blocks may not be showing.
+  </div>
+<% } %>
 
 <div class="stat-band">
   <span class="tile" style="display:block;"><span class="n info" style="display:block;"><%= stats.booked %></span><span class="l" style="display:block;">booked this week</span></span>
@@ -147,7 +173,7 @@
           <div class="t"><%= e.title %><% if (isSpan) { %> <span class="dy-tag">⇥ <%= e.spanIndex+1 %>/<%= e.spanTotal %></span><% } %><% if (e.seriesId) { %> <span class="dy-tag" title="Part of a repeating series">↻</span><% } %></div>
           <% if (!isCont) { %>
           <div class="m">
-            <span class="k"><%= KINDS[e.kind] ? KINDS[e.kind].label : e.kind %></span><%= e.feed === 'postponed' ? ' · postponed case' : (e.feed === 'chase' ? ' · chase due' : '') %>
+            <span class="k"><%= kindLabel(e) %></span><%= e.feed === 'postponed' ? ' · postponed case' : (e.feed === 'chase' ? ' · chase due' : '') %>
             <% if (e.endDayKey) { %><span>· <%= shortDay(e.dayKey) %> → <%= shortDay(e.endDayKey) %></span><% } %>
             <% if (e.customerName) { %><span>· <%= e.customerName %></span><% } %>
             <% e.people.forEach(function(p){ %><span class="dy-chip" title="<%= p.name %>"><%= initials(p.name) %></span><% }); %>
@@ -161,7 +187,7 @@
              <% if (!e.feed) { %>data-e="<%= JSON.stringify(e) %>" onclick="dyOpen(this.getAttribute('data-e'))"<% } else if (e.link) { %>onclick="location.href='<%= e.link %>'"<% } %>>
           <div class="t"><%= tmHM(e.s) %>–<%= tmHM(e.e) %> · <%= e.title %><% if (e.seriesId) { %> <span class="dy-tag" title="Part of a repeating series">↻</span><% } %></div>
           <div class="m">
-            <span class="k"><%= KINDS[e.kind] ? KINDS[e.kind].label : e.kind %></span><%= e.feed === 'maintenance' ? ' · scheduled' : '' %>
+            <span class="k"><%= kindLabel(e) %></span><%= e.feed === 'maintenance' ? ' · scheduled' : (isOutlook(e) ? ' · not bookable' : '') %>
             <% if (e.customerName) { %><span>· <%= e.customerName %></span><% } %>
             <% if (e.bufferMins) { %><span>· +<%= e.bufferMins %>m travel</span><% } %>
             <% e.people.forEach(function(p){ %><span class="dy-chip" title="<%= p.name %>"><%= initials(p.name) %></span><% }); %>

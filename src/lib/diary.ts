@@ -1,4 +1,5 @@
 import { pool } from '../db/pool';
+import { freeBusy } from './diary-graph';
 
 // ── The Diary — one pool of entries, hard-block clash engine ────────────────────
 // Design agreed 2026-08-17 (brief: 02 Projects/[C] Diary — business scheduling
@@ -291,6 +292,87 @@ function feedEntry(base: Partial<WeekEntry> & { id: number; kind: string; title:
 
 /** Everything in the diary for [monday, monday+7d), people attached, feeds merged.
  *  A day-lane entry that SPANS days is returned once per visible day it covers. */
+// ── Outlook, drawn on the week ──────────────────────────────────────────────────
+// The clash engine has always READ Outlook - a dentist appointment blocked out there has
+// stopped a booking since day one. What it never did was SHOW it, so the diary could look
+// wide open on an afternoon that was already gone, and the only way to find out was to try
+// to book it and be refused. These cards close that gap.
+//
+// Three decisions worth keeping:
+//
+//  1. READ-ONLY, AND OBVIOUSLY SO. They come through the same `feed` mechanism as postponed
+//     cases: dashed, grey, not clickable. Portal is still master - nothing here can be
+//     edited, and editing it in Outlook would not write back.
+//  2. NO SUBJECTS. A block says "Busy" or "Out of office", never what it is. Terry blocks
+//     personal things out in Outlook; those belong to him, not to whoever else opens the
+//     company lens. The time being gone is the whole point - the reason is not ours to
+//     publish. (The person can always read their own calendar.)
+//  3. OUR OWN PUSHES ARE NOT DRAWN. freeBusy already drops anything carrying the
+//     [LumenMSP Diary] tag, so a booking the Portal mirrored into Outlook does not come
+//     back as a ghost beside itself.
+//
+// Cached for a minute: flipping back and forth through weeks is how this screen is used,
+// and every flip would otherwise be one Graph round-trip per mailbox.
+const OUTLOOK_TTL_MS = 60 * 1000;
+//
+// The WARNING is returned, never swallowed. Without Calendars.ReadWrite consent the read
+// degrades quietly by design - which means a missing permission and a genuinely empty week
+// look identical, and the screen says "you are free" when nobody has asked Outlook anything.
+// Saying so on the page is the difference between a feature that works and one that appears
+// to work.
+export interface OutlookWeek { entries: WeekEntry[]; warning: string | null }
+const outlookCache = new Map<string, { at: number; rows: WeekEntry[]; warning: string | null }>();
+
+export async function loadOutlookWeek(monday: string): Promise<OutlookWeek> {
+  const people = await diaryPeople();
+  const emails = people.map((p) => p.email).filter(Boolean);
+  const key = monday + '|' + emails.join(',').toLowerCase();
+  const hit = outlookCache.get(key);
+  if (hit && Date.now() - hit.at < OUTLOOK_TTL_MS) return { entries: hit.rows, warning: hit.warning };
+
+  const from = londonEpoch(monday, '00:00');
+  const to = londonEpoch(addDays(monday, 7), '00:00');
+
+  let rows: WeekEntry[] = [];
+  let warning: string | null = null;
+  try {
+    const fb = await freeBusy(emails, from, to);
+    warning = fb.warning;
+    const byEmail = new Map(people.map((p) => [p.email.toLowerCase(), p]));
+    fb.busy.forEach((b, i) => {
+      if (b.status === 'tentative') return;                 // tentative never blocks, so it is not shown
+      const who = byEmail.get(String(b.email || '').toLowerCase());
+      // A shared-calendar block belongs to the company, not to one person, so it carries no
+      // initials - showing it against whoever happens to be first would be a lie.
+      const shared = !!b.shared;
+      if (!shared && !who) return;
+      const oof = b.status === 'oof';
+      rows.push(feedEntry({
+        // Negative ids keep these out of the way of real entry ids, which the view uses to
+        // de-duplicate multi-day cards. The offset is large enough that it cannot collide
+        // with the postponed-case feed, which negates a ticket id.
+        id: -2000000 - i,
+        kind: 'outlook',
+        title: shared ? (oof ? 'Blocked out (shared diary)' : 'Booked in the shared diary')
+                      : (oof ? 'Out of office' : 'Busy'),
+        dayKey: dayKeyOf(b.s),
+        s: b.s, e: b.e,
+        people: shared || !who ? [] : [{ id: who.id, name: who.name }],
+        feed: shared ? 'outlook-shared' : 'outlook',
+      }));
+    });
+  } catch (e: any) {
+    // Never let Outlook take the diary down with it. A missing permission, a throttle or a
+    // dead network costs the grey cards and nothing else.
+    console.error('[diary] Outlook overlay failed:', e.message);
+    rows = [];
+    warning = 'Outlook could not be read just now, so personal blocks are not shown.';
+  }
+
+  outlookCache.set(key, { at: Date.now(), rows, warning });
+  return { entries: rows, warning };
+}
+
 export async function loadWeek(monday: string): Promise<WeekEntry[]> {
   const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
   const firstDay = days[0], lastDay = days[days.length - 1];

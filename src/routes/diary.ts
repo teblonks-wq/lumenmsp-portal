@@ -5,8 +5,7 @@ import { logActivity } from '../lib/activity';
 import {
   DIARY_KINDS, DIARY_COLOURS, DIARY_RECURRENCE, isDiaryKind, isDiaryColour, isRecurrence,
   dayKeyOf, mondayOf, addDays, dayRange, diaryPeople, loadWeek, saveEntry, saveSeries,
-  cancelSeries, findClashes, findAllDayClashes, diaryWhenText, Clash,
-} from '../lib/diary';
+  cancelSeries, findClashes, findAllDayClashes, diaryWhenText, loadOutlookWeek, Clash } from '../lib/diary';
 import { freeBusy, pushEntry, removeEntry } from '../lib/diary-graph';
 
 const router = Router();
@@ -27,18 +26,23 @@ router.get('/diary/week', requireAuth, async (req: Request, res: Response) => {
   const monday = /^\d{4}-\d{2}-\d{2}$/.test(wRaw) ? mondayOf(wRaw) : mondayOf(today);
   const view = String(req.query.view || 'company');
 
-  const [people, entries, customers] = await Promise.all([
+  // Outlook runs ALONGSIDE the week, not after it: the cost of the overlay is then the
+  // slower of the two, not the sum. It resolves to [] rather than throwing if Graph is
+  // unreachable, so the diary never fails to load because a calendar did.
+  const [people, entries, customers, outlook] = await Promise.all([
     diaryPeople(),
     loadWeek(monday),
     pool.query(`SELECT id, name FROM customers WHERE status <> 'inactive' AND NOT is_placeholder ORDER BY name`)
       .then(r => r.rows),
+    loadOutlookWeek(monday).catch(() => ({ entries: [], warning: null })),
   ]);
 
   res.render('diary/week', {
     user, monday, today, view,
     days: Array.from({ length: 7 }, (_, i) => addDays(monday, i)),
     prevW: addDays(monday, -7), nextW: addDays(monday, 7),
-    people, entries, customers,
+    people, entries: entries.concat(outlook.entries), customers,
+    outlookCount: outlook.entries.length, outlookWarning: outlook.warning,
     KINDS: DIARY_KINDS, COLOURS: DIARY_COLOURS, REPEATS: DIARY_RECURRENCE,
     notice: req.query.msg || null, error: req.query.err || null,
   });
