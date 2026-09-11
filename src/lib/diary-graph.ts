@@ -135,7 +135,12 @@ export async function pushEntry(entryId: number): Promise<void> {
   if (!graphConfigured()) return;
   try {
     const er = await pool.query(
-      `SELECT e.*, bs.teams_meeting, EXTRACT(EPOCH FROM e.start_at)::bigint AS s, EXTRACT(EPOCH FROM e.end_at)::bigint AS en,
+      `SELECT e.*,
+              -- The SERVICE asks for Teams on a customer booking; the ENTRY asks for it on
+              -- one Terry created himself. Aliased explicitly because e.* already carries a
+              -- teams_meeting of its own, and two columns of the same name is a coin toss.
+              COALESCE(bs.teams_meeting, e.teams_meeting) AS wants_teams,
+              EXTRACT(EPOCH FROM e.start_at)::bigint AS s, EXTRACT(EPOCH FROM e.end_at)::bigint AS en,
               c.name AS customer_name
          FROM diary_entries e
          LEFT JOIN customers c ON c.id = e.customer_id
@@ -166,7 +171,7 @@ export async function pushEntry(entryId: number): Promise<void> {
     // copy, and that join link is written back so the confirmation email and the customer's
     // own bookings page can show it. Only the first copy asks for one: two people's calendars
     // would otherwise produce two different meetings for one appointment.
-    const wantsTeams = !!e.teams_meeting && timed;
+    const wantsTeams = !!e.wants_teams && timed;
     let joinUrl: string | null = e.online_meeting_url || null;
 
     for (const p of people) {

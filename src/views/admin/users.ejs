@@ -38,6 +38,7 @@
                 <label style="font-size:12px;display:inline-flex;gap:3px;align-items:center;"><input type="checkbox" name="sales" onchange="this.form.submit()" <%= u.sales_group ? 'checked' : '' %>> Sales</label>
                 <label style="font-size:12px;display:inline-flex;gap:3px;align-items:center;"><input type="checkbox" name="finance" onchange="this.form.submit()" <%= u.finance_group ? 'checked' : '' %>> Finance</label>
                 <label style="font-size:12px;display:inline-flex;gap:3px;align-items:center;" title="Hide this login-only account from engineer / assignee lookups"><input type="checkbox" name="hidden" onchange="this.form.submit()" <%= u.hidden_from_lookups ? 'checked' : '' %>> Hide from lookups</label>
+                <label style="font-size:12px;display:inline-flex;gap:3px;align-items:center;" title="Show this person in the Diary's Who list, and let customer bookings be allocated to them. Someone can have a Portal account and take cases without doing diary work."><input type="checkbox" name="diary" onchange="this.form.submit()" <%= u.diary_member ? 'checked' : '' %>> In the diary</label>
               </form>
               <a class="btn" href="/admin/users/<%= u.id %>/edit">Edit</a>
               <form method="post" action="/admin/users/<%= u.id %>/welcome" style="display:inline;" onsubmit="return confirm('Send the welcome email to <%= u.email %>?');"><button class="btn" type="submit">Resend welcome</button></form>

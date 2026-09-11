@@ -7,6 +7,7 @@ import {
   dayKeyOf, mondayOf, addDays, dayRange, diaryPeople, loadWeek, saveEntry, saveSeries,
   cancelSeries, findClashes, findAllDayClashes, diaryWhenText, loadOutlookWeek, Clash } from '../lib/diary';
 import { freeBusy, pushEntry, removeEntry } from '../lib/diary-graph';
+import { sendBookingMail } from '../lib/booking-email';
 
 const router = Router();
 
@@ -68,8 +69,32 @@ function parseBody(req: Request) {
     recurrence: isRecurrence(b.recurrence) ? String(b.recurrence) : 'none',
     recurrenceEnd: /^\d{4}-\d{2}-\d{2}$/.test(String(b.recurrence_end || '')) ? String(b.recurrence_end) : null,
     createdBy: null as number | null,
+    teamsMeeting: !!b.teams_meeting,
+    inviteName: String(b.invite_name || '').trim().slice(0, 120) || null,
+    // Validated here, not at the point of sending. An address that cannot be emailed must
+    // never be stored as though somebody had been invited - the entry would claim a
+    // confirmation went out that never could.
+    inviteEmail: /^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$/.test(String(b.invite_email || '').trim())
+      ? String(b.invite_email).trim().toLowerCase() : null,
   };
 }
+
+/**
+ * The contacts of one customer, for the diary's invite picker.
+ *
+ * Archived contacts and ones with no address are left out: the only thing this list is for
+ * is choosing somebody to email, and an entry that cannot be emailed is not a choice.
+ */
+router.get('/diary/customer/:id/contacts.json', requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (!id) { res.json({ contacts: [] }); return; }
+  const r = await pool.query(
+    `SELECT full_name AS name, email FROM customer_contacts
+      WHERE customer_id=$1 AND COALESCE(archived,false)=false
+        AND email IS NOT NULL AND email <> ''
+      ORDER BY is_primary DESC, full_name`, [id]).catch(() => ({ rows: [] as any[] }));
+  res.json({ contacts: r.rows });
+});
 
 async function checkAndSave(req: Request, res: Response, id: number | null) {
   const user = req.session.user!;
@@ -134,10 +159,21 @@ async function checkAndSave(req: Request, res: Response, id: number | null) {
 
   // Mirror to M365 in the background. The first occurrence goes first so the calendar
   // shows the thing you just booked immediately, even if a long series takes a moment.
-  pushEntry(result.id!).catch(() => {});
+  //
+  // With somebody invited, the push is AWAITED instead: it is what creates the Teams
+  // meeting and writes the join link back, and an invitation sent a moment earlier would
+  // go out without it - which is the one thing the recipient actually needs.
+  let invited: string | null = null;
+  if (inp.inviteEmail && timed) {
+    await pushEntry(result.id!).catch(() => {});
+    try { await sendBookingMail(result.id!, id == null ? 'confirmed' : 'updated'); invited = inp.inviteEmail; }
+    catch (e: any) { console.error('[diary] invitation failed:', e.message); }
+  } else {
+    pushEntry(result.id!).catch(() => {});
+  }
   for (const oid of (result.ids || []).slice(1)) pushEntry(oid).catch(() => {});
 
-  res.json({ ok: true, id: result.id, warning, series: isSeries, created: (result.ids || [result.id]).length, skipped: result.skipped || [] });
+  res.json({ ok: true, id: result.id, warning, invited, series: isSeries, created: (result.ids || [result.id]).length, skipped: result.skipped || [] });
 }
 
 router.post('/diary/entries', requireAuth, (req, res) => { checkAndSave(req, res, null).catch(e => res.json({ ok: false, error: e.message })); });

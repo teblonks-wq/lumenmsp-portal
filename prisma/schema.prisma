@@ -20,6 +20,11 @@ model User {
   inSalesGroup   Boolean   @default(false) @map("sales_group")   // receives quote/lead alerts
   inFinanceGroup Boolean   @default(false) @map("finance_group") // gates invoices + the dashboard invoices card
   hiddenFromLookups Boolean @default(false) @map("hidden_from_lookups") // break-glass/login accounts: hide from engineer + assignee pickers
+  // Whether this person appears in the DIARY - its Who list, and the pool a customer
+  // booking can be allocated to. Separate from hiddenFromLookups on purpose: somebody
+  // can need a Portal account and case assignment without doing diary work, and hiding
+  // them from every picker in the Portal to keep them off one screen is too blunt.
+  diaryMember Boolean @default(true) @map("diary_member")
   lastLoginAt    DateTime? @map("last_login_at")
   oneboardPrefs  Json?     @map("oneboard_prefs") // OneBoard: per-user saved site selection {"sites":[ids]}
   theme          String?   // V4 portal colour theme: aurora | carbon | solstice (null = aurora default)
@@ -3510,6 +3515,10 @@ model DiaryEntry {
   // hard block, same Outlook push — plus who booked it and how to join. Deliberately not
   // a separate table: a booking the clash engine cannot see is a double-booking waiting
   // to happen, which is the whole failure mode of a bolt-on booking system.
+  // A manual entry can want a Teams meeting too. Until now only a BOOKING could ask for
+  // one, because the flag lived on the service - so an IT meeting Terry put in himself got
+  // no join link and had to be arranged twice.
+  teamsMeeting     Boolean @default(false) @map("teams_meeting")
   bookingServiceId Int?    @map("booking_service_id")
   bookedByUserId   Int?    @map("booked_by_user_id")   // the customer login that booked it
   bookedByName     String? @map("booked_by_name")

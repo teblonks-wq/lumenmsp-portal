@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { pool } from '../db/pool';
 import { freeBusy } from './diary-graph';
 
@@ -177,6 +178,7 @@ export async function diaryPeople(): Promise<Array<{ id: number; name: string; e
   const r = await pool.query(
     `SELECT id, display_name AS name, email FROM users
       WHERE customer_id IS NULL AND is_active AND NOT hidden_from_lookups
+        AND COALESCE(diary_member, true)
         AND role IN ('staff','admin')
       ORDER BY id`);
   return r.rows.map((x: any) => ({ id: Number(x.id), name: String(x.name), email: String(x.email) }));
@@ -275,6 +277,9 @@ export interface WeekEntry {
   endDayKey: string | null; spanTotal: number; spanIndex: number;
   colour: string | null; accent: string;
   seriesId: number | null; recurrence: string; recurrenceEnd: string | null;
+  // Carried so the edit modal can show what was chosen, not so the card can print it.
+  teamsMeeting: boolean; inviteName: string | null; inviteEmail: string | null;
+  joinUrl: string | null;
   feed?: string; // set on virtual feed items (not editable)
   link?: string;
 }
@@ -284,6 +289,7 @@ function feedEntry(base: Partial<WeekEntry> & { id: number; kind: string; title:
     notes: null, customerId: null, customerName: null, ticketId: null, ticketNumber: null,
     s: null, e: null, bufferMins: 0, status: 'booked', people: [],
     endDayKey: null, spanTotal: 1, spanIndex: 0,
+    teamsMeeting: false, inviteName: null, inviteEmail: null, joinUrl: null,
     colour: null, accent: entryAccent(base.kind, null),
     seriesId: null, recurrence: 'none', recurrenceEnd: null,
     ...base,
@@ -380,6 +386,7 @@ export async function loadWeek(monday: string): Promise<WeekEntry[]> {
     `SELECT e.id, e.kind, e.title, e.notes, e.customer_id, c.name AS customer_name,
             e.ticket_id, t.ticket_number, e.buffer_mins, e.status, e.day_key, e.end_day_key,
             e.colour, e.series_id, e.recurrence, e.recurrence_end,
+            e.teams_meeting, e.booked_by_name, e.booked_by_email, e.online_meeting_url,
             EXTRACT(EPOCH FROM e.start_at)::bigint AS s, EXTRACT(EPOCH FROM e.end_at)::bigint AS en,
             COALESCE(to_char(e.start_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London','YYYY-MM-DD'), e.day_key) AS dk,
             COALESCE(json_agg(json_build_object('id', u.id, 'name', u.display_name)
@@ -417,6 +424,9 @@ export async function loadWeek(monday: string): Promise<WeekEntry[]> {
       colour: x.colour || null, accent: entryAccent(String(x.kind), x.colour || null),
       seriesId: x.series_id ? Number(x.series_id) : null,
       recurrence: String(x.recurrence || 'none'), recurrenceEnd: x.recurrence_end || null,
+      teamsMeeting: !!x.teams_meeting,
+      inviteName: x.booked_by_name || null, inviteEmail: x.booked_by_email || null,
+      joinUrl: x.online_meeting_url || null,
     };
     if (base.s != null || !base.endDayKey) { out.push(base); continue; }
     // A span: one card per day it covers, but only the days this week actually shows.
@@ -513,6 +523,17 @@ export interface SaveInput {
   recurrence: string;                                 // none | daily | weekdays | weekly | fortnightly | monthly
   recurrenceEnd: string | null;                       // 'YYYY-MM-DD', required when recurrence <> none
   createdBy: number | null;
+  // ── Teams, and the person being met ──────────────────────────────────────────
+  // teamsMeeting asks Graph for a real join link when the entry is pushed. The invite
+  // pair reuses booked_by_name / booked_by_email - the SAME columns a customer booking
+  // fills in - so one entry shape covers "they booked us" and "we booked them", and the
+  // confirmation email, the .ics and the manage link all work without a second code path.
+  // Optional: every other caller of saveEntry (renewal watch, the booking engine, the
+  // postpone feed) builds a SaveInput without them, and absent means off. Making them
+  // required would force three unrelated call sites to say "no Teams, nobody invited".
+  teamsMeeting?: boolean;
+  inviteName?: string | null;
+  inviteEmail?: string | null;
 }
 
 export interface SkippedOccurrence { dayKey: string; clashes: Clash[] }
@@ -569,13 +590,22 @@ export async function saveEntry(id: number | null, inp: SaveInput): Promise<Save
     timed ? null : inp.dayKey, Math.max(0, Math.round(inp.bufferMins || 0)), inp.createdBy,
     timed ? null : (inp.endDayKey && inp.endDayKey > inp.dayKey! ? inp.endDayKey : null),
     inp.colour || null, inp.recurrence, inp.recurrence === 'none' ? null : inp.recurrenceEnd,
+    // Teams only makes sense on something with a start and an end.
+    timed ? !!inp.teamsMeeting : false,
+    inp.inviteName || null, inp.inviteEmail || null,
+    // Minted in Node, not in SQL: gen_random_bytes() lives in pgcrypto, which is an
+    // extension this database is not guaranteed to have. A token that only appears when
+    // someone is actually invited - an entry nobody was emailed has nothing to manage.
+    inp.inviteEmail ? randomBytes(16).toString('hex') : null,
   ];
   let entryId = id;
   if (id == null) {
     const ins = await pool.query(
       `INSERT INTO diary_entries (kind, title, notes, customer_id, ticket_id, start_at, end_at, day_key,
-                                  buffer_mins, created_by, end_day_key, colour, recurrence, recurrence_end)
-       VALUES ($1,$2,$3,$4,$5, to_timestamp($6::bigint), to_timestamp($7::bigint), $8, $9, $10, $11, $12, $13, $14)
+                                  buffer_mins, created_by, end_day_key, colour, recurrence, recurrence_end,
+                                  teams_meeting, booked_by_name, booked_by_email, cancel_token)
+       VALUES ($1,$2,$3,$4,$5, to_timestamp($6::bigint), to_timestamp($7::bigint), $8, $9, $10, $11, $12, $13, $14,
+               $15, $16, $17, $18)
        RETURNING id`, params);
     entryId = Number(ins.rows[0].id);
   } else {
@@ -584,10 +614,16 @@ export async function saveEntry(id: number | null, inp: SaveInput): Promise<Save
     await pool.query(
       `UPDATE diary_entries SET kind=$1, title=$2, notes=$3, customer_id=$4, ticket_id=$5,
               start_at=to_timestamp($6::bigint), end_at=to_timestamp($7::bigint), day_key=$8, buffer_mins=$9,
-              end_day_key=$10, colour=$11, updated_at=NOW()
+              end_day_key=$10, colour=$11, teams_meeting=$13,
+              booked_by_name=$14, booked_by_email=$15,
+              -- COALESCE, never replace: a token that already went out in somebody's email
+              -- must keep working. A new one is minted only for an entry that never had one.
+              cancel_token = CASE WHEN $15::text IS NULL THEN cancel_token
+                                  ELSE COALESCE(cancel_token, $16) END,
+              updated_at=NOW()
         WHERE id=$12`,
       [params[0], params[1], params[2], params[3], params[4], params[5], params[6], params[7], params[8],
-       params[10], params[11], id]);
+       params[10], params[11], id, params[14], params[15], params[16], params[17]]);
     await pool.query(`DELETE FROM diary_entry_people WHERE entry_id=$1`, [id]);
   }
   for (const uid of Array.from(new Set(inp.personIds))) {

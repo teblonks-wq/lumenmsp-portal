@@ -112,7 +112,8 @@ router.post('/admin/fix-gc-balances', async (req: Request, res: Response) => {
 // ── Users ────────────────────────────────────────────────────────────────────────
 router.get('/admin/users', async (req: Request, res: Response) => {
   const { rows } = await pool.query(
-    `SELECT id, email, display_name, role, is_active, support_group, sales_group, finance_group, hidden_from_lookups, last_login_at, entra_oid,
+    `SELECT id, email, display_name, role, is_active, support_group, sales_group, finance_group, hidden_from_lookups,
+            COALESCE(diary_member, true) AS diary_member, last_login_at, entra_oid,
             (password_hash IS NOT NULL) AS has_password
      FROM users WHERE customer_id IS NULL ORDER BY is_active DESC, display_name ASC`
   );
@@ -181,9 +182,14 @@ router.post('/admin/users/import', async (req: Request, res: Response) => {
 router.post('/admin/users/:id/groups', async (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id), 10);
   const b = req.body as any;
+  // NOTE the inversion: the box on screen says "In the diary", because that is how a person
+  // thinks about it, but every other box here is a thing being GRANTED and an unticked
+  // checkbox posts nothing at all. So an absent `diary` means OFF, same as the rest.
   await pool.query(
-    'UPDATE users SET support_group=$2, sales_group=$3, finance_group=$4, hidden_from_lookups=$5 WHERE id=$1 AND customer_id IS NULL',
-    [id, b.support === 'on', b.sales === 'on', b.finance === 'on', b.hidden === 'on']
+    `UPDATE users SET support_group=$2, sales_group=$3, finance_group=$4, hidden_from_lookups=$5,
+            diary_member=$6
+      WHERE id=$1 AND customer_id IS NULL`,
+    [id, b.support === 'on', b.sales === 'on', b.finance === 'on', b.hidden === 'on', b.diary === 'on']
   );
   res.redirect('/admin/users');
 });

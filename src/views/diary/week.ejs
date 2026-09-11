@@ -249,7 +249,22 @@
       </div>
     </div>
 
+    <div id="dyInviteWrap">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <label>Invite <span style="font-weight:400;">(optional)</span></label>
+          <select id="dyIC"><option value="">— nobody outside Lumen —</option></select>
+        </div>
+        <div>
+          <label>…or an address</label>
+          <input type="email" id="dyIE" placeholder="name@company.co.uk" autocomplete="off">
+        </div>
+      </div>
+      <p class="dy-sub" id="dyInviteHint">Pick the customer first and their contacts appear here. Whoever is chosen gets the branded confirmation with a calendar invitation they can accept, and a link to move or cancel it — the same email a customer booking sends.</p>
+    </div>
+
     <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="dyTimed" checked style="width:auto;"> Timed booking</label>
+    <label style="display:flex;align-items:center;gap:8px;" id="dyTeamsWrap"><input type="checkbox" id="dyTeams" style="width:auto;"> Microsoft Teams meeting <span class="muted" style="font-weight:400;font-size:12px;">— creates a real join link and puts it on the invitation</span></label>
     <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr 0.9fr;gap:10px;" id="dyWhen">
       <div><label id="dyDLab">Date</label><input type="date" id="dyD"></div>
       <div id="dyWrapS"><label>Start</label><input type="time" id="dyS" value="09:00" step="300"></div>
@@ -311,8 +326,36 @@
     colour = c || '';
     document.querySelectorAll('#dySwatch button').forEach(function(b){ b.classList.toggle('on', (b.getAttribute('data-c')||'') === colour); });
   }
+  // Contacts are fetched per customer and remembered, so flipping between two customers
+  // while writing one entry is not two requests each time.
+  var contactCache = {};
+  function loadContacts(){
+    var cid = $('dyC').value, sel = $('dyIC'), want = sel.getAttribute('data-want') || '';
+    function fill(list){
+      sel.innerHTML = '<option value="">— nobody outside Lumen —</option>';
+      list.forEach(function(c){
+        var o = document.createElement('option');
+        o.value = c.email; o.textContent = (c.name || c.email) + ' · ' + c.email;
+        o.setAttribute('data-name', c.name || '');
+        sel.appendChild(o);
+      });
+      if (want) { sel.value = want; if (sel.value !== want) { $('dyIE').value = want; } }
+      sel.removeAttribute('data-want');
+    }
+    if (!cid) { fill([]); return; }
+    if (contactCache[cid]) { fill(contactCache[cid]); return; }
+    fetch('/diary/customer/' + cid + '/contacts.json', { headers: { 'Accept': 'application/json' } })
+      .then(function(r){ return r.json(); })
+      .then(function(j){ contactCache[cid] = (j && j.contacts) || []; fill(contactCache[cid]); })
+      .catch(function(){ fill([]); });
+  }
   function syncTimed(){
     var t = $('dyTimed').checked;
+    // Teams and an invitation both need a start and an end. Offering either on a day-lane
+    // task would produce a meeting with no time in it.
+    $('dyTeamsWrap').style.display = t ? '' : 'none';
+    $('dyInviteWrap').style.display = t ? '' : 'none';
+    if (!t) { $('dyTeams').checked = false; }
     $('dyWrapS').style.display = t ? '' : 'none';
     $('dyWrapE').style.display = t ? '' : 'none';
     $('dyWrapB').style.display = t && kind()==='onsite' ? '' : 'none';
@@ -339,6 +382,11 @@
   });
   $('dyTimed').addEventListener('change', syncTimed);
   $('dyR').addEventListener('change', syncRepeat);
+  $('dyC').addEventListener('change', loadContacts);
+  // Choosing a named contact wins over a typed address — two recipients on one entry would
+  // be two invitations, and the entry only holds one.
+  $('dyIC').addEventListener('change', function(){ if ($('dyIC').value) $('dyIE').value = ''; });
+  $('dyIE').addEventListener('input', function(){ if ($('dyIE').value.trim()) $('dyIC').value = ''; });
 
   window.dyOpen = function(json){
     var e = json ? JSON.parse(json) : null;
@@ -369,6 +417,14 @@
       $('dyD2').value = e && e.endDayKey ? e.endDayKey : '';
     }
     $('dyB').value = e ? String(e.bufferMins || 0) : '30';
+    $('dyTeams').checked = !!(e && e.teamsMeeting);
+    $('dyIE').value = '';
+    $('dyIC').setAttribute('data-want', (e && e.inviteEmail) ? e.inviteEmail : '');
+    loadContacts();
+    $('dyInviteHint').textContent = (e && e.inviteEmail)
+      ? ('Already invited: ' + (e.inviteName ? e.inviteName + ' <' + e.inviteEmail + '>' : e.inviteEmail)
+         + '. Saving sends them an updated invitation. Clear it to stop emailing them — it does not un-send what has gone.')
+      : 'Pick the customer first and their contacts appear here. Whoever is chosen gets the branded confirmation with a calendar invitation they can accept, and a link to move or cancel it — the same email a customer booking sends.';
     // Repeat is a CREATE-time choice — editing one occurrence must never silently rewrite
     // the series, so the control is hidden and reset on an existing entry.
     $('dyR').value = 'none'; $('dyRU').value = '';
@@ -396,6 +452,13 @@
       people: Array.prototype.slice.call(document.querySelectorAll('.dyP:checked')).map(function(c){ return c.value; }),
       buffer_mins: kind()==='onsite' && timed ? parseInt($('dyB').value||'0',10) : 0,
       colour: colour || null,
+      teams_meeting: timed && $('dyTeams').checked,
+      invite_email: timed ? ($('dyIC').value || $('dyIE').value.trim() || null) : null,
+      invite_name: timed
+        ? ($('dyIC').value
+            ? ($('dyIC').options[$('dyIC').selectedIndex].getAttribute('data-name') || null)
+            : null)
+        : null,
       recurrence: editId ? 'none' : $('dyR').value,
       recurrence_end: (!editId && $('dyR').value !== 'none') ? ($('dyRU').value || null) : null,
       _csrf: csrf(),
@@ -426,6 +489,7 @@
                  + (r.skipped.length > 6 ? ' …' : '') + '.';
           }
         }
+        if (r.invited) msg += ' Invitation sent to ' + r.invited + '.';
         if (r.warning) msg += ' (' + r.warning + ')';
         location.href = '/diary/week?w=<%= monday %>&view=<%= view %>&msg=' + encodeURIComponent(msg);
         return;

@@ -475,11 +475,16 @@ const DETAIL_SQL = `
   SELECT e.id, e.title, e.status, e.kind, e.agenda, e.online_meeting_url, e.cancel_token,
          e.booked_by_name, e.booked_by_email,
          EXTRACT(EPOCH FROM e.start_at)::bigint AS s, EXTRACT(EPOCH FROM e.end_at)::bigint AS en,
-         bs.name AS service_name, bs.slug, bs.teams_meeting, bs.location_text,
+         bs.name AS service_name, bs.slug,
+         COALESCE(bs.teams_meeting, e.teams_meeting) AS teams_meeting,
+         bs.location_text,
          cu.name AS customer_name,
          COALESCE(string_agg(DISTINCT u.display_name, ', '), '') AS staff
     FROM diary_entries e
-    JOIN booking_services bs ON bs.id = e.booking_service_id
+    -- LEFT, not INNER. An entry Terry created himself and invited a customer to has no
+    -- booking service, and an INNER join made bookingById() return null for it - so the
+    -- confirmation email quietly never sent and nobody could see why.
+    LEFT JOIN booking_services bs ON bs.id = e.booking_service_id
     LEFT JOIN customers cu ON cu.id = e.customer_id
     LEFT JOIN diary_entry_people p ON p.entry_id = e.id
     LEFT JOIN users u ON u.id = p.user_id`;
@@ -487,7 +492,8 @@ const DETAIL_SQL = `
 function mapDetail(x: any): BookingDetail {
   return {
     id: Number(x.id), title: String(x.title), status: String(x.status), kind: String(x.kind || 'remote'),
-    serviceName: String(x.service_name), slug: x.slug || null,
+    // An entry with no service is described by its own title - that is what the invite says.
+    serviceName: String(x.service_name || x.title || 'Appointment'), slug: x.slug || null,
     start: Number(x.s), end: Number(x.en),
     whenText: diaryWhenText(Number(x.s)),
     timeText: `${londonHM(Number(x.s))}–${londonHM(Number(x.en))}`,
