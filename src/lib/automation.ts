@@ -160,6 +160,8 @@ export interface TaskInput {
   /** 'YYYY-MM-DD' inclusive. Required when recurrence <> 'none'. */
   recurrenceEnd?: string | null;
   deviceIds: number[];
+  /** The case this was raised from, when raised from one. */
+  ticketId?: number | null;
   scriptId?: number | null;
   packageId?: number | null;
   /** software_catalogue.id — what "Deploy / Update / Remove software" acts on. */
@@ -315,16 +317,18 @@ export async function createTask(inp: TaskInput, userId: number | null, userName
       // $n has no inferable type and Postgres refuses to parse it.
       const t = day === null
         ? await client.query(
-          `INSERT INTO automation_tasks (name, action, payload, condition, run_at, run_until, recurrence, recurrence_end, series_id, created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+          `INSERT INTO automation_tasks (name, action, payload, condition, run_at, run_until, recurrence, recurrence_end, series_id, created_by, ticket_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
           [name, def.key, JSON.stringify({ ...payload, kind }), inp.condition, runAt, runUntil,
-            recurrence, recurrence === 'none' ? null : inp.recurrenceEnd, firstId || null, userId])
+            recurrence, recurrence === 'none' ? null : inp.recurrenceEnd, firstId || null, userId,
+            inp.ticketId || null])
         : await client.query(
-          `INSERT INTO automation_tasks (name, action, payload, condition, run_at, run_until, recurrence, recurrence_end, series_id, created_by)
-           SELECT $3::text,$4::text,$5::jsonb,$6::text,${OCCURRENCE_AT},NULL::timestamptz,$7::text,$8::text,$9::int,$10::int
+          `INSERT INTO automation_tasks (name, action, payload, condition, run_at, run_until, recurrence, recurrence_end, series_id, created_by, ticket_id)
+           SELECT $3::text,$4::text,$5::jsonb,$6::text,${OCCURRENCE_AT},NULL::timestamptz,$7::text,$8::text,$9::int,$10::int,$11::int
             WHERE ${OCCURRENCE_AT} > NOW() RETURNING id`,
           [day, timeText, name, def.key, JSON.stringify({ ...payload, kind }), inp.condition,
-            recurrence, recurrence === 'none' ? null : inp.recurrenceEnd, firstId || null, userId]);
+            recurrence, recurrence === 'none' ? null : inp.recurrenceEnd, firstId || null, userId,
+            inp.ticketId || null]);
       if (!t.rows.length) continue;   // occurrence already in the past
       const id = t.rows[0].id;
       if (!firstId) {
@@ -500,11 +504,50 @@ export async function reconcileTasks(): Promise<void> {
 
   // A task is finished when no machine is still waiting on it. Said in one statement so a
   // task can never sit "armed" for ever because the last machine's row was missed.
-  await pool.query(
+  //
+  // RETURNING, because the tasks that finish on THIS pass are the only ones whose case
+  // should be handed back. Re-reading "done tasks with a case" afterwards would flip the
+  // same case back to Awaiting engineer every single minute, for ever.
+  const finished = await pool.query(
     `UPDATE automation_tasks t SET status='done', finished_at=NOW(), updated_at=NOW()
       WHERE t.status='armed'
         AND NOT EXISTS (SELECT 1 FROM automation_task_devices d
-                         WHERE d.task_id=t.id AND d.status IN ('pending','queued','running'))`);
+                         WHERE d.task_id=t.id AND d.status IN ('pending','queued','running'))
+      RETURNING t.id, t.name, t.ticket_id`);
+
+  // ── The case comes back ───────────────────────────────────────────────────────
+  // A case parked while a task ran is invisible work: nobody is looking at it, and nothing
+  // will make anybody look at it again unless the Portal does. So the moment the task is
+  // done the case returns to Awaiting engineer, carrying a note that says what ran and how
+  // it went — the person picking it up should not have to go and find out.
+  //
+  // A case someone has since resolved or closed is left alone: finishing a task is not a
+  // reason to reopen work a human has already signed off.
+  for (const t of finished.rows) {
+    if (!t.ticket_id) continue;
+    try {
+      const c = (await pool.query(
+        `SELECT COUNT(*) FILTER (WHERE status='done')::int   AS done,
+                COUNT(*) FILTER (WHERE status IN ('failed','skipped'))::int AS failed,
+                COUNT(*)::int AS total
+           FROM automation_task_devices WHERE task_id=$1`, [t.id])).rows[0];
+      const how = Number(c.failed)
+        ? `${c.done} of ${c.total} machines done, ${c.failed} failed`
+        : `all ${c.total} machine${Number(c.total) === 1 ? '' : 's'} done`;
+      const moved = await pool.query(
+        `UPDATE inbox_tickets
+            SET status='awaiting_engineer', activity_status='awaiting_tech',
+                postponed_until=NULL, updated_at=NOW()
+          WHERE id=$1 AND deleted_at IS NULL AND status NOT IN ('resolved','closed')
+          RETURNING id`, [t.ticket_id]);
+      await pool.query(
+        `INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1, NULL, 'system_log', $2)`,
+        [t.ticket_id, `Scheduled task finished — "${t.name}": ${how}.`
+          + (moved.rowCount ? ' Returned to Awaiting engineer.' : ' The case was already closed, so its status was left alone.')]);
+    } catch (e: any) {
+      console.error('[automation] could not hand case %s back:', t.ticket_id, e.message);
+    }
+  }
 }
 
 /**

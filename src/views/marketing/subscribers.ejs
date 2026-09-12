@@ -1,0 +1,77 @@
+<%- include('../partials/header', { title: 'Subscribers', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">← Marketing</a></p>
+    <h1 style="margin:0;">📬 Subscribers</h1>
+    <p class="muted" style="margin:4px 0 0;">
+      People who aren't customers but <strong>asked</strong> to hear from us — today that means they ticked the opt-in box
+      when they downloaded a <a class="row-link" href="/marketing/guides">guide</a>.
+      Everyone who left the box unticked got their download and nothing else, and never reaches this list.
+    </p>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <a class="btn" href="/marketing/subscribers.csv">⬇ CSV</a>
+    <a class="btn btn-primary" href="/marketing/mass-mailer/new">✉️ Email them</a>
+  </div>
+</div>
+
+<% if (notice) { %><div class="card" style="border-left:4px solid var(--green-bright);margin-bottom:16px;padding:12px 16px;"><%= notice %></div><% } %>
+
+<div class="card" style="margin-bottom:16px;display:flex;gap:34px;flex-wrap:wrap;">
+  <div><div class="muted" style="font-size:12.5px;">Subscribed</div><div style="font-size:26px;font-weight:700;"><%= counts.optedIn %></div></div>
+  <div><div class="muted" style="font-size:12.5px;">Unsubscribed</div><div style="font-size:26px;font-weight:700;"><%= counts.optedOut %></div></div>
+  <div><div class="muted" style="font-size:12.5px;">On the list ever</div><div style="font-size:26px;font-weight:700;"><%= counts.total %></div></div>
+  <div style="flex:1;min-width:240px;align-self:center;">
+    <p class="muted" style="margin:0;font-size:13px;">Pick <strong>Guide subscribers</strong> as the recipient list in the Mass Mailer to write to them. Unsubscribes are honoured at send time, not just when the list was built.</p>
+  </div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Company</th>
+          <th>Came from</th>
+          <th>Status</th>
+          <th>Opted in</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (!subs.length) { %>
+          <tr><td colspan="7"><div class="empty-state">Nobody yet. Publish a guide from the Socials Studio and the opt-ins land here.</div></td></tr>
+        <% } %>
+        <% subs.forEach(function (s) { %>
+          <tr<%= s.opted_in ? '' : ' style="opacity:.55;"' %>>
+            <td><%= s.full_name || '—' %></td>
+            <td class="muted"><%= s.email %></td>
+            <td class="muted"><%= s.company || '—' %></td>
+            <td class="muted" style="font-size:13px;"><%= s.source_detail || s.source || '—' %></td>
+            <td>
+              <% if (s.opted_in) { %><span class="badge badge-sent">Subscribed</span>
+              <% } else { %><span class="badge badge-inactive">Unsubscribed</span><% } %>
+            </td>
+            <td class="muted"><%= s.opted_in_at ? new Date(s.opted_in_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—' %></td>
+            <td style="text-align:right;white-space:nowrap;">
+              <form method="post" action="/marketing/subscribers/<%= s.id %>/opt" style="display:inline;">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <input type="hidden" name="action" value="<%= s.opted_in ? 'out' : 'in' %>">
+                <button class="btn" style="font-size:12px;padding:4px 12px;" type="submit"><%= s.opted_in ? 'Unsubscribe' : 'Re-subscribe' %></button>
+              </form>
+              <form method="post" action="/marketing/subscribers/<%= s.id %>/delete" style="display:inline;" onsubmit="return confirm('Remove <%= s.email %> from the list entirely? Unsubscribing is usually the right choice — it keeps a record that they asked to stop.');">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button class="btn" style="font-size:12px;padding:4px 12px;" type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

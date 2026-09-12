@@ -89,10 +89,12 @@
         <select class="input" id="mmStatusFilter" onchange="loadAudience()" style="padding:4px 8px;">
           <option value="active">Active customers</option>
           <option value="all">Active + lead customers</option>
+          <option value="subscribers">Guide subscribers (opted in)</option>
+          <option value="everyone">Everyone — customers + subscribers</option>
         </select>
       </label>
     </div>
-    <p class="muted" style="font-size:12px;margin:8px 0 10px;">Everyone starts ticked. Use <strong>None</strong> and then pick the clients or people you want, or untick the odd one. Contacts who unsubscribed are shown greyed and are never emailed. Customers with no default domain aren't listed — use <a class="row-link" href="/customers/data-missing">Data missing</a> to fill those in.</p>
+    <p class="muted" style="font-size:12px;margin:8px 0 10px;">Everyone starts ticked. Use <strong>None</strong> and then pick the clients or people you want, or untick the odd one. Contacts who unsubscribed are shown greyed and are never emailed. <strong>Guide subscribers</strong> are people who ticked the opt-in box on a guide — see <a class="row-link" href="/marketing/subscribers">Subscribers</a>. Customers with no default domain aren't listed — use <a class="row-link" href="/customers/data-missing">Data missing</a> to fill those in.</p>
 
     <%# Select-all acts on what is VISIBLE, so searching first is how you pick a subset:
         type "larkmead", press All, and you have selected that client and nobody else.
@@ -330,8 +332,8 @@
       .catch(function(){ msg.set('Save failed', 'var(--bad)'); });
   }
 
-  <% if (campaign && campaign.audience && campaign.audience.statusFilter === 'all') { %>
-  document.getElementById('mmStatusFilter').value = 'all';
+  <% if (campaign && campaign.audience && campaign.audience.statusFilter) { %>
+  document.getElementById('mmStatusFilter').value = <%- JSON.stringify(campaign.audience.statusFilter) %>;
   <% } %>
   loadAudience();
 </script>

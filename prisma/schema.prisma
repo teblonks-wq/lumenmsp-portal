@@ -3010,6 +3010,7 @@ model MailCampaignRecipient {
   id           Int       @id @default(autoincrement())
   campaignId   Int       @map("campaign_id")
   contactId    Int?      @map("contact_id")            // → customer_contacts.id (informational)
+  subscriberId BigInt?   @map("subscriber_id")         // → marketing_subscribers.id (guide opt-ins)
   customerId   Int?      @map("customer_id")
   email        String
   fullName     String?   @map("full_name")
@@ -4181,6 +4182,10 @@ model AutomationTask {
   finishedAt    DateTime? @map("finished_at")
   cancelledAt   DateTime? @map("cancelled_at")
   createdBy     Int?      @map("created_by")
+  // The case this task was raised from, when it was raised from one. Nullable because
+  // most tasks are estate work with no case behind them. When it IS set, finishing the
+  // task returns the case to Awaiting engineer - see reconcileTasks().
+  ticketId     Int? @map("ticket_id")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at")
 
@@ -4205,4 +4210,75 @@ model AutomationTaskDevice {
   @@index([taskId])
   @@index([deviceId])
   @@map("automation_task_devices")
+}
+
+// ── Marketing → Guides (lead magnets) ──────────────────────────────────────────
+// Created with raw SQL in lib/guides.ts AND declared here. The declaration is what stops
+// `prisma db push --accept-data-loss` DROPPING these on deploy: raw-only tables do get
+// wiped (social_posts lost 51 rows that way). Keep both in sync if columns change.
+model MarketingGuide {
+  id         BigInt    @id @default(autoincrement())
+  slug       String    @unique
+  title      String
+  intro      String?
+  insideHtml String?   @map("inside_html")
+  excerpt    String?
+  imageUrl   String?   @map("image_url")
+  pdfFile    String    @map("pdf_file")
+  pdfName    String?   @map("pdf_name")
+  pdfBytes   BigInt?   @map("pdf_bytes")
+  landingUrl String?   @map("landing_url")
+  active     Boolean?  @default(true)
+  createdBy  String?   @map("created_by")
+  createdAt  DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@map("marketing_guides")
+}
+
+// One person who asked for one guide. `token` is the download link they were given; the
+// lead_id is the Portal lead the request created (null only if lead creation failed).
+model GuideLead {
+  id              BigInt    @id @default(autoincrement())
+  guideSlug       String    @map("guide_slug")
+  fullName        String?   @map("full_name")
+  email           String?
+  company         String?
+  phone           String?
+  token           String    @unique
+  leadId          BigInt?   @map("lead_id")
+  ip              String?
+  userAgent       String?   @map("user_agent")
+  optedIn         Boolean?  @default(false) @map("opted_in")
+  downloads       Int?      @default(0)
+  firstDownloadAt DateTime? @db.Timestamptz(6) @map("first_download_at")
+  lastDownloadAt  DateTime? @db.Timestamptz(6) @map("last_download_at")
+  createdAt       DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([guideSlug], map: "idx_guide_leads_slug")
+  @@index([email], map: "idx_guide_leads_email")
+  @@map("guide_leads")
+}
+
+// ── Marketing → Subscribers ────────────────────────────────────────────────────
+// Non-customers who ticked an opt-in box (today: on a guide landing page). Raw-SQL managed
+// in src/lib/subscribers.ts; declared here so `prisma db push --accept-data-loss` keeps it.
+// opted_in_at / opt_in_ip / opt_in_note are the EVIDENCE of consent - never fabricate them.
+model MarketingSubscriber {
+  id           BigInt    @id @default(autoincrement())
+  email        String    @unique
+  fullName     String?   @map("full_name")
+  company      String?
+  phone        String?
+  source       String?
+  sourceDetail String?   @map("source_detail")
+  unsubToken   String    @unique @map("unsub_token")
+  optedIn      Boolean?  @default(true) @map("opted_in")
+  optedInAt    DateTime? @default(now()) @db.Timestamptz(6) @map("opted_in_at")
+  optedOutAt   DateTime? @db.Timestamptz(6) @map("opted_out_at")
+  optInIp      String?   @map("opt_in_ip")
+  optInNote    String?   @map("opt_in_note")
+  createdAt    DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([optedIn], map: "idx_subscribers_optedin")
+  @@map("marketing_subscribers")
 }

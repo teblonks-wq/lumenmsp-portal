@@ -1,0 +1,57 @@
+<%- include('../partials/header', { title: 'Guides', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">← Marketing</a></p>
+    <h1 style="margin:0;">📘 Guides</h1>
+    <p class="muted" style="margin:4px 0 0;">Free downloads we offer on the website. Each asks for a name and email — to keep bots off the file, not to start a sales call. Only the ones who tick the opt-in box become a <a class="row-link" href="/leads">lead</a> and join <a class="row-link" href="/marketing/subscribers">Subscribers</a>.</p>
+  </div>
+  <a class="btn btn-primary" href="/marketing/socials">+ New guide</a>
+</div>
+
+<% if (notice) { %><div class="card" style="border-left:4px solid var(--green-bright);margin-bottom:16px;padding:12px 16px;"><%= notice %></div><% } %>
+
+<div class="card" style="padding:0;">
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Guide</th>
+          <th>Landing page</th>
+          <th style="text-align:center;">Requests</th>
+          <th style="text-align:center;">Opted in</th>
+          <th style="text-align:center;">Downloads</th>
+          <th>Last request</th>
+          <th>Published</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (!guides.length) { %>
+          <tr><td colspan="8"><div class="empty-state">No guides yet — write one as a PDF, then upload it in the Socials Studio (Guide mode) and Claude will write the offer around it.</div></td></tr>
+        <% } %>
+        <% guides.forEach(function (g) { %>
+          <tr>
+            <td>
+              <a class="row-link" href="/marketing/guides/<%= g.slug %>"><%= g.title %></a>
+              <div class="muted" style="font-size:12.5px;"><%= g.pdf_name || 'guide.pdf' %><%= g.pdf_bytes ? ' · ' + (Number(g.pdf_bytes) / (1024 * 1024)).toFixed(1) + ' MB' : '' %></div>
+            </td>
+            <td class="muted" style="font-size:13px;">
+              <% if (g.landing_url) { %><a class="row-link" href="<%= g.landing_url %>" target="_blank" rel="noopener">/guides/<%= g.slug %>/</a><% } else { %>—<% } %>
+            </td>
+            <td style="text-align:center;"><strong><%= g.requests %></strong></td>
+            <td style="text-align:center;"><%= g.leads ? g.leads : '—' %></td>
+            <td style="text-align:center;"><%= g.downloads || '—' %></td>
+            <td class="muted"><%= g.last_lead_at ? new Date(g.last_lead_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—' %></td>
+            <td class="muted"><%= new Date(g.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) %></td>
+            <td style="text-align:right;white-space:nowrap;">
+              <a class="btn" style="font-size:12px;padding:4px 12px;" href="/marketing/guides/<%= g.slug %>">View</a>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

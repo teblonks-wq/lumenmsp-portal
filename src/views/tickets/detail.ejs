@@ -58,9 +58,42 @@
     <% if (typeof subjectInvoice !== 'undefined' && subjectInvoice) { %>
     <a class="btn" href="/invoices/<%= subjectInvoice.id %>?ask=1" style="color:var(--ok);border-color:var(--ok);" title="This case's subject cites invoice <%= subjectInvoice.invoice_number %> — open the Finance Agent on it (live GoCardless check, credits, related invoices)">&pound; Finance Agent &mdash; <%= subjectInvoice.invoice_number %></a>
     <% } %>
-    <form method="post" action="/tickets/<%= ticket.id %>/convert-to-lead" onsubmit="return confirm('Transfer this ticket to sales as a draft lead?');" style="margin:0;"><button class="btn" type="submit">→ Draft Lead</button></form>
-    <form method="post" action="/tickets/<%= ticket.id %>/convert-to-quote" onsubmit="return confirm('Create a draft quote from this ticket?');" style="margin:0;"><button class="btn" type="submit">→ Draft Quote</button></form>
-    <button class="btn" type="button" onclick="var p=document.getElementById('escalatePanel');p.style.display=p.style.display==='none'?'block':'none';">Escalate</button>
+    <%# One Actions menu instead of a row of loose buttons. These are the things you DO with a
+        case — hand it to sales, put time in the diary, put work on machines, escalate it —
+        as opposed to the things you do TO it (merge, close, spam), which stay where they are. %>
+    <div class="tk-act" style="position:relative;">
+      <button class="btn" type="button" id="tkActBtn" aria-haspopup="true" aria-expanded="false"
+              onclick="var m=document.getElementById('tkActMenu');var on=m.style.display!=='block';m.style.display=on?'block':'none';this.setAttribute('aria-expanded',on?'true':'false');">Actions ▾</button>
+      <div id="tkActMenu" style="display:none;position:absolute;z-index:24;margin-top:4px;background:var(--surface);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 26px rgba(2,6,23,.16);min-width:250px;overflow:hidden;">
+        <a class="btn" style="display:block;width:100%;text-align:left;border:0;border-radius:0;text-decoration:none;"
+           href="/diary/week?ticket=<%= ticket.id %>"
+           title="Opens the diary with this case, its customer and a title already filled in — clash-checked against Outlook, and the customer can be invited">📅 Book time for this case</a>
+        <a class="btn" style="display:block;width:100%;text-align:left;border:0;border-radius:0;text-decoration:none;"
+           href="/automation/scheduled-tasks/new?ticket=<%= ticket.id %>"
+           title="Schedule work on this customer's machines. The case parks until it finishes, then comes back to an engineer with the outcome">⚙ Schedule work on machines</a>
+        <div style="height:1px;background:var(--line);"></div>
+        <form method="post" action="/tickets/<%= ticket.id %>/convert-to-lead" onsubmit="return confirm('Transfer this ticket to sales as a draft lead?');" style="margin:0;">
+          <button class="btn" type="submit" style="display:block;width:100%;text-align:left;border:0;border-radius:0;">→ Draft Lead</button></form>
+        <form method="post" action="/tickets/<%= ticket.id %>/convert-to-quote" onsubmit="return confirm('Create a draft quote from this ticket?');" style="margin:0;">
+          <button class="btn" type="submit" style="display:block;width:100%;text-align:left;border:0;border-radius:0;">→ Draft Quote</button></form>
+        <div style="height:1px;background:var(--line);"></div>
+        <button class="btn" type="button" style="display:block;width:100%;text-align:left;border:0;border-radius:0;"
+                onclick="document.getElementById('tkActMenu').style.display='none';var p=document.getElementById('escalatePanel');p.style.display='block';p.scrollIntoView({behavior:'smooth',block:'center'});">Escalate to a senior engineer</button>
+      </div>
+    </div>
+    <script>
+      // Click-away, so the menu does not sit open over the case while you read it.
+      document.addEventListener('click', function(ev){
+        var wrap = ev.target.closest ? ev.target.closest('.tk-act') : null;
+        if (wrap) return;
+        var m = document.getElementById('tkActMenu');
+        if (m) { m.style.display = 'none'; var b = document.getElementById('tkActBtn'); if (b) b.setAttribute('aria-expanded','false'); }
+      });
+      document.addEventListener('keydown', function(ev){
+        if (ev.key !== 'Escape') return;
+        var m = document.getElementById('tkActMenu'); if (m) m.style.display = 'none';
+      });
+    </script>
     <button class="btn" type="button" onclick="var p=document.getElementById('mergePanel');p.style.display=p.style.display==='none'?'block':'none';if(p.style.display==='block')document.getElementById('mergeSearch').focus();">Merge</button>
     <form method="post" action="/tickets/<%= ticket.id %>/close-no-contact" onsubmit="return confirm('Close this ticket with no contact? No emails are sent.');" style="margin:0;"><button class="btn" type="submit">Close — no contact</button></form>
     <form method="post" action="/tickets/<%= ticket.id %>/spam" id="spamForm" style="margin:0;position:relative;" onsubmit="return confirm('Mark this case as spam? It will be hidden and future mail from this ' + (document.getElementById('spamScope').value==='domain'?'domain':'sender') + ' will be blocked.');">

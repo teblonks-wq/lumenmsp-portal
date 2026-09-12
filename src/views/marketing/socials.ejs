@@ -3,26 +3,64 @@
 <div class="page-header">
   <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">&larr; Marketing</a></p>
   <h1>Socials Studio</h1>
-  <p class="muted">Four steps: sources → generate with Claude → push to website → push to Buffer. Nothing is stored in the Portal.</p>
+  <p class="muted">Four steps: sources &rarr; generate with Claude &rarr; push to the website &rarr; push to Buffer. Nothing is stored in the Portal &mdash; except a published guide, which the Portal has to keep so it can hand out the download.</p>
 </div>
 
 <% if (!aiReady) { %><div class="alert alert-error">Claude isn't configured — add the API key in Settings → Integrations before generating.</div><% } %>
 <% if (!websiteReady) { %><div class="alert alert-error">Website publishing isn't set up on the server yet — one-off: <code>mkdir -p /var/www/lumenmsp/news/live</code> (as lits-admin; the web root is already ours, no sudo). Site deploys preserve this folder automatically.</div><% } %>
+<% if (!guidesReady) { %><div class="alert alert-error">Guide landing pages aren't set up on the server yet — one-off: <code>mkdir -p /var/www/lumenmsp/guides</code> (as lits-admin, no sudo). Until then, Guide mode can still generate and preview; it just can't publish.</div><% } %>
 <% if (!bufferReady) { %><div class="alert alert-error">Buffer isn't configured — add the API key in Settings → Integrations to push socials.</div><% } %>
+
+<style>
+  .modeSwitch{display:flex;gap:12px;flex-wrap:wrap;}
+  .modeOpt{flex:1;min-width:280px;display:flex;gap:11px;align-items:flex-start;border:2px solid var(--line,#e2e8f0);border-radius:12px;padding:14px 16px;cursor:pointer;transition:border-color .12s ease,background .12s ease;}
+  .modeOpt:hover{border-color:var(--accent);}
+  .modeOpt.on{border-color:var(--accent);background:rgba(14,165,183,.07);}
+  .modeOpt input{margin-top:3px;}
+  .modeOpt b{display:block;font-size:15.5px;}
+  .modeOpt span{font-size:13.5px;color:var(--muted-fg,#64748b);}
+  .drop{border:2px dashed var(--line,#cbd5e1);border-radius:12px;padding:26px 20px;text-align:center;}
+  .drop.ok{border-color:var(--ok-fg,#15803d);border-style:solid;}
+</style>
+
+<!-- Mode -->
+<div class="card">
+  <div class="card-header"><h2>What are we making?</h2></div>
+  <div class="modeSwitch">
+    <label class="modeOpt on" id="modeArticleOpt">
+      <input type="radio" name="stMode" value="article" checked onchange="stSetMode('article')">
+      <span><b>📰 News article</b><span>Links and notes in — a meaty article for the website, plus LinkedIn and Facebook copy.</span></span>
+    </label>
+    <label class="modeOpt" id="modeGuideOpt">
+      <input type="radio" name="stMode" value="guide" onchange="stSetMode('guide')">
+      <span><b>📘 Guide / free download</b><span>Upload a PDF you've written. Claude reads it and writes the title, the intro and the posts that offer it. Readers give a name and email to get it.</span></span>
+    </label>
+  </div>
+</div>
 
 <!-- Step 1 — sources -->
 <div class="card">
-  <div class="card-header"><h2>1 · Sources</h2></div>
-  <div class="form-group" style="margin-bottom:12px;">
+  <div class="card-header"><h2>1 · <span id="step1Label">Sources</span></h2></div>
+
+  <div class="mode-guide" style="display:none;margin-bottom:16px;">
+    <label style="display:block;font-weight:600;margin-bottom:6px;">The guide (PDF)</label>
+    <div class="drop" id="pdfDrop">
+      <input type="file" id="pdfFile" accept="application/pdf,.pdf" style="display:none;" onchange="guideUploadFile()">
+      <button type="button" class="btn btn-primary" onclick="document.getElementById('pdfFile').click()">📎 Choose a PDF</button>
+      <div class="muted" id="pdfInfo" style="margin-top:10px;font-size:14px;">Up to 25 MB. Claude reads the whole thing before it writes a word.</div>
+    </div>
+  </div>
+
+  <div class="form-group mode-article" style="margin-bottom:12px;">
     <label>URLs (one per line — I'll read them for source material, up to 4)</label>
-    <textarea id="stUrls" class="input" rows="3" style="width:100%;font-family:monospace;font-size:13.5px;" placeholder="https://www.ncsc.gov.uk/…&#10;https://…"></textarea>
+    <textarea id="stUrls" class="input" rows="3" style="width:100%;font-family:monospace;font-size:13.5px;" placeholder="https://www.ncsc.gov.uk/&#10;https://…"></textarea>
   </div>
   <div class="form-group" style="margin-bottom:12px;">
-    <label>Content (notes, key points, anything to include)</label>
+    <label><span class="mode-article">Content (notes, key points, anything to include)</span><span class="mode-guide" style="display:none;">Notes — who it's for, anything that must be said (optional)</span></label>
     <textarea id="stContent" class="input" rows="5" style="width:100%;" placeholder="What's the story? Paste rough notes, bullet points, an email — anything."></textarea>
   </div>
   <div class="form-group">
-    <label>Lumen's take (our angle — this shapes the article)</label>
+    <label>Lumen's take (our angle — this shapes the writing)</label>
     <textarea id="stTake" class="input" rows="3" style="width:100%;" placeholder="e.g. Most small firms think this doesn't apply to them — it does, and the fix is cheap."></textarea>
   </div>
 </div>
@@ -30,7 +68,8 @@
 <!-- Step 2 — generate -->
 <div class="card">
   <div class="card-header"><h2>2 · Generate</h2></div>
-  <p class="muted" style="margin:0 0 12px;">Claude writes one meaty article for <strong>end users</strong> (plain English, no tech-speak) plus LinkedIn and Facebook copy. Everything below stays editable.</p>
+  <p class="muted mode-article" style="margin:0 0 12px;">Claude writes one meaty article for <strong>end users</strong> (plain English, no tech-speak) plus LinkedIn and Facebook copy. Everything below stays editable.</p>
+  <p class="muted mode-guide" style="margin:0 0 12px;display:none;">Claude reads your PDF and writes the shop window: a title with a bit of pull, a short intro, a <em>what's inside</em> list, and posts that offer the download. Everything below stays editable.</p>
   <button class="btn btn-primary" id="genBtn" onclick="stGenerate()" <%= aiReady ? '' : 'disabled' %>>✨ Generate with Claude</button>
   <span id="genStatus" class="muted" style="margin-left:10px;"></span>
 
@@ -40,13 +79,20 @@
       <div class="form-group" style="flex:1;min-width:200px;"><label>Slug (page address)</label><input id="outSlug" class="input" style="width:100%;font-family:monospace;font-size:13.5px;"></div>
     </div>
     <div class="form-group" style="margin-bottom:12px;"><label>Excerpt (preview line)</label><input id="outExcerpt" class="input" style="width:100%;"></div>
-    <div class="form-group" style="margin-bottom:12px;"><label>Website article (HTML)</label><textarea id="outArticle" class="input" rows="16" style="width:100%;font-size:14.5px;"></textarea></div>
+
+    <div class="form-group mode-article" style="margin-bottom:12px;"><label>Website article (HTML)</label><textarea id="outArticle" class="input" rows="16" style="width:100%;font-size:14.5px;"></textarea></div>
+
+    <div class="mode-guide" style="display:none;">
+      <div class="form-group" style="margin-bottom:12px;"><label>Intro (sits under the title on the landing page)</label><textarea id="outIntro" class="input" rows="4" style="width:100%;font-size:15px;"></textarea></div>
+      <div class="form-group" style="margin-bottom:12px;"><label>What's inside (HTML list)</label><textarea id="outInside" class="input" rows="7" style="width:100%;font-family:monospace;font-size:13.5px;"></textarea></div>
+    </div>
+
     <div style="display:flex;gap:12px;flex-wrap:wrap;">
       <div class="form-group" style="flex:1;min-width:300px;"><label>LinkedIn</label><textarea id="outLinkedin" class="input" rows="8" style="width:100%;"></textarea></div>
       <div class="form-group" style="flex:1;min-width:300px;"><label>Facebook</label><textarea id="outFacebook" class="input" rows="8" style="width:100%;"></textarea></div>
     </div>
     <div class="form-group" style="margin-top:14px;">
-      <label>Hero photo (goes on the article and the social posts)</label>
+      <label>Hero photo (goes on the page and the social posts)</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
         <input id="imgQuery" class="input" placeholder="search free photos…" style="min-width:220px;">
         <button type="button" class="btn" onclick="imgSearch()">🔍 Search photos</button>
@@ -59,7 +105,7 @@
 </div>
 
 <!-- Step 3 — website -->
-<div class="card">
+<div class="card mode-article">
   <div class="card-header"><h2>3 · Push to website</h2></div>
   <p class="muted" style="margin:0 0 12px;">Publishes the article live at <strong>lumenmsp.co.uk/news/&lt;slug&gt;/</strong> instantly — no site rebuild.</p>
   <button class="btn" id="prevBtn" onclick="stPreview()" disabled>👁 Preview</button>
@@ -67,10 +113,22 @@
   <span id="webStatus" style="margin-left:10px;"></span>
 </div>
 
+<div class="card mode-guide" style="display:none;">
+  <div class="card-header"><h2>3 · Publish the guide</h2></div>
+  <p class="muted" style="margin:0 0 12px;">
+    Publishes a landing page at <strong>lumenmsp.co.uk/guides/&lt;slug&gt;/</strong> with your title, intro and a
+    <strong>name &amp; email form</strong>. The PDF itself stays inside the Portal — there's no file address to guess —
+    and every request creates a <a href="/leads">lead</a> and tells the sales group.
+  </p>
+  <button class="btn" id="gPrevBtn" onclick="stPreviewGuide()" disabled>👁 Preview the page</button>
+  <button class="btn btn-primary" id="gPubBtn" onclick="stPublishGuide()" disabled>📘 Publish guide</button>
+  <span id="gPubStatus" style="margin-left:10px;"></span>
+</div>
+
 <!-- Step 4 — Buffer -->
 <div class="card">
   <div class="card-header"><h2>4 · Push to Buffer</h2></div>
-  <p class="muted" style="margin:0 0 12px;">Sends the LinkedIn + Facebook copy (with the article link attached once it's published).</p>
+  <p class="muted" style="margin:0 0 12px;">Sends the LinkedIn + Facebook copy, with the published link attached.</p>
   <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
     <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="radio" name="bufMode" value="now" checked> Post now</label>
     <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="radio" name="bufMode" value="schedule"> Schedule for</label>
@@ -80,15 +138,79 @@
   <span id="bufStatus" style="margin-left:10px;"></span>
 </div>
 
+
+<!-- Step 5 — email the list -->
+<div class="card">
+  <div class="card-header"><h2>5 · Email the list</h2></div>
+  <p class="muted" style="margin:0 0 12px;">
+    Claude writes a short campaign email around what you just published and saves it as a
+    <strong>draft</strong> in the Mass Mailer. You land on its review page &mdash; send yourself a test, then hit Start sending.
+    Nothing goes to anybody from this button.
+  </p>
+  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+    <label style="font-weight:600;">Who gets it</label>
+    <select id="mailList" class="input" style="width:auto;">
+      <option value="subscribers">Guide subscribers (opted in)</option>
+      <option value="active">Active customers</option>
+      <option value="everyone">Everyone — customers + subscribers</option>
+    </select>
+  </div>
+  <button class="btn btn-primary" id="mailBtn" onclick="stEmail()" disabled>✉️ Write the email</button>
+  <span id="mailStatus" style="margin-left:10px;"></span>
+</div>
+
 <script>
 function csrf(){ var m=document.querySelector('meta[name="csrf-token"]'); return m?m.getAttribute('content'):''; }
 function jpost(url, body){ return fetch(url, { method:'POST', headers:{'Content-Type':'application/json','x-csrf-token':csrf()}, body: JSON.stringify(body) }).then(function(r){ return r.json(); }); }
+function $(id){ return document.getElementById(id); }
 var publishedUrl = '';
 var selectedImage = '';
+var stMode = 'article';
+var pdfId = '';
+
+function stSetMode(m){
+  stMode = m;
+  document.querySelectorAll('.mode-article').forEach(function(el){ el.style.display = (m === 'article') ? '' : 'none'; });
+  document.querySelectorAll('.mode-guide').forEach(function(el){ el.style.display = (m === 'guide') ? '' : 'none'; });
+  $('modeArticleOpt').className = 'modeOpt' + (m === 'article' ? ' on' : '');
+  $('modeGuideOpt').className = 'modeOpt' + (m === 'guide' ? ' on' : '');
+  $('step1Label').textContent = (m === 'guide') ? 'The guide' : 'Sources';
+  // A draft written for one mode is meaningless in the other — start clean.
+  $('genOut').style.display = 'none';
+  $('genStatus').textContent = '';
+  publishedUrl = '';
+  $('webStatus').textContent = ''; $('gPubStatus').textContent = '';
+  $('bufBtn').disabled = true; $('prevBtn').disabled = true; $('webBtn').disabled = true;
+  $('gPrevBtn').disabled = true; $('gPubBtn').disabled = true;
+  $('mailBtn').disabled = true; $('mailStatus').textContent = '';
+}
+
+function guideUploadFile(){
+  var f = $('pdfFile').files[0];
+  if (!f) return;
+  var info = $('pdfInfo'), drop = $('pdfDrop');
+  drop.className = 'drop';
+  info.textContent = 'Uploading ' + f.name + '…'; info.style.color = '';
+  var fd = new FormData(); fd.append('pdf', f);
+  fetch('/marketing/socials/guide-upload', { method:'POST', headers:{ 'x-csrf-token': csrf() }, body: fd })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d.ok) { info.textContent = d.error || 'Upload failed.'; info.style.color = 'var(--bad-fg)'; pdfId = ''; return; }
+      pdfId = d.pdfId;
+      drop.className = 'drop ok';
+      var size = (d.bytes / (1024*1024)).toFixed(1) + ' MB';
+      info.innerHTML = '✔ <strong>' + d.name + '</strong> — ' + size + (d.pages ? ' · ' + d.pages + ' pages' : '')
+        + (d.scanned
+            ? ' · <em>no text found, so Claude will read the pages themselves</em>'
+            : ' · ' + d.chars.toLocaleString() + ' characters of text ready for Claude');
+      info.style.color = 'var(--ok-fg)';
+    })
+    .catch(function(){ info.textContent = 'Upload failed.'; info.style.color = 'var(--bad-fg)'; pdfId = ''; });
+}
 
 function imgSearch(){
-  var q = document.getElementById('imgQuery').value.trim(); if(!q) return;
-  var grid = document.getElementById('imgGrid');
+  var q = $('imgQuery').value.trim(); if(!q) return;
+  var grid = $('imgGrid');
   grid.innerHTML = '<span class="muted">Searching…</span>';
   fetch('/marketing/socials/image-search?q=' + encodeURIComponent(q)).then(function(r){ return r.json(); }).then(function(d){
     if(!d.ok || !d.images || !d.images.length){ grid.innerHTML = '<span class="muted">' + (d.error || 'No photos found — try different words, or paste a URL.') + '</span>'; return; }
@@ -106,52 +228,83 @@ function imgPick(url, el){
   selectedImage = (url || '').trim();
   document.querySelectorAll('#imgGrid img').forEach(function(i){ i.style.borderColor = 'transparent'; });
   if (el) el.style.borderColor = 'var(--accent)';
-  document.getElementById('imgSel').innerHTML = selectedImage
-    ? '✔ Photo selected — it will appear on the article and both social posts.'
+  $('imgSel').innerHTML = selectedImage
+    ? '✔ Photo selected — it will appear on the page and both social posts.'
     : 'No photo selected — everything goes out text-only.';
-  document.getElementById('imgSel').style.color = selectedImage ? 'var(--ok-fg)' : '';
+  $('imgSel').style.color = selectedImage ? 'var(--ok-fg)' : '';
 }
 
-function stPreview(){
-  // POST an invisible form to the preview endpoint in a new tab — the exact page publish would produce.
+// POST an invisible form to a preview endpoint in a new tab — the exact page publish would produce.
+function previewPost(action, fields){
   var f = document.createElement('form');
-  f.method = 'POST'; f.action = '/marketing/socials/preview-website'; f.target = '_blank';
-  [['_csrf', csrf()], ['title', document.getElementById('outTitle').value], ['slug', document.getElementById('outSlug').value],
-   ['excerpt', document.getElementById('outExcerpt').value], ['articleHtml', document.getElementById('outArticle').value],
-   ['imageUrl', selectedImage]].forEach(function(kv){
+  f.method = 'POST'; f.action = action; f.target = '_blank';
+  fields.push(['_csrf', csrf()]);
+  fields.forEach(function(kv){
     var i = document.createElement('input'); i.type = 'hidden'; i.name = kv[0]; i.value = kv[1]; f.appendChild(i);
   });
   document.body.appendChild(f); f.submit(); f.remove();
 }
 
+function stPreview(){
+  previewPost('/marketing/socials/preview-website', [
+    ['title', $('outTitle').value], ['slug', $('outSlug').value],
+    ['excerpt', $('outExcerpt').value], ['articleHtml', $('outArticle').value], ['imageUrl', selectedImage]]);
+}
+
+function stPreviewGuide(){
+  previewPost('/marketing/socials/preview-guide', [
+    ['title', $('outTitle').value], ['slug', $('outSlug').value], ['intro', $('outIntro').value],
+    ['insideHtml', $('outInside').value], ['excerpt', $('outExcerpt').value], ['imageUrl', selectedImage]]);
+}
+
 function stGenerate(){
-  var b=document.getElementById('genBtn'), s=document.getElementById('genStatus');
-  b.disabled=true; b.textContent='✨ Writing…'; s.textContent='Reading sources and drafting — 20–40 seconds.'; s.style.color='';
-  jpost('/marketing/socials/generate', {
-    urls: document.getElementById('stUrls').value,
-    content: document.getElementById('stContent').value,
-    take: document.getElementById('stTake').value
-  }).then(function(d){
+  var b=$('genBtn'), s=$('genStatus');
+  if (stMode === 'guide' && !pdfId) { s.textContent = 'Upload the PDF first.'; s.style.color='var(--bad-fg)'; return; }
+  b.disabled=true; b.textContent='✨ Writing…'; s.style.color='';
+  s.textContent = (stMode === 'guide') ? 'Reading your guide and writing the offer — 20–60 seconds.' : 'Reading sources and drafting — 20–40 seconds.';
+
+  var url = (stMode === 'guide') ? '/marketing/socials/guide-generate' : '/marketing/socials/generate';
+  var body = (stMode === 'guide')
+    ? { pdfId: pdfId, content: $('stContent').value, take: $('stTake').value }
+    : { urls: $('stUrls').value, content: $('stContent').value, take: $('stTake').value };
+
+  jpost(url, body).then(function(d){
     b.disabled=false; b.textContent='✨ Generate with Claude';
     if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
-    document.getElementById('outTitle').value=d.title; document.getElementById('outSlug').value=d.slug;
-    document.getElementById('outExcerpt').value=d.excerpt; document.getElementById('outArticle').value=d.articleHtml;
-    document.getElementById('outLinkedin').value=d.linkedin; document.getElementById('outFacebook').value=d.facebook;
-    document.getElementById('genOut').style.display='block';
-    document.getElementById('webBtn').disabled=false; document.getElementById('bufBtn').disabled=false;
-    document.getElementById('prevBtn').disabled=false;
-    if (d.imageQuery) { document.getElementById('imgQuery').value = d.imageQuery; imgSearch(); }
-    s.textContent='Done — read ' + d.sourcesRead + ' of ' + d.sourcesGiven + ' URL(s). Edit anything below, then push.'; s.style.color='var(--ok-fg)';
+    $('outTitle').value=d.title; $('outSlug').value=d.slug; $('outExcerpt').value=d.excerpt;
+    $('outLinkedin').value=d.linkedin; $('outFacebook').value=d.facebook;
+    if (stMode === 'guide') {
+      $('outIntro').value = d.intro || '';
+      $('outInside').value = d.insideHtml || '';
+      $('gPrevBtn').disabled=false; $('gPubBtn').disabled=false;
+      s.textContent = 'Done — read ' + (d.pages ? d.pages + ' pages' : 'the PDF')
+        + (d.readAs === 'pdf' ? ' as images' : '') + '. Edit anything below, then publish.';
+    } else {
+      $('outArticle').value = d.articleHtml || '';
+      $('prevBtn').disabled=false; $('webBtn').disabled=false;
+      s.textContent = 'Done — read ' + d.sourcesRead + ' of ' + d.sourcesGiven + ' URL(s). Edit anything below, then push.';
+    }
+    $('genOut').style.display='block';
+    stSetModeVisibilityOnly();
+    $('bufBtn').disabled=false; $('mailBtn').disabled=false;
+    if (d.imageQuery) { $('imgQuery').value = d.imageQuery; imgSearch(); }
+    s.style.color='var(--ok-fg)';
   }).catch(function(){ b.disabled=false; b.textContent='✨ Generate with Claude'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
 }
 
+// Re-apply which blocks belong to the current mode WITHOUT wiping the draft we just received
+// (stSetMode clears everything, which is right when switching but wrong right after Generate).
+function stSetModeVisibilityOnly(){
+  document.querySelectorAll('.mode-article').forEach(function(el){ el.style.display = (stMode === 'article') ? '' : 'none'; });
+  document.querySelectorAll('.mode-guide').forEach(function(el){ el.style.display = (stMode === 'guide') ? '' : 'none'; });
+}
+
 function stPublish(){
-  var b=document.getElementById('webBtn'), s=document.getElementById('webStatus');
+  var b=$('webBtn'), s=$('webStatus');
   b.disabled=true; b.textContent='🌐 Publishing…'; s.textContent='';
   jpost('/marketing/socials/publish-website', {
-    title: document.getElementById('outTitle').value, slug: document.getElementById('outSlug').value,
-    excerpt: document.getElementById('outExcerpt').value, articleHtml: document.getElementById('outArticle').value,
-    imageUrl: selectedImage
+    title: $('outTitle').value, slug: $('outSlug').value,
+    excerpt: $('outExcerpt').value, articleHtml: $('outArticle').value, imageUrl: selectedImage
   }).then(function(d){
     b.disabled=false; b.textContent='🌐 Push to website';
     if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
@@ -160,16 +313,35 @@ function stPublish(){
   }).catch(function(){ b.disabled=false; b.textContent='🌐 Push to website'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
 }
 
+function stPublishGuide(){
+  var b=$('gPubBtn'), s=$('gPubStatus');
+  if (!pdfId) { s.textContent='The upload has expired — choose the PDF again.'; s.style.color='var(--bad-fg)'; return; }
+  b.disabled=true; b.textContent='📘 Publishing…'; s.textContent='';
+  jpost('/marketing/socials/publish-guide', {
+    pdfId: pdfId, title: $('outTitle').value, slug: $('outSlug').value, intro: $('outIntro').value,
+    insideHtml: $('outInside').value, excerpt: $('outExcerpt').value, imageUrl: selectedImage
+  }).then(function(d){
+    b.disabled=false; b.textContent='📘 Publish guide';
+    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
+    publishedUrl=d.url;
+    s.innerHTML='✔ Live: <a href="'+d.url+'" target="_blank" rel="noopener">'+d.url+'</a> · <a href="/marketing/guides">see downloads</a>';
+    s.style.color='var(--ok-fg)';
+  }).catch(function(){ b.disabled=false; b.textContent='📘 Publish guide'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
+}
+
 function stBuffer(){
-  var b=document.getElementById('bufBtn'), s=document.getElementById('bufStatus');
+  var b=$('bufBtn'), s=$('bufStatus');
   var mode=document.querySelector('input[name="bufMode"]:checked').value;
-  var when=document.getElementById('bufWhen').value;
+  var when=$('bufWhen').value;
   var dueAt = (mode==='schedule' && when) ? new Date(when).toISOString() : undefined;
   if(mode==='schedule' && !dueAt){ s.textContent='Pick a date and time first.'; s.style.color='var(--bad-fg)'; return; }
-  if(!publishedUrl && !confirm('The article hasn\'t been pushed to the website yet, so the posts will go out without a link. Continue?')) return;
+  var warn = (stMode === 'guide')
+    ? 'The guide hasn\'t been published yet, so the posts will go out with nothing to click. Continue?'
+    : 'The article hasn\'t been pushed to the website yet, so the posts will go out without a link. Continue?';
+  if(!publishedUrl && !confirm(warn)) return;
   b.disabled=true; b.textContent='📣 Pushing…'; s.textContent='';
   jpost('/marketing/socials/push-buffer', {
-    linkedin: document.getElementById('outLinkedin').value, facebook: document.getElementById('outFacebook').value,
+    linkedin: $('outLinkedin').value, facebook: $('outFacebook').value,
     mode: mode, dueAt: dueAt, link: publishedUrl, imageUrl: selectedImage
   }).then(function(d){
     b.disabled=false; b.textContent='📣 Push to Buffer';
@@ -178,6 +350,29 @@ function stBuffer(){
     s.style.color = JSON.stringify(d.results).indexOf('FAILED')>=0 ? 'var(--warn-fg)' : 'var(--ok-fg)';
   }).catch(function(){ b.disabled=false; b.textContent='📣 Push to Buffer'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
 }
+
+function stEmail(){
+  var b=$('mailBtn'), s=$('mailStatus');
+  // The email is only worth sending once there is a published page to send people to.
+  if (!publishedUrl) {
+    s.textContent = (stMode === 'guide')
+      ? 'Publish the guide first — the email needs somewhere to send people.'
+      : 'Push the article to the website first — the email needs somewhere to send people.';
+    s.style.color='var(--bad-fg)'; return;
+  }
+  b.disabled=true; b.textContent='\u2709\uFE0F Writing…'; s.textContent='Claude is drafting it — about 10 seconds.'; s.style.color='';
+  jpost('/marketing/socials/email-campaign', {
+    kind: stMode, title: $('outTitle').value, link: publishedUrl,
+    summary: (stMode === 'guide' ? $('outIntro').value : '') || $('outExcerpt').value,
+    list: $('mailList').value
+  }).then(function(d){
+    b.disabled=false; b.textContent='\u2709\uFE0F Write the email';
+    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
+    s.innerHTML='\u2714 Draft ready \u2014 <a href="'+d.url+'">open it to review and send</a>.'; s.style.color='var(--ok-fg)';
+  }).catch(function(){ b.disabled=false; b.textContent='\u2709\uFE0F Write the email'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
+}
+
+stSetMode('article');
 </script>
 
 <%- include('../partials/footer') %>

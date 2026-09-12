@@ -38,12 +38,25 @@ router.get('/diary/week', requireAuth, async (req: Request, res: Response) => {
     loadOutlookWeek(monday).catch(() => ({ entries: [], warning: null })),
   ]);
 
+  // Arrived from a case's Actions menu: the diary opens with the entry form already up and
+  // the case, its customer and a sensible title filled in. Reusing this screen rather than
+  // building a second booking form on the case page means the clash engine, the invitation
+  // and the Teams link all behave identically wherever a booking is made.
+  const seedTicketId = parseInt(String(req.query.ticket || ''), 10) || null;
+  const seedTicket = seedTicketId
+    ? (await pool.query(
+      `SELECT t.id, t.ticket_number, t.subject, t.customer_id
+         FROM inbox_tickets t WHERE t.id=$1 AND t.deleted_at IS NULL`, [seedTicketId])
+      .catch(() => ({ rows: [] as any[] }))).rows[0] || null
+    : null;
+
   res.render('diary/week', {
     user, monday, today, view,
     days: Array.from({ length: 7 }, (_, i) => addDays(monday, i)),
     prevW: addDays(monday, -7), nextW: addDays(monday, 7),
     people, entries: entries.concat(outlook.entries), customers,
     outlookCount: outlook.entries.length, outlookWarning: outlook.warning,
+    seedTicket,
     KINDS: DIARY_KINDS, COLOURS: DIARY_COLOURS, REPEATS: DIARY_RECURRENCE,
     notice: req.query.msg || null, error: req.query.err || null,
   });
@@ -152,6 +165,17 @@ async function checkAndSave(req: Request, res: Response, id: number | null) {
 
   const result = isSeries ? await saveSeries(inp, seriesBusy) : await saveEntry(id, inp);
   if (!result.ok) { res.json({ ...result, blocked: !!result.clashes, warning }); return; }
+
+  // A booking made against a case belongs ON that case: the next person to open it should
+  // see that somebody is going out on Tuesday without having to find the diary. Create only
+  // — an edit would write the same line again every time the time moved by five minutes.
+  if (id == null && inp.ticketId && timed) {
+    await pool.query(
+      `INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1,$2,'system_log',$3)`,
+      [inp.ticketId, user.id,
+       `${DIARY_KINDS[inp.kind] ? DIARY_KINDS[inp.kind].label : inp.kind} booked — ${inp.title} (${diaryWhenText(inp.startEpoch!)})`
+       + (inp.inviteEmail ? `. Invitation sent to ${inp.inviteEmail}.` : '.')]).catch(() => {});
+  }
 
   await logActivity(user.id, id == null ? 'diary_create' : 'diary_update', 'diary_entries', result.id!,
     `${DIARY_KINDS[inp.kind].label}: ${inp.title}` + (timed ? ` (${diaryWhenText(inp.startEpoch!)})` : inp.dayKey ? ` (${inp.dayKey})` : '')

@@ -55,6 +55,7 @@ import softphoneRoutes from './routes/softphone';
 import chatRoutes from './routes/chat';
 import chatPublicRoutes from './routes/chat-public';
 import leadsApiRoutes from './routes/leads-api';
+import guidesPublicRoutes from './routes/guides-public';
 import agentApiRoutes from './routes/agent-api';
 import agentToolsRoutes from './routes/agent-tools';
 import customerToolsRoutes from './routes/customer-tools';
@@ -86,6 +87,8 @@ import { ensureChatTables } from './lib/chat';
 import { ensureAlertsTable } from './lib/alerts';
 import { ensureInvoiceBalanceGuard } from './lib/invoice-balance';
 import { ensureSocialsTables } from './lib/socials';
+import { ensureGuideTables } from './lib/guides';
+import { ensureSubscriberTables } from './lib/subscribers';
 import { startGiacomStatus } from './lib/giacom-status';
 import { startUnifiPoll } from './lib/unifi';
 import { startWatchdog } from './lib/watchdog';
@@ -425,6 +428,7 @@ app.use('/', webhookRoutes);
 app.use('/', trackingRoutes);     // public email-open pixel (per-send token, no auth)
 app.use('/', chatPublicRoutes);   // public website chat API (token-based, CORS, no auth)
 app.use('/', leadsApiRoutes);     // public website lead intake (bearer token, no session)
+app.use('/', guidesPublicRoutes); // public guide gate: landing-page form + tokenised PDF download (no session)
 app.use('/', agentApiRoutes);     // LumenMSP Agent API (device-token auth, no session)
 app.use('/', mcpRoutes);          // Claude MCP connector (capability-URL token, read-only, no session
                                   // → the CSRF guard's !req.session.user branch already exempts it)
@@ -572,6 +576,8 @@ server.listen(config.PORT, () => {
   ensureDmarcTables().catch((e) => console.error('ensureDmarcTables failed:', e.message)); // LITS-DMARC domains/reports/records
   startDmarcIngest();       // LITS-DMARC: poll the rua mailbox every 30 min (no-op until DMARC_MAILBOX set)
   ensureSocialsTables().catch((e) => console.error('ensureSocialsTables failed:', e.message)); // legacy socials table kept; seeding retired with the 2026-07-09 stateless studio rewrite
+  ensureGuideTables().catch((e) => console.error('ensureGuideTables failed:', e.message)); // Marketing -> Guides (lead magnets)
+  ensureSubscriberTables().catch((e) => console.error('ensureSubscriberTables failed:', e.message)); // Marketing -> Subscribers (guide opt-ins)
   resumeMassMailer();    // Mass Mailer: resume any campaign a deploy restart interrupted
   startGiacomStatus();   // N3twrx: poll Giacom status feed
   startUnifiPoll();      // N3twrx: poll UniFi Site Manager API for offline devices

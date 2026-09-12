@@ -164,13 +164,26 @@ router.get('/automation/scheduled-tasks/new', requireAuth, requireAdmin, async (
   // Started from ONE machine's Manage menu on its asset page: the customer travels with it,
   // so the picker below opens showing that site rather than all 200 machines with one ticked.
   const seedCustomerId = parseInt(String(req.query.customer || ''), 10) || null;
+  // Raised from a CASE. The case travels on the URL so the task can be tied to it, and so
+  // the page can say which case it is working on rather than leaving the person to remember.
+  const seedTicketId = parseInt(String(req.query.ticket || ''), 10) || null;
+  const seedTicket = seedTicketId
+    ? (await pool.query(
+      `SELECT t.id, t.ticket_number, t.subject, t.customer_id, c.name AS customer_name
+         FROM inbox_tickets t LEFT JOIN customers c ON c.id = t.customer_id
+        WHERE t.id=$1 AND t.deleted_at IS NULL`, [seedTicketId]).catch(() => ({ rows: [] as any[] }))).rows[0] || null
+    : null;
 
   res.render('automation/task-new', {
     user: req.session.user!,
     actions: ACTIONS, conditions: CONDITIONS, recurrences: RECURRENCES,
     scripts: scripts.filter((s) => s.osType === 'windows'),
     packages: packages.rows, customers: customers.rows, catalogue,
-    seedDevices, seedAction, seedCustomerId,
+    // A case with a customer preselects that customer's machines — you raised the task from
+    // their case, you are not about to schedule it on somebody else's estate.
+    seedDevices, seedAction,
+    seedCustomerId: seedCustomerId || (seedTicket ? seedTicket.customer_id : null),
+    seedTicket,
     notice: req.query.msg || null, error: req.query.err || null,
   });
 });
@@ -217,10 +230,32 @@ router.post('/automation/scheduled-tasks', requireAuth, requireAdmin, async (req
     command: String(b.command || '') || null,
     accountName: String(b.account_name || '') || null,
     delaySeconds: b.delay_seconds != null ? parseInt(String(b.delay_seconds), 10) : null,
+    ticketId: parseInt(String(b.ticket_id || ''), 10) || null,
   }, req.session.user!.id, req.session.user!.displayName);
 
-  if (!r.ok) { res.redirect('/automation/scheduled-tasks/new?err=' + encodeURIComponent(r.error || 'Could not schedule that.')); return; }
+  if (!r.ok) {
+    const back = '/automation/scheduled-tasks/new?err=' + encodeURIComponent(r.error || 'Could not schedule that.');
+    res.redirect(b.ticket_id ? back + '&ticket=' + encodeURIComponent(String(b.ticket_id)) : back);
+    return;
+  }
   const extra = (r.occurrences || 1) > 1 ? ` — ${r.occurrences} occurrences scheduled.` : '';
+
+  // Raised from a case: park it and go back there. A case waiting on a task nobody can see
+  // sits on the board looking untouched, and the person who raised the task is the one who
+  // gets asked why nothing is happening. It comes back on its own when the task finishes
+  // (reconcileTasks), so nothing is lost by parking it.
+  const tid = parseInt(String(b.ticket_id || ''), 10) || null;
+  if (tid) {
+    await pool.query(
+      `UPDATE inbox_tickets SET status='awaiting_installation', activity_status='awaiting_tech', updated_at=NOW()
+        WHERE id=$1 AND deleted_at IS NULL AND status NOT IN ('resolved','closed')`, [tid]).catch(() => {});
+    await pool.query(
+      `INSERT INTO inbox_notes (ticket_id, user_id, note_type, body) VALUES ($1,$2,'system_log',$3)`,
+      [tid, req.session.user!.id,
+       `Scheduled task raised — "${String(b.name || 'task')}" (#${r.taskId}). Case parked until it finishes.`]).catch(() => {});
+    res.redirect(`/tickets/${tid}?msg=` + encodeURIComponent('Task scheduled — the case is parked until it finishes.' + extra));
+    return;
+  }
   res.redirect(`/automation/scheduled-tasks/${r.taskId}?msg=` + encodeURIComponent('Scheduled.' + extra));
 });
 

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { pool } from '../db/pool';
+import { listSubscribers, subscriberUnsubToken, optOutSubscriberByToken, subscriberForUnsubToken } from './subscribers';
 import { config } from '../config';
 import { sendMail } from './mailer';
 import { getSignatureHtml } from './signature';
@@ -21,9 +22,12 @@ import { pollBlockHtml } from './questionnaire-email';
 //  • Tables/columns are Prisma-schema-managed (schema.prisma) — deploy's
 //    `prisma db push` creates them. Nothing here creates tables.
 
+export type AudienceFilter = 'active' | 'all' | 'subscribers' | 'everyone';
+
 export interface AudienceRow {
-  contact_id: number;
-  customer_id: number;
+  contact_id: number | null;      // null for a marketing subscriber (no customer behind them)
+  subscriber_id?: number | null;  // set only for marketing_subscribers rows
+  customer_id: number | null;
   customer_name: string;
   customer_status: string;
   full_name: string;
@@ -36,7 +40,10 @@ export interface AudienceRow {
 // Contacts on their customer's default domain. status filter: 'active' | 'all'.
 // Includes opted-out contacts (flagged) so the compose page can SHOW who is
 // suppressed; they are excluded from the snapshot and re-checked at send time.
-export async function audience(statusFilter: 'active' | 'all'): Promise<AudienceRow[]> {
+export async function audience(statusFilter: AudienceFilter): Promise<AudienceRow[]> {
+  // Guide subscribers are people who ticked an opt-in box; they have no customer record, so
+  // they are a separate query grouped under one heading in the compose list.
+  if (statusFilter === 'subscribers') return subscriberAudience();
   const where = statusFilter === 'active' ? "AND c.status = 'active'" : "AND c.status <> 'inactive'";
   const { rows } = await pool.query(
     `SELECT DISTINCT ON (lower(cc.email))
@@ -57,7 +64,27 @@ export async function audience(statusFilter: 'active' | 'all'): Promise<Audience
   // Order for display: by customer name, primary contact first.
   rows.sort((a: AudienceRow, b: AudienceRow) =>
     a.customer_name.localeCompare(b.customer_name) || Number(b.is_primary) - Number(a.is_primary) || a.full_name.localeCompare(b.full_name));
-  return rows;
+  return statusFilter === 'everyone' ? rows.concat(await subscriberAudience()) : rows;
+}
+
+// The opt-in list, shaped like an audience row so the compose page can render it unchanged.
+// customer_name is the group heading, which is why it reads as a sentence.
+export const SUBSCRIBER_GROUP = 'Guide subscribers (opted in)';
+
+export async function subscriberAudience(): Promise<AudienceRow[]> {
+  const subs = await listSubscribers(true).catch(() => []);
+  return subs.map((s2) => ({
+    contact_id: null,
+    subscriber_id: Number(s2.id),
+    customer_id: null,
+    customer_name: SUBSCRIBER_GROUP,
+    customer_status: 'subscriber',
+    full_name: s2.full_name || s2.email,
+    email: String(s2.email).toLowerCase(),
+    job_title: s2.company || null,
+    is_primary: false,
+    opted_out: !s2.opted_in,
+  }));
 }
 
 // ── Audience coverage — WHY the list is the size it is ─────────────────────────
@@ -78,7 +105,12 @@ export interface Coverage {
   optedOutTotal: number;
 }
 
-export async function audienceCoverage(statusFilter: 'active' | 'all'): Promise<Coverage> {
+export async function audienceCoverage(statusFilter: AudienceFilter): Promise<Coverage> {
+  // Coverage explains why the CUSTOMER list is the size it is; subscribers have no customer
+  // behind them, so the subscribers-only view has nothing to explain.
+  if (statusFilter === 'subscribers') {
+    return { totalCustomers: 0, represented: [], noDomain: [], noMatch: [], noContacts: [], optedOutTotal: 0 };
+  }
   const where = statusFilter === 'active' ? "AND c.status = 'active'" : "AND c.status <> 'inactive'";
   const { rows } = await pool.query(
     `SELECT c.id, c.name, c.domain,
@@ -111,7 +143,7 @@ export interface CampaignInput {
   name: string;
   subject: string;
   bodyHtml: string;
-  statusFilter: 'active' | 'all';
+  statusFilter: AudienceFilter;
   excludeEmails: string[];   // unticked in the compose UI
   createdBy: number;
   // Attached one-click poll — a FROZEN questionnaire version (lib/questionnaires). The
@@ -125,7 +157,7 @@ export async function createCampaign(input: CampaignInput): Promise<number> {
   const list = (await audience(input.statusFilter)).filter(
     (r) => !r.opted_out && !input.excludeEmails.includes(r.email)
   );
-  if (!list.length) throw new Error('No recipients match — check customers have a default domain set and contacts use it.');
+  if (!list.length) throw new Error('No recipients match — check customers have a default domain set and contacts use it, or pick a different recipient list.');
   const c = await pool.query(
     `INSERT INTO mail_campaigns (name, subject, body_html, status, audience, created_by, questionnaire_version_id)
      VALUES ($1,$2,$3,'draft',$4,$5,$6) RETURNING id`,
@@ -136,9 +168,9 @@ export async function createCampaign(input: CampaignInput): Promise<number> {
   const campaignId: number = c.rows[0].id;
   for (const r of list) {
     await pool.query(
-      `INSERT INTO mail_campaign_recipients (campaign_id, contact_id, customer_id, email, full_name, customer_name)
-       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (campaign_id, email) DO NOTHING`,
-      [campaignId, r.contact_id, r.customer_id, r.email, r.full_name, r.customer_name]
+      `INSERT INTO mail_campaign_recipients (campaign_id, contact_id, subscriber_id, customer_id, email, full_name, customer_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (campaign_id, email) DO NOTHING`,
+      [campaignId, r.contact_id, r.subscriber_id ?? null, r.customer_id, r.email, r.full_name, r.customer_name]
     );
   }
   return campaignId;
@@ -162,9 +194,9 @@ export async function updateDraft(campaignId: number, input: CampaignInput): Pro
   );
   for (const r of list) {
     await pool.query(
-      `INSERT INTO mail_campaign_recipients (campaign_id, contact_id, customer_id, email, full_name, customer_name)
-       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (campaign_id, email) DO NOTHING`,
-      [campaignId, r.contact_id, r.customer_id, r.email, r.full_name, r.customer_name]
+      `INSERT INTO mail_campaign_recipients (campaign_id, contact_id, subscriber_id, customer_id, email, full_name, customer_name)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (campaign_id, email) DO NOTHING`,
+      [campaignId, r.contact_id, r.subscriber_id ?? null, r.customer_id, r.email, r.full_name, r.customer_name]
     );
   }
 }
@@ -191,9 +223,12 @@ async function unsubTokenFor(contactId: number): Promise<string> {
   return token;
 }
 
-function unsubFooter(url: string): string {
+function unsubFooter(url: string, subscriber = false): string {
+  const why = subscriber
+    ? "You're receiving this because you asked us to when you downloaded one of our guides."
+    : "You're receiving this because you're a contact of Lumen IT Solutions.";
   return `<p style="margin:28px 0 0;padding-top:14px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:12px;line-height:1.5;">
-    You're receiving this because you're a contact of Lumen IT Solutions.
+    ${why}
     <a href="${url}" style="color:#9ca3af;">Unsubscribe</a> from these updates.</p>`;
 }
 
@@ -297,7 +332,7 @@ function runLoop(campaignId: number): void {
         const camp = st.rows[0];
 
         const next = await pool.query(
-          `SELECT id, contact_id, email, full_name, customer_name FROM mail_campaign_recipients
+          `SELECT id, contact_id, subscriber_id, email, full_name, customer_name FROM mail_campaign_recipients
            WHERE campaign_id=$1 AND status='pending' ORDER BY id ASC LIMIT 1`,
           [campaignId]
         );
@@ -317,14 +352,26 @@ function runLoop(campaignId: number): void {
           }
         }
 
+        // Same re-check for a subscriber: an unsubscribe between the snapshot and the send
+        // must be honoured, and for this list that is the whole basis on which we may write.
+        if (r.subscriber_id) {
+          const so = await pool.query('SELECT COALESCE(opted_in,true) AS i FROM marketing_subscribers WHERE id=$1', [r.subscriber_id]);
+          if (!so.rows.length || !so.rows[0].i) {
+            await pool.query("UPDATE mail_campaign_recipients SET status='skipped', error='opted out' WHERE id=$1", [r.id]);
+            continue;
+          }
+        }
+
         try {
-          const token = r.contact_id ? await unsubTokenFor(r.contact_id) : 'unknown';
+          const token = r.contact_id
+            ? await unsubTokenFor(r.contact_id)
+            : (r.subscriber_id ? await subscriberUnsubToken(Number(r.subscriber_id)) : 'unknown');
           // Body -> poll -> signature -> unsubscribe. The poll sits above the signature so
           // it reads as part of the message rather than as footer furniture.
           const html = mergeFields(camp.body_html, r)
             + (await pollBlockFor(camp, r))
             + (await campaignSignatureHtml())
-            + unsubFooter(config.APP_URL + '/unsubscribe/' + token);
+            + unsubFooter(config.APP_URL + '/unsubscribe/' + token, !!r.subscriber_id);
           await sendMail({ to: r.email, subject: camp.subject, html, from: camp.from_email || undefined });
           await pool.query("UPDATE mail_campaign_recipients SET status='sent', sent_at=now(), error=NULL WHERE id=$1", [r.id]);
         } catch (e: any) {

@@ -30,7 +30,22 @@
 <% if (error) { %><div class="alert alert-error" style="margin-bottom:12px;"><%= error %></div><% } %>
 <% if (typeof notice !== 'undefined' && notice) { %><div class="alert" style="margin-bottom:12px;background:var(--tint-warn,#fffbeb);border:1px solid var(--warn-line,#fde68a);color:var(--warn-deep,#92400e);"><%= notice %></div><% } %>
 
+<% var ST = (typeof seedTicket !== 'undefined') ? seedTicket : null; %>
+<% if (ST) { %>
+  <div class="card" style="margin-bottom:12px;padding:12px 14px;border-left:3px solid var(--accent);">
+    <div style="font-size:13px;">
+      Raised from case <a class="row-link" href="/tickets/<%= ST.id %>"><strong><%= ST.ticket_number %></strong></a>
+      <% if (ST.subject) { %> — <%= ST.subject %><% } %>
+      <% if (ST.customer_name) { %> <span class="muted">· <%= ST.customer_name %></span><% } %>
+    </div>
+    <p class="muted" style="margin:6px 0 0;font-size:12px;">
+      Scheduling this parks the case until the task finishes, then puts it back in front of an
+      engineer with a note saying how it went. You land back on the case, not here.
+    </p>
+  </div>
+<% } %>
 <form method="post" action="/automation/scheduled-tasks" id="ntForm">
+<% if (ST) { %><input type="hidden" name="ticket_id" value="<%= ST.id %>"><% } %>
 <input type="hidden" name="device_ids" id="ntDeviceIds">
 <input type="hidden" name="run_at_epoch" id="ntEpoch">
 <input type="hidden" name="run_until_epoch" id="ntEndEpoch">

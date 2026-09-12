@@ -46,6 +46,15 @@ const schema = z.object({
   WEBSITE_NEWS_DIR:    z.string().default('/var/www/lumenmsp/news/live'),
   WEBSITE_BASE_URL:    z.string().default('https://www.lumenmsp.co.uk'),
 
+  // Marketing studio "Publish guide": directory the Portal writes lead-magnet landing pages
+  // into (static HTML with a name/email form, served by the website's nginx). Nothing in the
+  // Astro build owns /guides/, so there is no collision. The PDF itself is NOT written here -
+  // it stays private inside the Portal (data/guides) and is handed out only through a one-time
+  // download token, which is what makes the gate a gate rather than a suggestion.
+  // One-off server setup: mkdir -p /var/www/lumenmsp/guides (web root is lits-admin-owned).
+  // The website deploy.ps1 preserves guides/ across site deploys, as it does news/live.
+  WEBSITE_GUIDES_DIR:  z.string().default('/var/www/lumenmsp/guides'),
+
   // QuickBooks Online (OAuth client creds; tokens stored in settings table)
   QB_CLIENT_ID:        z.string().default(''),
   QB_CLIENT_SECRET:    z.string().default(''),

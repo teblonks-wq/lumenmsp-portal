@@ -1,0 +1,64 @@
+<%- include('../partials/header', { title: guide.title, user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing/guides">← Guides</a></p>
+    <h1 style="margin:0;">📘 <%= guide.title %></h1>
+    <p class="muted" style="margin:4px 0 0;">
+      <% if (guide.landing_url) { %><a class="row-link" href="<%= guide.landing_url %>" target="_blank" rel="noopener"><%= guide.landing_url %></a> · <% } %>
+      <%= guide.pdf_name || 'guide.pdf' %><%= guide.pdf_bytes ? ' · ' + (Number(guide.pdf_bytes) / (1024 * 1024)).toFixed(1) + ' MB' : '' %>
+      <% if (guide.created_by) { %> · published by <%= guide.created_by %><% } %>
+    </p>
+  </div>
+  <form method="post" action="/marketing/guides/<%= guide.slug %>/archive" onsubmit="return confirm('Withdraw this guide? The download link stops working for everyone who has it. The landing page stays on the website until you remove it on the server.');">
+    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+    <button class="btn" type="submit">Withdraw</button>
+  </form>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+  <div class="card-header"><h2>The offer</h2></div>
+  <p style="margin:0 0 10px;font-size:15.5px;"><%= guide.intro %></p>
+  <% if (guide.inside_html) { %><div class="muted" style="font-size:14.5px;"><%- guide.inside_html %></div><% } %>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:16px 20px;"><h2>Who asked for it (<%= leads.length %>)</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Company</th>
+          <th>Phone</th>
+          <th style="text-align:center;">Downloads</th>
+          <th>Hear from us?</th>
+          <th>Requested</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (!leads.length) { %>
+          <tr><td colspan="8"><div class="empty-state">Nobody has asked for this one yet. Push the LinkedIn and Facebook posts from the Socials Studio and give it a few days.</div></td></tr>
+        <% } %>
+        <% leads.forEach(function (l) { %>
+          <tr>
+            <td><%= l.full_name || '—' %></td>
+            <td class="muted"><%= l.email || '—' %></td>
+            <td class="muted"><%= l.company || '—' %></td>
+            <td class="muted"><%= l.phone || '—' %></td>
+            <td style="text-align:center;"><%= l.downloads || 0 %></td>
+            <td><% if (l.opted_in) { %><span class="badge badge-sent">Opted in</span><% } else { %><span class="muted" style="font-size:12.5px;">No — not contacted</span><% } %></td>
+            <td class="muted"><%= new Date(l.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) %></td>
+            <td style="text-align:right;white-space:nowrap;">
+              <% if (l.lead_id) { %><a class="btn" style="font-size:12px;padding:4px 12px;" href="/leads/<%= l.lead_id %>">Lead</a><% } %>
+            </td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

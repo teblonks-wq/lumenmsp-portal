@@ -516,13 +516,16 @@ function cachedSystem(system: string): any {
   return [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }];
 }
 
-async function callClaude(key: string, model: string, system: string, userText: string, maxTokens: number, images?: StudioImage[]): Promise<string> {
-  const content: any = (images && images.length)
-    ? [
-        ...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } })),
-        { type: 'text', text: userText },
-      ]
-    : userText;
+async function callClaude(
+  key: string, model: string, system: string, userText: string, maxTokens: number,
+  images?: StudioImage[], pdfBase64?: string | null,
+): Promise<string> {
+  // A PDF goes up as a document block (Claude reads it natively, layout and all) - used when
+  // pdf-parse found no text, i.e. the guide was exported as images.
+  const blocks: any[] = [];
+  if (pdfBase64) blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } });
+  if (images && images.length) blocks.push(...images.map((im) => ({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } })));
+  const content: any = blocks.length ? [...blocks, { type: 'text', text: userText }] : userText;
   const __t0 = Date.now();
   const __feature = callerFeature();
   let res: Response;
@@ -832,5 +835,78 @@ export async function aiGenerateStudio(input: StudioInput): Promise<StudioOutput
       category: String(w.category || 'IT News').trim(),
       body: String(w.body || '').trim(),
     },
+  };
+}
+
+// ── Marketing studio → Guide mode (lead magnets) ────────────────────────────────
+// Terry has written a PDF; Claude reads it and writes the shop window: a title with a bit
+// of swagger, a short intro, "what's inside", and social copy that offers the download.
+// This is NOT the article brief — nobody reads a 700-word essay before clicking Download.
+export interface GuidePostInput {
+  pdfText: string;               // extracted text (empty when the PDF is image-only)
+  pdfBase64?: string | null;     // the file itself — sent only when there is no text to read
+  pdfName: string;
+  pages: number;
+  notes: string;                 // who it's for / anything Terry wants said
+  take: string;                  // Lumen's angle
+}
+export interface GuidePostOutput {
+  title: string; slug: string; intro: string; insideHtml: string; excerpt: string;
+  linkedin: string; facebook: string; imageQuery: string;
+}
+
+export async function aiGuidePost(input: GuidePostInput): Promise<GuidePostOutput> {
+  const key = await resolveKey();
+  if (!key) throw new Error('Claude is not configured - add your API key in Settings -> Integrations (or ANTHROPIC_API_KEY in the server .env).');
+  // Reading a whole document and pitching it well is a reasoning job, so this one uses the
+  // strong model rather than the cheap one every other studio step runs on.
+  const model = ((await getSetting('anthropic', 'model_strong')) || '').trim() || STRONG_MODEL;
+
+  const system = [
+    'Lumen IT Solutions (a UK managed IT provider, lumenmsp.co.uk) is giving away a free guide it has written. You have the guide itself. Your job is the shop window: make a busy business owner want it, in about fifteen seconds.',
+    'AUDIENCE: business owners, office managers and everyday staff - intelligent people who are NOT technical. No jargon; if a technical term is unavoidable, explain it in one plain phrase.',
+    'TONE: British English (£, dd/mm/yyyy, organise/colour/licence/whilst). Punchy, warm, confident, human. Say something real. Do NOT write like a brochure or an AI: no "unlock", "elevate", "in today\'s fast-paced world", "game-changer", "dive into", "empower", "supercharge", no em-dash-heavy corporate rhythm.',
+    'EVERYTHING you write must come from the guide itself. Never promise content the guide does not contain, and never invent statistics, prices or case studies.',
+    'Produce:',
+    '- title: the name of the offer as it appears on the landing page and in the posts. Confident and specific, with a bit of pull - the sort of thing someone forwards to a colleague. Maximum 70 characters. NOT clickbait, no "You won\'t believe", no fear-mongering, no colon-stuffing.',
+    '- slug: url-safe kebab-case from the title (lowercase a-z, 0-9, hyphens; max 60 chars).',
+    '- intro: 2 to 4 SHORT sentences (45-90 words total) that go under the title on the landing page. Open with the problem the reader actually has, say what the guide gives them, and make it obvious it is free and quick to read. Plain text, no HTML, no headings.',
+    '- insideHtml: a "What\'s inside" list as clean HTML - one <ul> containing 4 to 6 <li> items, each 6-14 words, each naming something genuinely covered in the guide. No other tags, no styles, no nesting.',
+    '- excerpt: one sentence (max 160 characters) for the page description and link preview.',
+    '- linkedin: a LinkedIn post of 90-160 words OFFERING the guide. Hook with the problem, give away one genuinely useful point FROM the guide (so the post is worth reading even if they never download), then invite them to grab the free copy. The landing-page link is appended automatically after your text, so write no URL and no "link in comments". End with 2-3 relevant hashtags.',
+    '- facebook: 50-100 words, same job, more conversational and warmer. Link appended automatically, so no URL in the text. At most 1 hashtag.',
+    '- imageQuery: a 2-4 word stock-photo search phrase for the landing-page hero - concrete and visual (e.g. "office worker laptop"), never an abstract concept ("cyber security concept").',
+    'Return ONLY a JSON object {"title":"...","slug":"...","intro":"...","insideHtml":"...","excerpt":"...","linkedin":"...","facebook":"...","imageQuery":"..."} with no code fences and no other text.',
+  ].join('\n');
+
+  const hasText = !!String(input.pdfText || '').trim();
+  const userText = [
+    `The guide: ${input.pdfName}${input.pages ? ` (${input.pages} pages)` : ''}`,
+    hasText
+      // 60k characters is roughly a 40-page guide - well inside the model's window, and the
+      // opening pages are where the promise of a guide lives anyway.
+      ? `\nFull text of the guide:\n${String(input.pdfText).slice(0, 60000)}`
+      : '\nThe PDF has no extractable text, so it is attached above - read it directly.',
+    `\nNotes from Lumen (who it is for, anything that must be said):\n${input.notes || '(none)'}`,
+    `\nLumen's take (our angle):\n${input.take || '(none given - take a helpful, practical stance)'}`,
+  ].join('\n');
+
+  const raw = await callClaude(key, model, system, userText, 2000, undefined, hasText ? null : (input.pdfBase64 || null));
+  const jsonStr = (raw.match(/\{[\s\S]*\}/) || [raw])[0];
+  let j: any;
+  try { j = JSON.parse(jsonStr); } catch { throw new Error('Claude did not return a clean draft - try Generate again.'); }
+
+  const title = String(j.title || '').trim();
+  if (!title) throw new Error('Claude did not return a title - try Generate again.');
+  const slug = String(j.slug || title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'guide';
+  return {
+    title,
+    slug,
+    intro: String(j.intro || '').trim(),
+    insideHtml: String(j.insideHtml || '').trim(),
+    excerpt: String(j.excerpt || '').trim(),
+    linkedin: String(j.linkedin || '').trim(),
+    facebook: String(j.facebook || '').trim(),
+    imageQuery: String(j.imageQuery || '').trim(),
   };
 }

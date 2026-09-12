@@ -440,9 +440,20 @@
     syncTimed(); syncRepeat();
     $('dyOverlay').classList.add('on');
   };
+  // Opened from a case: put the form up straight away with the case, its customer and a
+  // starting title already in, so the only thing left to choose is the time.
+  var SEED_TICKET = <%- JSON.stringify(typeof seedTicket !== 'undefined' ? seedTicket : null) %>;
   window.dyClose = function(){ $('dyOverlay').classList.remove('on'); };
   $('dyOverlay').addEventListener('click', function(ev){ if (ev.target === $('dyOverlay')) dyClose(); });
   document.addEventListener('keydown', function(ev){ if (ev.key==='Escape') dyClose(); });
+  if (SEED_TICKET) {
+    dyOpen(null);
+    $('dyTk').value = String(SEED_TICKET.id);
+    if (SEED_TICKET.customer_id) { $('dyC').value = String(SEED_TICKET.customer_id); loadContacts(); }
+    $('dyT').value = SEED_TICKET.subject || SEED_TICKET.ticket_number;
+    $('dyTitle').textContent = 'Book against ' + SEED_TICKET.ticket_number;
+    $('dyT').focus();
+  }
 
   window.dySave = function(){
     var timed = $('dyTimed').checked;
@@ -491,6 +502,12 @@
         }
         if (r.invited) msg += ' Invitation sent to ' + r.invited + '.';
         if (r.warning) msg += ' (' + r.warning + ')';
+        // Booked from a case: go back to the case, not to the week. The person came here to
+        // do one thing on behalf of that case and should land where they started.
+        if (SEED_TICKET && !editId) {
+          location.href = '/tickets/' + SEED_TICKET.id + '?msg=' + encodeURIComponent(msg);
+          return;
+        }
         location.href = '/diary/week?w=<%= monday %>&view=<%= view %>&msg=' + encodeURIComponent(msg);
         return;
       }
