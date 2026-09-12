@@ -8,7 +8,8 @@ import { publishNewsArticle, websitePublishConfigured, renderArticlePreview } fr
 import { publishGuidePage, guidePublishConfigured, renderGuidePage } from '../lib/guide-publish';
 import {
   guideUpload, readPdf, holdPdf, takePdf, dropPdf, storePdf, saveGuide, getGuide,
-  listGuides, guideLeads, archiveGuide, slugify,
+  listGuides, guideLeads, archiveGuide, slugify, updateGuide, replaceGuidePdf,
+  guidePdfBuffer, setGuideNewsUrl,
 } from '../lib/guides';
 import { searchFreeImages } from '../lib/images';
 import {
@@ -248,6 +249,11 @@ router.post('/marketing/socials/publish-guide', requireAdmin, async (req: Reques
       slug: published.slug, title, intro, insideHtml, excerpt, imageUrl,
       pdfFile: stored.file, pdfName: stored.name, pdfBytes: stored.bytes,
       landingUrl: published.url, createdBy: req.session.user!.displayName || req.session.user!.email || null,
+      linkedin: String(req.body.linkedin || '').trim() || null,
+      facebook: String(req.body.facebook || '').trim() || null,
+      newsTitle: String(req.body.newsTitle || '').trim() || null,
+      newsExcerpt: String(req.body.newsExcerpt || '').trim() || null,
+      newsHtml: String(req.body.newsHtml || '').trim() || null,
     });
     dropPdf(pdfId);
     res.json({ ok: true, url: published.url, slug: published.slug });
@@ -271,6 +277,115 @@ router.get('/marketing/guides/:slug', requireAdmin, async (req: Request, res: Re
   res.render('marketing/guide-detail', {
     user: req.session.user!, guide, leads: await guideLeads(slug).catch(() => []),
   });
+});
+
+// Re-publish an existing guide: rewrite its landing page from edited copy. No PDF needed - the
+// file is already stored, so a typo fix never means running the whole studio again.
+router.post('/marketing/guides/:slug/update', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const slug = String(req.params.slug || '');
+    const guide = await getGuide(slug);
+    if (!guide) { res.status(404).json({ ok: false, error: 'That guide no longer exists.' }); return; }
+
+    const title = String(req.body.title || '').trim();
+    if (!title) { res.status(400).json({ ok: false, error: 'A title is required.' }); return; }
+    const intro = String(req.body.intro || '').trim();
+    const insideHtml = String(req.body.insideHtml || '').trim();
+    const excerpt = String(req.body.excerpt || '').trim();
+    const imageUrl = String(req.body.imageUrl || '').trim() || null;
+
+    // The slug stays put: it is the public address, and people already have the link.
+    const published = await publishGuidePage({ title, slug, intro, insideHtml, excerpt, imageUrl: imageUrl || undefined });
+    await updateGuide(slug, {
+      title, intro, insideHtml, excerpt, imageUrl, landingUrl: published.url,
+      linkedin: String(req.body.linkedin || '').trim() || null,
+      facebook: String(req.body.facebook || '').trim() || null,
+      newsTitle: String(req.body.newsTitle || '').trim() || null,
+      newsExcerpt: String(req.body.newsExcerpt || '').trim() || null,
+      newsHtml: String(req.body.newsHtml || '').trim() || null,
+    });
+    res.json({ ok: true, url: published.url });
+  } catch (e: any) {
+    res.status(400).json({ ok: false, error: e.message || 'Re-publish failed' });
+  }
+});
+
+// Swap in a corrected edition of the PDF. Download links already handed out keep working and
+// serve the new file.
+router.post('/marketing/guides/:slug/pdf', requireAdmin, guidePdf, async (req: Request, res: Response) => {
+  try {
+    const f = (req as any).file;
+    if (!f || !f.buffer) { res.status(400).json({ ok: false, error: 'No PDF received — choose a file first.' }); return; }
+    const r = await replaceGuidePdf(String(req.params.slug || ''), f.buffer, f.originalname || 'guide.pdf');
+    res.json({ ok: true, name: r.name, bytes: r.bytes });
+  } catch (e: any) {
+    res.status(400).json({ ok: false, error: e.message || 'Could not replace the PDF' });
+  }
+});
+
+// Ask Claude to (re)write the copy for a guide that is already published — it re-reads the stored
+// PDF. This is what fills the LinkedIn / Facebook / news boxes for a guide created before there
+// was anywhere to keep them, and it is the "give me a different angle" button afterwards.
+router.post('/marketing/guides/:slug/copy', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const slug = String(req.params.slug || '');
+    const guide = await getGuide(slug);
+    if (!guide) { res.status(404).json({ ok: false, error: 'That guide no longer exists.' }); return; }
+    const held = await guidePdfBuffer(slug);
+    if (!held) { res.status(400).json({ ok: false, error: 'The PDF behind this guide is missing from the server — use Replace the PDF first.' }); return; }
+
+    const read = await readPdf(held.buf);
+    if (read.scanned && held.buf.length > 20 * 1024 * 1024) {
+      res.status(400).json({ ok: false, error: 'This PDF has no readable text and is too large to send to Claude as-is.' });
+      return;
+    }
+    const out = await aiGuidePost({
+      pdfText: read.text,
+      pdfBase64: read.scanned ? held.buf.toString('base64') : null,
+      pdfName: held.name,
+      pages: read.pages,
+      // Keep the existing offer as the steer, so a rewrite stays the same guide.
+      notes: ['The landing page already says:', guide.title, guide.intro || '', guide.inside_html || ''].join('\n'),
+      take: String(req.body.take || '').trim(),
+    });
+    res.json({
+      ok: true, linkedin: out.linkedin, facebook: out.facebook,
+      newsTitle: out.newsTitle, newsExcerpt: out.newsExcerpt, newsHtml: out.newsHtml,
+    });
+  } catch (e: any) {
+    res.status(400).json({ ok: false, error: e.message || 'Could not write the copy' });
+  }
+});
+
+// Publish the guide's news article to lumenmsp.co.uk/news/live/<slug>/. It is a real article on
+// the subject that closes by offering the download — the link to the landing page is appended
+// here rather than trusted to the model.
+router.post('/marketing/guides/:slug/news', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const slug = String(req.params.slug || '');
+    const guide = await getGuide(slug);
+    if (!guide) { res.status(404).json({ ok: false, error: 'That guide no longer exists.' }); return; }
+
+    // Unsaved edits on screen win, so what you read is what goes live.
+    const title = String(req.body.newsTitle || guide.news_title || guide.title).trim();
+    const excerpt = String(req.body.newsExcerpt || guide.news_excerpt || guide.excerpt || '').trim();
+    let html = String(req.body.newsHtml || guide.news_html || '').trim();
+    if (!html) { res.status(400).json({ ok: false, error: 'There is no article to publish — press "Write the copy with Claude" first.' }); return; }
+
+    const landing = guide.landing_url || '';
+    if (landing && html.indexOf(landing) === -1) {
+      html += `\n<p><a href="${landing}">Get the free guide: ${guide.title}</a></p>`;
+    }
+
+    const r = await publishNewsArticle({
+      title, slug, excerpt, articleHtml: html,
+      imageUrl: String(req.body.imageUrl || guide.image_url || '').trim() || undefined,
+    });
+    await setGuideNewsUrl(slug, r.url);
+    res.json({ ok: true, url: r.url });
+  } catch (e: any) {
+    res.status(400).json({ ok: false, error: e.message || 'Could not publish the news article' });
+  }
 });
 
 router.post('/marketing/guides/:slug/archive', requireAdmin, async (req: Request, res: Response) => {

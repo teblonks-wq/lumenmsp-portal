@@ -89,6 +89,14 @@
     <div class="mode-guide" style="display:none;">
       <div class="form-group" style="margin-bottom:12px;"><label>Intro (sits under the title on the landing page)</label><textarea id="outIntro" class="input" rows="4" style="width:100%;font-size:15px;"></textarea></div>
       <div class="form-group" style="margin-bottom:12px;"><label>What's inside (HTML list)</label><textarea id="outInside" class="input" rows="7" style="width:100%;font-family:monospace;font-size:13.5px;"></textarea></div>
+      <div style="border-top:1px solid var(--line,#e2e8f0);margin:16px 0 14px;padding-top:14px;">
+        <p class="muted" style="margin:0 0 12px;font-size:14px;"><strong>The news article.</strong> A real piece on the subject for <strong>lumenmsp.co.uk/news</strong> — it makes the guide's best points properly and ends by offering the download. Read it before it goes live.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+          <div class="form-group" style="flex:2;min-width:280px;"><label>Headline</label><input id="outNewsTitle" class="input" style="width:100%;"></div>
+          <div class="form-group" style="flex:1;min-width:220px;"><label>Preview line</label><input id="outNewsExcerpt" class="input" style="width:100%;"></div>
+        </div>
+        <div class="form-group" style="margin-bottom:0;"><label>Article (HTML)</label><textarea id="outNews" class="input" rows="14" style="width:100%;font-size:14.5px;"></textarea></div>
+      </div>
     </div>
 
     <div style="display:flex;gap:12px;flex-wrap:wrap;">
@@ -143,6 +151,10 @@
     </div>
   </div>
 
+  <div class="pushRow mode-guide" style="display:none;">
+    <label class="pushHead"><input type="checkbox" id="pushNews" checked onchange="pushToggle()"> <b>📰 Website news</b><span class="muted"> — publishes the article above at lumenmsp.co.uk/news, ending with a link to the guide</span></label>
+  </div>
+
   <div class="pushRow">
     <label class="pushHead"><input type="checkbox" id="pushEmail" checked onchange="pushToggle()"> <b>✉️ Email the list</b><span class="muted"> — Claude writes it and saves it as a <strong>draft</strong>; nothing reaches anyone until you review it and press Start sending</span></label>
     <div class="pushBody" id="pushEmailBody">
@@ -168,6 +180,7 @@ var publishedUrl = '';
 var selectedImage = '';
 var stMode = 'article';
 var pdfId = '';
+var publishedSlug = '';
 
 function stSetMode(m){
   stMode = m;
@@ -179,7 +192,7 @@ function stSetMode(m){
   // A draft written for one mode is meaningless in the other — start clean.
   $('genOut').style.display = 'none';
   $('genStatus').textContent = '';
-  publishedUrl = '';
+  publishedUrl = ''; publishedSlug = '';
   $('webStatus').textContent = ''; $('gPubStatus').textContent = '';
   $('prevBtn').disabled = true; $('webBtn').disabled = true;
   $('gPrevBtn').disabled = true; $('gPubBtn').disabled = true;
@@ -277,6 +290,9 @@ function stGenerate(){
     if (stMode === 'guide') {
       $('outIntro').value = d.intro || '';
       $('outInside').value = d.insideHtml || '';
+      $('outNewsTitle').value = d.newsTitle || '';
+      $('outNewsExcerpt').value = d.newsExcerpt || '';
+      $('outNews').value = d.newsHtml || '';
       $('gPrevBtn').disabled=false; $('gPubBtn').disabled=false;
       s.textContent = 'Done — read ' + (d.pages ? d.pages + ' pages' : 'the PDF')
         + (d.readAs === 'pdf' ? ' as images' : '') + '. Edit anything below, then publish.';
@@ -320,12 +336,14 @@ function stPublishGuide(){
   b.disabled=true; b.textContent='📘 Publishing…'; s.textContent='';
   jpost('/marketing/socials/publish-guide', {
     pdfId: pdfId, title: $('outTitle').value, slug: $('outSlug').value, intro: $('outIntro').value,
-    insideHtml: $('outInside').value, excerpt: $('outExcerpt').value, imageUrl: selectedImage
+    insideHtml: $('outInside').value, excerpt: $('outExcerpt').value, imageUrl: selectedImage,
+    linkedin: $('outLinkedin').value, facebook: $('outFacebook').value,
+    newsTitle: $('outNewsTitle').value, newsExcerpt: $('outNewsExcerpt').value, newsHtml: $('outNews').value
   }).then(function(d){
     b.disabled=false; b.textContent='📘 Publish guide';
     if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
-    publishedUrl=d.url;
-    s.innerHTML='✔ Live: <a href="'+d.url+'" target="_blank" rel="noopener">'+d.url+'</a> · <a href="/marketing/guides">see downloads</a>';
+    publishedUrl=d.url; publishedSlug=d.slug;
+    s.innerHTML='✔ Live: <a href="'+d.url+'" target="_blank" rel="noopener">'+d.url+'</a> · <a href="/marketing/guides/'+d.slug+'">manage it</a>';
     s.style.color='var(--ok-fg)';
   }).catch(function(){ b.disabled=false; b.textContent='📘 Publish guide'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
 }
@@ -353,6 +371,18 @@ function doBuffer(){
 }
 
 // Email draft — same contract.
+// The guide's news article. Addressed to the guide, so the Portal records where it went.
+function doNews(){
+  if(!publishedSlug) return Promise.resolve({ ok:false, line:'News: publish the guide first.' });
+  return jpost('/marketing/guides/' + encodeURIComponent(publishedSlug) + '/news', {
+    newsTitle: $('outNewsTitle').value, newsExcerpt: $('outNewsExcerpt').value,
+    newsHtml: $('outNews').value, imageUrl: selectedImage
+  }).then(function(d){
+    if(!d.ok) return { ok:false, line:'News: ' + (d.error||'failed') };
+    return { ok:true, line:'News: live at <a href="'+d.url+'" target="_blank" rel="noopener">'+d.url+'</a>' };
+  }).catch(function(){ return { ok:false, line:'News: request failed.' }; });
+}
+
 function doEmail(){
   return jpost('/marketing/socials/email-campaign', {
     kind: stMode, title: $('outTitle').value, link: publishedUrl,
@@ -367,7 +397,8 @@ function doEmail(){
 function stPushAll(){
   var b=$('pushBtn'), s=$('pushStatus'), d=$('pushDetail');
   var wantSocial = $('pushSocial').checked, wantEmail = $('pushEmail').checked;
-  if(!wantSocial && !wantEmail){ s.textContent='Tick at least one.'; s.style.color='var(--bad-fg)'; return; }
+  var wantNews = (stMode === 'guide') && $('pushNews').checked;
+  if(!wantSocial && !wantEmail && !wantNews){ s.textContent='Tick at least one.'; s.style.color='var(--bad-fg)'; return; }
 
   // The email is a link with words around it, so it needs the page to exist. Socials can go
   // out without one, but you would be posting something nobody can click.
@@ -389,8 +420,11 @@ function stPushAll(){
   s.style.color='';
 
   // Sequential on purpose: Buffer is rate-limited and the email call spends ~10s with Claude.
-  (wantSocial ? doBuffer() : Promise.resolve(null)).then(function(r1){
-    return (wantEmail ? doEmail() : Promise.resolve(null)).then(function(r2){ return [r1, r2]; });
+  // News goes first so the site has the piece before anyone is sent anywhere.
+  (wantNews ? doNews() : Promise.resolve(null)).then(function(r0){
+    return (wantSocial ? doBuffer() : Promise.resolve(null)).then(function(r1){
+      return (wantEmail ? doEmail() : Promise.resolve(null)).then(function(r2){ return [r0, r1, r2]; });
+    });
   }).then(function(rs){
     b.disabled=false; b.textContent='🚀 Push it out';
     var done = rs.filter(Boolean);

@@ -853,6 +853,9 @@ export interface GuidePostInput {
 export interface GuidePostOutput {
   title: string; slug: string; intro: string; insideHtml: string; excerpt: string;
   linkedin: string; facebook: string; imageQuery: string;
+  // The website news piece that carries the guide. A news page full of adverts stops being
+  // read, so this is a real article that happens to end by offering the download.
+  newsTitle: string; newsExcerpt: string; newsHtml: string;
 }
 
 export async function aiGuidePost(input: GuidePostInput): Promise<GuidePostOutput> {
@@ -876,7 +879,11 @@ export async function aiGuidePost(input: GuidePostInput): Promise<GuidePostOutpu
     '- linkedin: a LinkedIn post of 90-160 words OFFERING the guide. Hook with the problem, give away one genuinely useful point FROM the guide (so the post is worth reading even if they never download), then invite them to grab the free copy. The landing-page link is appended automatically after your text, so write no URL and no "link in comments". End with 2-3 relevant hashtags.',
     '- facebook: 50-100 words, same job, more conversational and warmer. Link appended automatically, so no URL in the text. At most 1 hashtag.',
     '- imageQuery: a 2-4 word stock-photo search phrase for the landing-page hero - concrete and visual (e.g. "office worker laptop"), never an abstract concept ("cyber security concept").',
-    'Return ONLY a JSON object {"title":"...","slug":"...","intro":"...","insideHtml":"...","excerpt":"...","linkedin":"...","facebook":"...","imageQuery":"..."} with no code fences and no other text.',
+    'You also write the news article that carries this guide on lumenmsp.co.uk/news. THIS IS NOT AN ADVERT. It is a genuine, useful article on the guide\'s subject that a reader would be glad they read even if they never download anything - it earns the offer at the end. Take the most useful 3-4 points FROM the guide and actually make them, in full, in plain English. Do not tease ("the guide explains why..."), do not pad, do not repeat the landing page.',
+    '- newsTitle: a plain-English headline for the article. It is about the SUBJECT, not about the guide - not "Download our free guide to X".',
+    '- newsExcerpt: 1-2 sentences for the news listing and link preview.',
+    '- newsHtml: the article BODY as clean HTML - <p>, <h2>, <ul>/<li>, <strong> only (no <h1>, no inline styles, no scripts, no links). 450-700 words. Structure: why this matters to a business owner -> the substance, the real points from the guide made properly -> what to do about it. Then ONE short closing paragraph offering the full guide free - a plain sentence, no hard sell, no exclamation marks, and no URL (the link is added automatically).',
+    'Return ONLY a JSON object {"title":"...","slug":"...","intro":"...","insideHtml":"...","excerpt":"...","linkedin":"...","facebook":"...","imageQuery":"...","newsTitle":"...","newsExcerpt":"...","newsHtml":"..."} with no code fences and no other text.',
   ].join('\n');
 
   const hasText = !!String(input.pdfText || '').trim();
@@ -891,7 +898,7 @@ export async function aiGuidePost(input: GuidePostInput): Promise<GuidePostOutpu
     `\nLumen's take (our angle):\n${input.take || '(none given - take a helpful, practical stance)'}`,
   ].join('\n');
 
-  const raw = await callClaude(key, model, system, userText, 2000, undefined, hasText ? null : (input.pdfBase64 || null));
+  const raw = await callClaude(key, model, system, userText, 4000, undefined, hasText ? null : (input.pdfBase64 || null));
   const jsonStr = (raw.match(/\{[\s\S]*\}/) || [raw])[0];
   let j: any;
   try { j = JSON.parse(jsonStr); } catch { throw new Error('Claude did not return a clean draft - try Generate again.'); }
@@ -908,5 +915,8 @@ export async function aiGuidePost(input: GuidePostInput): Promise<GuidePostOutpu
     linkedin: String(j.linkedin || '').trim(),
     facebook: String(j.facebook || '').trim(),
     imageQuery: String(j.imageQuery || '').trim(),
+    newsTitle: String(j.newsTitle || title).trim(),
+    newsExcerpt: String(j.newsExcerpt || j.excerpt || '').trim(),
+    newsHtml: String(j.newsHtml || '').trim(),
   };
 }

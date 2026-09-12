@@ -4228,6 +4228,12 @@ model MarketingGuide {
   pdfName    String?   @map("pdf_name")
   pdfBytes   BigInt?   @map("pdf_bytes")
   landingUrl String?   @map("landing_url")
+  linkedin    String?
+  facebook    String?
+  newsTitle   String?  @map("news_title")
+  newsExcerpt String?  @map("news_excerpt")
+  newsHtml    String?  @map("news_html")
+  newsUrl     String?  @map("news_url")
   active     Boolean?  @default(true)
   createdBy  String?   @map("created_by")
   createdAt  DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")

@@ -6,22 +6,109 @@
     <h1 style="margin:0;">📘 <%= guide.title %></h1>
     <p class="muted" style="margin:4px 0 0;">
       <% if (guide.landing_url) { %><a class="row-link" href="<%= guide.landing_url %>" target="_blank" rel="noopener"><%= guide.landing_url %></a> · <% } %>
-      <%= guide.pdf_name || 'guide.pdf' %><%= guide.pdf_bytes ? ' · ' + (Number(guide.pdf_bytes) / (1024 * 1024)).toFixed(1) + ' MB' : '' %>
+      <span id="pdfLabel"><%= guide.pdf_name || 'guide.pdf' %><%= guide.pdf_bytes ? ' · ' + (Number(guide.pdf_bytes) / (1024 * 1024)).toFixed(1) + ' MB' : '' %></span>
       <% if (guide.created_by) { %> · published by <%= guide.created_by %><% } %>
     </p>
   </div>
-  <form method="post" action="/marketing/guides/<%= guide.slug %>/archive" onsubmit="return confirm('Withdraw this guide? The download link stops working for everyone who has it. The landing page stays on the website until you remove it on the server.');">
+  <form method="post" action="/marketing/guides/<%= guide.slug %>/archive" onsubmit="return confirm('Withdraw this guide? Every download link handed out stops working. The landing page stays on the website until you remove it on the server.');">
     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
     <button class="btn" type="submit">Withdraw</button>
   </form>
 </div>
 
-<div class="card" style="margin-bottom:16px;">
+<!-- Edit + re-publish -->
+<div class="card">
   <div class="card-header"><h2>The offer</h2></div>
-  <p style="margin:0 0 10px;font-size:15.5px;"><%= guide.intro %></p>
-  <% if (guide.inside_html) { %><div class="muted" style="font-size:14.5px;"><%- guide.inside_html %></div><% } %>
+  <p class="muted" style="margin:0 0 14px;">
+    Edit anything here and re-publish — the page address stays the same, so links already out there keep working.
+    The PDF is untouched unless you replace it below.
+  </p>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+    <div class="form-group" style="flex:2;min-width:280px;"><label>Title</label><input id="gTitle" class="input" style="width:100%;" value="<%= guide.title %>"></div>
+    <div class="form-group" style="flex:1;min-width:200px;"><label>Page address</label><input class="input" style="width:100%;font-family:monospace;font-size:13.5px;" value="/guides/<%= guide.slug %>/" disabled></div>
+  </div>
+  <div class="form-group" style="margin-bottom:12px;"><label>Intro</label><textarea id="gIntro" class="input" rows="4" style="width:100%;font-size:15px;"><%= guide.intro || '' %></textarea></div>
+  <div class="form-group" style="margin-bottom:12px;"><label>What's inside (HTML list)</label><textarea id="gInside" class="input" rows="6" style="width:100%;font-family:monospace;font-size:13.5px;"><%= guide.inside_html || '' %></textarea></div>
+  <div class="form-group" style="margin-bottom:12px;"><label>Excerpt (link preview line)</label><input id="gExcerpt" class="input" style="width:100%;" value="<%= guide.excerpt || '' %>"></div>
+  <div class="form-group" style="margin-bottom:14px;"><label>Hero photo URL</label><input id="gImage" class="input" style="width:100%;font-family:monospace;font-size:13px;" value="<%= guide.image_url || '' %>" placeholder="paste an image URL, or leave empty for text-only"></div>
+
+  <button class="btn" onclick="gPreview()">👁 Preview</button>
+  <button class="btn btn-primary" id="gSaveBtn" onclick="gSave()">💾 Re-publish the page</button>
+  <span id="gSaveStatus" style="margin-left:10px;"></span>
 </div>
 
+<!-- Replace the file -->
+<div class="card">
+  <div class="card-header"><h2>The file</h2></div>
+  <p class="muted" style="margin:0 0 12px;">
+    Swapping the PDF keeps every download link working — they just start serving the new edition.
+    Use it for a corrected or updated version of the same guide.
+  </p>
+  <input type="file" id="gPdf" accept="application/pdf,.pdf" style="display:none;" onchange="gReplacePdf()">
+  <button class="btn" onclick="document.getElementById('gPdf').click()">📎 Replace the PDF</button>
+  <span id="gPdfStatus" style="margin-left:10px;"></span>
+</div>
+
+<!-- Push it out again -->
+<div class="card">
+  <div class="card-header"><h2>Push it out</h2></div>
+  <p class="muted" style="margin:0 0 14px;">Post it again, email it again, or do one without the other. The copy below is what goes out — edit it first if you want a different angle this time.</p>
+
+  <div style="margin-bottom:14px;">
+    <button class="btn" id="gCopyBtn" onclick="gWriteCopy()">✨ Write the copy with Claude</button>
+    <span id="gCopyStatus" class="muted" style="margin-left:10px;"></span>
+    <p class="muted" style="font-size:13px;margin:8px 0 0;">Claude re-reads the PDF and writes all three: the two posts and the news article. Empty boxes below mean this guide was published before the Portal kept its copy — press the button.</p>
+  </div>
+
+  <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+    <div class="form-group" style="flex:1;min-width:300px;"><label>LinkedIn</label><textarea id="gLinkedin" class="input" rows="7" style="width:100%;"><%= guide.linkedin || '' %></textarea></div>
+    <div class="form-group" style="flex:1;min-width:300px;"><label>Facebook</label><textarea id="gFacebook" class="input" rows="7" style="width:100%;"><%= guide.facebook || '' %></textarea></div>
+  </div>
+
+  <div style="border-top:1px solid var(--line,#e2e8f0);margin:4px 0 14px;padding-top:14px;">
+    <p class="muted" style="margin:0 0 12px;font-size:14px;"><strong>The news article.</strong> A real piece on the subject for <strong>lumenmsp.co.uk/news</strong> — it makes the guide's best points properly and ends with a link to the download. Read it before it goes live.
+    <% if (guide.news_url) { %><br>Currently live at <a class="row-link" href="<%= guide.news_url %>" target="_blank" rel="noopener"><%= guide.news_url %></a>.<% } %></p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+      <div class="form-group" style="flex:2;min-width:280px;"><label>Headline</label><input id="gNewsTitle" class="input" style="width:100%;" value="<%= guide.news_title || '' %>"></div>
+      <div class="form-group" style="flex:1;min-width:220px;"><label>Preview line</label><input id="gNewsExcerpt" class="input" style="width:100%;" value="<%= guide.news_excerpt || '' %>"></div>
+    </div>
+    <div class="form-group" style="margin-bottom:0;"><label>Article (HTML)</label><textarea id="gNews" class="input" rows="14" style="width:100%;font-size:14.5px;"><%= guide.news_html || '' %></textarea></div>
+  </div>
+
+  <p class="muted" style="font-size:13px;margin:0 0 14px;">All of this is saved with the guide when you press <strong>Re-publish the page</strong> above.</p>
+
+  <div class="pushRow">
+    <label class="pushHead"><input type="checkbox" id="pushSocial" checked onchange="pushToggle()"> <b>📣 LinkedIn + Facebook</b><span class="muted"> — via Buffer, with the landing-page link attached</span></label>
+    <div class="pushBody" id="pushSocialBody">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="radio" name="bufMode" value="now" checked> Post now</label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="radio" name="bufMode" value="schedule"> Schedule for</label>
+      <input type="datetime-local" id="bufWhen" class="input" style="width:auto;">
+    </div>
+  </div>
+
+  <div class="pushRow">
+    <label class="pushHead"><input type="checkbox" id="pushNews" onchange="pushToggle()"> <b>📰 Website news</b><span class="muted"> — publishes the article above at lumenmsp.co.uk/news (re-publishing replaces it at the same address)</span></label>
+  </div>
+
+  <div class="pushRow">
+    <label class="pushHead"><input type="checkbox" id="pushEmail" onchange="pushToggle()"> <b>✉️ Email the list</b><span class="muted"> — saved as a <strong>draft</strong> in the Mass Mailer; nothing reaches anyone until you review it and press Start sending</span></label>
+    <div class="pushBody" id="pushEmailBody">
+      <label style="font-weight:600;">Who gets it</label>
+      <select id="mailList" class="input" style="width:auto;">
+        <option value="subscribers" selected>Subscribers only (opted in) — the default</option>
+        <option value="active">Active customers</option>
+        <option value="everyone">Everyone — customers + subscribers</option>
+      </select>
+    </div>
+  </div>
+
+  <button class="btn btn-primary" id="pushBtn" onclick="gPushAll()">🚀 Push it out</button>
+  <span id="pushStatus" style="margin-left:10px;"></span>
+  <div id="pushDetail" class="muted" style="margin-top:10px;font-size:14px;"></div>
+</div>
+
+<!-- Who asked -->
 <div class="card" style="padding:0;">
   <div class="card-header" style="padding:16px 20px;"><h2>Who asked for it (<%= leads.length %>)</h2></div>
   <div class="table-wrap">
@@ -40,7 +127,7 @@
       </thead>
       <tbody>
         <% if (!leads.length) { %>
-          <tr><td colspan="8"><div class="empty-state">Nobody has asked for this one yet. Push the LinkedIn and Facebook posts from the Socials Studio and give it a few days.</div></td></tr>
+          <tr><td colspan="8"><div class="empty-state">Nobody has asked for this one yet. Push it out and give it a few days.</div></td></tr>
         <% } %>
         <% leads.forEach(function (l) { %>
           <tr>
@@ -60,5 +147,141 @@
     </table>
   </div>
 </div>
+
+<style>
+  .pushRow{border:1px solid var(--line,#e2e8f0);border-radius:10px;padding:13px 15px;margin-bottom:12px;}
+  .pushHead{display:block;font-size:14.5px;cursor:pointer;}
+  .pushHead b{font-size:15.5px;}
+  .pushBody{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:11px 0 0;padding-left:24px;transition:opacity .12s ease;}
+</style>
+
+<script>
+var SLUG = <%- JSON.stringify(guide.slug) %>;
+var LANDING = <%- JSON.stringify(guide.landing_url || '') %>;
+function $(id){ return document.getElementById(id); }
+function csrf(){ var m=document.querySelector('meta[name="csrf-token"]'); return m?m.getAttribute('content'):''; }
+function jpost(url, body){ return fetch(url, { method:'POST', headers:{'Content-Type':'application/json','x-csrf-token':csrf()}, body: JSON.stringify(body) }).then(function(r){ return r.json(); }); }
+
+function fields(){
+  return { title:$('gTitle').value, intro:$('gIntro').value, insideHtml:$('gInside').value,
+           excerpt:$('gExcerpt').value, imageUrl:$('gImage').value.trim(),
+           linkedin:$('gLinkedin').value, facebook:$('gFacebook').value,
+           newsTitle:$('gNewsTitle').value, newsExcerpt:$('gNewsExcerpt').value, newsHtml:$('gNews').value };
+}
+
+function gPreview(){
+  var f = fields(), form = document.createElement('form');
+  form.method='POST'; form.action='/marketing/socials/preview-guide'; form.target='_blank';
+  [['_csrf',csrf()],['title',f.title],['slug',SLUG],['intro',f.intro],
+   ['insideHtml',f.insideHtml],['excerpt',f.excerpt],['imageUrl',f.imageUrl]].forEach(function(kv){
+    var i=document.createElement('input'); i.type='hidden'; i.name=kv[0]; i.value=kv[1]; form.appendChild(i);
+  });
+  document.body.appendChild(form); form.submit(); form.remove();
+}
+
+function gSave(){
+  var b=$('gSaveBtn'), s=$('gSaveStatus');
+  b.disabled=true; b.textContent='💾 Publishing…'; s.textContent='';
+  jpost('/marketing/guides/' + encodeURIComponent(SLUG) + '/update', fields()).then(function(d){
+    b.disabled=false; b.textContent='💾 Re-publish the page';
+    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
+    LANDING = d.url;
+    s.innerHTML='✔ Live: <a href="'+d.url+'" target="_blank" rel="noopener">'+d.url+'</a>'; s.style.color='var(--ok-fg)';
+  }).catch(function(){ b.disabled=false; b.textContent='💾 Re-publish the page'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
+}
+
+function gReplacePdf(){
+  var f=$('gPdf').files[0]; if(!f) return;
+  var s=$('gPdfStatus');
+  s.textContent='Uploading ' + f.name + '…'; s.style.color='';
+  var fd=new FormData(); fd.append('pdf', f);
+  fetch('/marketing/guides/' + encodeURIComponent(SLUG) + '/pdf', { method:'POST', headers:{'x-csrf-token':csrf()}, body: fd })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
+      s.textContent='✔ Replaced — links already out there now serve this file.'; s.style.color='var(--ok-fg)';
+      $('pdfLabel').textContent = d.name + ' · ' + (d.bytes/(1024*1024)).toFixed(1) + ' MB';
+    })
+    .catch(function(){ s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
+}
+
+function gWriteCopy(){
+  var b=$('gCopyBtn'), s=$('gCopyStatus');
+  b.disabled=true; b.textContent='✨ Reading the guide…';
+  s.textContent='Claude is reading the PDF and writing — 30–60 seconds.'; s.style.color='';
+  jpost('/marketing/guides/' + encodeURIComponent(SLUG) + '/copy', {}).then(function(d){
+    b.disabled=false; b.textContent='✨ Write the copy with Claude';
+    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
+    $('gLinkedin').value=d.linkedin||''; $('gFacebook').value=d.facebook||'';
+    $('gNewsTitle').value=d.newsTitle||''; $('gNewsExcerpt').value=d.newsExcerpt||''; $('gNews').value=d.newsHtml||'';
+    s.textContent='Done — read it, edit it, then Re-publish to save it.'; s.style.color='var(--ok-fg)';
+  }).catch(function(){ b.disabled=false; b.textContent='✨ Write the copy with Claude'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
+}
+
+function doNews(){
+  return jpost('/marketing/guides/' + encodeURIComponent(SLUG) + '/news', {
+    newsTitle:$('gNewsTitle').value, newsExcerpt:$('gNewsExcerpt').value,
+    newsHtml:$('gNews').value, imageUrl:$('gImage').value.trim()
+  }).then(function(d){
+    if(!d.ok) return { ok:false, line:'News: ' + (d.error||'failed') };
+    return { ok:true, line:'News: live at <a href="'+d.url+'" target="_blank" rel="noopener">'+d.url+'</a>' };
+  }).catch(function(){ return { ok:false, line:'News: request failed.' }; });
+}
+
+function pushToggle(){
+  $('pushSocialBody').style.opacity = $('pushSocial').checked ? '1' : '.4';
+  $('pushEmailBody').style.opacity  = $('pushEmail').checked  ? '1' : '.4';
+}
+pushToggle();
+
+function doBuffer(){
+  var mode=document.querySelector('input[name="bufMode"]:checked').value;
+  var when=$('bufWhen').value;
+  var dueAt=(mode==='schedule' && when) ? new Date(when).toISOString() : undefined;
+  if(mode==='schedule' && !dueAt) return Promise.resolve({ ok:false, line:'Socials: pick a date and time first.' });
+  return jpost('/marketing/socials/push-buffer', {
+    linkedin: $('gLinkedin').value, facebook: $('gFacebook').value,
+    mode: mode, dueAt: dueAt, link: LANDING, imageUrl: $('gImage').value.trim()
+  }).then(function(d){
+    if(!d.ok) return { ok:false, line:'Socials: ' + (d.error||'failed') };
+    var parts=Object.keys(d.results).map(function(k){ return k+' '+d.results[k]; }).join(' · ');
+    return { ok: JSON.stringify(d.results).indexOf('FAILED') < 0, line:'Socials: ' + parts };
+  }).catch(function(){ return { ok:false, line:'Socials: request failed.' }; });
+}
+
+function doEmail(){
+  return jpost('/marketing/socials/email-campaign', {
+    kind:'guide', title:$('gTitle').value, link:LANDING,
+    summary:$('gIntro').value || $('gExcerpt').value, list:$('mailList').value
+  }).then(function(d){
+    if(!d.ok) return { ok:false, line:'Email: ' + (d.error||'failed') };
+    return { ok:true, line:'Email: draft ready — <a href="'+d.url+'">review and send</a>' };
+  }).catch(function(){ return { ok:false, line:'Email: request failed.' }; });
+}
+
+function gPushAll(){
+  var b=$('pushBtn'), s=$('pushStatus'), d=$('pushDetail');
+  var wantSocial=$('pushSocial').checked, wantEmail=$('pushEmail').checked, wantNews=$('pushNews').checked;
+  if(!wantSocial && !wantEmail && !wantNews){ s.textContent='Tick at least one.'; s.style.color='var(--bad-fg)'; return; }
+  if(!LANDING){ s.textContent='Re-publish the page first — there is no link to send people to.'; s.style.color='var(--bad-fg)'; return; }
+  // Copy edited here but not yet saved would go out without matching the guide record.
+  if((wantSocial) && !confirm('Push this out now?\n\nAnything you have edited above goes out as it reads on screen. Press Cancel if you meant to Re-publish first.')) return;
+
+  b.disabled=true; b.textContent='🚀 Pushing…'; d.innerHTML='';
+  s.textContent = wantSocial && wantEmail ? 'Posting, then drafting the email — about 15 seconds.' : 'Working…';
+  s.style.color='';
+  (wantNews ? doNews() : Promise.resolve(null)).then(function(r0){
+    return (wantSocial ? doBuffer() : Promise.resolve(null)).then(function(r1){
+      return (wantEmail ? doEmail() : Promise.resolve(null)).then(function(r2){ return [r0,r1,r2]; });
+    });
+  }).then(function(rs){
+    b.disabled=false; b.textContent='🚀 Push it out';
+    var done=rs.filter(Boolean), bad=done.some(function(r){ return !r.ok; });
+    s.textContent = bad ? 'Finished with problems — see below.' : '✔ Done.';
+    s.style.color = bad ? 'var(--warn-fg)' : 'var(--ok-fg)';
+    d.innerHTML = done.map(function(r){ return r.line; }).join('<br>');
+  });
+}
+</script>
 
 <%- include('../partials/footer') %>
