@@ -157,7 +157,14 @@ app.use(helmet({
       // 2026-08-04 (R-011): was ['self', data:, https:] - the bare 'https:' is a CSP
       // wildcard, letting images load from any host. Verified across all views: the only
       // image sources are same-origin assets and data: URIs (logos come from logoDataUri()).
-      imgSrc: ["'self'", 'data:', 'blob:'],
+      //
+      // 2026-09-12: that verification MISSED one - the Socials Studio's stock-photo picker
+      // (Marketing -> Socials, lib/images.ts) renders Pexels thumbnails straight from
+      // images.pexels.com, so from 04/08 it silently showed a row of broken images with no
+      // console message anyone was watching. Fixed by naming the ONE host it needs rather
+      // than restoring the https: wildcard. Anything else that wants a remote image gets
+      // added here by name, or is proxied through the Portal.
+      imgSrc: ["'self'", 'data:', 'blob:', 'https://images.pexels.com'],
       connectSrc: ["'self'"],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],

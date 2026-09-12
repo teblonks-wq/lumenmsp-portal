@@ -3,7 +3,7 @@
 <div class="page-header">
   <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">&larr; Marketing</a></p>
   <h1>Socials Studio</h1>
-  <p class="muted">Four steps: sources &rarr; generate with Claude &rarr; push to the website &rarr; push to Buffer. Nothing is stored in the Portal &mdash; except a published guide, which the Portal has to keep so it can hand out the download.</p>
+  <p class="muted">Four steps: sources &rarr; generate with Claude &rarr; publish &rarr; push it out to socials <em>and</em> the mailing list. Nothing is stored in the Portal &mdash; except a published guide, which the Portal has to keep so it can hand out the download.</p>
 </div>
 
 <% if (!aiReady) { %><div class="alert alert-error">Claude isn't configured — add the API key in Settings → Integrations before generating.</div><% } %>
@@ -21,6 +21,10 @@
   .modeOpt span{font-size:13.5px;color:var(--muted-fg,#64748b);}
   .drop{border:2px dashed var(--line,#cbd5e1);border-radius:12px;padding:26px 20px;text-align:center;}
   .drop.ok{border-color:var(--ok-fg,#15803d);border-style:solid;}
+  .pushRow{border:1px solid var(--line,#e2e8f0);border-radius:10px;padding:13px 15px;margin-bottom:12px;}
+  .pushHead{display:block;font-size:14.5px;cursor:pointer;}
+  .pushHead b{font-size:15.5px;}
+  .pushBody{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:11px 0 0;padding-left:24px;transition:opacity .12s ease;}
 </style>
 
 <!-- Mode -->
@@ -107,7 +111,7 @@
 <!-- Step 3 — website -->
 <div class="card mode-article">
   <div class="card-header"><h2>3 · Push to website</h2></div>
-  <p class="muted" style="margin:0 0 12px;">Publishes the article live at <strong>lumenmsp.co.uk/news/&lt;slug&gt;/</strong> instantly — no site rebuild.</p>
+  <p class="muted" style="margin:0 0 12px;">Publishes the article live at <strong>lumenmsp.co.uk/news/&lt;slug&gt;/</strong> instantly — no site rebuild. Then step 4 sends it to socials and the list.</p>
   <button class="btn" id="prevBtn" onclick="stPreview()" disabled>👁 Preview</button>
   <button class="btn btn-primary" id="webBtn" onclick="stPublish()" disabled>🌐 Push to website</button>
   <span id="webStatus" style="margin-left:10px;"></span>
@@ -125,38 +129,35 @@
   <span id="gPubStatus" style="margin-left:10px;"></span>
 </div>
 
-<!-- Step 4 — Buffer -->
+<!-- Step 4 — push it out (socials + the list, one action) -->
 <div class="card">
-  <div class="card-header"><h2>4 · Push to Buffer</h2></div>
-  <p class="muted" style="margin:0 0 12px;">Sends the LinkedIn + Facebook copy, with the published link attached.</p>
-  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="radio" name="bufMode" value="now" checked> Post now</label>
-    <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="radio" name="bufMode" value="schedule"> Schedule for</label>
-    <input type="datetime-local" id="bufWhen" class="input" style="width:auto;">
-  </div>
-  <button class="btn btn-primary" id="bufBtn" onclick="stBuffer()" disabled>📣 Push to Buffer</button>
-  <span id="bufStatus" style="margin-left:10px;"></span>
-</div>
+  <div class="card-header"><h2>4 · Push it out</h2></div>
+  <p class="muted" style="margin:0 0 14px;">Socials and the mailing list together. Untick either one if you only want the other.</p>
 
-
-<!-- Step 5 — email the list -->
-<div class="card">
-  <div class="card-header"><h2>5 · Email the list</h2></div>
-  <p class="muted" style="margin:0 0 12px;">
-    Claude writes a short campaign email around what you just published and saves it as a
-    <strong>draft</strong> in the Mass Mailer. You land on its review page &mdash; send yourself a test, then hit Start sending.
-    Nothing goes to anybody from this button.
-  </p>
-  <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-    <label style="font-weight:600;">Who gets it</label>
-    <select id="mailList" class="input" style="width:auto;">
-      <option value="subscribers">Guide subscribers (opted in)</option>
-      <option value="active">Active customers</option>
-      <option value="everyone">Everyone — customers + subscribers</option>
-    </select>
+  <div class="pushRow">
+    <label class="pushHead"><input type="checkbox" id="pushSocial" checked onchange="pushToggle()"> <b>📣 LinkedIn + Facebook</b><span class="muted"> — via Buffer, with the published link and photo attached</span></label>
+    <div class="pushBody" id="pushSocialBody">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="radio" name="bufMode" value="now" checked> Post now</label>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600;"><input type="radio" name="bufMode" value="schedule"> Schedule for</label>
+      <input type="datetime-local" id="bufWhen" class="input" style="width:auto;">
+    </div>
   </div>
-  <button class="btn btn-primary" id="mailBtn" onclick="stEmail()" disabled>✉️ Write the email</button>
-  <span id="mailStatus" style="margin-left:10px;"></span>
+
+  <div class="pushRow">
+    <label class="pushHead"><input type="checkbox" id="pushEmail" checked onchange="pushToggle()"> <b>✉️ Email the list</b><span class="muted"> — Claude writes it and saves it as a <strong>draft</strong>; nothing reaches anyone until you review it and press Start sending</span></label>
+    <div class="pushBody" id="pushEmailBody">
+      <label style="font-weight:600;">Who gets it</label>
+      <select id="mailList" class="input" style="width:auto;">
+        <option value="subscribers" selected>Subscribers only (opted in) — the default</option>
+        <option value="active">Active customers</option>
+        <option value="everyone">Everyone — customers + subscribers</option>
+      </select>
+    </div>
+  </div>
+
+  <button class="btn btn-primary" id="pushBtn" onclick="stPushAll()" disabled>🚀 Push it out</button>
+  <span id="pushStatus" style="margin-left:10px;"></span>
+  <div id="pushDetail" class="muted" style="margin-top:10px;font-size:14px;"></div>
 </div>
 
 <script>
@@ -180,9 +181,9 @@ function stSetMode(m){
   $('genStatus').textContent = '';
   publishedUrl = '';
   $('webStatus').textContent = ''; $('gPubStatus').textContent = '';
-  $('bufBtn').disabled = true; $('prevBtn').disabled = true; $('webBtn').disabled = true;
+  $('prevBtn').disabled = true; $('webBtn').disabled = true;
   $('gPrevBtn').disabled = true; $('gPubBtn').disabled = true;
-  $('mailBtn').disabled = true; $('mailStatus').textContent = '';
+  $('pushBtn').disabled = true; $('pushStatus').textContent = ''; $('pushDetail').innerHTML = '';
 }
 
 function guideUploadFile(){
@@ -286,7 +287,7 @@ function stGenerate(){
     }
     $('genOut').style.display='block';
     stSetModeVisibilityOnly();
-    $('bufBtn').disabled=false; $('mailBtn').disabled=false;
+    $('pushBtn').disabled=false;
     if (d.imageQuery) { $('imgQuery').value = d.imageQuery; imgSearch(); }
     s.style.color='var(--ok-fg)';
   }).catch(function(){ b.disabled=false; b.textContent='✨ Generate with Claude'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
@@ -329,47 +330,75 @@ function stPublishGuide(){
   }).catch(function(){ b.disabled=false; b.textContent='📘 Publish guide'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
 }
 
-function stBuffer(){
-  var b=$('bufBtn'), s=$('bufStatus');
+function pushToggle(){
+  $('pushSocialBody').style.opacity = $('pushSocial').checked ? '1' : '.4';
+  $('pushEmailBody').style.opacity  = $('pushEmail').checked  ? '1' : '.4';
+}
+
+// Buffer push — returns a one-line result rather than writing to the page, so the combined
+// button can report both channels together.
+function doBuffer(){
   var mode=document.querySelector('input[name="bufMode"]:checked').value;
   var when=$('bufWhen').value;
   var dueAt = (mode==='schedule' && when) ? new Date(when).toISOString() : undefined;
-  if(mode==='schedule' && !dueAt){ s.textContent='Pick a date and time first.'; s.style.color='var(--bad-fg)'; return; }
-  var warn = (stMode === 'guide')
-    ? 'The guide hasn\'t been published yet, so the posts will go out with nothing to click. Continue?'
-    : 'The article hasn\'t been pushed to the website yet, so the posts will go out without a link. Continue?';
-  if(!publishedUrl && !confirm(warn)) return;
-  b.disabled=true; b.textContent='📣 Pushing…'; s.textContent='';
-  jpost('/marketing/socials/push-buffer', {
+  if(mode==='schedule' && !dueAt) return Promise.resolve({ ok:false, line:'Socials: pick a date and time first.' });
+  return jpost('/marketing/socials/push-buffer', {
     linkedin: $('outLinkedin').value, facebook: $('outFacebook').value,
     mode: mode, dueAt: dueAt, link: publishedUrl, imageUrl: selectedImage
   }).then(function(d){
-    b.disabled=false; b.textContent='📣 Push to Buffer';
-    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
-    s.textContent = Object.keys(d.results).map(function(k){ return k+': '+d.results[k]; }).join(' · ');
-    s.style.color = JSON.stringify(d.results).indexOf('FAILED')>=0 ? 'var(--warn-fg)' : 'var(--ok-fg)';
-  }).catch(function(){ b.disabled=false; b.textContent='📣 Push to Buffer'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
+    if(!d.ok) return { ok:false, line:'Socials: ' + (d.error||'failed') };
+    var parts = Object.keys(d.results).map(function(k){ return k+' '+d.results[k]; }).join(' · ');
+    return { ok: JSON.stringify(d.results).indexOf('FAILED') < 0, line:'Socials: ' + parts };
+  }).catch(function(){ return { ok:false, line:'Socials: request failed.' }; });
 }
 
-function stEmail(){
-  var b=$('mailBtn'), s=$('mailStatus');
-  // The email is only worth sending once there is a published page to send people to.
-  if (!publishedUrl) {
+// Email draft — same contract.
+function doEmail(){
+  return jpost('/marketing/socials/email-campaign', {
+    kind: stMode, title: $('outTitle').value, link: publishedUrl,
+    summary: (stMode === 'guide' ? $('outIntro').value : '') || $('outExcerpt').value,
+    list: $('mailList').value
+  }).then(function(d){
+    if(!d.ok) return { ok:false, line:'Email: ' + (d.error||'failed') };
+    return { ok:true, line:'Email: draft ready — <a href="'+d.url+'">review and send</a>' };
+  }).catch(function(){ return { ok:false, line:'Email: request failed.' }; });
+}
+
+function stPushAll(){
+  var b=$('pushBtn'), s=$('pushStatus'), d=$('pushDetail');
+  var wantSocial = $('pushSocial').checked, wantEmail = $('pushEmail').checked;
+  if(!wantSocial && !wantEmail){ s.textContent='Tick at least one.'; s.style.color='var(--bad-fg)'; return; }
+
+  // The email is a link with words around it, so it needs the page to exist. Socials can go
+  // out without one, but you would be posting something nobody can click.
+  if(wantEmail && !publishedUrl){
     s.textContent = (stMode === 'guide')
       ? 'Publish the guide first — the email needs somewhere to send people.'
       : 'Push the article to the website first — the email needs somewhere to send people.';
     s.style.color='var(--bad-fg)'; return;
   }
-  b.disabled=true; b.textContent='\u2709\uFE0F Writing…'; s.textContent='Claude is drafting it — about 10 seconds.'; s.style.color='';
-  jpost('/marketing/socials/email-campaign', {
-    kind: stMode, title: $('outTitle').value, link: publishedUrl,
-    summary: (stMode === 'guide' ? $('outIntro').value : '') || $('outExcerpt').value,
-    list: $('mailList').value
-  }).then(function(d){
-    b.disabled=false; b.textContent='\u2709\uFE0F Write the email';
-    if(!d.ok){ s.textContent=d.error||'Failed'; s.style.color='var(--bad-fg)'; return; }
-    s.innerHTML='\u2714 Draft ready \u2014 <a href="'+d.url+'">open it to review and send</a>.'; s.style.color='var(--ok-fg)';
-  }).catch(function(){ b.disabled=false; b.textContent='\u2709\uFE0F Write the email'; s.textContent='Request failed.'; s.style.color='var(--bad-fg)'; });
+  if(wantSocial && !publishedUrl){
+    var warn = (stMode === 'guide')
+      ? 'The guide hasn\'t been published yet, so the posts will go out with nothing to click. Continue?'
+      : 'The article hasn\'t been pushed to the website yet, so the posts will go out without a link. Continue?';
+    if(!confirm(warn)) return;
+  }
+
+  b.disabled=true; b.textContent='🚀 Pushing…'; d.innerHTML='';
+  s.textContent = wantSocial && wantEmail ? 'Posting, then drafting the email — about 15 seconds.' : 'Working…';
+  s.style.color='';
+
+  // Sequential on purpose: Buffer is rate-limited and the email call spends ~10s with Claude.
+  (wantSocial ? doBuffer() : Promise.resolve(null)).then(function(r1){
+    return (wantEmail ? doEmail() : Promise.resolve(null)).then(function(r2){ return [r1, r2]; });
+  }).then(function(rs){
+    b.disabled=false; b.textContent='🚀 Push it out';
+    var done = rs.filter(Boolean);
+    var bad = done.some(function(r){ return !r.ok; });
+    s.textContent = bad ? 'Finished with problems — see below.' : '✔ Done.';
+    s.style.color = bad ? 'var(--warn-fg)' : 'var(--ok-fg)';
+    d.innerHTML = done.map(function(r){ return r.line; }).join('<br>');
+  });
 }
 
 stSetMode('article');
