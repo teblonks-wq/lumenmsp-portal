@@ -4288,3 +4288,24 @@ model MarketingSubscriber {
   @@index([optedIn], map: "idx_subscribers_optedin")
   @@map("marketing_subscribers")
 }
+
+// Views of pages the PORTAL publishes (guide landing pages, Studio news articles). The Astro
+// site's own beacon posts to the broadband-api and stores the path only; this one keeps the
+// query string, which is where utm_source lives. Raw-SQL managed in src/lib/pageviews.ts.
+model ContentView {
+  id          BigInt    @id @default(autoincrement())
+  kind        String?
+  slug        String?
+  path        String
+  utmSource   String?   @map("utm_source")
+  utmMedium   String?   @map("utm_medium")
+  utmCampaign String?   @map("utm_campaign")
+  referrer    String?
+  ua          String?
+  ipHash      String?   @map("ip_hash")
+  createdAt   DateTime? @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([kind, slug], map: "idx_content_views_slug")
+  @@index([createdAt], map: "idx_content_views_created")
+  @@map("content_views")
+}

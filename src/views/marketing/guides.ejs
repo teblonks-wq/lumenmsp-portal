@@ -18,6 +18,7 @@
         <tr>
           <th>Guide</th>
           <th>Landing page</th>
+          <th style="text-align:center;">Views</th>
           <th style="text-align:center;">Requests</th>
           <th style="text-align:center;">Opted in</th>
           <th style="text-align:center;">Downloads</th>
@@ -28,7 +29,7 @@
       </thead>
       <tbody>
         <% if (!guides.length) { %>
-          <tr><td colspan="8"><div class="empty-state">No guides yet — write one as a PDF, then upload it in the Socials Studio (Guide mode) and Claude will write the offer around it.</div></td></tr>
+          <tr><td colspan="9"><div class="empty-state">No guides yet — write one as a PDF, then upload it in the Socials Studio (Guide mode) and Claude will write the offer around it.</div></td></tr>
         <% } %>
         <% guides.forEach(function (g) { %>
           <tr>
@@ -39,6 +40,7 @@
             <td class="muted" style="font-size:13px;">
               <% if (g.landing_url) { %><a class="row-link" href="<%= g.landing_url %>" target="_blank" rel="noopener">/guides/<%= g.slug %>/</a><% } else { %>—<% } %>
             </td>
+            <td style="text-align:center;"><%= (views[g.slug] || 0) || '—' %></td>
             <td style="text-align:center;"><strong><%= g.requests %></strong></td>
             <td style="text-align:center;"><%= g.leads ? g.leads : '—' %></td>
             <td style="text-align:center;"><%= g.downloads || '—' %></td>

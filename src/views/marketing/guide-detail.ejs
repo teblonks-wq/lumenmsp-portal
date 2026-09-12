@@ -108,6 +108,64 @@
   <div id="pushDetail" class="muted" style="margin-top:10px;font-size:14px;"></div>
 </div>
 
+<!-- How it is doing -->
+<div class="card">
+  <div class="card-header"><h2>How it's doing</h2></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:stretch;margin-bottom:14px;">
+    <div class="fn"><div class="fnN"><%= stats.views %></div><div class="fnL">page views</div></div>
+    <div class="fnA">→</div>
+    <div class="fn"><div class="fnN"><%= stats.people %></div><div class="fnL">roughly people</div></div>
+    <div class="fnA">→</div>
+    <div class="fn"><div class="fnN"><%= funnel.requests %></div><div class="fnL">asked for it</div></div>
+    <div class="fnA">→</div>
+    <div class="fn"><div class="fnN"><%= funnel.downloads %></div><div class="fnL">downloads</div></div>
+    <div class="fnA">→</div>
+    <div class="fn fnGood"><div class="fnN"><%= funnel.optedIn %></div><div class="fnL">opted in</div></div>
+  </div>
+  <p class="muted" style="font-size:13px;margin:0 0 14px;">
+    <% if (stats.views && funnel.requests) { %>
+<% const pct = function (a, b) { if (!b) return '—'; const v = (a / b) * 100; return v > 0 && v < 1 ? 'under 1%' : (v < 10 ? v.toFixed(1) : Math.round(v)) + '%'; }; %>
+      <strong><%= pct(funnel.requests, stats.views) %></strong> of the people who landed on the page filled the form<% if (funnel.requests) { %>, and <strong><%= pct(funnel.optedIn, funnel.requests) %></strong> of those ticked the opt-in box<% } %>.
+    <% } else if (stats.views) { %>
+      Views but no form submissions yet.
+    <% } else { %>
+      Nothing tracked yet. Views are counted from the moment the landing page goes live; anyone who opted out of analytics on the website isn't counted, and obvious crawlers are dropped.
+    <% } %>
+    <% if (stats.last) { %> Last view <%= new Date(stats.last).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) %>.<% } %>
+  </p>
+
+  <% if (stats.sources.length) { %>
+    <div style="margin-bottom:6px;font-weight:600;font-size:14px;">Where the traffic came from</div>
+    <div class="table-wrap" style="max-width:520px;">
+      <table class="table">
+        <thead><tr><th>Source</th><th style="text-align:center;">Views</th><th style="text-align:center;">People</th></tr></thead>
+        <tbody>
+          <% stats.sources.forEach(function (s) { %>
+            <tr><td><%= s.source %></td><td style="text-align:center;"><%= s.views %></td><td style="text-align:center;"><%= s.people %></td></tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted" style="font-size:12.5px;margin:8px 0 0;">Every link the Portal pushes is tagged with its channel, so these are real sources rather than guesses. "direct / other" is someone typing the address, a link we didn't tag, or an app that strips the tag.</p>
+  <% } %>
+
+  <% if (newsStats) { %>
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line,#e2e8f0);">
+      <strong style="font-size:14px;">The news article</strong>
+      <span class="muted" style="font-size:14px;"> — <%= newsStats.views %> views, <%= newsStats.people %> roughly people.
+      <% if (guide.news_url) { %><a class="row-link" href="<%= guide.news_url %>" target="_blank" rel="noopener">open it</a><% } %></span>
+    </div>
+  <% } %>
+</div>
+
+<style>
+  .fn{flex:1;min-width:110px;background:var(--surface-2,#f1f5f9);border-radius:10px;padding:14px 12px;text-align:center;}
+  .fnGood{background:#ecfdf5;}
+  .fnN{font-size:24px;font-weight:700;line-height:1.1;}
+  .fnL{font-size:12.5px;color:var(--muted-fg,#64748b);margin-top:3px;}
+  .fnA{align-self:center;color:var(--muted-fg,#94a3b8);font-size:18px;}
+</style>
+
 <!-- Who asked -->
 <div class="card" style="padding:0;">
   <div class="card-header" style="padding:16px 20px;"><h2>Who asked for it (<%= leads.length %>)</h2></div>

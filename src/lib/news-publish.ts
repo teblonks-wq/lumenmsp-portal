@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { config } from '../config';
+import { viewBeacon } from './guide-publish';
 
 // ── Marketing studio: "Push to website" ─────────────────────────────────────────
 // Writes a finished article as a static, self-contained HTML page into the live
@@ -67,6 +68,7 @@ ${a.imageUrl ? `<meta property="og:image" content="${esc(a.imageUrl)}">` : ''}
   <div class="cta">Questions about how this affects your business? <a href="${base}/contact">Talk to Lumen IT Solutions</a> — straight answers, no jargon.</div>
   <div class="foot"><a href="${base}/news/">More news</a> · <a href="${base}/">lumenmsp.co.uk</a></div>
 </div>
+${viewBeacon('news', a.slug)}
 </body>
 </html>`;
 }

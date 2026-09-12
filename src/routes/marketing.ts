@@ -12,6 +12,8 @@ import {
   guidePdfBuffer, setGuideNewsUrl,
 } from '../lib/guides';
 import { searchFreeImages } from '../lib/images';
+import { tagUrl, slugFromUrl, viewStats, viewCounts, trackedContent, sourceTotals } from '../lib/pageviews';
+import { recordUpload, listUploads } from '../lib/socials';
 import {
   audience, audienceCoverage, createCampaign, updateDraft, sendTest, startSending, pauseSending,
   retryFailed, contactForUnsubToken, optOutByToken, campaignSignatureHtml, AudienceFilter,
@@ -143,10 +145,21 @@ router.post('/marketing/socials/push-buffer', requireAdmin, async (req: Request,
       if (!text) continue;
       const ch = channelFor(channels, network);
       if (!ch) { results[network] = `no ${network} channel connected in Buffer`; continue; }
-      const body = link ? `${text}\n\n${link}` : text;
+      // Tag the link per network so "which channel actually works" is answerable from our own
+      // page-view data rather than from Buffer's, which we cannot read.
+      const campaign = slugFromUrl(link);
+      const tagged = link ? tagUrl(link, network, 'social', campaign) : '';
+      const body = tagged ? `${text}\n\n${tagged}` : text;
       const imageUrl = String(req.body.imageUrl || '').trim() || undefined;
       const r = await createBufferPost(ch.id, body, mode, network, dueAt, imageUrl);
       results[network] = r.error ? `FAILED: ${r.error}` : (mode === 'now' ? 'posted' : `scheduled for ${dueAt}`);
+      // A Portal-side record of what went out. Buffer is send-only to us, so without this
+      // there is no history of what was posted, when, or to which channel.
+      await recordUpload({
+        slug: campaign || null, network, action: mode === 'now' ? 'post' : 'schedule',
+        status: r.error ? 'error' : 'ok', bufferPostId: r.id || null, dueAt: dueAt || null,
+        message: r.error || tagged || null, createdBy: req.session.user!.displayName || req.session.user!.email || null,
+      }).catch(() => { /* logging must never fail a push */ });
       await new Promise((r2) => setTimeout(r2, 800)); // Buffer rate-limit spacing
     }
     if (!Object.keys(results).length) { res.status(400).json({ ok: false, error: 'Nothing to post — both social boxes are empty.' }); return; }
@@ -266,16 +279,30 @@ router.post('/marketing/socials/publish-guide', requireAdmin, async (req: Reques
 // What is live, and what each guide has actually produced.
 router.get('/marketing/guides', requireAdmin, async (req: Request, res: Response) => {
   let guides: any[] = [];
-  try { guides = await listGuides(); } catch { /* tables appear on first deploy */ }
-  res.render('marketing/guides', { user: req.session.user!, guides, notice: req.query.msg || null });
+  let views: Record<string, number> = {};
+  try {
+    guides = await listGuides();
+    views = await viewCounts('guide', guides.map((g) => g.slug));
+  } catch { /* tables appear on first deploy */ }
+  res.render('marketing/guides', { user: req.session.user!, guides, views, notice: req.query.msg || null });
 });
 
 router.get('/marketing/guides/:slug', requireAdmin, async (req: Request, res: Response) => {
   const slug = String(req.params.slug || '');
   const guide = await getGuide(slug);
   if (!guide) { res.status(404).render('error', { message: 'Guide not found.' }); return; }
+  const leads = await guideLeads(slug).catch(() => []);
+  const empty = { views: 0, people: 0, last: null, sources: [], daily: [] };
   res.render('marketing/guide-detail', {
-    user: req.session.user!, guide, leads: await guideLeads(slug).catch(() => []),
+    user: req.session.user!, guide, leads,
+    stats: await viewStats('guide', slug).catch(() => empty),
+    newsStats: guide.news_url ? await viewStats('news', slug).catch(() => empty) : null,
+    // The funnel, in the order it actually happens.
+    funnel: {
+      requests: leads.length,
+      optedIn: leads.filter((l: any) => l.opted_in).length,
+      downloads: leads.reduce((n: number, l: any) => n + Number(l.downloads || 0), 0),
+    },
   });
 });
 
@@ -372,7 +399,7 @@ router.post('/marketing/guides/:slug/news', requireAdmin, async (req: Request, r
     let html = String(req.body.newsHtml || guide.news_html || '').trim();
     if (!html) { res.status(400).json({ ok: false, error: 'There is no article to publish — press "Write the copy with Claude" first.' }); return; }
 
-    const landing = guide.landing_url || '';
+    const landing = guide.landing_url ? tagUrl(guide.landing_url, 'news', 'website', slug) : '';
     if (landing && html.indexOf(landing) === -1) {
       html += `\n<p><a href="${landing}">Get the free guide: ${guide.title}</a></p>`;
     }
@@ -544,6 +571,21 @@ router.post('/marketing/mass-mailer/:id/delete', requireAdmin, async (req: Reque
   res.redirect('/marketing/mass-mailer?msg=' + encodeURIComponent('Campaign deleted'));
 });
 
+// ══ Marketing → Content ══════════════════════════════════════════════════════
+// Every page the Portal has published and tracked, what it got, and where from. This is the
+// only view of news-article traffic that exists: the Astro site's own analytics never saw
+// these pages, because they are written outside the Astro build.
+router.get('/marketing/content', requireAdmin, async (req: Request, res: Response) => {
+  const days = [7, 30, 90, 365].includes(Number(req.query.days)) ? Number(req.query.days) : 90;
+  let rows: any[] = [], sources: any[] = [], pushes: any[] = [];
+  try { rows = await trackedContent(days); } catch { /* table arrives on first deploy */ }
+  try { sources = await sourceTotals(days); } catch { /* ditto */ }
+  try { pushes = await listUploads(60); } catch { /* ditto */ }
+  const titles: Record<string, string> = {};
+  try { (await listGuides()).forEach((g: any) => { titles[g.slug] = g.title; }); } catch { /* ignore */ }
+  res.render('marketing/content', { user: req.session.user!, rows, sources, pushes, titles, days });
+});
+
 // ══ Marketing → Subscribers ══════════════════════════════════════════════════
 // People who are not customers but ticked the opt-in box on a guide. The Mass Mailer can
 // send to this list; nothing else may write to it (lib/subscribers.ts explains why).
@@ -579,7 +621,9 @@ router.post('/marketing/subscribers/:id/delete', requireAdmin, async (req: Reque
 router.post('/marketing/socials/email-campaign', requireAdmin, async (req: Request, res: Response) => {
   try {
     const title = String(req.body.title || '').trim();
-    const link = String(req.body.link || '').trim();
+    const rawLink = String(req.body.link || '').trim();
+    // Tagged as email so the guide's funnel can separate list traffic from social traffic.
+    const link = rawLink ? tagUrl(rawLink, 'email', 'email', slugFromUrl(rawLink)) : '';
     const summary = String(req.body.summary || '').trim();
     const kind = String(req.body.kind || 'article') === 'guide' ? 'guide' : 'article';
     const listChoice = String(req.body.list || 'subscribers');

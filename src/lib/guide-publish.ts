@@ -152,6 +152,7 @@ ${g.imageUrl ? `<meta property="og:image" content="${esc(g.imageUrl)}">` : ''}
   </div>
   <div class="foot"><a href="${base}/news/">News</a> · <a href="${base}/contact">Talk to us</a> · <a href="${base}/">lumenmsp.co.uk</a></div>
 </div>
+${viewBeacon('guide', g.slug)}
 <script>
 (function(){
   var f = document.getElementById('gf'), btn = document.getElementById('gb'), msg = document.getElementById('gmsg');
@@ -191,6 +192,31 @@ ${g.imageUrl ? `<meta property="og:image" content="${esc(g.imageUrl)}">` : ''}
 </script>
 </body>
 </html>`;
+}
+
+// The page-view beacon for pages the Portal publishes. It mirrors the Astro site's own
+// beacon in BaseLayout.astro - same consent key, same opt-out, hashed IP, no third parties -
+// but posts to the Portal, which keeps the query string so utm_source survives.
+export function viewBeacon(kind: string, slug: string): string {
+  const api = (config.APP_URL || 'https://portal.lumenmsp.co.uk').replace(/\/$/, '');
+  return `<script>
+(function(){
+  try {
+    var c = null; try { c = JSON.parse(localStorage.getItem('lumenConsent') || 'null'); } catch (e) {}
+    if (c && c.analytics === false) return;   // they opted out elsewhere on the site; same origin, so we see it
+    var q = new URLSearchParams(location.search);
+    var payload = JSON.stringify({
+      kind: ${JSON.stringify(kind)}, slug: ${JSON.stringify(slug)},
+      path: location.pathname + location.search,
+      utm_source: q.get('utm_source') || '', utm_medium: q.get('utm_medium') || '',
+      utm_campaign: q.get('utm_campaign') || '', referrer: document.referrer || ''
+    });
+    var url = ${JSON.stringify(api + '/api/pageview')};
+    if (navigator.sendBeacon) { navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' })); }
+    else { fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: payload, keepalive: true }).catch(function(){}); }
+  } catch (e) {}
+})();
+</script>`;
 }
 
 export function guidePublishConfigured(): boolean {

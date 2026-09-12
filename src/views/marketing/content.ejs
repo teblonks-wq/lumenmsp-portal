@@ -1,0 +1,125 @@
+<%- include('../partials/header', { title: 'Content', user }) %>
+
+<div class="page-header" style="display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+  <div>
+    <p class="muted" style="margin:0 0 4px;"><a class="row-link" href="/marketing">← Marketing</a></p>
+    <h1 style="margin:0;">📈 Content</h1>
+    <p class="muted" style="margin:4px 0 0;">
+      Views of the pages the Portal publishes — guide landing pages and Studio news articles.
+      The website's own analytics never saw these, because they're written outside the Astro build.
+    </p>
+  </div>
+  <div>
+    <select class="input" style="width:auto;" onchange="location='/marketing/content?days='+this.value">
+      <option value="7"<%= days === 7 ? ' selected' : '' %>>Last 7 days</option>
+      <option value="30"<%= days === 30 ? ' selected' : '' %>>Last 30 days</option>
+      <option value="90"<%= days === 90 ? ' selected' : '' %>>Last 90 days</option>
+      <option value="365"<%= days === 365 ? ' selected' : '' %>>Last year</option>
+    </select>
+  </div>
+</div>
+
+<% const totalViews = rows.reduce(function (n, r) { return n + r.views; }, 0); %>
+<% const totalPeople = rows.reduce(function (n, r) { return n + r.people; }, 0); %>
+
+<div class="card" style="margin-bottom:16px;display:flex;gap:34px;flex-wrap:wrap;align-items:center;">
+  <div><div class="muted" style="font-size:12.5px;">Views</div><div style="font-size:26px;font-weight:700;"><%= totalViews.toLocaleString() %></div></div>
+  <div><div class="muted" style="font-size:12.5px;">Roughly people</div><div style="font-size:26px;font-weight:700;"><%= totalPeople.toLocaleString() %></div></div>
+  <div><div class="muted" style="font-size:12.5px;">Pages</div><div style="font-size:26px;font-weight:700;"><%= rows.length %></div></div>
+  <div style="flex:1;min-width:260px;">
+    <div class="muted" style="font-size:12.5px;margin-bottom:6px;">Where they came from</div>
+    <% if (!sources.length) { %><span class="muted">Nothing tracked yet.</span><% } %>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <% sources.forEach(function (s) { %>
+        <span class="badge" style="background:var(--surface-2);color:var(--text);font-size:12.5px;padding:4px 11px;">
+          <%= s.source %> · <strong><%= s.views %></strong>
+        </span>
+      <% }); %>
+    </div>
+  </div>
+</div>
+<p class="muted" style="font-size:12.5px;margin:-6px 0 16px;">
+  "Roughly people" counts distinct hashed addresses — a sensible estimate, not a headcount. Obvious
+  crawlers are dropped, and anyone who opted out of analytics on the website isn't counted at all.
+</p>
+
+<div class="card" style="padding:0;margin-bottom:16px;">
+  <div class="card-header" style="padding:16px 20px;"><h2>Pages</h2></div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Page</th>
+          <th>Type</th>
+          <th style="text-align:center;">Views</th>
+          <th style="text-align:center;">People</th>
+          <th>First seen</th>
+          <th>Last seen</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (!rows.length) { %>
+          <tr><td colspan="6"><div class="empty-state">Nothing tracked yet. Publish a guide or an article from the Socials Studio — tracking starts the moment the page goes live.</div></td></tr>
+        <% } %>
+        <% rows.forEach(function (r) { %>
+          <tr>
+            <td>
+              <% if (r.kind === 'guide') { %>
+                <a class="row-link" href="/marketing/guides/<%= r.slug %>"><%= titles[r.slug] || r.slug %></a>
+              <% } else { %>
+                <%= titles[r.slug] || r.slug %>
+              <% } %>
+              <div class="muted" style="font-size:12.5px;font-family:monospace;">/<%= r.kind === 'guide' ? 'guides' : 'news/live' %>/<%= r.slug %>/</div>
+            </td>
+            <td><span class="badge badge-inactive"><%= r.kind === 'guide' ? 'Guide' : 'News' %></span></td>
+            <td style="text-align:center;"><strong><%= r.views %></strong></td>
+            <td style="text-align:center;"><%= r.people %></td>
+            <td class="muted"><%= new Date(r.first_view).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) %></td>
+            <td class="muted"><%= new Date(r.last_view).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card" style="padding:0;">
+  <div class="card-header" style="padding:16px 20px;">
+    <h2>Pushed to social</h2>
+    <p class="muted" style="margin:4px 0 0;font-size:13px;">What the Portal sent to Buffer, and when. Buffer doesn't report engagement back to us — likes and comments live in Buffer itself. What arrives <em>here</em> is the click-through, in the table above, because every link we push is tagged with its channel.</p>
+  </div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Channel</th>
+          <th>Page</th>
+          <th>Action</th>
+          <th>Result</th>
+          <th>By</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (!pushes.length) { %>
+          <tr><td colspan="6"><div class="empty-state">Nothing pushed yet.</div></td></tr>
+        <% } %>
+        <% pushes.forEach(function (p) { %>
+          <tr>
+            <td class="muted" style="white-space:nowrap;"><%= new Date(p.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) %></td>
+            <td><%= p.network %></td>
+            <td class="muted"><%= p.slug || '—' %></td>
+            <td class="muted"><%= p.action %><%= p.due_at ? ' · ' + new Date(p.due_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '' %></td>
+            <td>
+              <% if (p.status === 'ok') { %><span class="badge badge-sent">OK</span>
+              <% } else { %><span class="badge" style="background:var(--bad-bg);color:var(--bad-deep);" title="<%= p.message || '' %>">Failed</span><% } %>
+            </td>
+            <td class="muted"><%= p.created_by || '—' %></td>
+          </tr>
+        <% }); %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../partials/footer') %>

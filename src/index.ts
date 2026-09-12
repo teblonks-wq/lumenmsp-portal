@@ -89,6 +89,7 @@ import { ensureInvoiceBalanceGuard } from './lib/invoice-balance';
 import { ensureSocialsTables } from './lib/socials';
 import { ensureGuideTables } from './lib/guides';
 import { ensureSubscriberTables } from './lib/subscribers';
+import { ensureContentViewTables } from './lib/pageviews';
 import { startGiacomStatus } from './lib/giacom-status';
 import { startUnifiPoll } from './lib/unifi';
 import { startWatchdog } from './lib/watchdog';
@@ -585,6 +586,7 @@ server.listen(config.PORT, () => {
   ensureSocialsTables().catch((e) => console.error('ensureSocialsTables failed:', e.message)); // legacy socials table kept; seeding retired with the 2026-07-09 stateless studio rewrite
   ensureGuideTables().catch((e) => console.error('ensureGuideTables failed:', e.message)); // Marketing -> Guides (lead magnets)
   ensureSubscriberTables().catch((e) => console.error('ensureSubscriberTables failed:', e.message)); // Marketing -> Subscribers (guide opt-ins)
+  ensureContentViewTables().catch((e) => console.error('ensureContentViewTables failed:', e.message)); // views of Portal-published pages
   resumeMassMailer();    // Mass Mailer: resume any campaign a deploy restart interrupted
   startGiacomStatus();   // N3twrx: poll Giacom status feed
   startUnifiPoll();      // N3twrx: poll UniFi Site Manager API for offline devices

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { Router, Request, Response, NextFunction } from 'express';
 import { gateDownload, claimDownload, downloadUrl } from '../lib/guides';
+import { recordView } from '../lib/pageviews';
 
 // ── PUBLIC, unauthenticated guide gate ──────────────────────────────────────────
 // Two endpoints, both reached from the static landing page on www.lumenmsp.co.uk:
@@ -12,7 +13,8 @@ import { gateDownload, claimDownload, downloadUrl } from '../lib/guides';
 
 const router = Router();
 
-router.use('/api/guide-lead', (req: Request, res: Response, next: NextFunction) => {
+// Same CORS treatment for the beacon: it is called from static pages on www.lumenmsp.co.uk.
+router.use(['/api/guide-lead', '/api/pageview'], (req: Request, res: Response, next: NextFunction) => {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
@@ -61,6 +63,25 @@ router.post('/api/guide-lead', async (req: Request, res: Response) => {
   } catch (e: any) {
     res.status(400).json({ ok: false, error: e.message || 'Could not fetch that guide.' });
   }
+});
+
+// Page-view beacon for the pages the Portal publishes (guide landing pages, news articles).
+// Fire-and-forget: answer 204 first, so a slow or broken insert can never hold up someone's
+// page, and never log an error back to a visitor who did nothing wrong.
+router.post('/api/pageview', async (req: Request, res: Response) => {
+  res.sendStatus(204);
+  try {
+    const b = req.body || {};
+    const path = String(b.path || '').slice(0, 300);
+    if (!path) return;
+    await recordView({
+      kind: String(b.kind || ''), slug: String(b.slug || ''), path,
+      utmSource: String(b.utm_source || ''), utmMedium: String(b.utm_medium || ''),
+      utmCampaign: String(b.utm_campaign || ''),
+      referrer: String(b.referrer || ''), ua: String(req.headers['user-agent'] || ''),
+      ip: clientIp(req),
+    });
+  } catch (e) { console.error('[pageview] failed:', (e as Error).message); }
 });
 
 const gonePage = (msg: string) =>
