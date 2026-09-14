@@ -229,6 +229,55 @@ export async function aiMarketingPost(input: MarketingPostInput): Promise<Market
   }
 }
 
+// ── Quick post (Marketing → Socials → "Just a post") ─────────────────────────
+// A standalone social post. No article, no website page, no email — Terry says the thing
+// he wants to say and this shapes it for each channel. The job here is EDITING, not
+// authoring: his words, his opinion, tightened. Anything that reads like a marketing
+// department wrote it has failed, because the whole point of these posts is that a person
+// is behind them.
+export interface QuickPostInput {
+  thought: string;        // what he wants to say, however rough
+  link?: string | null;   // optional link appended by the push step (not written into the copy)
+}
+export interface QuickPostOutput { linkedin: string; facebook: string; imageQuery: string; }
+
+export async function aiQuickSocialPost(input: QuickPostInput): Promise<QuickPostOutput> {
+  const key = await resolveKey();
+  if (!key) throw new Error('Claude is not configured - add your API key in Settings -> Integrations (or ANTHROPIC_API_KEY in the server .env).');
+  const model = ((await getSetting('anthropic', 'model')) || '').trim() || DEFAULT_MODEL;
+
+  const system = [
+    'You are shaping a short social post for Lumen IT Solutions, a small UK managed IT provider (lumenmsp.co.uk). The posts are written by the owner and read as one person talking, not as a company broadcasting.',
+    'YOUR JOB IS EDITING, NOT AUTHORING. What you are given is the post. Keep his point, his opinion and his words wherever they work. Tighten, order it properly, cut the waffle, fix spelling and grammar. Do NOT add arguments, examples, statistics or claims he did not make, and do NOT smooth his voice into corporate copy.',
+    'TONE: British English (organise, whilst, £, dd/mm/yyyy). Plain, direct, spoken. Contractions are fine. Short sentences. A dry aside is fine if it is his.',
+    'BANNED, because they are the tells that a machine wrote it: "In today\'s digital landscape", "game-changer", "delve", "unlock", "leverage", "navigate the complexities", "it\'s not just X, it\'s Y", "here\'s the thing", opening with a rhetorical question, opening with a one-word sentence for drama, emoji bullet points, strings of emoji, ALL-CAPS words, and any closing line that asks people to "reach out". No em dashes used as dramatic pauses.',
+    'No hard sell. If there is an offer, it is one plain sentence at the end, and only if his notes point at one.',
+    'Produce:',
+    '- linkedin: 80-160 words. Paragraphs of 1-3 lines with a blank line between them (LinkedIn collapses long blocks). At most 2 hashtags, lowercase-ish and relevant, or none at all if none fit. Do not write a URL — any link is appended automatically after your text.',
+    '- facebook: 40-90 words. The same point, said more casually — this is a local audience, not a professional one. At most 1 hashtag. No URL in the text.',
+    '- imageQuery: a 2-4 word stock-photo search phrase that suits the post, concrete and visual (e.g. "empty office desk", not "business synergy concept"). Empty string if the post is better with no photo.',
+    'Return ONLY a JSON object {"linkedin":"...","facebook":"...","imageQuery":"..."} with no code fences and no other text.',
+  ].join('\n');
+
+  const userText = [
+    'What he wants to say:',
+    input.thought,
+    input.link ? `\n(A link will be appended to the post automatically: ${input.link} — do not write it into the copy, but you may refer to it naturally, e.g. "the full thing is below".)` : '',
+  ].join('\n');
+
+  const raw = await callClaude(key, model, system, userText, 1200);
+  try {
+    const json = JSON.parse(raw.replace(/^```json\s*|```\s*$/g, '').trim());
+    return {
+      linkedin: String(json.linkedin || '').trim(),
+      facebook: String(json.facebook || '').trim(),
+      imageQuery: String(json.imageQuery || '').trim(),
+    };
+  } catch {
+    throw new Error('Claude did not return a clean draft — try Generate again.');
+  }
+}
+
 // ── Mass Mailer (Marketing → Mass Mailer) ─────────────────────────────────────
 // Draft a bulk email to Lumen's customer contacts from rough notes. Output is the
 // subject plus body HTML in the exact shape the Quill composer edits, including

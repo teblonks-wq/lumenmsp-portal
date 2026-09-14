@@ -3,7 +3,7 @@ import { requireAdmin } from '../middleware/auth';
 import { websiteStats, visitorList } from '../lib/chat';
 import { getGroup, setSetting } from '../lib/settings';
 import { bufferConfigured, getChannels, channelFor, createBufferPost } from '../lib/buffer';
-import { aiMarketingPost, aiGuidePost, aiComposeConfigured } from '../lib/ai-compose';
+import { aiMarketingPost, aiGuidePost, aiQuickSocialPost, aiComposeConfigured } from '../lib/ai-compose';
 import { publishNewsArticle, websitePublishConfigured, renderArticlePreview } from '../lib/news-publish';
 import { publishGuidePage, guidePublishConfigured, renderGuidePage } from '../lib/guide-publish';
 import {
@@ -104,6 +104,19 @@ router.post('/marketing/socials/generate', requireAdmin, async (req: Request, re
   } catch (e: any) { res.status(400).json({ ok: false, error: e.message || 'Generation failed' }); }
 });
 
+// Quick post — socials only. No article, no website page, no email: just the thing he wants
+// to say, shaped for LinkedIn and Facebook. Claude is optional here; the studio can push
+// whatever is in the boxes without ever calling this.
+router.post('/marketing/socials/quick-generate', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const thought = String(req.body.thought || '').trim();
+    if (thought.length < 15) { res.status(400).json({ ok: false, error: 'Give me a bit more to work with — a sentence or two at least.' }); return; }
+    const link = String(req.body.link || '').trim();
+    const out = await aiQuickSocialPost({ thought, link: link || null });
+    res.json({ ok: true, ...out });
+  } catch (e: any) { res.status(400).json({ ok: false, error: e.message || 'Generation failed' }); }
+});
+
 // Free stock-photo search (Pexels) — hero-image picker for the studio.
 router.get('/marketing/socials/image-search', requireAdmin, async (req: Request, res: Response) => {
   try { res.json({ ok: true, images: await searchFreeImages(String(req.query.q || '')) }); }
@@ -158,7 +171,9 @@ router.post('/marketing/socials/push-buffer', requireAdmin, async (req: Request,
       await recordUpload({
         slug: campaign || null, network, action: mode === 'now' ? 'post' : 'schedule',
         status: r.error ? 'error' : 'ok', bufferPostId: r.id || null, dueAt: dueAt || null,
-        message: r.error || tagged || null, createdBy: req.session.user!.displayName || req.session.user!.email || null,
+        // Without a link (a quick post has none) there would be nothing readable in the
+        // history at all, so fall back to the opening of what was actually posted.
+        message: r.error || tagged || text.slice(0, 160), createdBy: req.session.user!.displayName || req.session.user!.email || null,
       }).catch(() => { /* logging must never fail a push */ });
       await new Promise((r2) => setTimeout(r2, 800)); // Buffer rate-limit spacing
     }
