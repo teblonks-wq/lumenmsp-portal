@@ -9,6 +9,7 @@ import { logActivity } from '../lib/activity';
 import {
   Principal, resolvePrincipal, touchToken, mayCall, issueToken, revokeToken,
 } from '../lib/mcp-auth';
+import { commsRateCard, currentCommsPeriod } from '../lib/comms-billing';
 
 // ── Claude MCP connector (read-only) ──────────────────────────────────────────
 // A minimal, dependency-free Model Context Protocol server over Streamable HTTP,
@@ -1001,6 +1002,114 @@ const TOOLS: Tool[] = [
           monthly_margin: Math.round((sellTotal - buyTotal) * 100) / 100,
         },
         circuits,
+      };
+    },
+  },
+
+  // ── Comms margin, every recurring line ──────────────────────────────────────
+  // Built on commsRateCard — the SAME function the bill run uses — so the buy and sell
+  // here are what the customer would actually be invoiced, seat packaging and all. Do not
+  // reimplement this from service_items: voice is packaged (seats, recording, feature pack)
+  // and a per-CLI price does not exist for it.
+  {
+    name: 'comms_margins',
+    description:
+      'Margin on every recurring comms line Lumen bills — internet circuits, voice (Simply VoIP seats, line rental), mobile and additional services — taken from the Portal\'s own rate card, so buy and sell are exactly what the bill run would invoice. One row per line: category, label, circuit/CLI ref, qty, monthly buy, monthly sell, margin, margin %, and a flag of loss / thin / unpriced against the thresholds. Omit customer for the whole estate. Call charges and one-off fees are excluded — usage and once-only, not standing margin.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        customer: { type: 'string', description: 'Customer id, account number or name (optional — omit for the estate)' },
+        period: { type: 'string', description: 'Comms billing period YYYY-MM (optional — defaults to the current open period)' },
+        thin_pct: { type: 'number', description: 'Flag a line thin below this margin %% of sell (default 20)' },
+        thin_gbp: { type: 'number', description: 'Flag a line thin below this £ margin a month (default 10)' },
+        flagged_only: { type: 'boolean', description: 'Return only flagged lines; the totals still cover everything (default false)' },
+      },
+    },
+    run: async (a) => {
+      const per = String(a.period || '').trim() || (await currentCommsPeriod());
+      if (!per) return { error: 'No comms billing period found — nothing has been imported yet.' };
+      const thinPct = a.thin_pct === undefined ? 20 : Number(a.thin_pct);
+      const thinGbp = a.thin_gbp === undefined ? 10 : Number(a.thin_gbp);
+      let targets: { id: number; name: string; account: string | null }[];
+      if (a.customer != null && String(a.customer).trim() !== '') {
+        const ref = await resolveCustomer(a.customer);
+        if (!ref || 'ambiguous' in ref) return customerNotFound(ref, a.customer);
+        const c = (await pool.query('SELECT id, name, account_number FROM customers WHERE id=$1', [ref.id])).rows[0];
+        targets = [{ id: ref.id, name: c?.name || String(ref.id), account: c?.account_number ?? null }];
+      } else {
+        targets = (await pool.query(
+          `SELECT DISTINCT c.id, c.name, c.account_number
+             FROM service_items si JOIN customers c ON c.id = si.customer_id
+            WHERE si.source='comms' AND si.billing_period = $1 AND c.deleted_at IS NULL
+            ORDER BY c.name LIMIT 200`, [per])).rows
+          .map((r: any) => ({ id: r.id, name: r.name, account: r.account_number ?? null }));
+      }
+      const RECURRING = ['internet', 'voice', 'mobile', 'additional'];
+      const round2 = (n: number) => Math.round(n * 100) / 100;
+      const lines: any[] = [];
+      const customers: any[] = [];
+      const byCat: Record<string, { buy: number; sell: number; margin: number; lines: number }> = {};
+      let tBuy = 0, tSell = 0, unpriced = 0, flaggedCount = 0;
+      for (const t of targets) {
+        const rc = await commsRateCard(t.id, per);
+        let cBuy = 0, cSell = 0, cFlagged = 0;
+        for (const l of rc.lines) {
+          if (!RECURRING.includes(l.category)) continue;
+          const qty = Number(l.qty) || 0;
+          const buy = round2(Number(l.cost) || 0);
+          const sell = l.sale === null || l.sale === undefined ? null : round2(Number(l.sale));
+          const margin = sell === null ? null : round2(sell - buy);
+          // Margin % is of SELL — the reseller reading, and what a price rise has to move.
+          const pct = sell === null || sell === 0 ? null : Math.round(((sell - buy) / sell) * 1000) / 10;
+          // A zero-cost, zero-sell line is a bundled component (care level, included handset),
+          // not a thin deal — it must never land on the repricing list.
+          const bundled = buy === 0 && (sell === 0 || sell === null);
+          let flag = '';
+          if (sell === null && !bundled) { flag = 'unpriced'; unpriced++; }
+          else if (margin !== null && margin < 0) flag = 'loss';
+          else if (!bundled && margin !== null && ((pct !== null && pct < thinPct) || margin < thinGbp)) flag = 'thin';
+          if (flag) { cFlagged++; flaggedCount++; }
+          cBuy += buy; if (sell !== null) cSell += sell;
+          if (!byCat[l.category]) byCat[l.category] = { buy: 0, sell: 0, margin: 0, lines: 0 };
+          byCat[l.category].buy += buy; byCat[l.category].sell += sell ?? 0;
+          byCat[l.category].margin += (sell ?? 0) - buy; byCat[l.category].lines++;
+          lines.push({
+            customer: t.name, account_number: t.account, category: l.category, service: l.label,
+            ref: l.ref ?? null, site: l.location ?? null, qty,
+            unit_buy: qty ? Math.round((buy / qty) * 10000) / 10000 : buy,
+            unit_sell: sell === null ? null : qty ? Math.round((sell / qty) * 10000) / 10000 : sell,
+            monthly_buy: buy, monthly_sell: sell, monthly_margin: margin, margin_pct: pct,
+            flag: flag || null, bundled,
+          });
+        }
+        tBuy += cBuy; tSell += cSell;
+        customers.push({
+          customer: t.name, account_number: t.account,
+          monthly_buy: round2(cBuy), monthly_sell: round2(cSell), monthly_margin: round2(cSell - cBuy),
+          margin_pct: cSell > 0 ? Math.round(((cSell - cBuy) / cSell) * 1000) / 10 : null,
+          flagged_lines: cFlagged,
+        });
+      }
+      customers.sort((x, y) => (x.monthly_margin ?? 0) - (y.monthly_margin ?? 0));
+      const out = a.flagged_only ? lines.filter((l) => l.flag) : lines;
+      out.sort((x, y) => (x.monthly_margin ?? 0) - (y.monthly_margin ?? 0));
+      return {
+        period: per,
+        thresholds: { thin_below_pct: thinPct, thin_below_gbp: thinGbp },
+        customers_checked: targets.length,
+        line_count: lines.length,
+        flagged: flaggedCount,
+        unpriced,
+        totals: {
+          monthly_buy: round2(tBuy), monthly_sell: round2(tSell), monthly_margin: round2(tSell - tBuy),
+          margin_pct: tSell > 0 ? Math.round(((tSell - tBuy) / tSell) * 1000) / 10 : null,
+        },
+        by_category: Object.fromEntries(Object.entries(byCat).map(([k, v]) => [k, {
+          lines: v.lines, monthly_buy: round2(v.buy), monthly_sell: round2(v.sell), monthly_margin: round2(v.margin),
+          margin_pct: v.sell > 0 ? Math.round((v.margin / v.sell) * 1000) / 10 : null,
+        }])),
+        customers,
+        lines: out.slice(0, 1000),
       };
     },
   },
