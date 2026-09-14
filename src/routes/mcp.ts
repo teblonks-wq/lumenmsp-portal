@@ -873,6 +873,138 @@ const TOOLS: Tool[] = [
     },
   },
 
+  // ── Broadband / connectivity ────────────────────────────────────────────────
+  // The one question asked of the comms feed more than any other: "what broadband are we
+  // paying for, for whom, on which circuit, and what do we charge?". The circuit reference
+  // IS service_items.product_reference (a CLI field that holds a phone number for voice and
+  // a circuit ref for broadband), so this is the only place the ref and the money meet.
+  {
+    name: 'list_broadband',
+    description:
+      'Every broadband / connectivity charge in the Portal, one row per circuit: customer, CIRCUIT REFERENCE (the ref the carrier bills on), product, site label, buy (carrier cost), sell (what the customer is charged) and margin. Broadband is matched on the supplier description (FTTP, SOGEA, FTTC, ADSL, ethernet, internet access, broadband, fibre, leased line). Scope with customer, or omit for the whole estate. live_only (default true) keeps only circuits present in the latest supplier import — pass false to include ceased/historical ones. Sell resolves durable price → register → last recurring invoice; a null sell means the circuit is uncosted and sits in the bureau queue.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        customer: { type: 'string', description: 'Customer id, account number or name (optional — omit for the estate)' },
+        live_only: { type: 'boolean', description: 'Only circuits in the latest supplier import (default true)' },
+        include_unallocated: { type: 'boolean', description: 'Include circuits not yet matched to a Portal customer (default true)' },
+        include_one_off: { type: 'boolean', description: 'Include install/cease/connection fees (default false)' },
+      },
+    },
+    run: async (a) => {
+      const liveOnly = a.live_only === undefined ? true : !!a.live_only;
+      const inclUnalloc = a.include_unallocated === undefined ? true : !!a.include_unallocated;
+      const inclOneOff = !!a.include_one_off;
+      const params: any[] = [];
+      const where: string[] = [
+        "si.description ~* 'fttp|sogea|fttc|adsl|ethernet|internet access|broadband|fibre|leased'",
+      ];
+      if (!inclOneOff) where.push('si.is_one_off = false');
+      if (a.customer != null && String(a.customer).trim() !== '') {
+        const ref = await resolveCustomer(a.customer);
+        if (!ref || 'ambiguous' in ref) return customerNotFound(ref, a.customer);
+        params.push(ref.id); where.push(`si.customer_id = $${params.length}`);
+      } else if (!inclUnalloc) {
+        where.push('si.customer_id IS NOT NULL');
+      }
+      // The register is raw-SQL managed; if it has not been pushed to this database yet the
+      // sell simply falls back to the durable price / invoice template rather than erroring.
+      const hasRegister = !!(await pool.query(
+        "SELECT to_regclass('public.customer_register_lines') AS t")).rows[0]?.t;
+      // Matched on the circuit ref AND the product description. Ref alone is wrong: a single
+      // circuit carries several register lines (the bearer, its care level, a static IP), so
+      // ref-only picks whichever row it meets first — verified against Larkmead's CS-0076,
+      // where it put the Sky static IP's 49.99 onto the care line and read 0 for a circuit
+      // actually billed at 55.
+      const registerSale = hasRegister
+        ? `(SELECT r.sale_price FROM customer_register_lines r
+             WHERE r.customer_id = bb.customer_id AND r.cli = bb.product_reference
+               AND lower(trim(r.description)) = lower(trim(bb.description))
+               AND r.sale_price IS NOT NULL AND r.status <> 'ceased'
+             ORDER BY r.id DESC LIMIT 1)`
+        : 'NULL::numeric';
+      // One row per (source, customer, circuit ref, buy price) — the latest billing period
+      // for that circuit. service_items keeps a row per period, so taking the newest avoids
+      // summing the same circuit across months.
+      const rows = (await pool.query(
+        `WITH last AS (SELECT source, MAX(synced_at) AS ls FROM service_items GROUP BY source),
+              bb AS (
+           SELECT DISTINCT ON (si.source, si.customer_id, si.product_reference, si.unit_cost)
+                  si.id, si.source, si.customer_id, si.external_customer_name, si.product_reference,
+                  si.description, si.location, si.quantity, si.unit_cost, si.billing_period,
+                  si.billing_from, si.billing_to, si.is_prorata, si.is_one_off,
+                  (si.synced_at >= l.ls - INTERVAL '1 day') AS live
+             FROM service_items si JOIN last l ON l.source = si.source
+            WHERE ${where.join(' AND ')}
+            ORDER BY si.source, si.customer_id, si.product_reference, si.unit_cost,
+                     si.billing_period DESC NULLS LAST, si.billing_from DESC NULLS LAST, si.id DESC)
+         SELECT bb.*, c.name AS customer_name, c.account_number,
+                sp.sale_price AS durable_sale,
+                ${registerSale} AS register_sale,
+                (SELECT ii.unit_price FROM invoice_items ii JOIN invoices i ON i.id=ii.invoice_id
+                  WHERE i.customer_id = bb.customer_id AND ii.source = bb.source
+                    AND i.status <> 'void' AND bb.product_reference IS NOT NULL
+                    AND ii.description ILIKE '%(' || bb.product_reference || ')%'
+                  ORDER BY i.id DESC LIMIT 1) AS invoice_sale
+           FROM bb
+           LEFT JOIN customers c ON c.id = bb.customer_id
+           LEFT JOIN service_pricing sp ON sp.source = bb.source AND sp.customer_id = bb.customer_id
+                 AND COALESCE(sp.product_reference,'') = COALESCE(bb.product_reference,'')
+                 AND sp.unit_cost = bb.unit_cost
+          ORDER BY c.name NULLS LAST, bb.product_reference
+          LIMIT 500`, params)).rows;
+      const d = (v: any) => (v ? new Date(v).toISOString().slice(0, 10) : null);
+      let buyTotal = 0, sellTotal = 0, uncosted = 0;
+      const circuits = rows
+        .filter((r: any) => (liveOnly ? r.live : true))
+        .map((r: any) => {
+          const qty = Number(r.quantity) || 0;
+          const unitBuy = Number(r.unit_cost) || 0;
+          const sale = r.durable_sale ?? r.register_sale ?? r.invoice_sale ?? null;
+          const saleFrom = r.durable_sale != null ? 'durable' : r.register_sale != null ? 'register'
+            : r.invoice_sale != null ? 'last-invoice' : null;
+          const unitSell = sale === null ? null : Number(sale);
+          const buy = Math.round(unitBuy * qty * 100) / 100;
+          const sell = unitSell === null ? null : Math.round(unitSell * qty * 100) / 100;
+          buyTotal += buy;
+          if (sell === null) uncosted++; else sellTotal += sell;
+          return {
+            customer: r.customer_name ?? null,
+            account_number: r.account_number ?? null,
+            supplier_account_name: r.customer_name ? null : (r.external_customer_name ?? null),
+            circuit_ref: r.product_reference ?? null,
+            product: r.description ?? null,
+            site: r.location ?? null,
+            qty,
+            unit_buy: Math.round(unitBuy * 10000) / 10000,
+            unit_sell: unitSell === null ? null : Math.round(unitSell * 10000) / 10000,
+            monthly_buy: buy,
+            monthly_sell: sell,
+            monthly_margin: sell === null ? null : Math.round((sell - buy) * 100) / 100,
+            sell_from: saleFrom,
+            source: r.source,
+            billing_period: r.billing_period ?? null,
+            service_from: d(r.billing_from),
+            service_to: d(r.billing_to),
+            live: !!r.live,
+            prorata: !!r.is_prorata,
+            one_off: !!r.is_one_off,
+          };
+        });
+      return {
+        count: circuits.length,
+        uncosted,
+        live_only: liveOnly,
+        totals: {
+          monthly_buy: Math.round(buyTotal * 100) / 100,
+          monthly_sell: Math.round(sellTotal * 100) / 100,
+          monthly_margin: Math.round((sellTotal - buyTotal) * 100) / 100,
+        },
+        circuits,
+      };
+    },
+  },
+
   {
     name: 'list_subscriptions',
     description:

@@ -162,7 +162,6 @@
     <button type="button" data-tool="services">Services</button>
     <button type="button" data-tool="users">Users</button>
     <button type="button" data-tool="files">File system</button>
-    <button type="button" data-tool="clipboard">Clipboard</button>
     <button type="button" data-tool="registry">Registry</button>
     <button type="button" data-tool="patching">Patching</button>
     <button type="button" data-tool="taskmgr">Task Manager</button>
@@ -315,36 +314,6 @@
 
   <!-- Registry: modelled on regedit - hive tree on the left, values on the right,
        address bar across the top, and the toolset engineers actually reach for. -->
-  <!-- Clipboard: copy and paste between here and the machine, text or files.
-       The agent's tray runs IN the signed-in session, so it sets the real Windows
-       clipboard - no session to guess at, which is the thing MeshCentral gets wrong. -->
-  <div class="tool-panel" data-panel="clipboard">
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
-      <label style="font-size:12.5px;font-weight:600;">Paste to</label>
-      <select class="input" id="clipSession" style="max-width:280px;font-size:12.5px;">
-        <option value="">Whoever is signed in</option>
-      </select>
-      <button class="btn" type="button" id="clipSessions" style="padding:2px 10px;font-size:11.5px;">Refresh sessions</button>
-      <span class="muted" style="font-size:11.5px;">On a terminal server, choose the session &mdash; otherwise this refuses rather than guess.</span>
-    </div>
-
-    <div id="clipZone" contenteditable="true" spellcheck="false"
-         style="border:2px dashed var(--line);border-radius:8px;padding:22px 16px;text-align:center;
-                font-size:13px;color:var(--muted);cursor:text;outline:none;background:var(--bg,transparent);">
-      Click here and press <b>Ctrl+V</b> &mdash; text or files &mdash; or drop files on this box.
-    </div>
-
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0;">
-      <button class="btn" type="button" id="clipGrab" style="padding:3px 12px;font-size:12px;">&darr; Copy from the device</button>
-      <span class="muted" style="font-size:11.5px;">Copy something over there first, then click this.</span>
-      <span style="flex:1;"></span>
-      <span class="muted" style="font-size:11.5px;">50 MB per file &middot; nobody signed in means no clipboard</span>
-    </div>
-
-    <div id="clipBusy" class="muted" style="font-size:12px;min-height:18px;"></div>
-    <div id="clipResult" style="font-size:12.5px;"></div>
-  </div>
-
   <div class="tool-panel" data-panel="registry">
     <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
       <input class="input tool-crumb" id="regPath" placeholder="HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft" style="flex:1;min-width:280px;">
@@ -2255,144 +2224,6 @@
     }
     document.querySelector('[data-load="activity"]').addEventListener('click', loadActivity);
     document.querySelector('[data-tool="activity"]').addEventListener('click', function(){ if (!activityResult.innerHTML) loadActivity(); });
-
-    // ── Clipboard ──────────────────────────────────────────────────────────────
-    // Ctrl+C here, Ctrl+V on the device page, Ctrl+V there. The browser cannot READ files
-    // off the system clipboard, but it is handed them on a paste event - which is why this
-    // is a paste target rather than a "choose file" button.
-    var clipZone = document.getElementById('clipZone');
-    var clipBusy = document.getElementById('clipBusy');
-    var clipResult = document.getElementById('clipResult');
-    var clipSession = document.getElementById('clipSession');
-    var CLIP_HINT = 'Click here and press <b>Ctrl+V</b> &mdash; text or files &mdash; or drop files on this box.';
-
-    function clipTarget(){
-      var v = clipSession.value;
-      if (!v) return {};
-      var parts = v.split('|');                       // "id|user"
-      return { session: parts[0], user: parts[1] || '' };
-    }
-
-    function loadClipSessions(){
-      run('clipboard.sessions', {}, clipBusy).then(function(r){
-        var rows = String(r.output || '').split(/\r?\n/).map(function(l){ return l.trim(); })
-                     .filter(function(l){ return l.indexOf('|') > 0; });
-        clipSession.innerHTML = '<option value="">Whoever is signed in</option>';
-        rows.forEach(function(l){
-          var p = l.split('|');
-          var o = document.createElement('option');
-          o.value = p[0] + '|' + p[1];
-          o.textContent = p[1] + '  (session ' + p[0] + ', ' + p[2] + ')';
-          clipSession.appendChild(o);
-        });
-        if (!rows.length) clipBusy.textContent = 'Nobody is signed in to this machine, so there is no clipboard to use.';
-        else if (rows.length > 1) { clipBusy.textContent = rows.length + ' people are signed in - choose the session before pasting.'; clipSession.focus(); }
-        else clipBusy.textContent = '';
-      }).catch(function(e){ clipBusy.textContent = e.message; });
-    }
-    document.getElementById('clipSessions').addEventListener('click', loadClipSessions);
-    document.querySelector('[data-tool="clipboard"]').addEventListener('click', function(){
-      if (clipSession.options.length <= 1) loadClipSessions();
-      setTimeout(function(){ clipZone.focus(); }, 30);
-    });
-
-    function clipOk(r){
-      clipBusy.textContent = '';
-      var bad = r.exit_code !== 0;
-      clipResult.innerHTML = '<div style="padding:8px 10px;border-radius:6px;border:1px solid var(--line);' +
-        (bad ? 'color:var(--bad-fg,#b91c1c);' : '') + '">' + esc(r.output || '') + '</div>';
-    }
-    function clipErr(e){ clipBusy.textContent = ''; clipResult.innerHTML = '<div class="muted">' + esc(e.message) + '</div>'; }
-
-    function pushText(text){
-      if (!text) return;
-      clipResult.innerHTML = '';
-      run('clipboard.set', Object.assign({ text: text }, clipTarget()), clipBusy).then(clipOk).catch(clipErr);
-    }
-
-    function pushFiles(fileList){
-      var files = Array.prototype.slice.call(fileList || []).slice(0, 10);
-      if (!files.length) return;
-      var tooBig = files.filter(function(f){ return f.size > 50 * 1024 * 1024; });
-      if (tooBig.length) {
-        alert('Over the 50 MB transfer limit, so these have to go the File system route instead:\n\n' +
-              tooBig.map(function(f){ return f.name; }).join('\n'));
-        return;
-      }
-      clipResult.innerHTML = '';
-      var staged = [], i = 0;
-      function next(){
-        if (i >= files.length) return run('clipboard.setfiles', Object.assign({ transfers: staged }, clipTarget()), clipBusy);
-        var f = files[i++];
-        clipBusy.textContent = 'Uploading ' + f.name + ' (' + i + ' of ' + files.length + ')...';
-        var fd = new FormData(); fd.append('file', f);
-        return jsonFetch(BASE + '/stage', { method: 'POST', body: fd }).then(function(j){
-          if (!j.ok) throw new Error(j.error || 'Upload failed.');
-          staged.push({ id: j.id, name: f.name });
-          return next();
-        });
-      }
-      next().then(clipOk).catch(clipErr);
-    }
-
-    clipZone.addEventListener('paste', function(e){
-      e.preventDefault();
-      var dt = e.clipboardData;
-      if (!dt) return;
-      if (dt.files && dt.files.length) pushFiles(dt.files);
-      else pushText(dt.getData('text/plain'));
-      clipZone.innerHTML = CLIP_HINT;
-    });
-    clipZone.addEventListener('dragover', function(e){ e.preventDefault(); clipZone.style.borderColor = 'var(--accent)'; });
-    clipZone.addEventListener('dragleave', function(){ clipZone.style.borderColor = ''; });
-    clipZone.addEventListener('drop', function(e){
-      e.preventDefault(); clipZone.style.borderColor = '';
-      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) pushFiles(e.dataTransfer.files);
-    });
-    // A paste target, not a document editor - everything except the paste itself is ignored.
-    clipZone.addEventListener('keydown', function(e){ if (!e.ctrlKey && !e.metaKey) e.preventDefault(); });
-
-    document.getElementById('clipGrab').addEventListener('click', function(){
-      clipResult.innerHTML = '';
-      run('clipboard.get', clipTarget(), clipBusy).then(function(r){
-        clipBusy.textContent = '';
-        var out = String(r.output || '');
-
-        var t = out.indexOf('___LMA_CLIPTEXT___');
-        if (t >= 0) {
-          clipResult.innerHTML =
-            '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">' +
-              '<b style="font-size:12px;">Clipboard from the device</b>' +
-              '<button class="btn" type="button" id="clipCopyBack" style="padding:2px 10px;font-size:11.5px;">Copy</button>' +
-              '<span class="muted" style="font-size:11.5px;">handed over once, then dropped from the Portal</span>' +
-            '</div>' +
-            '<textarea class="input" id="clipGot" readonly style="width:100%;min-height:110px;font-family:ui-monospace,Consolas,monospace;font-size:12px;"></textarea>';
-          document.getElementById('clipGot').value = out.slice(t + 18);
-          document.getElementById('clipCopyBack').addEventListener('click', function(){
-            var ta = document.getElementById('clipGot');
-            ta.select();
-            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(ta.value);
-            else document.execCommand('copy');
-            this.textContent = 'Copied';
-          });
-          return;
-        }
-
-        var chips = [];
-        out.split(/\r?\n/).forEach(function(line){
-          var k = line.indexOf('___LMA_FILE___');
-          if (k < 0) return;
-          var parts = line.slice(k + 14).trim().split('|');
-          var kb = Math.max(1, Math.round(Number(parts[2] || 0) / 1024));
-          chips.push('<a class="btn" style="padding:3px 10px;font-size:12px;text-decoration:none;" href="' +
-                     BASE + '/file/' + encodeURIComponent(parts[0]) + '">&darr; ' + esc(parts[1]) +
-                     ' <span class="muted">(' + kb + ' KB)</span></a>');
-        });
-        clipResult.innerHTML = chips.length
-          ? '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + chips.join('') + '</div>'
-          : '<div class="muted">' + esc(out || 'Nothing came back.') + '</div>';
-      }).catch(clipErr);
-    });
 
     // Inline AD-only form: the page IS the tool, so open on the directory straight away —
     // but only once the footer has run, because that is what stamps the CSRF token onto
