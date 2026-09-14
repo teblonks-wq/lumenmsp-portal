@@ -61,6 +61,10 @@ const KINDS: Record<string, { label: string; ad?: boolean; destructive?: boolean
   'services.start': { label: 'Started a service', destructive: true },
   'services.stop': { label: 'Stopped a service', destructive: true },
   'files.list': { label: 'Browsed the file system' },
+  'clipboard.sessions': { label: 'Listed the signed-in sessions' },
+  'clipboard.set': { label: 'Pasted text to the device' },
+  'clipboard.setfiles': { label: 'Pasted files to the device' },
+  'clipboard.get': { label: "Copied the device's clipboard" },
   'users.list': { label: 'Listed local users' },
   'users.disable': { label: 'Disabled a local user', destructive: true },
   'users.enable': { label: 'Enabled a local user', destructive: true },
@@ -376,6 +380,34 @@ router.post('/assets/:id/tools/run', requireAuth, requireAdmin, async (req: Requ
       const days = parseInt(String(b.days || '7'), 10) || 7;
       payload.days = String(Math.min(Math.max(days, 1), 90));
     }
+    // ── Clipboard ───────────────────────────────────────────────────────────────
+    // Copy and paste against the agent's tray, which is IN the signed-in session rather
+    // than guessing at it. The text is never echoed into the activity log (it is usually
+    // a password) and the whole payload is NULLed the moment the command finishes, the
+    // same as a reset password.
+    if (kind === 'clipboard.set') {
+      const text = String(b.text || '');
+      if (!text) { res.status(400).json({ ok: false, error: 'Nothing to paste.' }); return; }
+      payload.text = text.slice(0, 100000);
+    }
+    if (kind === 'clipboard.setfiles') {
+      // [{ id, name }] - each already staged on the Portal by /tools/stage.
+      const raw = Array.isArray(b.transfers) ? b.transfers : [];
+      const transfers = raw.slice(0, 10).map((t: any) => ({
+        id: String((t || {}).id || '').replace(/[^a-f0-9]/gi, '').slice(0, 32),
+        name: String((t || {}).name || 'file').slice(-120),
+      })).filter((t: any) => t.id.length === 32);
+      if (!transfers.length) { res.status(400).json({ ok: false, error: 'No files were staged for that paste.' }); return; }
+      payload.transfers = transfers;
+    }
+    if (kind.startsWith('clipboard.')) {
+      // Which session. Left blank the agent decides, and REFUSES when more than one person
+      // is signed in - a pushed password must not land in a stranger's clipboard.
+      const sess = parseInt(String(b.session || ''), 10);
+      if (Number.isFinite(sess) && sess >= 0) payload.session = String(sess);
+      if (b.user) payload.user = String(b.user).slice(0, 120);
+    }
+
     if (kind === 'users.resetpw' || kind === 'ad.user.resetpw') {
       // Either generate one or take the admin's. A typed password is echoed back so the
       // UI can show it once alongside a generated one; like a generated one it is never
@@ -441,6 +473,14 @@ router.get('/assets/:id/tools/result/:commandId', requireAuth, requireAdmin, asy
       ok: true, status: c.status, exit_code: c.exit_code, output: c.output || '',
       progress: c.progress || '', progress_pct: c.progress_pct == null ? null : Number(c.progress_pct),
     });
+
+    // A grabbed clipboard is handed over ONCE and then dropped. Whatever an engineer had
+    // copied on a customer's machine is very often a password, and there is no reason for
+    // it to sit in agent_commands.output for the life of the database.
+    if (c.kind === 'clipboard.get' && ['done', 'failed'].includes(String(c.status))) {
+      pool.query("UPDATE agent_commands SET output='(handed over)' WHERE id=$1", [commandId])
+        .catch(() => { /* best effort - the row is already served */ });
+    }
   } catch (e: any) {
     res.status(500).json({ ok: false, error: 'Could not read the result.' });
   }

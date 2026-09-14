@@ -108,6 +108,65 @@
   <div id="pushDetail" class="muted" style="margin-top:10px;font-size:14px;"></div>
 </div>
 
+<!-- Where it's been -->
+<div class="card">
+  <div class="card-header"><h2>Where it's been</h2></div>
+  <% if (!pushes.length) { %>
+    <div class="empty-state" style="padding:6px 0;">Not sent anywhere yet. Use <strong>Push it out</strong> below.</div>
+  <% } else { %>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Channel</th><th>What happened</th><th>When</th><th>By</th></tr></thead>
+        <tbody>
+          <% pushes.forEach(function (p) { %>
+            <tr>
+              <td style="white-space:nowrap;">
+                <% if (p.network === 'linkedin') { %>LinkedIn
+                <% } else if (p.network === 'facebook') { %>Facebook
+                <% } else if (p.network === 'google') { %>Google Business
+                <% } else if (p.network === 'news') { %>Website news
+                <% } else if (p.network === 'email') { %>Email
+                <% } else { %><%= p.network %><% } %>
+              </td>
+              <td>
+                <% if (p.status !== 'ok') { %>
+                  <span class="badge" style="background:var(--bad-bg);color:var(--bad-deep);">Failed</span>
+                  <span class="muted" style="font-size:13px;"><%= p.message || '' %></span>
+                <% } else if (p.network === 'news') { %>
+                  <span class="badge badge-sent">Published</span>
+                  <% if (p.message) { %><a class="row-link" href="<%= p.message %>" target="_blank" rel="noopener" style="font-size:13px;">open</a><% } %>
+                <% } else if (p.network === 'email') { %>
+                  <% if (!p.campaign) { %>
+                    <span class="badge badge-inactive">Draft created</span>
+                    <span class="muted" style="font-size:13px;">campaign since deleted</span>
+                  <% } else if (p.campaign.status === 'sent') { %>
+                    <span class="badge badge-sent">Sent</span>
+                    <span class="muted" style="font-size:13px;">to <%= p.campaign.sent %> <a class="row-link" href="/marketing/mass-mailer/<%= p.campaign.id %>">see it</a></span>
+                  <% } else if (p.campaign.status === 'sending') { %>
+                    <span class="badge badge-primary">Sending</span>
+                    <span class="muted" style="font-size:13px;"><%= p.campaign.sent %> so far · <a class="row-link" href="/marketing/mass-mailer/<%= p.campaign.id %>">see it</a></span>
+                  <% } else { %>
+                    <span class="badge badge-inactive">Draft — not sent</span>
+                    <span class="muted" style="font-size:13px;"><a class="row-link" href="/marketing/mass-mailer/<%= p.campaign.id %>">review and send it</a></span>
+                  <% } %>
+                <% } else if (p.action === 'schedule' && p.due_at) { %>
+                  <span class="badge badge-inactive">Scheduled</span>
+                  <span class="muted" style="font-size:13px;">for <%= new Date(p.due_at).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) %></span>
+                <% } else { %>
+                  <span class="badge badge-sent">Posted</span>
+                <% } %>
+              </td>
+              <td class="muted" style="white-space:nowrap;"><%= new Date(p.created_at).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' }) %></td>
+              <td class="muted"><%= p.created_by || '—' %></td>
+            </tr>
+          <% }); %>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted" style="font-size:12.5px;margin:10px 0 0;">This is what the Portal sent. Whether a post got likes or comments lives in Buffer — what comes back here is the click-through, in the source table above.</p>
+  <% } %>
+</div>
+
 <!-- How it is doing -->
 <div class="card">
   <div class="card-header"><h2>How it's doing</h2></div>

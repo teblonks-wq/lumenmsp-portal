@@ -13,7 +13,7 @@ import {
 } from '../lib/guides';
 import { searchFreeImages } from '../lib/images';
 import { tagUrl, slugFromUrl, viewStats, viewCounts, trackedContent, sourceTotals } from '../lib/pageviews';
-import { recordUpload, listUploads } from '../lib/socials';
+import { recordUpload, listUploads, uploadsForSlug, pushSummary } from '../lib/socials';
 import {
   audience, audienceCoverage, createCampaign, updateDraft, sendTest, startSending, pauseSending,
   retryFailed, contactForUnsubToken, optOutByToken, campaignSignatureHtml, AudienceFilter,
@@ -280,11 +280,14 @@ router.post('/marketing/socials/publish-guide', requireAdmin, async (req: Reques
 router.get('/marketing/guides', requireAdmin, async (req: Request, res: Response) => {
   let guides: any[] = [];
   let views: Record<string, number> = {};
+  let pushed: Record<string, { networks: string[]; at: string }> = {};
   try {
     guides = await listGuides();
-    views = await viewCounts('guide', guides.map((g) => g.slug));
+    const slugs = guides.map((g) => g.slug);
+    views = await viewCounts('guide', slugs);
+    pushed = await pushSummary(slugs);
   } catch { /* tables appear on first deploy */ }
-  res.render('marketing/guides', { user: req.session.user!, guides, views, notice: req.query.msg || null });
+  res.render('marketing/guides', { user: req.session.user!, guides, views, pushed, notice: req.query.msg || null });
 });
 
 router.get('/marketing/guides/:slug', requireAdmin, async (req: Request, res: Response) => {
@@ -295,6 +298,7 @@ router.get('/marketing/guides/:slug', requireAdmin, async (req: Request, res: Re
   const empty = { views: 0, people: 0, last: null, sources: [], daily: [] };
   res.render('marketing/guide-detail', {
     user: req.session.user!, guide, leads,
+    pushes: await pushHistory(slug),
     stats: await viewStats('guide', slug).catch(() => empty),
     newsStats: guide.news_url ? await viewStats('news', slug).catch(() => empty) : null,
     // The funnel, in the order it actually happens.
@@ -409,6 +413,10 @@ router.post('/marketing/guides/:slug/news', requireAdmin, async (req: Request, r
       imageUrl: String(req.body.imageUrl || guide.image_url || '').trim() || undefined,
     });
     await setGuideNewsUrl(slug, r.url);
+    await recordUpload({
+      slug, network: 'news', action: 'publish', status: 'ok', message: r.url,
+      createdBy: req.session.user!.displayName || req.session.user!.email || null,
+    }).catch(() => { /* ditto */ });
     res.json({ ok: true, url: r.url });
   } catch (e: any) {
     res.status(400).json({ ok: false, error: e.message || 'Could not publish the news article' });
@@ -571,6 +579,25 @@ router.post('/marketing/mass-mailer/:id/delete', requireAdmin, async (req: Reque
   res.redirect('/marketing/mass-mailer?msg=' + encodeURIComponent('Campaign deleted'));
 });
 
+// One row per thing we sent, with the email campaign's CURRENT status rather than the status
+// it had the moment the draft was made - a draft that was never sent should say so.
+async function pushHistory(slug: string): Promise<any[]> {
+  const rows = await uploadsForSlug(slug).catch(() => []);
+  const campaignIds = rows.filter((r: any) => r.network === 'email' && r.buffer_post_id)
+    .map((r: any) => parseInt(r.buffer_post_id, 10)).filter(Boolean);
+  const campaigns: Record<string, any> = {};
+  if (campaignIds.length) {
+    try {
+      const c = await pool.query(
+        `SELECT c.id, c.status, c.subject,
+                (SELECT COUNT(*)::int FROM mail_campaign_recipients r WHERE r.campaign_id=c.id AND r.status='sent') AS sent
+           FROM mail_campaigns c WHERE c.id = ANY($1::int[])`, [campaignIds]);
+      c.rows.forEach((x: any) => { campaigns[String(x.id)] = x; });
+    } catch { /* campaign deleted, or tables not there yet */ }
+  }
+  return rows.map((r: any) => ({ ...r, campaign: r.buffer_post_id ? campaigns[r.buffer_post_id] || null : null }));
+}
+
 // ══ Marketing → Content ══════════════════════════════════════════════════════
 // Every page the Portal has published and tracked, what it got, and where from. This is the
 // only view of news-article traffic that exists: the Astro site's own analytics never saw
@@ -659,6 +686,14 @@ router.post('/marketing/socials/email-campaign', requireAdmin, async (req: Reque
       createdBy: req.session.user!.id,
       questionnaireVersionId: null,
     });
+    // Logged alongside the social pushes so one place answers "where has this been?".
+    // buffer_post_id carries the campaign id here - the column is named for Buffer, but it is
+    // the provider's own id for whatever we sent, which for an email is the campaign.
+    await recordUpload({
+      slug: slugFromUrl(rawLink) || null, network: 'email', action: 'campaign', status: 'ok',
+      bufferPostId: String(id), message: draft.subject,
+      createdBy: req.session.user!.displayName || req.session.user!.email || null,
+    }).catch(() => { /* never fail the draft over a log line */ });
     res.json({ ok: true, id, url: '/marketing/mass-mailer/' + id });
   } catch (e: any) {
     res.status(400).json({ ok: false, error: e.message || 'Could not build the email' });

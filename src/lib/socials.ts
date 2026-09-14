@@ -700,6 +700,32 @@ export async function recordUpload(u: {
     [u.postId ?? null, u.slug ?? null, u.network, u.action, u.status, u.bufferPostId ?? null, u.dueAt ?? null, u.message ?? null, u.createdBy ?? null]);
 }
 
+// Everything the Portal has sent out for one piece of content, newest first. This is the
+// answer to "has this actually gone anywhere?" - Buffer tells us nothing after the fact, so
+// our own log is the only record that a post was made at all.
+export async function uploadsForSlug(slug: string): Promise<any[]> {
+  const { rows } = await pool.query(
+    `SELECT * FROM social_uploads WHERE slug = $1 ORDER BY created_at DESC`, [slug]);
+  return rows;
+}
+
+// Last successful push per slug, for the Guides list: { slug: { networks: [...], at } }.
+export async function pushSummary(slugs: string[]): Promise<Record<string, { networks: string[]; at: string }>> {
+  if (!slugs.length) return {};
+  const { rows } = await pool.query(
+    `SELECT slug, network, MAX(created_at) AS at
+       FROM social_uploads
+      WHERE slug = ANY($1::text[]) AND status = 'ok'
+      GROUP BY slug, network`, [slugs]);
+  const out: Record<string, { networks: string[]; at: string }> = {};
+  for (const r of rows as any[]) {
+    const e = out[r.slug] || (out[r.slug] = { networks: [], at: r.at });
+    e.networks.push(r.network);
+    if (new Date(r.at) > new Date(e.at)) e.at = r.at;
+  }
+  return out;
+}
+
 export async function listUploads(limit = 100): Promise<any[]> {
   const { rows } = await pool.query(`SELECT * FROM social_uploads ORDER BY created_at DESC LIMIT $1`, [limit]);
   return rows;
