@@ -53,6 +53,13 @@
       <div class="form-group"><label>Bcc <span class="muted" style="font-weight:400;">(comma-separated)</span></label><input class="input" name="bcc" placeholder="name@example.com, …"></div>
     </div>
     <div class="form-group" style="margin-bottom:12px;"><label>Message</label>
+      <% var _credCust = (typeof credCustomer !== 'undefined' && credCustomer) ? credCustomer : (entityType === 'customer' ? entityId : ''); %>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+        <button type="button" class="btn" style="padding:3px 10px;font-size:12px;"
+                title="Hand over a username and password without putting either in this email"
+                onclick="window.openCredLightboxC<%= entityId %> && window.openCredLightboxC<%= entityId %>()">🔐 Send credentials…</button>
+        <span class="muted" style="font-size:11.5px;">Link in the email, passcode by phone or text.</span>
+      </div>
       <div id="commsEditor<%= entityId %>" style="height:170px;background:var(--surface);"></div>
     </div>
     <div class="form-group" style="margin-bottom:12px;"><label>Attachments <span class="muted">(up to 5, 10MB each)</span></label>
@@ -88,3 +95,11 @@
   });
   if (window.LumenGrammar) LumenGrammar.attach(window.commsQuill<%= entityId %>, document.getElementById('commsEditor<%= entityId %>').parentNode);
 </script>
+
+<%- include('./cred-lightbox', {
+      credId: 'C' + entityId,
+      credCustomer: _credCust,
+      credTicket: '',
+      credQuill: 'window.commsQuill' + entityId,
+      credToSel: '#comms input[name=to_email]'
+    }) %>

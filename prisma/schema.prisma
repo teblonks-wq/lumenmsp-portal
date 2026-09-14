@@ -4309,3 +4309,52 @@ model ContentView {
   @@index([createdAt], map: "idx_content_views_created")
   @@map("content_views")
 }
+
+// ── Send Credentials: one-time, passcode-gated credential handover ───────────────
+// Raw-SQL managed in src/lib/credential-send.ts; mirrored here so `prisma db push` does
+// not drop the tables (the social_posts lesson). payload_encrypted holds the whole set of
+// credentials as one AES-256-GCM blob and is set to NULL the moment they are collected —
+// after a reveal there is genuinely nothing left to decrypt. The passcode is never stored,
+// only scrypt(passcode, salt).
+model CredentialSend {
+  id               Int       @id @default(autoincrement())
+  token            String    @unique
+  passcodeSalt     String    @map("passcode_salt")
+  passcodeHash     String    @map("passcode_hash")
+  payloadEncrypted String?   @map("payload_encrypted")
+  itemCount        Int       @default(0) @map("item_count")
+  title            String?
+  customerId       Int?      @map("customer_id")
+  ticketId         Int?      @map("ticket_id")
+  toEmail          String?   @map("to_email")
+  createdBy        Int?      @map("created_by")
+  createdAt        DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  expiresAt        DateTime  @db.Timestamptz(6) @map("expires_at")
+  revealedAt       DateTime? @db.Timestamptz(6) @map("revealed_at")
+  revokedAt        DateTime? @db.Timestamptz(6) @map("revoked_at")
+  attempts         Int       @default(0)
+  lockedAt         DateTime? @db.Timestamptz(6) @map("locked_at")
+
+  events CredentialSendEvent[]
+
+  @@index([customerId, createdAt], map: "idx_cred_sends_customer")
+  @@index([ticketId], map: "idx_cred_sends_ticket")
+  @@map("credential_sends")
+}
+
+// Every touch of a credentials link: created, opened, wrong passcode, collected, cancelled.
+// Kept after the secret is destroyed — the point of the trail is that it outlives the secret.
+model CredentialSendEvent {
+  id        BigInt   @id @default(autoincrement())
+  sendId    Int      @map("send_id")
+  event     String
+  ip        String?
+  userAgent String?  @map("user_agent")
+  meta      Json?
+  createdAt DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  send CredentialSend @relation(fields: [sendId], references: [id], onDelete: Cascade)
+
+  @@index([sendId, createdAt], map: "idx_cred_send_events")
+  @@map("credential_send_events")
+}

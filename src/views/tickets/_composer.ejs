@@ -54,6 +54,7 @@ var _standalone = (typeof standalone !== 'undefined' && !!standalone);
           <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
             <select id="tplSelect" class="input" style="width:auto;padding:3px 8px;font-size:12px;">
               <option value="">📄 Insert template…</option>
+              <option value="__creds">🔐 Send credentials…</option>
               <% (typeof replyTemplates !== 'undefined' ? replyTemplates : []).forEach(function(t){ %>
               <option value="<%= t.id %>"><%= t.name %></option>
               <% }); %>
@@ -323,6 +324,13 @@ var _standalone = (typeof standalone !== 'undefined' && !!standalone);
           var TPLS = <%- JSON.stringify((typeof replyTemplates !== 'undefined' ? replyTemplates : []).map(function(t){ return { id: t.id, html: t.body_html }; })) %>;
           var sel = document.getElementById('tplSelect');
           if (sel) sel.addEventListener('change', function(){
+            // Send credentials is not a canned paragraph — it mints a one-time link first,
+            // so it opens the lightbox and leaves the composer alone until you confirm.
+            if (sel.value === '__creds') {
+              sel.value = '';
+              if (window.openCredLightboxTK) window.openCredLightboxTK();
+              return;
+            }
             var t = TPLS.filter(function(x){ return String(x.id) === sel.value; })[0];
             sel.value = '';
             if (!t || !window.ticketQuill) return;
@@ -367,6 +375,14 @@ var _standalone = (typeof standalone !== 'undefined' && !!standalone);
         })();
       })();
       </script>
+
+<%- include('../partials/cred-lightbox', {
+      credId: 'TK',
+      credCustomer: (ticket.customer_id || ''),
+      credTicket: ticket.id,
+      credQuill: 'window.ticketQuill',
+      credToSel: '#tkRecipients .rcpt-to'
+    }) %>
 
 <%# The editor's stylesheet travels WITH the composer — the review page taught us why:
     without it, Quill's toolbar paints its raw SVGs full-size and the screen fills with

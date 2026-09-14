@@ -1,0 +1,241 @@
+<%
+// ── "Send credentials" lightbox ─────────────────────────────────────────────────
+// One implementation, included by both composers (the case composer and the customer
+// Composer tab). Opening it is a function on window so either host can call it from a
+// dropdown, a button, or anything else later.
+//
+// Locals:
+//   credId        - unique suffix for element ids (a page may hold two composers)
+//   credCustomer  - customer id, or '' (the vault picker hides itself without one)
+//   credTicket    - ticket id, or ''
+//   credQuill     - JS expression that evaluates to the Quill instance to paste into
+//   credToSel     - (optional) CSS selector of the To field, used to label the send
+var cid = String(typeof credId !== 'undefined' ? credId : 'x');
+var cCust = String(typeof credCustomer !== 'undefined' && credCustomer ? credCustomer : '');
+var cTick = String(typeof credTicket !== 'undefined' && credTicket ? credTicket : '');
+var cQuill = String(typeof credQuill !== 'undefined' ? credQuill : 'window.ticketQuill');
+var cToSel = String(typeof credToSel !== 'undefined' ? credToSel : '');
+%>
+<style>
+  .cl-ov { display:none; position:fixed; inset:0; z-index:1200; background:rgba(15,23,42,.55); align-items:flex-start; justify-content:center; padding:4vh 14px; overflow:auto; }
+  .cl-ov.on { display:flex; }
+  .cl-modal { background:var(--surface,#fff); color:var(--ink,#0f172a); border-radius:16px; width:min(720px,100%); padding:22px 24px; box-shadow:0 26px 64px rgba(15,23,42,.34); }
+  .cl-modal h3 { margin:0 0 4px; font-size:18px; }
+  .cl-sub { font-size:13px; color:var(--muted,#64748b); margin:0 0 16px; }
+  .cl-sec { border-top:1px solid var(--line,#e2e8f0); padding-top:14px; margin-top:14px; }
+  .cl-sec > .h { font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:var(--muted,#64748b); margin-bottom:9px; }
+  .cl-vault { max-height:190px; overflow:auto; border:1px solid var(--line,#e2e8f0); border-radius:10px; padding:6px 8px; }
+  .cl-vrow { display:flex; gap:9px; align-items:flex-start; padding:6px 4px; border-radius:7px; cursor:pointer; font-size:13.5px; }
+  .cl-vrow:hover { background:var(--tint-info,#f1f5f9); }
+  .cl-vrow input { width:auto; min-width:auto; margin:3px 0 0; }
+  .cl-vrow .m { color:var(--muted,#64748b); font-size:12px; }
+  .cl-adhoc { display:grid; grid-template-columns:1.1fr 1fr 1fr auto; gap:7px; margin-bottom:7px; }
+  .cl-adhoc input { font-size:13px; padding:6px 9px; }
+  @media (max-width:640px){ .cl-adhoc { grid-template-columns:1fr 1fr; } }
+  .cl-x { font:inherit; font-size:14px; font-weight:700; color:#b91c1c; background:none; border:0; cursor:pointer; padding:0 6px; }
+  .cl-act { display:flex; gap:9px; align-items:center; justify-content:flex-end; margin-top:18px; flex-wrap:wrap; }
+  .cl-err { background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; border-radius:9px; padding:9px 12px; font-size:13px; margin-bottom:12px; display:none; }
+  .cl-code { font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; font-size:34px; font-weight:800; letter-spacing:9px;
+             text-align:center; padding:16px 10px; background:#ecfeff; border:2px dashed #0e7490; border-radius:12px; color:#0b3a5b; }
+  .cl-warn { background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:10px; padding:11px 13px; font-size:13px; margin:14px 0; }
+  .cl-link { font-size:12px; word-break:break-all; background:var(--tint-info,#f1f5f9); border-radius:8px; padding:8px 10px; margin-top:10px; font-family:ui-monospace,Consolas,monospace; }
+</style>
+
+<div class="cl-ov" id="clOv<%= cid %>">
+  <div class="cl-modal" role="dialog" aria-modal="true" aria-labelledby="clH<%= cid %>">
+
+    <div id="clStep1<%= cid %>">
+      <h3 id="clH<%= cid %>">🔐 Send credentials</h3>
+      <p class="cl-sub">They get a link. You give them the passcode another way — ring them, or text it. The page opens once, shows the details with a Copy button on each, then destroys them. Every open is logged with the time, the address it came from and roughly where.</p>
+
+      <div class="cl-err" id="clErr<%= cid %>"></div>
+
+      <div class="form-group" style="margin-bottom:0;">
+        <label style="font-size:12px;">What are these for? <span class="muted" style="font-weight:400;">(shown at the top of their page)</span></label>
+        <input class="input" id="clTitle<%= cid %>" maxlength="90" placeholder="Your new Sage login" style="font-size:13.5px;">
+      </div>
+
+      <% if (cCust) { %>
+      <div class="cl-sec">
+        <div class="h">From this customer's vault</div>
+        <div class="cl-vault" id="clVault<%= cid %>"><div class="muted" style="font-size:13px;padding:8px;">Loading…</div></div>
+        <div class="muted" style="font-size:11.5px;margin-top:6px;">Passwords are pulled on the server when you press Create — they never touch this browser.</div>
+      </div>
+      <% } %>
+
+      <div class="cl-sec">
+        <div class="h">Or type them in <span style="text-transform:none;font-weight:400;">— leave the password blank for a link-only row</span></div>
+        <div id="clRows<%= cid %>"></div>
+        <button type="button" class="btn" id="clAdd<%= cid %>" style="padding:4px 11px;font-size:12px;">+ Add another</button>
+      </div>
+
+      <div class="cl-act">
+        <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin:0;">Link dies after
+          <select class="input" id="clTtl<%= cid %>" style="width:auto;padding:4px 8px;font-size:12px;">
+            <option value="24">24 hours</option>
+            <option value="72">3 days</option>
+            <option value="168" selected>7 days</option>
+          </select>
+          <span class="muted">if unused</span>
+        </label>
+        <span style="flex:1;"></span>
+        <button type="button" class="btn" onclick="clClose<%= cid %>()">Cancel</button>
+        <button type="button" class="btn btn-primary" id="clGo<%= cid %>">Create the link</button>
+      </div>
+    </div>
+
+    <div id="clStep2<%= cid %>" style="display:none;">
+      <h3>🔐 Link created — now send the passcode</h3>
+      <p class="cl-sub">This is the only time you will see it. Ring them, or text it — anything except the same email as the link.</p>
+      <div class="cl-code" id="clPass<%= cid %>"></div>
+      <div style="display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap;">
+        <button type="button" class="btn" id="clCopyPass<%= cid %>" style="font-size:12.5px;">Copy passcode</button>
+        <a class="btn" id="clSms<%= cid %>" href="#" style="font-size:12.5px;">Text it</a>
+        <a class="btn" id="clWa<%= cid %>" href="#" target="_blank" rel="noopener" style="font-size:12.5px;">WhatsApp it</a>
+      </div>
+      <div class="cl-warn">
+        Do not put this passcode in the email. If it goes down the same pipe as the link,
+        one compromised mailbox has both halves and the whole exercise was for nothing.
+      </div>
+      <div class="cl-link" id="clUrl<%= cid %>"></div>
+      <div class="cl-act">
+        <a class="muted" id="clTrack<%= cid %>" href="#" target="_blank" style="font-size:12px;">Track this link →</a>
+        <span style="flex:1;"></span>
+        <button type="button" class="btn" onclick="clClose<%= cid %>()">Close</button>
+        <button type="button" class="btn btn-primary" id="clInsert<%= cid %>">Insert into the email</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+(function(){
+  var CID = '<%= cid %>', CUST = '<%= cCust %>', TICK = '<%= cTick %>';
+  var ov = document.getElementById('clOv' + CID);
+  if (!ov) return;
+  var step1 = document.getElementById('clStep1' + CID), step2 = document.getElementById('clStep2' + CID);
+  var rowsBox = document.getElementById('clRows' + CID);
+  var errBox = document.getElementById('clErr' + CID);
+  var minted = null;
+
+  function csrf(){ var m = document.querySelector('meta[name="csrf-token"]'); return m ? m.getAttribute('content') : ''; }
+  function showErr(msg){ errBox.textContent = msg; errBox.style.display = msg ? 'block' : 'none'; }
+
+  function addRow(){
+    var d = document.createElement('div');
+    d.className = 'cl-adhoc';
+    d.innerHTML = '<input class="input cl-l" placeholder="What it is (e.g. Sage)">' +
+                  '<input class="input cl-u" placeholder="Username">' +
+                  '<input class="input cl-p" placeholder="Password" autocomplete="new-password">' +
+                  '<button type="button" class="cl-x" title="Remove this row">&times;</button>' +
+                  '<input class="input cl-url" placeholder="Link / URL (optional)" style="grid-column:1 / -1;">';
+    d.querySelector('.cl-x').addEventListener('click', function(){ d.remove(); if (!rowsBox.children.length) addRow(); });
+    rowsBox.appendChild(d);
+  }
+  document.getElementById('clAdd' + CID).addEventListener('click', addRow);
+
+  function loadVault(){
+    var box = document.getElementById('clVault' + CID);
+    if (!box || !CUST) return;
+    fetch('/credential-sends/vault.json?customerId=' + encodeURIComponent(CUST))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var items = (d && d.items) || [];
+        if (!items.length) { box.innerHTML = '<div class="muted" style="font-size:13px;padding:8px;">Nothing saved against this customer yet — type the details in below, or add them to the vault first.</div>'; return; }
+        box.innerHTML = '';
+        items.forEach(function(it){
+          var l = document.createElement('label');
+          l.className = 'cl-vrow';
+          var bits = [];
+          if (it.username) bits.push(it.username);
+          if (!it.has_password) bits.push('no password saved');
+          if (it.category) bits.push(it.category);
+          l.innerHTML = '<input type="checkbox" value="' + it.id + '">' +
+            '<span><strong>' + esc(it.name) + '</strong>' +
+            (bits.length ? '<br><span class="m">' + esc(bits.join(' · ')) + '</span>' : '') + '</span>';
+          box.appendChild(l);
+        });
+      })
+      .catch(function(){ box.innerHTML = '<div class="muted" style="font-size:13px;padding:8px;">Could not load the vault.</div>'; });
+  }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+
+  window['openCredLightbox' + CID] = function(){
+    minted = null; showErr('');
+    step1.style.display = ''; step2.style.display = 'none';
+    rowsBox.innerHTML = ''; addRow();
+    var t = document.getElementById('clTitle' + CID); if (t) t.value = '';
+    loadVault();
+    ov.classList.add('on');
+    setTimeout(function(){ if (t) t.focus(); }, 30);
+  };
+  window['clClose' + CID] = function(){ ov.classList.remove('on'); };
+  ov.addEventListener('click', function(e){ if (e.target === ov) window['clClose' + CID](); });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && ov.classList.contains('on')) window['clClose' + CID](); });
+
+  document.getElementById('clGo' + CID).addEventListener('click', function(){
+    showErr('');
+    var btn = this;
+    var ids = [];
+    document.querySelectorAll('#clVault' + CID + ' input[type=checkbox]:checked').forEach(function(c){ ids.push(parseInt(c.value, 10)); });
+    var items = [];
+    Array.prototype.forEach.call(rowsBox.children, function(d){
+      var label = d.querySelector('.cl-l').value.trim();
+      var user = d.querySelector('.cl-u').value.trim();
+      var pass = d.querySelector('.cl-p').value;
+      var url = d.querySelector('.cl-url').value.trim();
+      if (!label && !user && !pass && !url) return;
+      items.push({ label: label || 'Login', username: user, password: pass, url: url });
+    });
+    if (!ids.length && !items.length) { showErr('Tick a saved password or fill in a row first.'); return; }
+
+    var toEl = <%- cToSel ? ("document.querySelector('" + cToSel + "')") : 'null' %>;
+    btn.disabled = true; btn.textContent = 'Creating…';
+    fetch('/credential-sends/new.json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrf() },
+      body: JSON.stringify({
+        customerId: CUST || null, ticketId: TICK || null,
+        credentialIds: ids, items: items,
+        title: document.getElementById('clTitle' + CID).value.trim(),
+        toEmail: toEl ? (toEl.value || '').trim() : '',
+        ttlHours: parseInt(document.getElementById('clTtl' + CID).value, 10),
+      }),
+    }).then(function(r){ return r.json(); }).then(function(d){
+      btn.disabled = false; btn.textContent = 'Create the link';
+      if (!d || !d.ok) { showErr((d && d.error) || 'Could not create the link.'); return; }
+      minted = d;
+      document.getElementById('clPass' + CID).textContent = d.passcode;
+      document.getElementById('clUrl' + CID).textContent = d.url;
+      document.getElementById('clTrack' + CID).href = '/credential-sends/' + d.id;
+      var msg = 'Your passcode for the Lumen login details page is ' + d.passcode;
+      document.getElementById('clSms' + CID).href = 'sms:?&body=' + encodeURIComponent(msg);
+      document.getElementById('clWa' + CID).href = 'https://wa.me/?text=' + encodeURIComponent(msg);
+      step1.style.display = 'none'; step2.style.display = '';
+    }).catch(function(){
+      btn.disabled = false; btn.textContent = 'Create the link';
+      showErr('Could not reach the Portal. Try again.');
+    });
+  });
+
+  document.getElementById('clCopyPass' + CID).addEventListener('click', function(){
+    var b = this, v = minted ? minted.passcode : '';
+    if (!v) return;
+    var done = function(){ b.textContent = 'Copied'; setTimeout(function(){ b.textContent = 'Copy passcode'; }, 1500); };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(v).then(done, done);
+    else { var t = document.createElement('textarea'); t.value = v; document.body.appendChild(t); t.select(); try { document.execCommand('copy'); } catch(e){} document.body.removeChild(t); done(); }
+  });
+
+  document.getElementById('clInsert' + CID).addEventListener('click', function(){
+    if (!minted) return;
+    var q = <%- cQuill %>;
+    if (q) {
+      var sel = q.getSelection(true);
+      var idx = sel ? sel.index : q.getLength();
+      q.clipboard.dangerouslyPasteHTML(idx, minted.emailHtml, 'user');
+    }
+    window['clClose' + CID]();
+  });
+})();
+</script>

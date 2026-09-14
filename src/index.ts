@@ -41,6 +41,7 @@ import { ensurePushTables } from './lib/webpush';
 import selfRegisteredRoutes from './routes/self-registered';
 import { ensureSignupColumns } from './lib/self-signup';
 import credentialRoutes from './routes/credentials';
+import credentialSendRoutes from './routes/credential-send';
 import licenceRoutes from './routes/licences';
 import ateraRoutes from './routes/atera';
 import ateraAttachmentRoutes from './routes/atera-attachments';
@@ -90,6 +91,7 @@ import { ensureSocialsTables } from './lib/socials';
 import { ensureGuideTables } from './lib/guides';
 import { ensureSubscriberTables } from './lib/subscribers';
 import { ensureContentViewTables } from './lib/pageviews';
+import { ensureCredentialSendTables } from './lib/credential-send';
 import { startGiacomStatus } from './lib/giacom-status';
 import { startUnifiPoll } from './lib/unifi';
 import { startWatchdog } from './lib/watchdog';
@@ -353,6 +355,8 @@ app.use((req, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   if (req.path.startsWith('/webhooks/')) return next();         // verified by signature/secret
   if (req.path.startsWith('/api/chat')) return next();          // public website chat widget (token-based, CORS)
+  if (req.path.startsWith('/c/')) return next();                 // public one-time credentials page (passcode IS the credential;
+                                                                 // a forged POST without it reveals nothing and burns nothing)
   if (!req.session.user) return next();                          // public/login flows use other protections
   const sent = req.get('x-csrf-token') || (req.body && req.body._csrf) || req.query._csrf;
   if (sent && sent === (req.session as any).csrfToken) return next();
@@ -442,6 +446,8 @@ app.use('/', mcpRoutes);          // Claude MCP connector (capability-URL token,
                                   // → the CSRF guard's !req.session.user branch already exempts it)
 app.use('/', signupRoutes);      // public self-registration (no session, throttled)
 app.use('/', bookPublicRoutes);   // public booking page (no session, throttled + honeypot)
+app.use('/', credentialSendRoutes); // /c/:token one-time credentials page (public, passcode-gated)
+                                   // + /credential-sends staff screens (vault gate inside the router)
 app.use('/', pulseRoutes);       // mobile Pulse feed + Web Push (staff only, session)
 app.use('/', authRoutes);
 app.use('/', dashboardRoutes);
@@ -587,6 +593,7 @@ server.listen(config.PORT, () => {
   ensureGuideTables().catch((e) => console.error('ensureGuideTables failed:', e.message)); // Marketing -> Guides (lead magnets)
   ensureSubscriberTables().catch((e) => console.error('ensureSubscriberTables failed:', e.message)); // Marketing -> Subscribers (guide opt-ins)
   ensureContentViewTables().catch((e) => console.error('ensureContentViewTables failed:', e.message)); // views of Portal-published pages
+  ensureCredentialSendTables().catch((e) => console.error('ensureCredentialSendTables failed:', e.message)); // Send Credentials: one-time links + their audit trail
   resumeMassMailer();    // Mass Mailer: resume any campaign a deploy restart interrupted
   startGiacomStatus();   // N3twrx: poll Giacom status feed
   startUnifiPoll();      // N3twrx: poll UniFi Site Manager API for offline devices
