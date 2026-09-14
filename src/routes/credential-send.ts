@@ -13,8 +13,8 @@ import { logActivity } from '../lib/activity';
 import { decryptSecret } from '../lib/vault';
 import {
   CredItem, MAX_ATTEMPTS, clientIp, findByToken, getCredentialSendEvents, listCredentialSends,
-  logCredEvent, lookupGeo, mintCredentialSend, revealCredentials, revokeCredentialSend,
-  stateOf, statusOf, userAgent, whereFrom,
+  logCredEvent, lookupGeo, mintCredentialSend, reissuePasscode, revealCredentials,
+  revokeCredentialSend, stateOf, statusOf, userAgent, whereFrom,
 } from '../lib/credential-send';
 
 const router = Router();
@@ -146,8 +146,10 @@ router.get('/credential-sends', async (req: Request, res: Response) => {
   res.render('credentials/sends', { user: req.session.user!, rows, statusOf, customerId: customerId || null });
 });
 
-router.get('/credential-sends/:id', async (req: Request, res: Response) => {
-  const id = parseInt(String(req.params.id), 10);
+/** The detail screen. Shared, because reissuing a passcode has to render it directly —
+ *  a fresh passcode must never travel in a redirect URL, where it would land in the
+ *  browser history, the proxy log and the Referer header of the next request. */
+async function renderDetail(req: Request, res: Response, id: number, extra: Record<string, any> = {}) {
   const r = await pool.query(
     `SELECT s.*, c.name AS customer_name, u.display_name AS created_by_name
        FROM credential_sends s
@@ -156,11 +158,31 @@ router.get('/credential-sends/:id', async (req: Request, res: Response) => {
   if (!r.rows.length) { res.redirect('/credential-sends'); return; }
   const events = await getCredentialSendEvents(id);
   const opens = events.filter((e: any) => e.event === 'link_opened').length;
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.render('credentials/send-detail', {
     user: req.session.user!, s: r.rows[0], events, whereFrom,
     status: statusOf({ ...r.rows[0], opens }),
-    notice: req.query.msg || null,
+    notice: req.query.msg || null, error: null, newPasscode: null, url: APP() + '/c/' + r.rows[0].token,
+    ...extra,
   });
+}
+
+router.get('/credential-sends/:id', async (req: Request, res: Response) => {
+  await renderDetail(req, res, parseInt(String(req.params.id), 10));
+});
+
+// New passcode for a link nobody has collected yet. Same URL, same contents — so the
+// email already sitting in their inbox still works and nothing has to be re-keyed.
+router.post('/credential-sends/:id/reissue', async (req: Request, res: Response) => {
+  const id = parseInt(String(req.params.id), 10);
+  const passcode = await reissuePasscode(id, req.session.user!.id,
+    parseInt(String(req.body?.ttlHours || ''), 10) || undefined);
+  if (!passcode) {
+    await renderDetail(req, res, id, { error: 'This one cannot be reissued — it has already been collected or cancelled. Send a fresh set from the composer.' });
+    return;
+  }
+  await logActivity(req.session.user!.id, 'updated', 'credential_send', id, 'Reissued the passcode on a credentials link');
+  await renderDetail(req, res, id, { newPasscode: passcode });
 });
 
 router.post('/credential-sends/:id/revoke', async (req: Request, res: Response) => {

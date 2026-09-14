@@ -105,7 +105,8 @@ export async function ensureCredentialSendTables(): Promise<void> {
 
 export type CredEvent =
   | 'created' | 'link_opened' | 'passcode_failed' | 'revealed'
-  | 'opened_after_burn' | 'opened_expired' | 'opened_revoked' | 'locked' | 'revoked';
+  | 'opened_after_burn' | 'opened_expired' | 'opened_revoked' | 'locked' | 'revoked'
+  | 'passcode_reissued';
 
 export function clientIp(req: any): string {
   const fwd = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
@@ -273,6 +274,35 @@ export async function revealCredentials(
   const geo = await lookupGeo(ctx.ip || '');
   await logCredEvent(s.id, 'revealed', { ip: ctx.ip, userAgent: ctx.userAgent, meta: { geo, items: items.length } });
   return { ok: true, items };
+}
+
+/**
+ * Give an uncollected link a brand-new passcode.
+ *
+ * The passcode is shown once and stored only as scrypt(passcode, salt) — there is no
+ * "remind me what it was", by design. But the sender losing the code is not the same as
+ * the handover being compromised, and making them re-key three logins to fix a Post-it
+ * is the kind of friction that ends with somebody pasting a password into an email again.
+ * So: same link, same contents, new code, attempts reset. The old code stops working the
+ * instant this runs, which is also the right answer if they wrote it somewhere careless.
+ *
+ * Refuses on a link that has already been collected or cancelled — there is nothing left
+ * behind either of those to hand over.
+ */
+export async function reissuePasscode(id: number, byUserId: number, ttlHours?: number): Promise<string | null> {
+  const passcode = newPasscode();
+  const salt = crypto.randomBytes(16).toString('hex');
+  const ttl = ttlHours ? Math.max(1, Math.min(24 * 30, ttlHours)) : null;
+  const r = await pool.query(
+    `UPDATE credential_sends
+        SET passcode_salt=$2, passcode_hash=$3, attempts=0, locked_at=NULL,
+            expires_at = CASE WHEN $4::text IS NULL THEN expires_at ELSE NOW() + ($4 || ' hours')::interval END
+      WHERE id=$1 AND revealed_at IS NULL AND revoked_at IS NULL AND payload_encrypted IS NOT NULL
+      RETURNING id`,
+    [id, salt, hashPasscode(passcode, salt), ttl === null ? null : String(ttl)]);
+  if (!r.rows.length) return null;
+  await logCredEvent(id, 'passcode_reissued', { meta: { byUserId } });
+  return passcode;
 }
 
 export async function revokeCredentialSend(id: number, byUserId: number): Promise<void> {
